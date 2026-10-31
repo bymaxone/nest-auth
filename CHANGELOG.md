@@ -18,6 +18,46 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+Nothing here is a breaking change, and nothing changes unless you opt in.
+
+- **Service API keys (new, opt-in).** To authenticate a machine caller, set `apiKeys` in the
+  factory (`enabled`, `pepper`, `scopes`) and provide `BYMAX_AUTH_API_KEY_REPOSITORY` in
+  `extraProviders`; either one alone fails at startup. Implement `IApiKeyRepository`, protect a
+  route with `@ServiceKey('read')`, and read the caller with `@CurrentApiKey()`. A backend that
+  keeps its own interim guard can delete it once its keys are re-issued (digests are not
+  portable across peppers) and its route-gate tests pass against `ApiKeyGuard`.
+- **Three new error codes** in the catalog and in `AUTH_ERROR_CODES` of both subpaths:
+  `auth.api_key_invalid` (401), `auth.api_key_scope_insufficient` (403) and
+  `auth.api_key_not_found` (404). A client that switches on `error.code` need not handle them
+  unless it calls routes behind `@ServiceKey`.
+- **`rust-auth` is to mirror the key format, the digest, the scope rules, the audit event and the
+  three codes.** They are pinned in the new `apiKeys` section of `conformance/wire-contract.json`,
+  with a digest vector, so the two libraries cannot drift unnoticed.
+
+### Added
+
+- **Scoped service API keys for machine callers.** `ApiKeyGuard` and the `@ServiceKey(...scopes)`
+  decorator (scopes, the user-JWT bypass and the guard in one), `@ApiKeyScopes`, `@CurrentApiKey`,
+  `ApiKeyService` (`issue`, `revoke`, `rotate`), `IApiKeyRepository` and the
+  `onApiKeyRequest` audit hook.
+  - Keys are stored only as `HMAC-SHA-256(pepper, secret)`; the plaintext is returned once.
+  - Every key takes the same verification steps (a dummy row and digest stand in for a missing
+    one) and every bad credential answers the same `401`.
+  - Scopes are route metadata; a bound route with no declaration is refused. A key must hold all
+    declared scopes, with no hierarchy and no wildcard.
+  - Several active keys may share a label, which is what an overlapping rotation uses.
+  - Last-used tracking is coalesced in memory and flushed in batches, so a verified request costs
+    no store write. With N instances a key is written up to N times per window.
+  - The hook receives the label, the route pattern and the outcome of every guarded request,
+    refusals included. `apiKeys.auditMode: 'required'` awaits it and denies the request if it
+    throws.
+  - A scope that is not in `apiKeys.scopes` stops the application at startup.
+  - `issue`, `revoke` and `rotate` emit no hook: they run inside the host's own admin route.
+  - Rate limiting is not built in; the README shows `@nestjs/throttler` keyed on the verified key
+    id, and an end-to-end test exercises that example.
+
 ## [1.4.6] - 2026-10-31
 
 ### Apply to a derived backend

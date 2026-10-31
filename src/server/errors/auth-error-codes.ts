@@ -248,6 +248,30 @@ export const AUTH_ERROR_CODES = {
   /** Platform-admin endpoint accessed with a dashboard JWT instead of a platform JWT. */
   PLATFORM_AUTH_REQUIRED: 'auth.platform_auth_required',
 
+  // ---------------------------------------------------------------------------
+  // Service API keys
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The presented service key is not accepted.
+   *
+   * One code for every way a credential can fail — absent, malformed, unknown, wrong secret,
+   * revoked, expired — so the answer tells a caller nothing about which of them it was. The
+   * reason is recorded in the audit hook, where only the operator reads it.
+   */
+  API_KEY_INVALID: 'auth.api_key_invalid',
+
+  /**
+   * The service key is valid but does not hold every scope the route declares.
+   *
+   * Safe to name because the caller has already proved the key. The body does not list the
+   * scopes, so it is no map of what other routes require.
+   */
+  API_KEY_SCOPE_INSUFFICIENT: 'auth.api_key_scope_insufficient',
+
+  /** A key operation named an id that does not exist. Raised by revoke and rotate only. */
+  API_KEY_NOT_FOUND: 'auth.api_key_not_found',
+
   /**
    * An unexpected internal failure. The cause is logged and never serialized.
    *
@@ -329,6 +353,9 @@ export const AUTH_ERROR_STATUS: Readonly<Record<AuthErrorCode, number>> = {
   'auth.oauth_failed': 401,
   'auth.oauth_email_mismatch': 409,
   'auth.platform_auth_required': 401,
+  'auth.api_key_invalid': 401,
+  'auth.api_key_scope_insufficient': 403,
+  'auth.api_key_not_found': 404,
   'auth.internal': 500
 }
 
@@ -381,5 +408,8 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.oauth_email_mismatch': 'OAuth email does not match',
   'auth.token_missing': 'Token missing',
   'auth.platform_auth_required': 'Platform authentication required',
+  'auth.api_key_invalid': 'Invalid API key',
+  'auth.api_key_scope_insufficient': 'API key lacks the required scope',
+  'auth.api_key_not_found': 'API key not found',
   'auth.internal': 'Internal server error'
 }

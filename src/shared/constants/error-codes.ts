@@ -106,6 +106,11 @@ export const AUTH_ERROR_CODES = {
   // Platform admin
   PLATFORM_AUTH_REQUIRED: 'auth.platform_auth_required',
 
+  // Service API keys (machine callers)
+  API_KEY_INVALID: 'auth.api_key_invalid',
+  API_KEY_SCOPE_INSUFFICIENT: 'auth.api_key_scope_insufficient',
+  API_KEY_NOT_FOUND: 'auth.api_key_not_found',
+
   /**
    * An unexpected internal failure. Raised only by the server's optional `AuthExceptionFilter`,
    * which gives unhandled failures the same envelope everything else answers with.
@@ -175,5 +180,8 @@ export const AUTH_ERROR_STATUS: Readonly<Record<AuthErrorCode, number>> = {
   'auth.oauth_failed': 401,
   'auth.oauth_email_mismatch': 409,
   'auth.platform_auth_required': 401,
+  'auth.api_key_invalid': 401,
+  'auth.api_key_scope_insufficient': 403,
+  'auth.api_key_not_found': 404,
   'auth.internal': 500
 }

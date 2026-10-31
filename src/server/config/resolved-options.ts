@@ -53,6 +53,7 @@ export type ResolvedOptions = Omit<
   | 'emailVerification'
   | 'platform'
   | 'invitations'
+  | 'apiKeys'
   | 'controllers'
   | 'blockedStatuses'
   | 'redisNamespace'
@@ -82,6 +83,7 @@ export type ResolvedOptions = Omit<
   emailVerification: Required<NonNullable<BymaxAuthModuleOptions['emailVerification']>>
   platform: Required<NonNullable<BymaxAuthModuleOptions['platform']>>
   invitations: Required<NonNullable<BymaxAuthModuleOptions['invitations']>>
+  apiKeys: Required<NonNullable<BymaxAuthModuleOptions['apiKeys']>>
   emailChange: Required<NonNullable<BymaxAuthModuleOptions['emailChange']>>
   // The shape is stated outright rather than derived from the option union: by this point
   // validation has run, so the discrimination that forces a consumer to name the source has
@@ -216,6 +218,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateOAuthProviders(userOptions.oauth, isProductionDeployment(userOptions))
   validateClientIpSource(userOptions.rateLimit)
   validateTenantBinding(userOptions)
+  validateApiKeys(userOptions)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
 
@@ -293,6 +296,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
       ...DEFAULT_OPTIONS.invitations,
       ...userOptions.invitations
     },
+
+    apiKeys: resolveApiKeys(userOptions.apiKeys),
 
     emailChange: {
       ...DEFAULT_OPTIONS.emailChange,
@@ -407,6 +412,9 @@ function withholdSecrets(resolved: ResolvedOptions): void {
   withholdFromSerialization(resolved.jwt, 'previousSecrets')
   withholdFromSerialization(resolved, 'hmacKey')
   withholdFromSerialization(resolved, 'previousHmacKeys')
+  // The pepper every service-key digest is computed under. Leaking it lets a database read
+  // become an offline guess against any digest, which is the whole reason it is kept apart.
+  withholdFromSerialization(resolved.apiKeys, 'pepper')
 
   // The AES-256-GCM key protecting every enrolled user's TOTP secret and their
   // recovery-code set, plus the retired keys still able to decrypt records that
@@ -507,6 +515,126 @@ function validateTenantBinding(userOptions: BymaxAuthModuleOptions): void {
         `control reports success while enforcing nothing. Provide a tenantIdResolver (typically the ` +
         `same host-to-tenant function used on the credential flows), or remove enforceTenantBinding.`
     )
+  }
+}
+
+/** Letters, digits and `: . _ -`; bounded so a scope is a name and never a payload. */
+const API_KEY_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,63}$/
+
+/** Lowercase letters and digits, no underscore: the underscore separates the key's parts. */
+const API_KEY_PREFIX_PATTERN = /^[a-z][a-z0-9]{1,15}$/
+
+/** A lowercase header field name. */
+const API_KEY_HEADER_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/
+
+/** Headers a key may not be read from: they already carry a different credential. */
+const API_KEY_FORBIDDEN_HEADERS = new Set(['authorization', 'cookie', 'set-cookie'])
+
+/**
+ * Builds the resolved service-key group: the user's values over the defaults, field by field.
+ *
+ * A key the host set to `undefined` (a config object built from optional environment values)
+ * must fall back to the default rather than erase it, which a plain spread would do.
+ *
+ * @param user - The `apiKeys` group as supplied, if any.
+ * @returns The group with every field present.
+ */
+function resolveApiKeys(
+  user: BymaxAuthModuleOptions['apiKeys']
+): Required<NonNullable<BymaxAuthModuleOptions['apiKeys']>> {
+  const defaults = DEFAULT_OPTIONS.apiKeys
+  return {
+    enabled: user?.enabled ?? defaults.enabled,
+    pepper: user?.pepper ?? defaults.pepper,
+    scopes: user?.scopes ?? defaults.scopes,
+    header: user?.header ?? defaults.header,
+    prefix: user?.prefix ?? defaults.prefix,
+    lastUsedFlushSeconds: user?.lastUsedFlushSeconds ?? defaults.lastUsedFlushSeconds,
+    auditMode: user?.auditMode ?? defaults.auditMode
+  }
+}
+
+/**
+ * Validates the service-key group when the feature is enabled.
+ *
+ * Nothing is checked while the feature is off, so a host that never opts in is not asked for a
+ * pepper. When it is on, every value that would otherwise fail late or fail silently is refused
+ * here: a weak or shared pepper, an empty or malformed vocabulary, a header or prefix the
+ * grammar cannot carry, and a flush interval or audit mode outside their documented range.
+ *
+ * @param userOptions - The options as supplied.
+ * @throws {Error} Naming the first offending field.
+ */
+function validateApiKeys(userOptions: BymaxAuthModuleOptions): void {
+  const group = userOptions.apiKeys
+  if (group?.enabled !== true) return
+
+  validateSecretStrength(group.pepper, 'apiKeys.pepper')
+  // An absent `identifierKey` is `undefined`, which a validated string pepper never equals.
+  // Stryker disable next-line ArrayDeclaration: a stand-in element in place of the empty fallback is a string no validated pepper (32+ characters of real entropy) can equal
+  const retired = userOptions.jwt.previousSecrets ?? []
+  const reused = new Set<unknown>([userOptions.jwt.secret, userOptions.identifierKey, ...retired])
+  if (reused.has(group.pepper)) {
+    throw new Error(
+      `[BymaxAuthModule] apiKeys.pepper must not equal jwt.secret, a retired jwt secret or ` +
+        `identifierKey. A key shared across purposes is one leak away from all of them.`
+    )
+  }
+
+  const scopes: unknown = group.scopes
+  if (!Array.isArray(scopes) || scopes.length === 0) {
+    throw new Error(
+      `[BymaxAuthModule] apiKeys.scopes must be a non-empty array: it is the closed vocabulary ` +
+        `every route declaration and every issued key is checked against.`
+    )
+  }
+  const seen = new Set<unknown>()
+  for (const [index, scope] of scopes.entries()) {
+    if (typeof scope !== 'string' || !API_KEY_SCOPE_PATTERN.test(scope)) {
+      throw new Error(
+        `[BymaxAuthModule] apiKeys.scopes[${index}] must be 1 to 64 characters of letters, ` +
+          `digits and ':', '.', '_', '-', starting with a letter or digit.`
+      )
+    }
+    if (seen.has(scope)) {
+      throw new Error(`[BymaxAuthModule] apiKeys.scopes[${index}] repeats an earlier scope.`)
+    }
+    seen.add(scope)
+  }
+
+  const { header, prefix, lastUsedFlushSeconds, auditMode } = group
+  if (
+    header !== undefined &&
+    (typeof header !== 'string' ||
+      !API_KEY_HEADER_PATTERN.test(header) ||
+      API_KEY_FORBIDDEN_HEADERS.has(header))
+  ) {
+    throw new Error(
+      `[BymaxAuthModule] apiKeys.header must be a lowercase header name other than ` +
+        `authorization, cookie or set-cookie: those already carry a different credential.`
+    )
+  }
+  if (
+    prefix !== undefined &&
+    (typeof prefix !== 'string' || !API_KEY_PREFIX_PATTERN.test(prefix))
+  ) {
+    throw new Error(
+      `[BymaxAuthModule] apiKeys.prefix must be 2 to 16 lowercase letters and digits, starting ` +
+        `with a letter. An underscore is not allowed: it separates the parts of a key.`
+    )
+  }
+  if (
+    lastUsedFlushSeconds !== undefined &&
+    (!Number.isInteger(lastUsedFlushSeconds) ||
+      lastUsedFlushSeconds < 1 ||
+      lastUsedFlushSeconds > 3600)
+  ) {
+    throw new Error(
+      `[BymaxAuthModule] apiKeys.lastUsedFlushSeconds must be an integer from 1 to 3600.`
+    )
+  }
+  if (auditMode !== undefined && auditMode !== 'best-effort' && auditMode !== 'required') {
+    throw new Error(`[BymaxAuthModule] apiKeys.auditMode must be 'best-effort' or 'required'.`)
   }
 }
 
