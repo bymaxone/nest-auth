@@ -1286,13 +1286,46 @@ export class AuthService {
     await this.bruteForce.recordFailure(bfIdentifier)
     this.emitLoginFailed({ ...who, reason: 'invalid_credentials' }, context)
 
-    if (this.hooks?.onLockout && (await this.bruteForce.isLockedOut(bfIdentifier))) {
-      const retryAfterSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
-      this.fireAndForget(
-        () => this.hooks?.onLockout?.({ ...who, retryAfterSeconds }, context),
-        'onLockout'
+    await this.fireLockoutIfCrossed(bfIdentifier, who, context)
+  }
+
+  /**
+   * Fires {@link IAuthHooks.onLockout} when the failure just recorded closed the window.
+   *
+   * The two reads here exist only to feed the hook, so a store that cannot answer them must cost
+   * the event and nothing else: the caller still receives the refusal it would have had. The
+   * pre-check and `recordFailure` are the opposite — counting is security state — and stay
+   * fail-closed.
+   *
+   * An unreadable flag leaves the lock unknown, so the hook is skipped. An unreadable TTL after
+   * the flag read `true` leaves it confirmed: the event is still owed, and the counter's own
+   * lifetime, `windowSeconds`, is a truthful upper bound where `0` would read as "not locked".
+   */
+  private async fireLockoutIfCrossed(
+    bfIdentifier: string,
+    who: { email: string; tenantId: string; userId?: string },
+    context: HookContext
+  ): Promise<void> {
+    if (!this.hooks?.onLockout) return
+
+    let locked = false
+    let retryAfterSeconds = this.options.bruteForce.windowSeconds
+    try {
+      locked = await this.bruteForce.isLockedOut(bfIdentifier)
+      if (locked) retryAfterSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
+    } catch (err: unknown) {
+      // The class only: a store error's message can carry the host or the key.
+      this.logger.warn(
+        `login: lockout state unreadable for the onLockout hook email=${maskEmail(who.email)} ` +
+          `tenantId=${logSafe(who.tenantId)} cause=${logSafe(err instanceof Error ? err.name : 'unknown')}`
       )
     }
+    if (!locked) return
+
+    this.fireAndForget(
+      () => this.hooks?.onLockout?.({ ...who, retryAfterSeconds }, context),
+      'onLockout'
+    )
   }
 
   /** Emits {@link IAuthHooks.onLoginFailed}, fire-and-forget. */

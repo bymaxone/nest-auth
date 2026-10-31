@@ -189,14 +189,17 @@ describe('AuthService', () => {
    * An `AuthService` over the same collaborators but different resolved options, for the
    * cases where the behaviour under test IS the option.
    */
-  async function buildServiceWith(options: unknown): Promise<AuthService> {
+  async function buildServiceWith(
+    options: unknown,
+    hooks: unknown = mockHooks
+  ): Promise<AuthService> {
     const module = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: options },
         { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
-        { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+        { provide: BYMAX_AUTH_HOOKS, useValue: hooks },
         { provide: PasswordService, useValue: mockPasswordService },
         { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: BruteForceService, useValue: mockBruteForce },
@@ -953,9 +956,109 @@ describe('AuthService', () => {
       await Promise.resolve()
 
       expect(mockHooks.onLockout).not.toHaveBeenCalled()
+      // The remaining time is read only for a lock that exists.
+      expect(mockBruteForce.getRemainingLockoutSeconds).not.toHaveBeenCalled()
       // …while the failure itself is still reported, so the silence is about the lockout and
       // not about the attempt.
       expect(mockHooks.onLoginFailed).toHaveBeenCalled()
+    })
+
+    // The reads that decide whether `onLockout` fires are best-effort: they feed a notification,
+    // not the refusal. A store that cannot answer them must cost the event and nothing else, so
+    // the caller still gets the credentials refusal it would have had and `onLoginFailed` has
+    // already gone out.
+    describe('when the store cannot answer the reads behind onLockout', () => {
+      const fault = Object.assign(new Error('redis host=10.0.0.7 key=lf:secret'), {
+        name: 'ReplyError'
+      })
+      let warnSpy: jest.SpyInstance
+
+      beforeEach(() => {
+        warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+        mockPasswordService.compare.mockResolvedValue(false)
+      })
+
+      afterEach(() => {
+        warnSpy.mockRestore()
+      })
+
+      const unreadableWarnings = (): string[] =>
+        warnSpy.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('onLockout'))
+
+      it('skips the hook and still refuses when the lockout flag cannot be read', async () => {
+        // First read is the pre-check, which stays fail-closed; the second feeds the hook.
+        mockBruteForce.isLockedOut.mockResolvedValueOnce(false).mockRejectedValueOnce(fault)
+
+        const err = await service.login(dto, mockReq).catch((e: unknown) => e)
+        await Promise.resolve()
+
+        expect(getErrorCode(err)).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+        expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
+        expect(mockHooks.onLoginFailed).toHaveBeenCalledTimes(1)
+        expect(mockHooks.onLockout).not.toHaveBeenCalled()
+        expect(unreadableWarnings()).toHaveLength(1)
+        // The line names the class of the fault and nothing it carried: no address, no key, no host.
+        const line = unreadableWarnings()[0] ?? ''
+        expect(line).toContain('ReplyError')
+        expect(line).not.toContain('user@example.com')
+        expect(line).not.toContain('10.0.0.7')
+        expect(line).not.toContain('lf:secret')
+      })
+
+      it('reads the lock state only once when no onLockout hook is set', async () => {
+        const { onLockout: _unused, ...withoutLockout } = mockHooks
+        const quiet = await buildServiceWith(mockOptions, withoutLockout)
+
+        await expect(quiet.login(dto, mockReq)).rejects.toThrow(AuthException)
+
+        // The pre-check is the only read: the ones that feed the hook have no hook to feed.
+        expect(mockBruteForce.isLockedOut).toHaveBeenCalledTimes(1)
+        expect(mockBruteForce.getRemainingLockoutSeconds).not.toHaveBeenCalled()
+      })
+
+      it('names a fault that is not an Error as unknown', async () => {
+        mockBruteForce.isLockedOut.mockResolvedValueOnce(false).mockRejectedValueOnce('ECONNRESET')
+
+        const err = await service.login(dto, mockReq).catch((e: unknown) => e)
+
+        expect(getErrorCode(err)).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+        expect(unreadableWarnings()[0]).toContain('cause=unknown')
+        expect(unreadableWarnings()[0]).not.toContain('ECONNRESET')
+      })
+
+      it('announces the lock with the configured window when its TTL cannot be read', async () => {
+        // Once the flag read true the lock is confirmed; the window is the counter's own
+        // lifetime, so it is a truthful upper bound where 0 would read as "not locked".
+        mockBruteForce.isLockedOut.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+        mockBruteForce.getRemainingLockoutSeconds.mockRejectedValueOnce(fault)
+
+        const err = await service.login(dto, mockReq).catch((e: unknown) => e)
+        await Promise.resolve()
+
+        expect(getErrorCode(err)).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+        expect(mockHooks.onLockout).toHaveBeenCalledTimes(1)
+        expect(mockHooks.onLockout).toHaveBeenCalledWith(
+          expect.objectContaining({ retryAfterSeconds: 900 }),
+          expect.anything()
+        )
+        expect(mockHooks.onLoginFailed).toHaveBeenCalledTimes(1)
+        expect(unreadableWarnings()).toHaveLength(1)
+        expect(unreadableWarnings()[0]).not.toContain('10.0.0.7')
+      })
+
+      it('lets a fault in recordFailure itself reach the caller', async () => {
+        mockBruteForce.recordFailure.mockRejectedValueOnce(fault)
+
+        await expect(service.login(dto, mockReq)).rejects.toBe(fault)
+        expect(mockHooks.onLockout).not.toHaveBeenCalled()
+      })
+
+      it('lets a fault in the lockout pre-check reach the caller', async () => {
+        mockBruteForce.isLockedOut.mockRejectedValueOnce(fault)
+
+        await expect(service.login(dto, mockReq)).rejects.toBe(fault)
+        expect(mockBruteForce.recordFailure).not.toHaveBeenCalled()
+      })
     })
 
     // The lockout hook is fire-and-forget in both failure shapes, like every other. The
