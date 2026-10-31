@@ -22,6 +22,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
+What a backend built on this library does about the changes below. The first item is a
+compile-time change to the resolver's parameter type; the rest change behaviour or add opt-in
+surface.
+
 - **`tenantIdResolver` is now typed `(req: TenantResolverRequest) => ...`, not `(req: Request) => ...`.**
   `TenantResolverRequest` is a new exported type with `headers`, `url` and `hostname`. A resolver
   annotated `(req: Request)` must be re-annotated to `TenantResolverRequest` or left to infer; one
@@ -43,18 +47,6 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   with the same limited request and the same refusal (`auth.token_invalid`). Existing callers are
   not broken: without `request` the token verifies as before, and with the binding on one warning
   per service instance says it was not applied. To close the gap, pass `request: socket.handshake`.
-
-### Security
-
-- `WsJwtGuard` enforces `enforceTenantBinding` on the bearer-header and ticket paths, and `verifyAccessToken` can now enforce it when given the request.
-
-## [1.4.7] - 2026-10-31
-
-### Apply to a derived backend
-
-What a backend built on this library does about the changes below. Nothing here is a breaking
-change to the public API; the items that change behaviour are the ones to read.
-
 - **Service API keys (new, opt-in).** To authenticate a machine caller, set `apiKeys` in the
   factory (`enabled`, `pepper`, `scopes`) and provide `BYMAX_AUTH_API_KEY_REPOSITORY` in
   `extraProviders`; either one alone fails at startup. Implement `IApiKeyRepository`, protect a
@@ -78,6 +70,10 @@ change to the public API; the items that change behaviour are the ones to read.
   supply your own `onOAuthLogin`. The `existingUser` it receives was always the user already
   linked to the provider identity, found by provider id, not by email; the documentation said the
   latter and is corrected.
+
+### Security
+
+- `WsJwtGuard` enforces `enforceTenantBinding` on the bearer-header and ticket paths, and `verifyAccessToken` can now enforce it when given the request.
 
 ### Fixed
 
@@ -4081,8 +4077,7 @@ ever installable.
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
 [Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.8...HEAD
-[1.4.8]: https://github.com/bymaxone/nest-auth/compare/v1.4.7...v1.4.8
-[1.4.7]: https://github.com/bymaxone/nest-auth/compare/v1.4.6...v1.4.7
+[1.4.8]: https://github.com/bymaxone/nest-auth/compare/v1.4.6...v1.4.8
 [1.4.6]: https://github.com/bymaxone/nest-auth/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/bymaxone/nest-auth/compare/v1.4.4...v1.4.5
 [1.4.4]: https://github.com/bymaxone/nest-auth/compare/v1.4.3...v1.4.4
