@@ -23,6 +23,7 @@ import type {
 } from '../interfaces/auth-hooks.interface'
 import { ApiKeyVerifierService } from '../services/api-key-verifier.service'
 import { describeChannelStatus } from '../utils/describe-error'
+import { logSafe } from '../utils/log-safe'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
 /** A request after this guard admitted it. */
@@ -70,7 +71,8 @@ export class ApiKeyGuard implements CanActivate {
     // Route configuration first, and before any credential work.
     if (required === null) {
       this.logger.error(
-        `api-key: ${request.method} ${base.route} is guarded but declares no scopes; refused`
+        `api-key: ${logSafe(request.method)} ${logSafe(base.route)} is guarded but declares no ` +
+          `scopes; refused`
       )
       await this.audit(request, { ...base, outcome: 'denied', reason: 'route_undeclared' })
       throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
@@ -146,7 +148,14 @@ export class ApiKeyGuard implements CanActivate {
     key: AuthApiKey | null = null
   ): Promise<boolean> {
     const hook = this.hooks?.onApiKeyRequest
-    if (hook === undefined) return true
+    if (hook === undefined) {
+      // Auditing was demanded and nothing can write it, so the request is not admitted.
+      if (this.options.apiKeys.auditMode !== 'required') return true
+      this.logger.error(
+        'api-key: auditMode is required but no onApiKeyRequest hook is implemented; refusing'
+      )
+      return false
+    }
     const event: ApiKeyAccessEvent = {
       ...partial,
       keyId: key?.id ?? null,

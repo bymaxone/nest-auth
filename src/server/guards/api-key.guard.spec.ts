@@ -279,6 +279,17 @@ describe('ApiKeyGuard', () => {
       expect(repo.calls).toEqual([])
     })
 
+    // The verb is client-supplied and the pattern is host-authored; neither may break the line.
+    it('keeps the log line to one line whatever the method and route contain', async () => {
+      const { guard, errors } = build()
+      const req = request(SENTINEL_KEY, {
+        method: 'GET\nforged: entry',
+        route: { path: '/a\r\nb' }
+      })
+      await codeOf(guard.canActivate(contextFor(Undeclared, 'bare', req)))
+      expect(errors[0]).not.toMatch(/[\r\n]/)
+    })
+
     // It is an event too, and the operator is told which route to fix.
     it('is audited and logged with the route', async () => {
       const { guard, events, errors } = build()
@@ -425,6 +436,23 @@ describe('ApiKeyGuard', () => {
       await expect(
         guard.canActivate(contextFor(Plain, 'read', request(SENTINEL_KEY)))
       ).resolves.toBe(true)
+    })
+
+    describe('in required mode without a hook to call', () => {
+      // Auditing was demanded and nothing can write it: admitting the request would be the one
+      // outcome with no audit record at all, so it is refused and the misconfiguration is loud.
+      it.each([
+        ['no hooks provider', null],
+        ['a hooks object without the method', {}]
+      ])('denies a valid request with %s', async (_name, hooks) => {
+        const { guard, errors } = build({ auditMode: 'required', hooks })
+        const req = request(SENTINEL_KEY)
+        expect(await codeOf(guard.canActivate(contextFor(Plain, 'read', req)))).toBe(
+          AUTH_ERROR_CODES.INTERNAL
+        )
+        expect(req.apiKey).toBeUndefined()
+        expect(errors.join('\n')).toContain('auditMode is required but no onApiKeyRequest hook')
+      })
     })
 
     describe('in best-effort mode', () => {

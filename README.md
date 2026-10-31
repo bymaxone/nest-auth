@@ -1086,14 +1086,14 @@ BymaxAuthModule.registerAsync({
 The feature is registered by the repository provider **and** `apiKeys.enabled`. Either one alone
 fails at startup and says which is missing.
 
-| Option                 | Default         | Meaning                                                                                                                                                            |
-| ---------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pepper`               | — (required)    | The HMAC key every digest is computed under. As strong as `jwt.secret`, and refused if it equals `jwt.secret` (current or retired), `identifierKey` or an MFA key. |
-| `scopes`               | — (required)    | The closed vocabulary: letters, digits and `: . _ -`, up to 64 characters each.                                                                                    |
-| `header`               | `'x-api-key'`   | Where the key is read from. Never the query string. Not `authorization`, `cookie` or `set-cookie`.                                                                 |
-| `prefix`               | `'bak'`         | Literal start of every issued key, for secret scanners. Lowercase letters and digits, 2 to 16, no underscore.                                                      |
-| `lastUsedFlushSeconds` | `60`            | How often coalesced `lastUsedAt` values are written, in one batch. 1 to 3600.                                                                                      |
-| `auditMode`            | `'best-effort'` | `'required'` awaits the audit hook and **denies** the request if it throws. See [Audit](#audit).                                                                   |
+| Option                 | Default         | Meaning                                                                                                                                                                                                                                         |
+| ---------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pepper`               | — (required)    | The HMAC key every digest is computed under. As strong as `jwt.secret`, and refused if it equals `jwt.secret` (current or retired), `identifierKey` or an MFA key.                                                                              |
+| `scopes`               | — (required)    | The closed vocabulary: letters, digits and `: . _ -`, up to 64 characters each.                                                                                                                                                                 |
+| `header`               | `'x-api-key'`   | Where the key is read from. Never the query string. Lowercased. Never a header the library reads, such as `authorization`, `cookie`, `user-agent`, `origin` or the forwarded-address headers; also avoid one your own `tenantIdResolver` reads. |
+| `prefix`               | `'bak'`         | Literal start of every issued key, for secret scanners. Lowercase letters and digits, 2 to 16, no underscore.                                                                                                                                   |
+| `lastUsedFlushSeconds` | `60`            | How often coalesced `lastUsedAt` values are written, in one batch. 1 to 3600.                                                                                                                                                                   |
+| `auditMode`            | `'best-effort'` | `'required'` awaits the audit hook and **denies** the request if it throws, and startup refuses it when the registered hooks plainly lack `onApiKeyRequest`. See [Audit](#audit).                                                               |
 
 ### Protect a route
 

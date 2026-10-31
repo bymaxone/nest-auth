@@ -92,6 +92,36 @@ function hasProviderToken(providers: Provider[], token: symbol): boolean {
   })
 }
 
+/**
+ * Whether the hooks the host registers plainly lack `onApiKeyRequest`.
+ *
+ * Absent means the no-op fallback, which has none. A value or a class is inspected; a factory or
+ * an alias cannot be inspected before it runs, so it is given the benefit of the doubt here and
+ * the guard's own runtime check stands behind it.
+ *
+ * @param providers - The host's `extraProviders`.
+ * @returns `true` when no registered hooks implementation can audit.
+ */
+function cannotAuditApiKeys(providers: Provider[]): boolean {
+  const hooks = providers.find(
+    (p) => typeof p !== 'function' && 'provide' in p && p.provide === BYMAX_AUTH_HOOKS
+  )
+  if (hooks === undefined) return true
+  if ('useValue' in hooks) {
+    return (
+      typeof (hooks.useValue as { onApiKeyRequest?: unknown } | null)?.onApiKeyRequest !==
+      'function'
+    )
+  }
+  if ('useClass' in hooks) {
+    return (
+      typeof (hooks.useClass.prototype as { onApiKeyRequest?: unknown }).onApiKeyRequest !==
+      'function'
+    )
+  }
+  return false
+}
+
 // ---------------------------------------------------------------------------
 // BymaxAuthModule
 // ---------------------------------------------------------------------------
@@ -356,6 +386,16 @@ export class BymaxAuthModule {
                   'is not true. Enable apiKeys in the useFactory return value, or remove the provider.'
               : '[BymaxAuthModule] apiKeys.enabled: true requires BYMAX_AUTH_API_KEY_REPOSITORY in ' +
                   'extraProviders. Provide your IApiKeyRepository implementation.'
+          )
+        }
+
+        // Auditing every request was demanded: refuse a module that is plainly unable to write it.
+        // The guard denies at runtime too, which also covers what is not inspectable here.
+        if (resolved.apiKeys.auditMode === 'required' && cannotAuditApiKeys(extraProviders)) {
+          throw new Error(
+            "[BymaxAuthModule] apiKeys.auditMode: 'required' needs an onApiKeyRequest hook, and " +
+              'the BYMAX_AUTH_HOOKS provider has none. Implement it, or use ' +
+              "auditMode: 'best-effort'."
           )
         }
 

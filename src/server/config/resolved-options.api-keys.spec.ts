@@ -6,6 +6,7 @@
 import { inspect } from 'node:util'
 
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import { LIBRARY_READ_HEADERS } from '../constants/request-headers'
 import { resolveOptions } from './resolved-options'
 
 const JWT_SECRET = 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B'
@@ -203,13 +204,9 @@ describe('resolveOptions — apiKeys', () => {
 
   describe('header, prefix, flush interval and audit mode', () => {
     it.each([
-      ['uppercase', 'X-Api-Key'],
       ['with a space', 'x api'],
       ['empty', ''],
       ['over-long', 'a'.repeat(65)],
-      ['authorization', 'authorization'],
-      ['cookie', 'cookie'],
-      ['set-cookie', 'set-cookie'],
       ['not a string', 7]
     ])('refuses a header that is %s', (_name, header) => {
       expect(() => resolveOptions(withKeys({ header: header as string }))).toThrow(
@@ -232,10 +229,31 @@ describe('resolveOptions — apiKeys', () => {
       )
     })
 
+    // A header the library reads, or derives a field from, is never a key header. The list is the
+    // one the library itself uses, so a header it starts reading later is refused too.
+    it.each(LIBRARY_READ_HEADERS)('refuses the library-read header %s', (header) => {
+      expect(() => resolveOptions(withKeys({ header }))).toThrow(/apiKeys\.header/)
+    })
+
+    // Header names are case-insensitive, so the comparison is too.
+    it.each(LIBRARY_READ_HEADERS)('refuses %s in any case', (header) => {
+      expect(() => resolveOptions(withKeys({ header: header.toUpperCase() }))).toThrow(
+        /apiKeys\.header/
+      )
+    })
+
+    // Node lowercases incoming header names, so a mixed-case option would otherwise never match
+    // and silently authenticate nothing: it is normalised instead.
+    it('normalises a mixed-case header to lowercase', () => {
+      expect(resolveOptions(withKeys({ header: 'X-Machine-Key' })).apiKeys.header).toBe(
+        'x-machine-key'
+      )
+    })
+
     // The messages say why.
     it('explains the header and prefix rules', () => {
       expect(() => resolveOptions(withKeys({ header: 'cookie' }))).toThrow(
-        /authorization, cookie or set-cookie: those already carry a different credential\./
+        /other than a header the library reads/
       )
       expect(() => resolveOptions(withKeys({ prefix: 'my_key' }))).toThrow(
         /starting with a letter\. An underscore is not allowed: it separates the parts of a key\./

@@ -12,7 +12,7 @@
  */
 
 import { Controller, Get, Module, Post, UseGuards } from '@nestjs/common'
-import type { INestApplication } from '@nestjs/common'
+import type { INestApplication, Type } from '@nestjs/common'
 import { APP_GUARD } from '@nestjs/core'
 import { Test } from '@nestjs/testing'
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler'
@@ -131,10 +131,8 @@ interface Harness {
   events: ApiKeyAccessEvent[]
 }
 
-async function boot(): Promise<Harness> {
-  const repo = new MemoryApiKeyRepository()
-  const events: ApiKeyAccessEvent[] = []
-
+/** The host's module: the library, a throttler, the controllers and a GLOBAL user-JWT guard. */
+function buildHost(repo: MemoryApiKeyRepository, events: ApiKeyAccessEvent[]): Type<unknown> {
   @Module({
     imports: [
       BymaxAuthModule.registerAsync({
@@ -173,8 +171,13 @@ async function boot(): Promise<Harness> {
     providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }]
   })
   class Host {}
+  return Host
+}
 
-  const moduleRef = await Test.createTestingModule({ imports: [Host] })
+async function boot(): Promise<Harness> {
+  const repo = new MemoryApiKeyRepository()
+  const events: ApiKeyAccessEvent[] = []
+  const moduleRef = await Test.createTestingModule({ imports: [buildHost(repo, events)] })
     .setLogger({
       log: () => undefined,
       error: () => undefined,

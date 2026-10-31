@@ -8,11 +8,15 @@ import { apiKeyDigest, formatApiKey } from '../../crypto/api-key'
 import type { AuthApiKey, IApiKeyRepository } from '../../interfaces/api-key-repository.interface'
 import type { ApiKeyClock } from '../api-key-clock'
 
+/** The pepper every fixture digest is computed under; long and varied enough to pass option validation. */
 export const PEPPER = 'pepper-for-tests-0123456789abcdefABCDEF!'
+/** The row id of the fixture key: a canonical lowercase UUID. */
 export const KEY_ID = '0b8f3c1e-5d2a-4c7e-9a14-6f3e8d2b7a90'
 /** A distinctive 43-character secret: a leak anywhere is findable by substring. */
 export const SENTINEL_SECRET = 'SENTINELsecretSENTINELsecretSENTINELsecret_'
+/** The plaintext key for {@link SENTINEL_SECRET}: a leak anywhere is findable by substring. */
 export const SENTINEL_KEY = formatApiKey('bak', KEY_ID, SENTINEL_SECRET)
+/** The instant every {@link FakeClock} starts at. */
 export const NOW = new Date('2026-06-01T12:00:00.000Z')
 
 /** A clock the test moves by hand. */

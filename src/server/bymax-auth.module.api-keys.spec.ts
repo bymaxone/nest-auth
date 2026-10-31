@@ -125,6 +125,44 @@ describe('BymaxAuthModule — service API keys', () => {
     )
   })
 
+  describe("apiKeys.auditMode 'required'", () => {
+    const REQUIRED = { ...BASE, apiKeys: { ...ENABLED.apiKeys, auditMode: 'required' as const } }
+    const refusal = /auditMode: 'required' needs an onApiKeyRequest hook/
+
+    class Auditing {
+      onApiKeyRequest(): void {}
+    }
+    class NotAuditing {}
+
+    // Auditing was demanded and nothing is registered that could write it: a startup error, not a
+    // service that admits requests with no audit record.
+    it.each([
+      ['no hooks provider (the no-op fallback has no such hook)', []],
+      ['a hooks object without the method', [{ provide: BYMAX_AUTH_HOOKS, useValue: {} }]],
+      ['a null hooks object', [{ provide: BYMAX_AUTH_HOOKS, useValue: null }]],
+      ['a hooks class without the method', [{ provide: BYMAX_AUTH_HOOKS, useClass: NotAuditing }]]
+    ])('is refused at startup with %s', async (_name, providers) => {
+      await expect(compile(REQUIRED, [KEYS, ...providers])).rejects.toThrow(refusal)
+    })
+
+    it.each([
+      [
+        'a hooks object with the method',
+        { provide: BYMAX_AUTH_HOOKS, useValue: { onApiKeyRequest() {} } }
+      ],
+      ['a hooks class with the method', { provide: BYMAX_AUTH_HOOKS, useClass: Auditing }],
+      // Decided at runtime, where the guard denies when the hook is missing.
+      ['a factory the module cannot inspect', { provide: BYMAX_AUTH_HOOKS, useFactory: () => ({}) }]
+    ])('boots with %s', async (_name, provider) => {
+      await expect(compile(REQUIRED, [KEYS, provider])).resolves.toBeDefined()
+    })
+
+    // Best effort never needed a hook.
+    it('does not apply to best-effort mode', async () => {
+      await expect(compile(ENABLED, [KEYS])).resolves.toBeDefined()
+    })
+  })
+
   // The hooks provider is exported so the guard can be re-instantiated by a host.
   it('exports the hooks token only with the feature', async () => {
     const withFeature = await compile(ENABLED, [KEYS])
