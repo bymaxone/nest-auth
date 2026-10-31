@@ -5,6 +5,7 @@
  * provides and what it deliberately does not.
  */
 
+import type { TenantResolverRequest } from '../interfaces/auth-module-options.interface'
 import { handshakeRequest } from './handshake-request'
 
 describe('handshakeRequest', () => {
@@ -44,9 +45,21 @@ describe('handshakeRequest', () => {
     expect(handshakeRequest({ headers: { host } }).hostname).toBe(expected)
   })
 
-  // Scenario: no Host header. Expected: undefined, not a guessed value.
-  it('should leave hostname undefined without a Host header', () => {
-    expect(handshakeRequest({ headers: {} }).hostname).toBeUndefined()
+  // Scenario: no usable Host (absent, or repeated). Expected: the empty string, never a guess.
+  // Why: a resolver deriving a tenant from it then resolves nothing and the upgrade is refused.
+  it.each([
+    ['absent', {}],
+    ['repeated', { host: ['a.example.com', 'b.example.com'] }]
+  ])('should give an empty hostname when Host is %s', (_why, headers) => {
+    expect(handshakeRequest({ headers }).hostname).toBe('')
+  })
+
+  // The result is a `TenantResolverRequest` with no cast, so a resolver written against that type
+  // alone is accepted by the compiler here — the contract a consumer's resolver is held to.
+  it('should satisfy a resolver typed against TenantResolverRequest only', () => {
+    const resolver: (req: TenantResolverRequest) => string = (req) => String(req.headers['x-t'])
+
+    expect(resolver(handshakeRequest({ headers: { 'X-T': 'a' } }))).toBe('a')
   })
 
   // Scenario: a forwarded host is present. Expected: ignored — trust-proxy semantics are absent.

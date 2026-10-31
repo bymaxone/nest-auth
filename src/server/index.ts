@@ -112,7 +112,8 @@ export type {
   BymaxAuthModuleOptions,
   AuthModuleAsyncOptions,
   BymaxAuthRateLimitOptions,
-  ClientIpSource
+  ClientIpSource,
+  TenantResolverRequest
 } from './interfaces/auth-module-options.interface'
 export type {
   AuthResult,

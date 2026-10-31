@@ -29,7 +29,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   trust-proxy behaviour are absent, and a resolver that throws on their absence, or returns another
   tenant, **refuses** the connection rather than binding it wrongly. If your resolver reads a
   cookie or `req.ip`, it will now refuse every socket until it can resolve from `headers` or
-  `hostname`. Nothing changes when `enforceTenantBinding` is off.
+  `hostname`.
+  **Type change:** `tenantIdResolver` is now typed `(req: TenantResolverRequest) => ...` (new exported
+  type: `headers`, `url`, `hostname`) instead of `(req: Request) => ...`, so a resolver that reads
+  `cookies`, `ip` or `ips` fails to compile rather than refusing sockets at runtime. A resolver you
+  annotated `(req: Request)` must be re-annotated `TenantResolverRequest` (or left to infer); an
+  Express request still satisfies the type, so HTTP behaviour is unchanged. Nothing changes when `enforceTenantBinding` is off.
 - **`AuthTokenVerifierService.verifyAccessToken` takes an optional `request`.** Pass the
   handshake (or any object with `headers` and `url`, an Express request included) and, with
   `enforceTenantBinding` on, the dashboard plane applies the same resolver check as `WsJwtGuard`,

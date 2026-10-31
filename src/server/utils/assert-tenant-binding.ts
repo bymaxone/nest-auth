@@ -1,3 +1,9 @@
+/**
+ * @fileoverview Tenant binding for credentials presented on a transport that has no Express request.
+ *
+ * @layer Utility
+ */
+
 import { handshakeRequest } from './handshake-request'
 import type { HandshakeLike } from './handshake-request'
 import type { ResolvedOptions } from '../config/resolved-options'

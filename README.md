@@ -820,17 +820,19 @@ tenant of the upgrade and refuses (`auth.token_invalid`, the same code HTTP answ
 token minted for another tenant, as `JwtAuthGuard` does on a mismatch. An upgrade has no Express request,
 so your `tenantIdResolver` is handed a request-like object with **only** these fields:
 
-| Field      | Value                                                                                                    |
-| ---------- | -------------------------------------------------------------------------------------------------------- |
-| `headers`  | The handshake headers, names lowercased                                                                  |
-| `url`      | The upgrade URL, `''` when the transport exposes none                                                    |
-| `hostname` | The `Host` header with the port cut (a bracketed IPv6 literal keeps its brackets), `undefined` if absent |
+| Field      | Value                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------- |
+| `headers`  | The handshake headers, names lowercased                                                           |
+| `url`      | The upgrade URL, `''` when the transport exposes none                                             |
+| `hostname` | The `Host` header with the port cut (a bracketed IPv6 literal keeps its brackets), `''` if absent |
 
 There is **no** `cookies` (the `Cookie` header is present in `headers`, but nothing parses it the way
 `cookie-parser` does on HTTP), no `ip` or `ips`, and no trust-proxy behaviour: `hostname` is the
-`Host` as received, never `X-Forwarded-Host`. A resolver that reads one of the absent fields gets
-`undefined`; if it throws, or returns anything other than the credential's tenant, the connection is
-**refused**, never bound to the wrong tenant. Resolve from `headers` or `hostname` so one resolver
+`Host` as received, never `X-Forwarded-Host`. The resolver's parameter is typed
+`TenantResolverRequest` (exported), so a resolver that reads one of the absent fields does not
+compile. If a resolver still throws at runtime, or returns anything other than the credential's
+tenant, the connection is **refused**, never bound to the wrong tenant. Resolve from `headers` or
+`hostname` so one resolver
 serves both HTTP and sockets.
 
 Both channels live on the client's `handshake`, and only a **Socket.IO** client has one — with

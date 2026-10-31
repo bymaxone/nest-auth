@@ -2,6 +2,7 @@ import type { Request } from 'express'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import type { TenantResolverRequest } from '../interfaces/auth-module-options.interface'
 
 /**
  * Resolves the tenant a request belongs to, preferring the configured resolver over the value
@@ -55,7 +56,7 @@ import { AuthException } from '../errors/auth-exception'
 export async function resolveTenantId(
   dtoTenantId: string | null | undefined,
   req: Request,
-  resolver?: (req: Request) => string | Promise<string>
+  resolver?: (req: TenantResolverRequest) => string | Promise<string>
 ): Promise<string> {
   if (resolver) {
     // `null` and `undefined` both mean the body named no tenant, and neither is refused: the

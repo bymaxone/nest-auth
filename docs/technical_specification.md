@@ -877,7 +877,7 @@ export interface BymaxAuthModuleOptions {
    * refused with `auth.validation`). In this case, the host application is responsible for
    * validating the tenantId.
    */
-  tenantIdResolver?: (req: import('express').Request) => string | Promise<string>
+  tenantIdResolver?: (req: TenantResolverRequest) => string | Promise<string>
 
   /**
    * Granular control over which controllers are registered.
