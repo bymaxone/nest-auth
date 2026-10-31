@@ -12,7 +12,6 @@ import type {
   OptionalFactoryDependency,
   Provider
 } from '@nestjs/common'
-import type { Request } from 'express'
 
 import type { AuthUser } from './user-repository.interface'
 
@@ -92,6 +91,24 @@ export type BymaxAuthRateLimitOptions =
       /** Never read while the limiter is off, so it need not be stated. */
       readonly clientIpSource?: ClientIpSource
     }
+
+/**
+ * What a {@link BymaxAuthModuleOptions.tenantIdResolver} may rely on, on every transport.
+ *
+ * Over HTTP the resolver is handed the Express request; on a WebSocket upgrade there is none, so
+ * it is handed an object carrying only these fields. Typing the parameter as this, rather than as
+ * the full request, makes the compiler refuse a resolver that reads `cookies`, `ip` or `ips` —
+ * the fields an upgrade lacks — instead of leaving that to a runtime refusal of every socket.
+ *
+ * `hostname` is the `Host` header with the port cut (a bracketed IPv6 literal keeps its brackets),
+ * `''` when an upgrade carries none or repeats it; it never reads `X-Forwarded-Host`. `url` is `''` when the
+ * transport exposes none.
+ */
+export interface TenantResolverRequest {
+  readonly headers: Readonly<Record<string, string | string[] | undefined>>
+  readonly url: string
+  readonly hostname: string
+}
 
 export interface BymaxAuthModuleOptions {
   /**
@@ -947,7 +964,9 @@ export interface BymaxAuthModuleOptions {
    * none is refused with the same `auth.validation` — the deployment has to choose one of the
    * two, and neither choice is guessed on its behalf.
    *
-   * @param req - The Express request object
+   * @param req - The request, as {@link TenantResolverRequest}: the fields every
+   *   transport has. An Express request satisfies it, so on HTTP you can still read the rest at
+   *   runtime, but a resolver that does fails the WebSocket upgrade by design.
    * @returns The tenant ID string, or a Promise resolving to it
    *
    * @throws {Error} When the resolver returns an empty string or throws.
@@ -974,7 +993,7 @@ export interface BymaxAuthModuleOptions {
    * }
    * ```
    */
-  tenantIdResolver?: (req: Request) => string | Promise<string>
+  tenantIdResolver?: (req: TenantResolverRequest) => string | Promise<string>
 
   /**
    * Whether the dashboard guard re-resolves the request's tenant and rejects a token whose
@@ -988,6 +1007,11 @@ export interface BymaxAuthModuleOptions {
    * its own tenant rather than the host's. For a deployment where the host is the tenant boundary
    * (subdomain-per-tenant behind an edge that refuses a `Host` it does not serve), turning this on
    * closes that gap: the guard calls {@link tenantIdResolver} and refuses a mismatch.
+   *
+   * `WsJwtGuard` enforces it too, on the bearer and the ticket path. An upgrade has no Express
+   * request, so the resolver is handed one carrying only `headers` (lowercased), `url` and
+   * `hostname` (the `Host` header, port cut); `cookies`, `ip`, `ips` and trust-proxy behaviour are
+   * absent. A resolver that throws on that, or answers another tenant, refuses the connection.
    *
    * Off by default, and requires a resolver to have any effect: with no resolver there is nothing
    * to compare against. Leave it off where a token is legitimately used across hosts (a single API

@@ -31,5 +31,7 @@ export const LIBRARY_READ_HEADERS: readonly string[] = [
   'x-forwarded-for',
   'x-forwarded-host',
   'x-real-ip',
-  'x-original-forwarded-for'
+  'x-original-forwarded-for',
+  // The `hostname` handed to a `tenantIdResolver` on a WebSocket upgrade, which has no Express request.
+  'host'
 ]

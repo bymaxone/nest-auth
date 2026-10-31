@@ -7,7 +7,7 @@
 import { createHash } from 'node:crypto'
 import { inspect } from 'node:util'
 
-import type { Request } from 'express'
+import type { TenantResolverRequest } from '../interfaces/auth-module-options.interface'
 
 import { hmacSha256 } from '../crypto/secure-token'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
@@ -207,7 +207,7 @@ describe('resolveOptions — success', () => {
 
   // Verifies that the tenantIdResolver function reference is preserved in resolved options.
   it('should preserve tenantIdResolver function reference', () => {
-    const fn = (_req: Request): string => 'tenant-1'
+    const fn = (_req: TenantResolverRequest): string => 'tenant-1'
     const options: BymaxAuthModuleOptions = {
       ...MINIMAL_OPTIONS,
       tenantIdResolver: fn
@@ -233,7 +233,7 @@ describe('resolveOptions — success', () => {
 
   // The same flag WITH a resolver is the supported configuration and must resolve without throwing.
   it('should accept enforceTenantBinding when a tenantIdResolver is configured', () => {
-    const fn = (_req: Request): string => 'tenant-1'
+    const fn = (_req: TenantResolverRequest): string => 'tenant-1'
     expect(() =>
       resolveOptions({ ...MINIMAL_OPTIONS, enforceTenantBinding: true, tenantIdResolver: fn })
     ).not.toThrow()

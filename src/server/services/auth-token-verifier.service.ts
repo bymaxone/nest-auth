@@ -4,7 +4,7 @@
  * @layer Service
  */
 
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
@@ -20,6 +20,8 @@ import {
   assertValidTenantId
 } from '../guards/utils/assert-token-type'
 import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
+import { assertTenantBinding, tenantBindingEnforced } from '../utils/assert-tenant-binding'
+import type { HandshakeLike } from '../utils/handshake-request'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 
 /**
@@ -86,6 +88,23 @@ export interface VerifyAccessTokenOptions {
    * @defaultValue true
    */
   readonly checkStatus?: boolean
+
+  /**
+   * The request the credential arrived on — a Socket.IO `handshake`, an Express request, or any
+   * object with `headers` and `url` — so `enforceTenantBinding` can be applied.
+   *
+   * The binding needs the request the host's `tenantIdResolver` reads, which a token alone does
+   * not carry. With `enforceTenantBinding` on and a request passed, the resolver runs on the
+   * dashboard plane exactly as it does in `WsJwtGuard`: it receives an object with only `headers`
+   * (lowercased), `url` and `hostname` (the `Host` header, port cut) — no `cookies`, `ip`, `ips`
+   * or trust-proxy behaviour — and a resolver that throws on that, or answers another tenant,
+   * refuses the token with `TOKEN_INVALID`. The platform plane has no tenant and ignores it.
+   *
+   * **Omit it and the binding is not applied for that call.** With `enforceTenantBinding` on,
+   * that is logged once per service instance, because a caller that never passes it has a
+   * binding the HTTP guards enforce and this surface does not.
+   */
+  readonly request?: HandshakeLike
 }
 
 /**
@@ -126,8 +145,8 @@ export interface VerifyAccessTokenOptions {
  * **What it still does not do, and cannot.** Route authorization is the consumer's — this answers
  * who the caller is, never what they may do, so a `@Roles()` equivalent stays yours to apply on
  * every message a stream carries, not only at the handshake. Tenant binding
- * (`enforceTenantBinding`) needs the request the resolver reads, which a redeemed ticket no longer
- * has. And nothing here holds a subscription: it answers at the moment it is called, so a stream
+ * (`enforceTenantBinding`) needs the request the resolver reads, which a token does not carry:
+ * pass the handshake as {@link VerifyAccessTokenOptions.request}, or the binding is not applied. And nothing here holds a subscription: it answers at the moment it is called, so a stream
  * that calls it once at connect is authorized for the lifetime of the token, not of the session.
  * Call it again on a cadence, and treat a rejection as a disconnect.
  *
@@ -141,6 +160,11 @@ export interface VerifyAccessTokenOptions {
  */
 @Injectable()
 export class AuthTokenVerifierService {
+  private readonly logger = new Logger(AuthTokenVerifierService.name)
+
+  /** Whether the "binding not applied" warning has been logged by this instance. */
+  private warnedUnbound = false
+
   /**
    * @param jwtService - The Nest JWT service, configured with the current signing secret.
    * @param options - Resolved module options, for the algorithm, the binding claims and the
@@ -189,7 +213,9 @@ export class AuthTokenVerifierService {
   ): Promise<VerifiedAccessToken> {
     const { plane, requireMfa = true, checkStatus = true } = options
 
-    if (plane === 'dashboard') return await this.verifyDashboard(token, requireMfa, checkStatus)
+    if (plane === 'dashboard') {
+      return await this.verifyDashboard(token, requireMfa, checkStatus, options.request)
+    }
     if (plane === 'platform') return await this.verifyPlatform(token, requireMfa, checkStatus)
 
     // Neither, which TypeScript rules out and a runtime does not: a JavaScript consumer, or one
@@ -207,13 +233,15 @@ export class AuthTokenVerifierService {
    * @param token - The compact JWT.
    * @param requireMfa - Whether to apply the MFA policy.
    * @param checkStatus - Whether to consult the account's current status.
+   * @param request - The request the token arrived on, for `enforceTenantBinding`.
    * @returns The verified dashboard payload.
    * @throws {@link AuthException} as {@link verifyAccessToken} documents.
    */
   private async verifyDashboard(
     token: string,
     requireMfa: boolean,
-    checkStatus: boolean
+    checkStatus: boolean,
+    request: HandshakeLike | undefined
   ): Promise<VerifiedAccessToken> {
     const payload = this.verifySignature<DashboardJwtPayload>(token)
 
@@ -227,6 +255,8 @@ export class AuthTokenVerifierService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
+    await this.assertBound(payload.tenantId, request)
+
     if (requireMfa) this.assertMfaClaimShape(payload)
 
     if (checkStatus) {
@@ -239,6 +269,27 @@ export class AuthTokenVerifierService {
     if (requireMfa) this.assertMfaVerified(payload)
 
     return { plane: 'dashboard', payload }
+  }
+
+  /**
+   * Applies `enforceTenantBinding` when a request was passed, and says so once when it could not.
+   *
+   * @param tenantId - The tenant the token was issued for.
+   * @param request - The request the token arrived on, when the caller supplied one.
+   * @throws {@link AuthException} with `TOKEN_INVALID` as {@link assertTenantBinding} documents.
+   */
+  private async assertBound(tenantId: string, request: HandshakeLike | undefined): Promise<void> {
+    if (request !== undefined) {
+      await assertTenantBinding(this.options, request, tenantId)
+      return
+    }
+    if (tenantBindingEnforced(this.options) && !this.warnedUnbound) {
+      this.warnedUnbound = true
+      this.logger.warn(
+        'verifyAccessToken: enforceTenantBinding is on but no request was passed, so the tenant ' +
+          'binding is not applied to this call. Pass the handshake as `request`.'
+      )
+    }
   }
 
   /**

@@ -877,7 +877,7 @@ export interface BymaxAuthModuleOptions {
    * refused with `auth.validation`). In this case, the host application is responsible for
    * validating the tenantId.
    */
-  tenantIdResolver?: (req: import('express').Request) => string | Promise<string>
+  tenantIdResolver?: (req: TenantResolverRequest) => string | Promise<string>
 
   /**
    * Granular control over which controllers are registered.
@@ -994,7 +994,7 @@ export interface BymaxAuthModuleOptions {
 | `oauth.errorRedirectUrl`          | `string`                                  | No          | `undefined`                           | Redirect when the OAuth callback fails                                                                                                                                                                                  |
 | `routePrefix`                     | `string`                                  | No          | `'auth'`                              | Route prefix                                                                                                                                                                                                            |
 | `tenantIdResolver`                | `function`                                | No          | `undefined`                           | tenantId resolver (prevents spoofing)                                                                                                                                                                                   |
-| `enforceTenantBinding`            | `boolean`                                 | No          | `false`                               | `JwtAuthGuard` refuses a token whose tenant differs from the resolved one (needs `tenantIdResolver`)                                                                                                                    |
+| `enforceTenantBinding`            | `boolean`                                 | No          | `false`                               | `JwtAuthGuard` and `WsJwtGuard` refuse a token whose tenant differs from the resolved one (needs `tenantIdResolver`)                                                                                                    |
 | `controllers.auth`                | `boolean`                                 | No          | `true`                                | Enables AuthController                                                                                                                                                                                                  |
 | `controllers.mfa`                 | `boolean`                                 | No          | `false`                               | Enables MfaController                                                                                                                                                                                                   |
 | `controllers.passwordReset`       | `boolean`                                 | No          | `true`                                | Enables PasswordResetController                                                                                                                                                                                         |

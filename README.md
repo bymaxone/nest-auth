@@ -815,6 +815,26 @@ socket must also refuse a blocked account or an unfinished second factor, author
 `AuthTokenVerifierService.verifyAccessToken` (see
 [Authorising a long-lived transport](#authorising-a-long-lived-transport--authtokenverifierservice)).
 
+**Tenant binding on the socket.** With `enforceTenantBinding` on, `WsJwtGuard` re-resolves the
+tenant of the upgrade and refuses (`auth.token_invalid`, the same code HTTP answers) a ticket or
+token minted for another tenant, as `JwtAuthGuard` does on a mismatch. An upgrade has no Express request,
+so your `tenantIdResolver` is handed a request-like object with **only** these fields:
+
+| Field      | Value                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------- |
+| `headers`  | The handshake headers, names lowercased                                                           |
+| `url`      | The upgrade URL, `''` when the transport exposes none                                             |
+| `hostname` | The `Host` header with the port cut (a bracketed IPv6 literal keeps its brackets), `''` if absent |
+
+There is **no** `cookies` (the `Cookie` header is present in `headers`, but nothing parses it the way
+`cookie-parser` does on HTTP), no `ip` or `ips`, and no trust-proxy behaviour: `hostname` is the
+`Host` as received, never `X-Forwarded-Host`. The resolver's parameter is typed
+`TenantResolverRequest` (exported), so a resolver that reads one of the absent fields does not
+compile. If a resolver still throws at runtime, or returns anything other than the credential's
+tenant, the connection is **refused**, never bound to the wrong tenant. Resolve from `headers` or
+`hostname` so one resolver
+serves both HTTP and sockets.
+
 Both channels live on the client's `handshake`, and only a **Socket.IO** client has one — with
 `@nestjs/platform-ws` the gateway receives the raw `ws` socket, which carries no `handshake` and
 does not retain the upgrade request. `WsJwtGuard` refuses such a connection with
@@ -2084,7 +2104,9 @@ is pending; `auth.mfa_required` is answered only for a usable account.
 > **Three things it still does not do.** Route **authorization** is yours — this answers who the
 > caller is, never what they may do, so your `@Roles()` equivalent belongs on every message a
 > stream carries, not only on the handshake. **Tenant binding** (`enforceTenantBinding`) needs the
-> request its resolver reads, which a redeemed ticket no longer has. And it holds **no
+> request its resolver reads, so pass the handshake as `request` to `verifyAccessToken` (the same
+> `headers`/`url`/`hostname` request as on `WsJwtGuard`, fail-closed on a resolver that cannot answer);
+> without it the binding is not applied to that call, and one warning per service instance says so. And it holds **no
 > subscription**: it answers at the moment you call it, so a stream that calls it once at connect
 > is authorized for the lifetime of the token rather than of the session. Call it again on a
 > cadence and treat a rejection as a disconnect.

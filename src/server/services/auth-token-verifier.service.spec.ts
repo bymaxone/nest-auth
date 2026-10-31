@@ -8,6 +8,7 @@
  * a caller branches on the code it receives.
  */
 
+import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { JwtService } from '@nestjs/jwt'
 
@@ -311,6 +312,23 @@ describe('AuthTokenVerifierService', () => {
     }
   )
 
+  // `requireMfa: false` does not even look at the claim, so a token that omits it is admitted. The
+  // claim-shape check belongs to the policy it skips; running it regardless would refuse a caller
+  // that established the fact another way.
+  it.each([
+    ['dashboard', DASHBOARD_PAYLOAD],
+    ['platform', PLATFORM_PAYLOAD]
+  ] as const)(
+    'admits a token with no mfaEnabled claim on the %s plane when requireMfa is false',
+    async (plane, payload) => {
+      mockJwt.verify.mockReturnValue({ ...payload, mfaEnabled: undefined })
+
+      await expect(
+        verifier.verifyAccessToken('tok', { plane, requireMfa: false })
+      ).resolves.toMatchObject({ plane })
+    }
+  )
+
   // -------------------------------------------------------------------------
   // Account status
   // -------------------------------------------------------------------------
@@ -459,4 +477,133 @@ describe('AuthTokenVerifierService', () => {
       expect(mockAccountStatus[gate]).not.toHaveBeenCalled()
     }
   )
+
+  // -------------------------------------------------------------------------
+  // Tenant binding
+  // -------------------------------------------------------------------------
+
+  describe('tenant binding', () => {
+    const resolver = jest.fn()
+    const request = { headers: { Host: 'tenant-b.example.com:3000' }, url: '/socket.io/' }
+    let warn: jest.SpyInstance
+
+    beforeEach(async () => {
+      resolver.mockReset()
+      warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      Object.assign(mockOptions, { enforceTenantBinding: true, tenantIdResolver: resolver })
+      verifier = await buildVerifier()
+    })
+
+    afterEach(() => {
+      delete (mockOptions as Record<string, unknown>)['enforceTenantBinding']
+      delete (mockOptions as Record<string, unknown>)['tenantIdResolver']
+      warn.mockRestore()
+    })
+
+    // Scenario: the resolver confirms the token's tenant. Expected: verified, and the resolver
+    // saw the shim. Why: the same question the guards ask, answered from the request passed in.
+    it('admits a token whose tenant the resolver confirms', async () => {
+      resolver.mockResolvedValue('tenant-1')
+
+      await expect(
+        verifier.verifyAccessToken('tok', { plane: 'dashboard', request })
+      ).resolves.toEqual({ plane: 'dashboard', payload: DASHBOARD_PAYLOAD })
+      expect(resolver.mock.calls[0]?.[0]).toMatchObject({
+        headers: { host: 'tenant-b.example.com:3000' },
+        hostname: 'tenant-b.example.com',
+        url: '/socket.io/'
+      })
+    })
+
+    // Scenario: another tenant, nothing, or a resolver that cannot answer. Expected: TOKEN_INVALID
+    // and the account is never consulted. Why: fail closed, and no work for a refused token.
+    it.each([
+      ['another tenant', () => Promise.resolve('tenant-b')],
+      ['nothing', () => Promise.resolve('')],
+      ['a rejection', () => Promise.reject(new Error('reads req.cookies'))],
+      [
+        'a synchronous throw',
+        () => {
+          throw new Error('reads req.cookies')
+        }
+      ]
+    ])('refuses the token when the resolver answers %s', async (_why, impl) => {
+      resolver.mockImplementation(impl)
+
+      const err = await verifier
+        .verifyAccessToken('tok', { plane: 'dashboard', request })
+        .catch((e: unknown) => e)
+
+      expect(errorCodeOf(err)).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
+      expect(mockAccountStatus.assertDashboardAccountUsable).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the binding is on and no request is passed. Expected: verified as before, the
+    // resolver untouched, one warning however many calls follow. Why: a patch must not break
+    // current callers, but must not leave them silently unbound either.
+    it('verifies without a request but warns once that the binding was not applied', async () => {
+      await verifier.verifyAccessToken('tok', { plane: 'dashboard' })
+      await verifier.verifyAccessToken('tok', { plane: 'dashboard' })
+
+      expect(resolver).not.toHaveBeenCalled()
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0]?.[0])).toBe(
+        'verifyAccessToken: enforceTenantBinding is on but no request was passed, so the tenant ' +
+          'binding is not applied to this call. Pass the handshake as `request`.'
+      )
+    })
+
+    // Scenario: the flag is on but no resolver is configured (startup refuses this; the arm is the
+    // defensive twin). Expected: nothing is enforced, so nothing is warned about.
+    it('stays silent when the flag is on but there is no resolver', async () => {
+      Object.assign(mockOptions, { tenantIdResolver: undefined })
+
+      await verifier.verifyAccessToken('tok', { plane: 'dashboard' })
+
+      expect(warn).not.toHaveBeenCalled()
+    })
+
+    // Scenario: a request is passed, so the binding IS applied. Expected: no warning.
+    it('does not warn when a request is passed', async () => {
+      resolver.mockResolvedValue('tenant-1')
+
+      await verifier.verifyAccessToken('tok', { plane: 'dashboard', request })
+
+      expect(warn).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the binding is off. Expected: the request is ignored and nothing is logged.
+    it('ignores the request and stays silent when the binding is off', async () => {
+      Object.assign(mockOptions, { enforceTenantBinding: false })
+
+      await verifier.verifyAccessToken('tok', { plane: 'dashboard', request })
+      await verifier.verifyAccessToken('tok', { plane: 'dashboard' })
+
+      expect(resolver).not.toHaveBeenCalled()
+      expect(warn).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the platform plane. Expected: untouched by the binding, with or without a request.
+    // Why: a platform administrator is cross-tenant; there is no tenant to bind.
+    it('leaves the platform plane alone', async () => {
+      mockJwt.verify.mockReturnValue({ ...PLATFORM_PAYLOAD })
+
+      await verifier.verifyAccessToken('tok', { plane: 'platform', request })
+      await verifier.verifyAccessToken('tok', { plane: 'platform' })
+
+      expect(resolver).not.toHaveBeenCalled()
+      expect(warn).not.toHaveBeenCalled()
+    })
+
+    // Scenario: a revoked token with a mismatching request. Expected: the revocation answer is the
+    // same TOKEN_INVALID either way, and the resolver is not run for a token already refused.
+    it('does not run the resolver for a token already refused as revoked', async () => {
+      mockRevocation.isAccessTokenRevoked.mockResolvedValue(true)
+
+      await expect(
+        verifier.verifyAccessToken('tok', { plane: 'dashboard', request })
+      ).rejects.toBeInstanceOf(AuthException)
+      expect(resolver).not.toHaveBeenCalled()
+    })
+  })
 })
