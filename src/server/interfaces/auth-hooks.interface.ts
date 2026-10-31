@@ -107,7 +107,8 @@ export interface OAuthLoginResult {
   /**
    * Desired action for this OAuth login attempt:
    * - `'create'` — provision a new user account from the OAuth profile.
-   * - `'link'`   — link the OAuth identity to an existing user account.
+   * - `'link'`   — keep the OAuth identity linked to the user passed as `existingUser`;
+   *   refused when there is none.
    * - `'reject'` — deny the login attempt (e.g. domain allowlist enforcement).
    */
   action: 'link' | 'create' | 'reject'
@@ -395,8 +396,11 @@ export interface IAuthHooks {
    * identity to an existing account, or reject the login (e.g. domain allowlists).
    *
    * @param profile - Normalized OAuth profile from the provider.
-   * @param existingUser - Existing user (credential fields omitted) if one is found
-   *   by email, otherwise `null`.
+   * @param existingUser - The user already linked to this provider identity (credential
+   *   fields omitted), found by provider id within the flow's tenant; `null` when this identity
+   *   is not linked to anyone. It is NOT looked up by email, so an account that merely shares
+   *   the profile's address does not appear here. Choosing `'create'` for an address another
+   *   account already owns is refused with `auth.oauth_email_mismatch`.
    * @param context - Request metadata (IP, user agent, sanitized headers).
    * @returns An {@link OAuthLoginResult} controlling the account resolution strategy.
    */

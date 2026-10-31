@@ -87,12 +87,14 @@ const SAFE_ADMIN = {
 
 const mockUserRepo = {
   findById: jest.fn(),
-  updateMfa: jest.fn()
+  updateMfa: jest.fn(),
+  updateLastLogin: jest.fn()
 }
 
 const mockPlatformUserRepo = {
   findById: jest.fn(),
-  updateMfa: jest.fn()
+  updateMfa: jest.fn(),
+  updateLastLogin: jest.fn()
 }
 
 const mockRedis = {
@@ -2391,6 +2393,89 @@ describe('MfaService', () => {
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_NOT_ENABLED })
         })
       }
+    })
+
+    // Completing the challenge is the login for an MFA account: the password step (or the OAuth
+    // callback) stopped short of recording it, so this is the one place the last-login time can
+    // move. Without it an MFA account's last login never changes.
+    it.each([
+      ['dashboard', 'user-1'],
+      ['platform', 'admin-1']
+    ] as const)(
+      'should record the last login when a %s challenge completes',
+      async (context, id) => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+        const { base32 } = generateTotpSecret()
+        const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+        mockRedis.setnx.mockResolvedValue(true)
+        mockUserRepo.updateLastLogin.mockResolvedValue(undefined)
+        mockPlatformUserRepo.updateLastLogin.mockResolvedValue(undefined)
+        const account = {
+          ...(context === 'dashboard' ? AUTH_USER_MFA_ENABLED : SAFE_ADMIN),
+          passwordHash: 'hash',
+          mfaEnabled: true,
+          mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+          mfaRecoveryCodes: []
+        }
+        if (context === 'dashboard') {
+          mockUserRepo.findById.mockResolvedValue(account)
+        } else {
+          mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+            userId: id,
+            context: 'platform',
+            jti: 'jti-last-login'
+          })
+          mockPlatformUserRepo.findById.mockResolvedValue(account)
+          mockTokenManager.issuePlatformTokens.mockResolvedValue({
+            admin: SAFE_ADMIN,
+            accessToken: 'platform.jwt',
+            rawRefreshToken: 'token'
+          })
+        }
+
+        await service.challenge('mfa.temp', validCode, '1.2.3.4', 'Browser')
+        await Promise.resolve()
+        await Promise.resolve()
+
+        if (context === 'dashboard') {
+          expect(mockUserRepo.updateLastLogin).toHaveBeenCalledTimes(1)
+          expect(mockUserRepo.updateLastLogin).toHaveBeenCalledWith({
+            id,
+            tenantId: SAFE_USER.tenantId
+          })
+          expect(mockPlatformUserRepo.updateLastLogin).not.toHaveBeenCalled()
+        } else {
+          expect(mockPlatformUserRepo.updateLastLogin).toHaveBeenCalledTimes(1)
+          expect(mockPlatformUserRepo.updateLastLogin).toHaveBeenCalledWith(id)
+          expect(mockUserRepo.updateLastLogin).not.toHaveBeenCalled()
+        }
+      }
+    )
+
+    // A failing last-login write must not undo a challenge that already passed.
+    it('should complete the challenge when recording the last login fails', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockUserRepo.updateLastLogin.mockRejectedValue(new Error('db down'))
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await expect(service.challenge('mfa.temp', validCode, '1.2.3.4', 'Browser')).resolves.toBe(
+        MOCK_AUTH_RESULT
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+        'updateLastLogin failed'
+      )
     })
 
     // Verifies that errors thrown by the afterLogin hook (dashboard) are silently suppressed.
