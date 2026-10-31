@@ -391,7 +391,11 @@ describe('service API keys (e2e)', () => {
       const { key } = await h.keys.issue({ label: 'automation', scopes: ['read'] })
       await get(h, '/machine/videos', key)
       await get(h, '/machine/admin', key)
-      expect(JSON.stringify(h.events)).not.toContain(key.split('_')[2])
+      // The secret is everything after `bak_<uuid>_` and may itself contain `_`, so it is sliced,
+      // not split: a split on `_` can yield an empty string, which `not.toContain('')` always fails.
+      const secret = key.slice('bak_'.length + 36 + 1)
+      expect(secret).toHaveLength(43)
+      expect(JSON.stringify(h.events)).not.toContain(secret)
     })
   })
 

@@ -116,8 +116,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     option group with its validation, and the audit hook. Measured 123.32 -> 129.23 KiB, so
 //     +5.91 KiB, against a 129 KiB budget the build overran by 0.23 KiB; 137 puts headroom back at
 //     about 6%, inside this entry's historical band. It is a capability the consumer's interim
-//     guard cannot be deleted without, with red-checked tests and a scoped mutation score of 100
-//     behind it, which is the distinction this budget exists to force.
+//     guard cannot be deleted without, with red-checked tests behind it, which is the
+//     distinction this budget exists to force.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
