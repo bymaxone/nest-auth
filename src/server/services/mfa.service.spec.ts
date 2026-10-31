@@ -2453,6 +2453,44 @@ describe('MfaService', () => {
       }
     )
 
+    // The platform plane has its own label, so an operator can tell which store failed.
+    it('should complete the platform challenge when recording the last login fails', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+      mockRedis.setnx.mockResolvedValue(true)
+      mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+        userId: 'admin-1',
+        context: 'platform',
+        jti: 'jti-platform-last-login'
+      })
+      mockPlatformUserRepo.findById.mockResolvedValue({
+        ...SAFE_ADMIN,
+        passwordHash: 'hash',
+        mfaEnabled: true,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: []
+      })
+      mockTokenManager.issuePlatformTokens.mockResolvedValue({
+        admin: SAFE_ADMIN,
+        accessToken: 'platform.jwt',
+        rawRefreshToken: 'token'
+      })
+      mockPlatformUserRepo.updateLastLogin.mockRejectedValue(new Error('db down'))
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await expect(
+        service.challenge('mfa.temp', validCode, '1.2.3.4', 'Browser')
+      ).resolves.toBeDefined()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+        'challenge: platform updateLastLogin failed'
+      )
+    })
+
     // A failing last-login write must not undo a challenge that already passed.
     it('should complete the challenge when recording the last login fails', async () => {
       const { encrypt } = await import('../crypto/aes-gcm')
