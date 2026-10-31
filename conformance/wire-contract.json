@@ -615,7 +615,9 @@
     "$comment": [
       "Both backends enforce these with a Redis fixed-window counter shared across instances; the",
       "key shape under the rl: prefix is per implementation (route naming is not shared), so one",
-      "client served by both libraries gets a budget from each."
+      "client served by both libraries gets a budget from each.",
+      "",
+      "The per-IP limit each auth route is served under, as `requests/windowSeconds`."
     ],
     "login": "5/60",
     "register": "10/3600",
