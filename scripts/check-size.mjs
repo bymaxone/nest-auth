@@ -111,6 +111,13 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     OpenAPI contributor offers (measured by removing that one block from the built bundle and
 //     compressing both). They are data compiled into the bundle, so the comment-stripping lever
 //     above does not touch them. The budget keeps about 5% headroom over the measured size.
+//     Raised to 137 KiB for the scoped service API keys: an issue/revoke/rotate service, the guard
+//     and its verifier, the last-used batcher, the bootstrap scope scan, three decorators, the
+//     option group with its validation, and the audit hook. Measured 123.32 -> 129.23 KiB, so
+//     +5.91 KiB, against a 129 KiB budget the build overran by 0.23 KiB; 137 puts headroom back at
+//     about 6%, inside this entry's historical band. It is a capability the consumer's interim
+//     guard cannot be deleted without, with red-checked tests and a scoped mutation score of 100
+//     behind it, which is the distinction this budget exists to force.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
@@ -144,7 +151,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 129 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 137 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.25 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },

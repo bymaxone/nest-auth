@@ -127,7 +127,8 @@ describe('BymaxAuthModule — service API keys', () => {
 
   describe("apiKeys.auditMode 'required'", () => {
     const REQUIRED = { ...BASE, apiKeys: { ...ENABLED.apiKeys, auditMode: 'required' as const } }
-    const refusal = /auditMode: 'required' needs an onApiKeyRequest hook/
+    const refusal =
+      /auditMode: 'required' needs an onApiKeyRequest hook, and the BYMAX_AUTH_HOOKS provider has none\. Implement it, or use auditMode: 'best-effort'\./
 
     class Auditing {
       onApiKeyRequest(): void {}
@@ -142,6 +143,8 @@ describe('BymaxAuthModule — service API keys', () => {
     // service that admits requests with no audit record.
     it.each([
       ['no hooks provider (the no-op fallback has no such hook)', []],
+      // A bare class provider is not a hooks provider; skipping it is what finds there is none.
+      ['only a bare class provider', [Auditing]],
       ['a hooks object without the method', [{ provide: BYMAX_AUTH_HOOKS, useValue: {} }]],
       ['a null hooks object', [{ provide: BYMAX_AUTH_HOOKS, useValue: null }]]
     ])('is refused at startup with %s', async (_name, providers) => {

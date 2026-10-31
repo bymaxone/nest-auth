@@ -253,7 +253,7 @@ describe('resolveOptions — apiKeys', () => {
     // The messages say why.
     it('explains the header and prefix rules', () => {
       expect(() => resolveOptions(withKeys({ header: 'cookie' }))).toThrow(
-        /other than a header the library reads/
+        /other than a header the library reads or derives a field from \(authorization, cookie, user-agent, origin, the forwarded-address headers and the like\): a key read from one would travel through a path built for something else\./
       )
       expect(() => resolveOptions(withKeys({ prefix: 'my_key' }))).toThrow(
         /starting with a letter\. An underscore is not allowed: it separates the parts of a key\./

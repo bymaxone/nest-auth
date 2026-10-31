@@ -71,6 +71,24 @@ describe('request headers the server reads', () => {
     expect(headerReads('planted.ts', source).sort()).toEqual(['accept', 'x-planted'])
   })
 
+  // The list is pinned by name, so dropping a header from it is a decision made in a test edit and
+  // never a quiet deletion: the table-driven option specs would follow the constant down.
+  it('names exactly the headers the library reads or derives a field from', () => {
+    expect([...LIBRARY_READ_HEADERS]).toEqual([
+      'authorization',
+      'proxy-authorization',
+      'cookie',
+      'set-cookie',
+      'user-agent',
+      'origin',
+      'sec-fetch-site',
+      'x-forwarded-for',
+      'x-forwarded-host',
+      'x-real-ip',
+      'x-original-forwarded-for'
+    ])
+  })
+
   // The list is lowercase and free of duplicates, because it is compared against lowercased input.
   it('is lowercase and unique', () => {
     expect(LIBRARY_READ_HEADERS.map((h) => h.toLowerCase())).toEqual([...LIBRARY_READ_HEADERS])

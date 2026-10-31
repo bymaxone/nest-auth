@@ -301,7 +301,7 @@ describe('ApiKeyGuard', () => {
         route: '/videos/:id',
         requiredScopes: []
       })
-      expect(errors[0]).toContain('GET /videos/:id')
+      expect(errors[0]).toContain('GET /videos/:id is guarded but declares no scopes; refused')
     })
   })
 

@@ -105,9 +105,7 @@ function hasProviderToken(providers: Provider[], token: symbol): boolean {
  * @returns `true` when no registered hooks implementation can audit.
  */
 function cannotAuditApiKeys(providers: Provider[]): boolean {
-  const hooks = providers.find(
-    (p) => typeof p !== 'function' && 'provide' in p && p.provide === BYMAX_AUTH_HOOKS
-  )
+  const hooks = providers.find((p) => 'provide' in p && p.provide === BYMAX_AUTH_HOOKS)
   if (hooks === undefined) return true
   if ('useValue' in hooks) {
     return (
