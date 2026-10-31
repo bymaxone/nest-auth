@@ -281,7 +281,11 @@ export interface IAuthHooks {
       email: string
       /** The tenant the lockout is scoped to. */
       tenantId: string
-      /** Seconds until the window expires and attempts are accepted again. */
+      /**
+       * Seconds until the window expires and attempts are accepted again. When the remaining
+       * time cannot be read from the store this is the configured `bruteForce.windowSeconds`,
+       * an upper bound, rather than the exact remainder.
+       */
       retryAfterSeconds: number
     },
     context: HookContext

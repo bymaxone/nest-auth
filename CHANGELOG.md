@@ -18,7 +18,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
-## [1.4.6] - 2026-10-30
+## [1.4.6] - 2026-10-31
 
 ### Apply to a derived backend
 
@@ -47,6 +47,11 @@ change to the public API; the items that change behaviour are the ones to read.
   upgrade `next` to 16.4.1 or later.
 - **A request without a body to `POST …/mfa/setup`.** It now answers exactly as it does for `{}`
   instead of 500; a client needs no change.
+- **`onLockout` when the store cannot answer.** Nothing to do beyond upgrading. If the reads that
+  decide whether the hook fires fail, the login still answers `auth.invalid_credentials`; the hook is
+  skipped when the lock cannot be confirmed. If only the remaining time cannot be read after the lock
+  was confirmed, the hook fires with `retryAfterSeconds` set to `bruteForce.windowSeconds`, an upper
+  bound. A handler that treats the value as exact should read it as at most that long.
 
 ### Added
 
@@ -249,6 +254,12 @@ change to the public API; the items that change behaviour are the ones to read.
 
 ### Fixed
 
+- **A store fault while deciding whether to fire `onLockout` no longer replaces the login
+  answer.** The two reads that exist only to feed the hook ran unguarded after the failure was
+  recorded, so a Redis error answered the request in place of `auth.invalid_credentials`. They are
+  now best-effort: an unreadable lock state skips the hook and logs one warning (the error class,
+  a masked address); an unreadable remaining time after a confirmed lock fires the hook with
+  `bruteForce.windowSeconds`. Recording the failure and the lockout pre-check still fail closed.
 - **A request without a body to `POST …/mfa/setup` now behaves like an empty object instead of
   answering 500.** The validation pipe returned a missing body as `undefined` to a handler that reads
   `dto.password`; it now hands the handler an empty DTO, so the route answers exactly as it does for
