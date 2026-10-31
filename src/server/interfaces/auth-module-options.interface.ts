@@ -101,7 +101,7 @@ export type BymaxAuthRateLimitOptions =
  * the fields an upgrade lacks — instead of leaving that to a runtime refusal of every socket.
  *
  * `hostname` is the `Host` header with the port cut (a bracketed IPv6 literal keeps its brackets),
- * `''` when an upgrade carries none; it never reads `X-Forwarded-Host`. `url` is `''` when the
+ * `''` when an upgrade carries none or repeats it; it never reads `X-Forwarded-Host`. `url` is `''` when the
  * transport exposes none.
  */
 export interface TenantResolverRequest {
@@ -964,7 +964,7 @@ export interface BymaxAuthModuleOptions {
    * none is refused with the same `auth.validation` — the deployment has to choose one of the
    * two, and neither choice is guessed on its behalf.
    *
-   * @param req - The request, as {@link TenantResolverRequest}: the three fields every
+   * @param req - The request, as {@link TenantResolverRequest}: the fields every
    *   transport has. An Express request satisfies it, so on HTTP you can still read the rest at
    *   runtime, but a resolver that does fails the WebSocket upgrade by design.
    * @returns The tenant ID string, or a Promise resolving to it

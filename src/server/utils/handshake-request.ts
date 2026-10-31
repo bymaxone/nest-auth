@@ -8,7 +8,7 @@ import type { TenantResolverRequest } from '../interfaces/auth-module-options.in
 
 /**
  * The fields {@link handshakeRequest} reads. A Socket.IO `handshake` fits, and so does an Express
- * request, which is why the verifier can take either.
+ * request.
  */
 export interface HandshakeLike {
   headers: Record<string, string | string[] | undefined>
