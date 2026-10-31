@@ -573,11 +573,21 @@ function validateApiKeys(userOptions: BymaxAuthModuleOptions): void {
   // An absent `identifierKey` is `undefined`, which a validated string pepper never equals.
   // Stryker disable next-line ArrayDeclaration: a stand-in element in place of the empty fallback is a string no validated pepper (32+ characters of real entropy) can equal
   const retired = userOptions.jwt.previousSecrets ?? []
-  const reused = new Set<unknown>([userOptions.jwt.secret, userOptions.identifierKey, ...retired])
+  const mfaKeys = [
+    userOptions.mfa?.encryptionKey,
+    ...(userOptions.mfa?.previousEncryptionKeys ?? [])
+  ]
+  const reused = new Set<unknown>([
+    userOptions.jwt.secret,
+    userOptions.identifierKey,
+    ...retired,
+    ...mfaKeys
+  ])
   if (reused.has(group.pepper)) {
     throw new Error(
-      `[BymaxAuthModule] apiKeys.pepper must not equal jwt.secret, a retired jwt secret or ` +
-        `identifierKey. A key shared across purposes is one leak away from all of them.`
+      `[BymaxAuthModule] apiKeys.pepper must not equal jwt.secret, a retired jwt secret, ` +
+        `identifierKey or an MFA encryption key. A key shared across purposes is one leak away ` +
+        `from all of them.`
     )
   }
 

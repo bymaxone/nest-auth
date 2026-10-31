@@ -10,6 +10,9 @@ import { resolveOptions } from './resolved-options'
 
 const JWT_SECRET = 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B'
 const IDENTIFIER_KEY = 'Zt8#vB3@nM6$qL9%wE2^rY5&uI1*oP4(aS7)dF0!gH'
+const MFA_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='
+/** A valid MFA key (base64 of 32 bytes) that also clears the pepper strength bar. */
+const MFA_PEPPER = 'q83vEjRWeJz9k2LmP4xYcB7nTuH1sA6dF0gVoXiQwKY='
 const PEPPER = 'pQ3$rT6&uW9*xZ2!aC5%dF8^gJ1(kM4)nP7+sV0-yB'
 
 const BASE: BymaxAuthModuleOptions = {
@@ -114,7 +117,20 @@ describe('resolveOptions — apiKeys', () => {
       ['identifierKey', { identifierKey: PEPPER }]
     ])('refuses a pepper equal to %s', (_name, extra) => {
       expect(() => resolveOptions(withKeys({}, extra as Partial<BymaxAuthModuleOptions>))).toThrow(
-        /apiKeys\.pepper must not equal jwt\.secret, a retired jwt secret or identifierKey\. A key shared across purposes is one leak away from all of them\./
+        /apiKeys\.pepper must not equal jwt\.secret, a retired jwt secret, identifierKey or an MFA encryption key\. A key shared across purposes is one leak away from all of them\./
+      )
+    })
+
+    // An MFA key is base64 of 32 bytes, so a pepper that equals one is a base64 string of its own.
+    it.each([
+      ['the MFA encryption key', { encryptionKey: MFA_PEPPER, issuer: 'App' }],
+      [
+        'a retired MFA encryption key',
+        { encryptionKey: MFA_KEY, previousEncryptionKeys: [MFA_PEPPER], issuer: 'App' }
+      ]
+    ])('refuses a pepper equal to %s', (_name, mfa) => {
+      expect(() => resolveOptions(withKeys({ pepper: MFA_PEPPER }, { mfa }))).toThrow(
+        /apiKeys\.pepper must not equal jwt\.secret, a retired jwt secret, identifierKey or an MFA encryption key\. A key shared across purposes is one leak away from all of them\./
       )
     })
 

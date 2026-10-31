@@ -104,6 +104,15 @@ describe('ApiKeyService', () => {
       ['too long', 'x'.repeat(API_KEY_MAX_LABEL_LENGTH + 1)],
       ['a control character', 'bad\nlabel'],
       ['a delete character', 'bad\u007flabel'],
+      ['a C1 control character', 'bad\u0085label'],
+      ['a line separator', 'bad\u2028label'],
+      ['a paragraph separator', 'bad\u2029label'],
+      ['a zero-width space', 'bad\u200blabel'],
+      ['a bidirectional override', 'bad\u202elabel'],
+      ['a bidirectional isolate', 'bad\u2066label'],
+      ['a byte order mark', 'bad\ufefflabel'],
+      ['a soft hyphen', 'bad\u00adlabel'],
+      ['a word joiner', 'bad\u2060label'],
       ['not a string', 42 as unknown as string]
     ])('refuses a label that is %s', async (_name, label) => {
       const { service } = build([])
@@ -315,21 +324,26 @@ describe('ApiKeyService', () => {
       expect(repo.calls).not.toContain('create')
     })
 
-    // A key is active strictly before its revocation and expiry instants: AT either it is not.
+    // A key is active strictly before its expiry instant, and not at all once revoked: the same
+    // rule the verifier applies, including for a date the store could not parse.
     it.each([
-      ['revokedAt', { revokedAt: NOW }],
-      ['expiresAt', { expiresAt: NOW }]
-    ])('answers not found for a key whose %s is exactly now', async (_name, patch) => {
+      ['revokedAt in the past', { revokedAt: new Date(NOW.getTime() - 1) }],
+      ['revokedAt at now', { revokedAt: NOW }],
+      ['revokedAt in the future', { revokedAt: new Date(NOW.getTime() + 1000) }],
+      ['an invalid revokedAt', { revokedAt: new Date('nope') }],
+      ['expiresAt at now', { expiresAt: NOW }],
+      ['an invalid expiresAt', { expiresAt: new Date('nope') }]
+    ])('answers not found for a key with %s', async (_name, patch) => {
       const { service } = build([makeRow(patch)])
       expect(await codeOf(service.rotate(KEY_ID, { overlapSeconds: 0 }))).toBe(
         AUTH_ERROR_CODES.API_KEY_NOT_FOUND
       )
     })
 
-    // A key whose revocation or expiry lies in the future is still active and can be rotated.
-    it('rotates a key whose revocation and expiry are still ahead', async () => {
+    // A key whose expiry lies in the future is still active and can be rotated.
+    it('rotates a key whose expiry is still ahead', async () => {
       const ahead = new Date(NOW.getTime() + 1000)
-      const { service } = build([makeRow({ revokedAt: ahead, expiresAt: ahead })])
+      const { service } = build([makeRow({ expiresAt: ahead })])
       await expect(service.rotate(KEY_ID, { overlapSeconds: 0 })).resolves.toBeDefined()
     })
   })

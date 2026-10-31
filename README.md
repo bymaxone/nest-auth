@@ -1086,14 +1086,14 @@ BymaxAuthModule.registerAsync({
 The feature is registered by the repository provider **and** `apiKeys.enabled`. Either one alone
 fails at startup and says which is missing.
 
-| Option                 | Default         | Meaning                                                                                                                 |
-| ---------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `pepper`               | — (required)    | The HMAC key every digest is computed under. As strong as `jwt.secret`, and refused if it equals it or `identifierKey`. |
-| `scopes`               | — (required)    | The closed vocabulary: letters, digits and `: . _ -`, up to 64 characters each.                                         |
-| `header`               | `'x-api-key'`   | Where the key is read from. Never the query string. Not `authorization`, `cookie` or `set-cookie`.                      |
-| `prefix`               | `'bak'`         | Literal start of every issued key, for secret scanners. Lowercase letters and digits, 2 to 16, no underscore.           |
-| `lastUsedFlushSeconds` | `60`            | How often coalesced `lastUsedAt` values are written, in one batch. 1 to 3600.                                           |
-| `auditMode`            | `'best-effort'` | `'required'` awaits the audit hook and **denies** the request if it throws. See [Audit](#audit).                        |
+| Option                 | Default         | Meaning                                                                                                                                                            |
+| ---------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pepper`               | — (required)    | The HMAC key every digest is computed under. As strong as `jwt.secret`, and refused if it equals `jwt.secret` (current or retired), `identifierKey` or an MFA key. |
+| `scopes`               | — (required)    | The closed vocabulary: letters, digits and `: . _ -`, up to 64 characters each.                                                                                    |
+| `header`               | `'x-api-key'`   | Where the key is read from. Never the query string. Not `authorization`, `cookie` or `set-cookie`.                                                                 |
+| `prefix`               | `'bak'`         | Literal start of every issued key, for secret scanners. Lowercase letters and digits, 2 to 16, no underscore.                                                      |
+| `lastUsedFlushSeconds` | `60`            | How often coalesced `lastUsedAt` values are written, in one batch. 1 to 3600.                                                                                      |
+| `auditMode`            | `'best-effort'` | `'required'` awaits the audit hook and **denies** the request if it throws. See [Audit](#audit).                                                                   |
 
 ### Protect a route
 
@@ -1226,7 +1226,7 @@ offline.
 row (always), compute the digest, compare two 32-byte buffers with `timingSafeEqual` (against a
 dummy digest when there is no row), and only then decide. An unknown, malformed, wrong, revoked
 or expired key all answer `401 auth.api_key_invalid` with the same body; the operator sees the
-real reason in the audit event. A key is valid strictly before its `expiresAt` and `revokedAt`.
+real reason in the audit event. A key is valid strictly before its `expiresAt`, and not at all once `revokedAt` is set.
 
 Two things this does _not_ claim. The store round trip costs differently for a present and an
 absent row, and no library can hide that — put a per-address throttle in front (below). And the
@@ -1256,8 +1256,7 @@ export class AuditHooks implements IAuthHooks {
 }
 ```
 
-By default the hook is fired without being awaited and its failure is logged, as for every
-other hook. With `apiKeys.auditMode: 'required'` it is awaited, and **if it throws the request is
+Every refused request reaches the hook too, so anonymous traffic can write audit rows: throttle by address before the guard. By default the hook is fired without being awaited and its failure is logged. With `apiKeys.auditMode: 'required'` it is awaited, and **if it throws the request is
 denied** (`500 auth.internal`): use that when the audit row is a record you must have.
 
 ### Keep the key out of your logs

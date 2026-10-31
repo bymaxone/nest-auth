@@ -24,7 +24,7 @@ export interface AuthApiKey {
   createdAt: Date
   /** The key stops verifying at this instant, when set. */
   expiresAt: Date | null
-  /** The key stops verifying at this instant, when set. */
+  /** When set, the key no longer verifies, on every instance, whatever instant it holds. */
   revokedAt: Date | null
   /** Last time the key verified. Advisory and coalesced: see `apiKeys.lastUsedFlushSeconds`. */
   lastUsedAt: Date | null

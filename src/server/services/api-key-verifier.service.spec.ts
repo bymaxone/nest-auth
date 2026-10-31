@@ -161,14 +161,33 @@ describe('ApiKeyVerifierService', () => {
       expect(await verifier.verify(SENTINEL_KEY)).toMatchObject({ ok: false, reason: 'expired' })
     })
 
-    // Same boundary for revocation: a key revoked at an instant stops verifying AT that instant.
-    it('is valid one millisecond before revokedAt and revoked at it', async () => {
-      const revokedAt = new Date(NOW.getTime() + 1000)
-      const { verifier, clock } = build([makeRow({ revokedAt })])
-      clock.current = new Date(revokedAt.getTime() - 1)
-      expect((await verifier.verify(SENTINEL_KEY)).ok).toBe(true)
-      clock.current = new Date(revokedAt.getTime())
+    // Revocation does not wait for a clock: a row with `revokedAt` set is revoked on every
+    // instance at once, whatever instant it names and whatever the verifying instance's clock
+    // says. A skewed clock would otherwise keep admitting a revoked key for the size of the skew.
+    it.each([
+      ['in the past', -1000],
+      ['at the present instant', 0],
+      ['in the future', 1000]
+    ])('refuses a key revoked %s', async (_name, offsetMs) => {
+      const revokedAt = new Date(NOW.getTime() + offsetMs)
+      const { verifier } = build([makeRow({ revokedAt })])
       expect(await verifier.verify(SENTINEL_KEY)).toMatchObject({ ok: false, reason: 'revoked' })
+    })
+
+    // A date the store could not parse compares false against every instant, so a check written
+    // as `date <= now` would let the key through. Both fields must fail closed.
+    it('refuses a key whose revokedAt or expiresAt is an invalid date', async () => {
+      const bad = new Date('not a date')
+      const revoked = build([makeRow({ revokedAt: bad })])
+      expect(await revoked.verifier.verify(SENTINEL_KEY)).toMatchObject({
+        ok: false,
+        reason: 'revoked'
+      })
+      const expired = build([makeRow({ expiresAt: bad })])
+      expect(await expired.verifier.verify(SENTINEL_KEY)).toMatchObject({
+        ok: false,
+        reason: 'expired'
+      })
     })
 
     // A revoked key that is also expired reports revoked: one fixed precedence.

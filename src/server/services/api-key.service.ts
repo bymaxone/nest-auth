@@ -30,9 +30,12 @@ export const API_KEY_MAX_LABEL_LENGTH = 128
 /** Longest rotation overlap accepted, in seconds: 30 days. */
 export const API_KEY_MAX_OVERLAP_SECONDS = 2_592_000
 
-/** Control characters, which would corrupt a log line or an audit row that carries the label. */
-// eslint-disable-next-line no-control-regex -- the point of the pattern is to match control characters
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
+/**
+ * Characters that would corrupt or spoof a log line or an audit row carrying the label: control
+ * characters (C0 and C1), format characters (zero-width, directional overrides and isolates, the
+ * byte order mark, the soft hyphen) and the Unicode line and paragraph separators.
+ */
+const CONTROL_CHARACTERS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
@@ -219,10 +222,7 @@ export class ApiKeyService {
 
 function isActive(key: AuthApiKey, now: Date): boolean {
   const nowMs = now.getTime()
-  return (
-    (key.revokedAt === null || key.revokedAt.getTime() > nowMs) &&
-    (key.expiresAt === null || key.expiresAt.getTime() > nowMs)
-  )
+  return key.revokedAt === null && (key.expiresAt === null || key.expiresAt.getTime() > nowMs)
 }
 
 function summary(row: AuthApiKey): AuthApiKeySummary {

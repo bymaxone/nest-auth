@@ -905,7 +905,7 @@
       "compare two 32-byte buffers in constant time, against a fixed dummy digest when there is no row",
       "only then decide: parsed AND found AND equal AND not revoked AND not expired"
     ],
-    "validity": "a key is valid strictly before expiresAt and strictly before revokedAt; at the instant itself it is not",
+    "validity": "a key is valid strictly before expiresAt, and not at all once revokedAt is set, on every instance and whatever instant revokedAt holds; a date that does not parse counts as lapsed",
     "scopes": "a key must hold ALL scopes the route declares; no wildcard and no hierarchy; the most specific declaration wins (handler over class); an empty declaration is undeclared and the route is refused",
     "refusals": {
       "api_key_invalid": "absent, malformed, unknown, wrong secret, revoked, expired — one answer, no oracle",

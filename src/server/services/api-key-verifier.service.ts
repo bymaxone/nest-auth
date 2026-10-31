@@ -94,8 +94,9 @@ export class ApiKeyVerifierService {
   /**
    * The single decision, evaluated after every step above has run.
    *
-   * A key is valid strictly before `expiresAt` and strictly before `revokedAt`: at the instant
-   * itself it is not.
+   * A key is valid strictly before `expiresAt`, and not at all once `revokedAt` is set. The
+   * comparisons are written as "is still ahead", so a date the store could not parse (`NaN`, which
+   * compares false against everything) reads as lapsed rather than as valid.
    */
   private rejection(
     header: unknown,
@@ -107,8 +108,8 @@ export class ApiKeyVerifierService {
     if (!parsed) return header === undefined ? 'missing' : 'malformed'
     if (row === null) return 'unknown'
     if (!equal) return 'wrong_secret'
-    if (row.revokedAt !== null && row.revokedAt.getTime() <= nowMs) return 'revoked'
-    if (row.expiresAt !== null && row.expiresAt.getTime() <= nowMs) return 'expired'
+    if (row.revokedAt !== null) return 'revoked'
+    if (row.expiresAt !== null && !(row.expiresAt.getTime() > nowMs)) return 'expired'
     return null
   }
 }
