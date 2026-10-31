@@ -312,6 +312,23 @@ describe('AuthTokenVerifierService', () => {
     }
   )
 
+  // `requireMfa: false` does not even look at the claim, so a token that omits it is admitted. The
+  // claim-shape check belongs to the policy it skips; running it regardless would refuse a caller
+  // that established the fact another way.
+  it.each([
+    ['dashboard', DASHBOARD_PAYLOAD],
+    ['platform', PLATFORM_PAYLOAD]
+  ] as const)(
+    'admits a token with no mfaEnabled claim on the %s plane when requireMfa is false',
+    async (plane, payload) => {
+      mockJwt.verify.mockReturnValue({ ...payload, mfaEnabled: undefined })
+
+      await expect(
+        verifier.verifyAccessToken('tok', { plane, requireMfa: false })
+      ).resolves.toMatchObject({ plane })
+    }
+  )
+
   // -------------------------------------------------------------------------
   // Account status
   // -------------------------------------------------------------------------
@@ -530,7 +547,20 @@ describe('AuthTokenVerifierService', () => {
 
       expect(resolver).not.toHaveBeenCalled()
       expect(warn).toHaveBeenCalledTimes(1)
-      expect(String(warn.mock.calls[0]?.[0])).toContain('enforceTenantBinding')
+      expect(String(warn.mock.calls[0]?.[0])).toBe(
+        'verifyAccessToken: enforceTenantBinding is on but no request was passed, so the tenant ' +
+          'binding is not applied to this call. Pass the handshake as `request`.'
+      )
+    })
+
+    // Scenario: the flag is on but no resolver is configured (startup refuses this; the arm is the
+    // defensive twin). Expected: nothing is enforced, so nothing is warned about.
+    it('stays silent when the flag is on but there is no resolver', async () => {
+      Object.assign(mockOptions, { tenantIdResolver: undefined })
+
+      await verifier.verifyAccessToken('tok', { plane: 'dashboard' })
+
+      expect(warn).not.toHaveBeenCalled()
     })
 
     // Scenario: a request is passed, so the binding IS applied. Expected: no warning.

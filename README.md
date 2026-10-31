@@ -817,7 +817,7 @@ socket must also refuse a blocked account or an unfinished second factor, author
 
 **Tenant binding on the socket.** With `enforceTenantBinding` on, `WsJwtGuard` re-resolves the
 tenant of the upgrade and refuses (`auth.token_invalid`, the same code HTTP answers) a ticket or
-token minted for another tenant, exactly as `JwtAuthGuard` does. An upgrade has no Express request,
+token minted for another tenant, as `JwtAuthGuard` does on a mismatch. An upgrade has no Express request,
 so your `tenantIdResolver` is handed a request-like object with **only** these fields:
 
 | Field      | Value                                                                                                    |

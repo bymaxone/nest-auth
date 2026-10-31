@@ -33,6 +33,12 @@ describe('handshakeRequest', () => {
     ['a.example.com:3000', 'a.example.com'],
     ['[::1]', '[::1]'],
     ['[::1]:3000', '[::1]'],
+    // A literal whose closing bracket sits right after its colons: the scan for the port must
+    // start after the bracket, not inside the address.
+    ['[::]', '[::]'],
+    ['[::]:80', '[::]'],
+    // A colon before a stray `]` in a host that is not bracketed: only a leading `[` moves the scan.
+    ['a:b]:c', 'a'],
     ['', '']
   ])('should derive hostname from Host %p as %p', (host, expected) => {
     expect(handshakeRequest({ headers: { host } }).hostname).toBe(expected)

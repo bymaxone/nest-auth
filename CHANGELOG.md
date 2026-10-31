@@ -39,8 +39,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
-- `WsJwtGuard` enforces `enforceTenantBinding` on the bearer-header and ticket paths, matching
-  `JwtAuthGuard`, and `verifyAccessToken` can now enforce it when given the request.
+- `WsJwtGuard` enforces `enforceTenantBinding` on the bearer-header and ticket paths, and `verifyAccessToken` can now enforce it when given the request.
 
 ## [1.4.7] - 2026-10-31
 
