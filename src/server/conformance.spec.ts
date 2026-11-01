@@ -25,6 +25,7 @@ import type { Redis } from 'ioredis'
 import { sessionIndexKey } from './constants/user-keys'
 import { AuthController } from './controllers/auth.controller'
 import { AcceptInvitationDto } from './dto/accept-invitation.dto'
+import { ChangePasswordDto } from './dto/change-password.dto'
 import { LoginDto } from './dto/login.dto'
 import { MfaVerifyDto } from './dto/mfa-verify.dto'
 import { RegisterDto } from './dto/register.dto'
@@ -654,7 +655,14 @@ describe('cross-implementation conformance', () => {
       ],
       ['verificationOtp', VerifyEmailDto, 'otp', { email: 'a@e.com', tenantId: 't' }, digits],
       ['resetOtp', VerifyOtpDto, 'otp', { email: 'a@e.com', tenantId: 't' }, digits],
-      ['totpCode', MfaVerifyDto, 'code', {}, digits]
+      ['totpCode', MfaVerifyDto, 'code', {}, digits],
+      [
+        'opaqueToken',
+        ChangePasswordDto,
+        'refreshToken',
+        { currentPassword: 'x', newPassword: 'hunter2hunter2' },
+        text
+      ]
     ]
 
     /** Whether `value` passes validation for `property` on `dto`. */
@@ -694,6 +702,25 @@ describe('cross-implementation conformance', () => {
         }
       }
     )
+  })
+
+  describe('opaque token lower bound', () => {
+    // Verifies a present-but-empty refresh token is refused where the contract sets min 1.
+    // `@IsOptional` skips only an absent value, so an empty string must reach the length rule;
+    // accepting it would let a malformed credential fall through as "no token".
+    it('refuses an empty refreshToken on change-password and accepts a one-character one', async () => {
+      const rest = { currentPassword: 'x', newPassword: 'hunter2hunter2' }
+      const min = contract.requestFieldBounds['opaqueToken']?.min
+      expect(min).toBe(1)
+      const empty = await validate(
+        plainToInstance(ChangePasswordDto, { ...rest, refreshToken: '' })
+      )
+      const one = await validate(plainToInstance(ChangePasswordDto, { ...rest, refreshToken: 'a' }))
+      const absent = await validate(plainToInstance(ChangePasswordDto, rest))
+      expect(empty.some((e) => e.property === 'refreshToken')).toBe(true)
+      expect(one).toHaveLength(0)
+      expect(absent).toHaveLength(0)
+    })
   })
 
   // -------------------------------------------------------------------------
