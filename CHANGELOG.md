@@ -35,9 +35,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 userAgent)`.** It is the challenge for an entry point that serves the platform plane only: it
   refuses a non-platform plane with `PLATFORM_AUTH_REQUIRED` before any side effect, then runs the
   challenge and returns a `PlatformAuthResult`. A host that mounts its own platform challenge route
-  can call it to get the same refusal. `challenge()` is unchanged. The temp token is verified twice
-  on this path, once to decide the plane and once by the challenge; the plane is a signed claim, so
-  both reads agree.
+  can call it to get the same refusal. `challenge()` is unchanged.
 
 ### Fixed
 
