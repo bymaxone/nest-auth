@@ -1,0 +1,77 @@
+name: API surface
+
+# An early signal for the check the release workflow runs before it publishes. When a pull
+# request moves the version in package.json, this builds the package and compares its public
+# declarations with the previous published version. A change passes only when the CHANGELOG
+# section of the new version, in this pull request, holds an "Apply to a derived backend" note,
+# so a release that changes the API without saying so fails here, before the tag, instead of at
+# the publish. A pull request that leaves the version alone is skipped: there is no release to
+# hold the declarations to.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - package.json
+
+concurrency:
+  group: api-surface-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only, and no secret is used: the previous version comes from the public registry.
+permissions:
+  contents: read
+
+jobs:
+  declarations:
+    name: Public declaration changes carry their note
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base commit is read to tell whether the version moved.
+          fetch-depth: 0
+          # The install step below runs the pull request's own scripts; the read-only token must
+          # not stay in the repository's git configuration for them to read.
+          persist-credentials: false
+
+      - name: Did this pull request bump the version
+        id: bump
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          BASE_VERSION=$(git show "$BASE_SHA:package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+          HEAD_VERSION=$(node -p "require('./package.json').version")
+          if [ "$BASE_VERSION" = "$HEAD_VERSION" ]; then
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            echo "The version is still $HEAD_VERSION: nothing to compare."
+          else
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "The version moves from $BASE_VERSION to $HEAD_VERSION."
+          fi
+
+      - name: Setup pnpm
+        if: steps.bump.outputs.bumped == 'true'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        if: steps.bump.outputs.bumped == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.bump.outputs.bumped == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        if: steps.bump.outputs.bumped == 'true'
+        run: pnpm build
+
+      - name: Compare the public declarations and read the CHANGELOG note
+        if: steps.bump.outputs.bumped == 'true'
+        run: node scripts/check-api-surface.mjs

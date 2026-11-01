@@ -107,6 +107,16 @@ jobs:
         # a second time and rebuild the `dist/` these gates just validated.
         run: pnpm prepublishOnly
 
+      - name: Verify a change to the public declarations carries its CHANGELOG note
+        # Runs after the build inside prepublishOnly, so `dist/` exists, and before the
+        # publish. It compares the built `.d.ts` and `.d.cts` with the previous published
+        # version, ignoring comments, and always prints what differs. A difference passes only
+        # when the CHANGELOG section of this version holds an "Apply to a derived backend" note,
+        # since the version number carries no compatibility information here. It reads the
+        # previous version from the public registry, so it needs no credential. There is no
+        # override: a difference without its note is resolved by writing the note.
+        run: node scripts/check-api-surface.mjs
+
       - name: Publish to npm with provenance
         # `npm publish`, not `pnpm publish`. The registry's `readme` field is
         # populated from the publish request, and pnpm 11 does not send it — every

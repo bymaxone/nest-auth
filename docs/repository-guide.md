@@ -67,6 +67,13 @@ pnpm release      # npm publish --provenance --access public
 
 Post-build checks: all 5 exports resolve, CJS + ESM work, .d.ts present, no bundled peer deps.
 
+Public declaration gate: `pnpm check:api` (run after `pnpm build`) compares the built `.d.ts` and
+`.d.cts` files with the previous published version, ignoring comments, and always prints what
+differs. A difference passes only when the CHANGELOG section of the version being released carries
+an "Apply to a derived backend" note, because the version number says nothing about compatibility
+here. The release workflow runs it after `prepublishOnly` and before the publish; `prepublishOnly`
+itself does not include it. There is no override: write the note.
+
 ---
 
 ## Pre-task checklist
