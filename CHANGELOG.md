@@ -26,8 +26,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   unchanged. Only the attribute changes: the access and session-signal cookies still follow
   `cookies.sameSite`, so the OAuth return trip is unaffected, and the cookie that ends a session
   is cleared with the same attribute it was issued with. Nothing a user could do stops working:
-  the silent-refresh route already refused every caller whose `Sec-Fetch-Site` is not
-  `same-origin` or `none`. Measured in Chromium 140 with the real proxy and route handler, a
+  the silent-refresh route already refused every caller stating a `Sec-Fetch-Site` other
+  than `same-origin` or `none`. Measured in Chromium 140 with the real proxy and route handler, a
   `Lax` refresh cookie does reach that route on a cross-site link, and the route answers before
   reading it, so a `Strict` cookie changes the outcome of no navigation. A deployment that
   proxies the refresh call from a frontend on another site must already be on `none`.
