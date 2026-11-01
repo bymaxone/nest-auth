@@ -446,9 +446,9 @@ export interface BymaxAuthModuleOptions {
      * the module. Default: `'lax'`.
      *
      * The refresh-token cookie does not follow this value except for `'none'`: it is issued
-     * `Strict` under `'lax'` and `'strict'`, because only the refresh route reads it and that
-     * route refuses a cross-site caller on its own. Under `'none'` it is `None` too, since a
-     * cross-site frontend's refresh call would otherwise carry no credential.
+     * `Strict` under `'lax'` and `'strict'`, because only the refresh route reads it and no
+     * cross-site request needs it. Under `'none'` it is `None` too, since a cross-site
+     * frontend's refresh call would otherwise carry no credential.
      *
      * Trade-offs:
      * - `'lax'` (default): cookies travel on top-level cross-site GET navigations.

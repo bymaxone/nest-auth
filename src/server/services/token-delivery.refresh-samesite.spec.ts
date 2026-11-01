@@ -62,9 +62,9 @@ function sameSiteOf(calls: CookieCall[], name: string): unknown {
 describe('TokenDeliveryService — refresh cookie SameSite', () => {
   // Scenario: the default posture (`lax`) is configured. Expected: the refresh cookie is
   // Strict while the access and session-signal cookies keep following the configured value.
-  // Why: the refresh cookie is only ever read by the refresh route, which refuses a cross-site
-  // caller on its own; Strict withholds it from every cross-site request at no cost, and Lax on
-  // the access cookie is what the OAuth return trip needs.
+  // Why: the refresh cookie is only ever read by the refresh route, so Strict withholds it from
+  // every cross-site request at no cost, while Lax on the access cookie is what the OAuth return
+  // trip needs.
   it('issues the refresh cookie Strict when the configured value is lax', async () => {
     const service = await buildService('lax')
     const res = makeRes()
