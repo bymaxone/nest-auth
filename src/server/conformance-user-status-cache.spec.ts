@@ -11,6 +11,7 @@
  * @layer Conformance
  */
 
+import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -18,18 +19,39 @@ import { DEFAULT_OPTIONS } from './config/default-options'
 import { AccountStatusService } from './services/account-status.service'
 
 interface UserStatusCacheContract {
+  hmacKeyDerivation: { vectors: { derivedKeyHex: string }[] }
   redisKeyPrefixes: Record<string, string>
+  userSubjectPreimages: { dashboard: string }
+  userSubjectDerivedKeys: Record<string, string>
   userStatusCache: {
     emailVerifiedValue: { verified: string; unverified: string }
     ttl: { option: string; default: number }
     invalidateOrder: string[]
-    vectors: { tenantId: string; userId: string; scope: string }[]
+    vectors: { tenantId: string; userId: string; userSubject: string; digestHex: string }[]
   }
 }
 
 const contract = JSON.parse(
   readFileSync(join(__dirname, '../../conformance/wire-contract.json'), 'utf8')
 ) as UserStatusCacheContract
+
+/** The identifier-HMAC key the contract pins, and the one the service under test is given. */
+const HMAC_KEY = contract.hmacKeyDerivation.vectors[0]?.derivedKeyHex ?? ''
+
+/** Renders the contract's dashboard subject template, the way the contract spells it. */
+function renderSubject(tenantId: string, userId: string): string {
+  return contract.userSubjectPreimages.dashboard
+    .replace('{utf8ByteLength(tenantId)}', String(Buffer.byteLength(tenantId, 'utf8')))
+    .replace('{tenantId}', tenantId)
+    .replace('{userId}', userId)
+}
+
+/** The digest an account's entries are keyed by, computed here and not by the library. */
+function digestOf(tenantId: string, userId: string): string {
+  return createHmac('sha256', HMAC_KEY)
+    .update(renderSubject(tenantId, userId), 'utf8')
+    .digest('hex')
+}
 
 describe('account-status cache', () => {
   const cache = contract.userStatusCache
@@ -56,6 +78,7 @@ describe('account-status cache', () => {
     const record = { status: 'Active', emailVerified: true }
     const userRepo = { findById: jest.fn().mockResolvedValue(record) }
     const resolved = {
+      hmacKey: HMAC_KEY,
       userStatusCacheTtlSeconds: options.ttl ?? DEFAULT_OPTIONS.userStatusCacheTtlSeconds,
       emailVerification: { required: options.required },
       blockedStatuses: ['BANNED']
@@ -64,27 +87,48 @@ describe('account-status cache', () => {
     return { service, calls, record, userRepo, store }
   }
 
-  // Verifies the key both entries are written under, for every pinned scope. The ids are
-  // percent-encoded one at a time, so a delimiter inside either cannot move the boundary; the
-  // vectors include the characters implementations most often disagree about.
+  // Verifies the key both entries are written under, for every pinned vector: the prefix, then the
+  // HMAC digest of the account's subject. The vectors include a delimiter inside either id and a
+  // multi-byte tenant, so a subject that stopped carrying its byte-length prefix names another key.
   it.each(cache.vectors)(
-    'names both entries by the pinned scope for $tenantId / $userId',
+    'names both entries by the pinned digest for $tenantId / $userId',
     async (v) => {
       const { service, calls } = build({ required: true })
 
       await service.assertDashboardAccountUsable({ tenantId: v.tenantId, userId: v.userId })
 
       expect(calls.filter((c) => c.op === 'set').map((c) => c.key)).toEqual([
-        `${contract.redisKeyPrefixes.userStatus}:${v.scope}`,
-        `${contract.redisKeyPrefixes.userEmailVerified}:${v.scope}`
+        `${contract.redisKeyPrefixes.userStatus}:${v.digestHex}`,
+        `${contract.redisKeyPrefixes.userEmailVerified}:${v.digestHex}`
       ])
     }
   )
 
-  // Verifies the scope string is the contract's own composition of the two encoded halves, so a
-  // vector cannot drift from the rule it illustrates.
-  it.each(cache.vectors)('derives the pinned scope from the encoding rule for $scope', (v) => {
-    expect(`${encodeURIComponent(v.tenantId)}:${encodeURIComponent(v.userId)}`).toBe(v.scope)
+  // Verifies each vector is the contract's own derivation, computed outside the library: the
+  // subject rendered from the contract's grammar, and the digest of that subject under the pinned
+  // key. A vector that drifted from the rule it illustrates fails here, whichever of the two moved.
+  it.each(cache.vectors)('derives the pinned subject and digest for $tenantId / $userId', (v) => {
+    expect(renderSubject(v.tenantId, v.userId)).toBe(v.userSubject)
+    expect(digestOf(v.tenantId, v.userId)).toBe(v.digestHex)
+  })
+
+  // Verifies the vectors name distinct entries, including the two whose ids differ only by where a
+  // delimiter falls: the property the subject's byte-length prefix exists for.
+  it('keeps every pinned account on its own entry', () => {
+    const digests = cache.vectors.map((v) => v.digestHex)
+
+    expect(new Set(digests).size).toBe(digests.length)
+  })
+
+  // Verifies the contract lists both entries among the account-derived keys, spelled as the
+  // derivation the vectors exercise.
+  it.each([
+    ['userStatus', contract.redisKeyPrefixes.userStatus],
+    ['userEmailVerified', contract.redisKeyPrefixes.userEmailVerified]
+  ])('lists %s among the subject-derived keys', (name, prefix) => {
+    expect(contract.userSubjectDerivedKeys[name]).toBe(
+      `${prefix}:{hmac_sha256(hmacKey, userSubject)}`
+    )
   })
 
   // Verifies the value forms: the status as the repository returned it, and '1' / '0' for the
@@ -161,15 +205,15 @@ describe('account-status cache', () => {
     async (_which, prefix) => {
       const { service, calls, userRepo, store } = build({ required: true })
       await service.assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
-      store.delete(`${prefix}:t:u`)
+      store.delete(`${prefix}:${digestOf('t', 'u')}`)
       calls.length = 0
 
       await service.assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
 
       expect(userRepo.findById).toHaveBeenCalledTimes(2)
       expect(calls.filter((c) => c.op === 'set').map((c) => c.key)).toEqual([
-        `${contract.redisKeyPrefixes.userStatus}:t:u`,
-        `${contract.redisKeyPrefixes.userEmailVerified}:t:u`
+        `${contract.redisKeyPrefixes.userStatus}:${digestOf('t', 'u')}`,
+        `${contract.redisKeyPrefixes.userEmailVerified}:${digestOf('t', 'u')}`
       ])
     }
   )

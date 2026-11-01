@@ -1249,7 +1249,7 @@ Use this checklist when writing or reviewing JWT-related code in this project.
 | `prt`  | `auth:prt:{sha256(token)}`                                                                     | Platform refresh session                                                  |
 | `prp`  | `auth:prp:{sha256(oldToken)}`                                                                  | Platform rotation grace pointer                                           |
 | `mfa`  | `auth:mfa:{sha256(jti)}`                                                                       | MFA temp token (single use)                                               |
-| `us`   | `auth:us:{tenantId}:{userId}` (each part passed through `encodeURIComponent`)                  | Status cache; `uev:` holds the verified email                             |
+| `us`   | `auth:us:{hmac_sha256(hmacKey, userSubject)}`                                                  | Status cache; `uev:` holds the verified email                             |
 | `sess` | `auth:sess:{hmac_sha256(hmacKey, "dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}")}` | Session index (SET); `psess:{hmac("platform:{userId}")}` for the platform |
 | `sd`   | `auth:sd:{sessionHash}`                                                                        | Session details                                                           |
 

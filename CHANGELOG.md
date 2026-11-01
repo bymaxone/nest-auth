@@ -18,13 +18,31 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **The account-status cache keys no longer carry the tenant and user id.** The `us:` (status) and
+  `uev:` (email-verified) entries were keyed by the percent-encoded tenant and user id; they are now
+  keyed by `HMAC-SHA-256(hmacKey, userSubject)` of the tenant-scoped dashboard subject, like the
+  session index, the token epoch and every other key that names an account. Both entries are
+  TTL'd cache values, so nothing needs migrating: the first read after the change misses and
+  refills. **Do not name these keys yourself**; `AccountStatusService.invalidate` is the supported
+  way to drop them and it already derives the new shape. A deployment that runs the old and the new
+  release side by side (a rolling deploy, or another backend on the old shape sharing the store)
+  can serve a changed status stale for **up to `userStatusCacheTtlSeconds`** (60 s by default),
+  because an invalidation issued by one side deletes a key the other does not read, and pays one
+  extra repository read per account. Drain the old release before the new one serves to avoid even
+  that.
+
+### Security
+
+- The status cache no longer writes account identifiers into Redis keys in the clear.
+
 ### Documentation
 
 - **The account-status cache is part of the shared wire contract.** `conformance/wire-contract.json`
-  now declares the `us` and `uev` prefixes and a `userStatusCache` section: the key and its scope
-  encoding (each id percent-encoded on its own, with vectors for the characters implementations
-  disagree about), the value forms, the TTL source and the invalidation order (verified entry
-  first). A conformance test pins the library's behaviour to it. No behaviour changes.
+  declares the `us` and `uev` prefixes and a `userStatusCache` section: the key derivation, the
+  value forms, the TTL source and the invalidation order (verified entry first), with vectors for
+  delimiter-bearing and multi-byte ids. A conformance test pins the library's behaviour to it.
 
 ## [1.4.9] - 2026-11-01
 

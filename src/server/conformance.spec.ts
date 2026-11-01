@@ -148,7 +148,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = '04c9d56222d731851b1e2c24363ecdbcf1d4fbab52bc39a1b6f818e3210f5fed'
+const CONTRACT_SHA256 = 'e01663b3011b76c1664c67d186cbca9ef843576b7a05ab881f177be362dffb89'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -313,16 +313,14 @@ describe('cross-implementation conformance', () => {
     // that silently derives from something else. Two of them share ONE preimage — the anti-replay
     // marker and the recovery-code claim — and are separated only by their prefix.
     //
-    // Eight now, not six: the session index and the token epoch joined when they stopped being
-    // keyed on the bare user id. The count is asserted rather than left open because the whole
-    // value of this block is that a key deriving from the subject and NOT listed here is invisible
-    // to the contract — which is exactly how those two spent so long tenant-blind.
-    it('derives all eight named keys from the subject', () => {
+    // The count is asserted rather than left open: the whole value of this block is that a key
+    // deriving from the subject and NOT listed here is invisible to the contract.
+    it('derives all ten named keys from the subject', () => {
       const derived = Object.entries(contract.userSubjectDerivedKeys).filter(
         ([name]) => name !== '$comment'
       )
 
-      expect(derived.length).toBe(8)
+      expect(derived.length).toBe(10)
       for (const [, formula] of derived) {
         expect(formula).toContain('userSubject')
       }

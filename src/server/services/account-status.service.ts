@@ -12,6 +12,8 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { userSubject } from '../constants/user-subject'
+import { hmacSha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IPlatformUserRepository } from '../interfaces/platform-user-repository.interface'
@@ -28,19 +30,27 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
  * a key format drifts out of agreement silently: the delete stops matching, nothing raises, and
  * the entry simply survives to its TTL.
  *
- * @param ref - The account to name. The tenant is required: a repository id is unique only WITHIN
- *   a tenant, so a key built from a bare id can answer for a colliding id elsewhere.
+ * Both keys are the HMAC of the tenant-scoped {@link userSubject}, like every other key that names
+ * an account. The tenant is part of the subject because a repository id is unique only WITHIN a
+ * tenant, so a key built from a bare id could answer for a colliding id elsewhere; the HMAC is
+ * there because the keyspace is shared and readable, and an account identifier written into a key
+ * in the clear is disclosed to anyone with access to the store. The cache is dashboard-only: the
+ * platform status check is uncached, so there is no platform subject to derive.
+ *
+ * @param ref - The account to name. The tenant is required and non-empty; an empty one derives a
+ *   subject no read ever wrote.
+ * @param hmacKey - The library's identifier-HMAC key.
  * @returns The status key and the email-verified key for that account.
  */
-function cacheKeysFor(ref: { readonly userId: string; readonly tenantId: string }): {
+function cacheKeysFor(
+  ref: { readonly userId: string; readonly tenantId: string },
+  hmacKey: string
+): {
   readonly statusKey: string
   readonly verifiedKey: string
 } {
-  // Each half is percent-encoded before it is joined by `:`, so a tenant or subject that itself
-  // contains a `:` cannot shift the boundary and collide with another pair (`('a:b','c')` and
-  // `('a','b:c')` would otherwise both key `a:b:c`).
-  const scope = `${encodeURIComponent(ref.tenantId)}:${encodeURIComponent(ref.userId)}`
-  return { statusKey: `us:${scope}`, verifiedKey: `uev:${scope}` }
+  const digest = hmacSha256(userSubject('dashboard', ref.userId, ref.tenantId), hmacKey)
+  return { statusKey: `us:${digest}`, verifiedKey: `uev:${digest}` }
 }
 
 /**
@@ -51,7 +61,7 @@ function cacheKeysFor(ref: { readonly userId: string; readonly tenantId: string 
  * request — an access token's whole lifetime, a stream held open for hours — therefore has to ask
  * again, which is what this service exists to do.
  *
- * It reads through a Redis cache (`us:{tenantId}:{userId}`, and `uev:` for the verified flag)
+ * It reads through a Redis cache (`us:` for the status and `uev:` for the verified flag, each keyed by the account)
  * rather than the repository, so asking on every request or on every reconnect costs one `get`
  * rather than a database round trip. A miss resolves both facts from a single tenant-scoped read
  * and writes both back for `userStatusCacheTtlSeconds`.
@@ -113,7 +123,7 @@ export class AccountStatusService {
    *
    * @param ref - The account whose cached facts are now stale. Both fields must be non-empty.
    * @throws {TypeError} When either id is empty or blank. Refused rather than attempted: an empty
-   *   tenant builds `us::{userId}`, which names no entry any read ever wrote, so the delete would
+   *   tenant derives a subject no read ever wrote, so the delete would
    *   remove nothing and resolve normally — the caller's admin surface reports the suspension
    *   applied while the cached `active` survives its full TTL. That is the exact silent failure
    *   this method exists to eliminate, and an unset resolver value or a `undefined` coerced by a
@@ -124,7 +134,7 @@ export class AccountStatusService {
       throw new TypeError('invalidate: userId and tenantId must both be non-empty')
     }
 
-    const { statusKey, verifiedKey } = cacheKeysFor(ref)
+    const { statusKey, verifiedKey } = cacheKeysFor(ref, this.options.hmacKey)
     // The verified flag goes FIRST. If the second delete fails — a blip, a failover — the caller
     // sees the rejection either way, but the entry left behind should be the one whose staleness
     // merely costs a repository read. A stale `uev` of `0` locks a just-verified account out of
@@ -150,7 +160,7 @@ export class AccountStatusService {
     readonly tenantId: string
   }): Promise<void> {
     const { userId, tenantId } = ref
-    const { statusKey, verifiedKey } = cacheKeysFor(ref)
+    const { statusKey, verifiedKey } = cacheKeysFor(ref, this.options.hmacKey)
     const cacheTtl = this.options.userStatusCacheTtlSeconds
     const requireVerified = this.options.emailVerification.required
 

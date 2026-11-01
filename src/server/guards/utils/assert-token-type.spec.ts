@@ -51,15 +51,15 @@ describe('assertValidSub', () => {
     expect(() => assertValidSub(value)).not.toThrow()
   })
 
-  // Rejects empty strings — they produce degenerate Redis keys like `us:` which collapse
-  // into a single shared namespace across users.
+  // Rejects empty strings — they produce degenerate Redis keys which collapse into a single
+  // shared namespace across users.
   it('should throw when sub is an empty string', () => {
     expect(() => assertValidSub('')).toThrow(AuthException)
   })
 
   // Rejects non-string values — a forged or misconfigured signer emitting `sub` as a
   // number or object would otherwise flow into string-concatenation and produce keys
-  // like `us:[object Object]`.
+  // naming `[object Object]`.
   it.each([null, undefined, 42, {}, []])('should throw when sub is %p', (value) => {
     expect(() => assertValidSub(value)).toThrow(AuthException)
   })
@@ -87,7 +87,7 @@ describe('assertValidTenantId', () => {
     expect(() => assertValidTenantId(value)).not.toThrow()
   })
 
-  // Rejects an empty tenant — it would produce a degenerate `us::{sub}` key and defeat the
+  // Rejects an empty tenant — it would derive a key no read ever wrote and defeat the
   // tenant-binding comparison it feeds.
   it('should throw when tenantId is an empty string', () => {
     expect(() => assertValidTenantId('')).toThrow(AuthException)

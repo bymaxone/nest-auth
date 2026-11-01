@@ -82,7 +82,8 @@ export class JwtAuthGuard implements CanActivate {
     assertValidJti(payload.jti)
 
     // Require sub as a bounded non-empty string — used downstream in Redis keys
-    // (`us:{tenantId}:{sub}`, `sess:{sub}`) and HMAC-identifier pre-images. Rejecting
+    // (the status cache, the session index and the token epoch are all derived from it) and
+    // HMAC-identifier pre-images. Rejecting
     // empty and pathological shapes keeps the key space well-formed.
     assertValidSub(payload.sub)
 
