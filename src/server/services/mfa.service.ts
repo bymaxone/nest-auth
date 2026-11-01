@@ -759,6 +759,32 @@ export class MfaService {
     }
   }
 
+  /**
+   * The account a hook is handed after an MFA transition, projected from the state the transition
+   * wrote.
+   *
+   * The record in hand was read before the transition, so its `mfaEnabled` still describes the
+   * state the transition replaced; the hooks run after the write and must be told what it
+   * produced. Only the flag is overridden. The secret and recovery-code fields are stripped by
+   * the same projections every other hook payload uses, and the repository's own record is not
+   * modified.
+   *
+   * @param context - The identity plane the account belongs to.
+   * @param user - The record read before the transition.
+   * @param mfaEnabled - Whether the transition left the second factor enabled.
+   * @returns The projection for the plane, with `mfaEnabled` as written.
+   */
+  private committedSafeUser(
+    context: 'dashboard' | 'platform',
+    user: AuthUser | AuthPlatformUser,
+    mfaEnabled: boolean
+  ): SafeAuthUser {
+    const committed = { ...user, mfaEnabled }
+    return context === 'platform'
+      ? this.platformUserAsSafeUser(committed as AuthPlatformUser)
+      : this.toSafeUser(committed as AuthUser)
+  }
+
   // ---------------------------------------------------------------------------
   // setup — TOTP secret generation, idempotent key reservation, recovery codes
   // ---------------------------------------------------------------------------
@@ -981,10 +1007,7 @@ export class MfaService {
 
     // Fire-and-forget hook — errors must not roll back a completed DB operation.
     if (this.hooks.afterMfaEnabled) {
-      const safeUser =
-        context === 'platform'
-          ? this.platformUserAsSafeUser(user as AuthPlatformUser)
-          : this.toSafeUser(user as AuthUser)
+      const safeUser = this.committedSafeUser(context, user, true)
       void Promise.resolve(
         this.hooks.afterMfaEnabled(safeUser, {
           // The plane, because the tenant cannot carry it: a platform admin is rendered with the
@@ -1352,10 +1375,7 @@ export class MfaService {
       provider.sendMfaDisabledNotification(tenant, email)
     )
 
-    const safeUser =
-      context === 'platform'
-        ? this.platformUserAsSafeUser(user as AuthPlatformUser)
-        : this.toSafeUser(user as AuthUser)
+    const safeUser = this.committedSafeUser(context, user, false)
 
     if (this.hooks.afterMfaDisabled) {
       void Promise.resolve(
@@ -1445,10 +1465,7 @@ export class MfaService {
       provider.sendMfaDisabledNotification(tenant, email)
     )
 
-    const safeUser =
-      context === 'platform'
-        ? this.platformUserAsSafeUser(user as AuthPlatformUser)
-        : this.toSafeUser(user as AuthUser)
+    const safeUser = this.committedSafeUser(context, user, false)
 
     if (this.hooks.afterMfaDisabled) {
       void Promise.resolve(
