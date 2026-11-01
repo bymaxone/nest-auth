@@ -31,6 +31,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   brute-force counter either. The error code is unchanged, and the dashboard route keeps serving
   both planes. A handler that relied on `afterLogin` or `onNewSession` firing for such a request
   no longer sees it.
+- **`MfaService` has a new public member, `challengePlatformOnly(mfaTempToken, code, ip,
+userAgent)`.** It is the challenge for an entry point that serves the platform plane only: it
+  verifies the temp token once, refuses a non-platform plane with `PLATFORM_AUTH_REQUIRED` before
+  any side effect, runs the challenge and returns a `PlatformAuthResult`. The platform challenge
+  route calls it. `challenge()` keeps its signature and behaviour, and a host that mounts its own
+  platform challenge route can call the new member to get the same refusal instead of checking the
+  result's shape after the fact. The declaration also gains a private member that `challenge()` now
+  delegates to.
 
 ### Fixed
 

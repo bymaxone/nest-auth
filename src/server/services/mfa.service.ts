@@ -240,6 +240,14 @@ function isMfaSetupData(value: unknown): value is MfaSetupData {
 const PLANE_TENANT_MESSAGE =
   'tenantId must be a non-empty value on the dashboard plane and absent on the platform plane'
 
+/** What `TokenManagerService.verifyMfaTempToken` returns for a valid MFA challenge token. */
+interface VerifiedMfaTempToken {
+  userId: string
+  context: 'dashboard' | 'platform'
+  jti: string
+  tenantId?: string
+}
+
 /**
  * Manages TOTP-based multi-factor authentication lifecycle.
  *
@@ -1049,19 +1057,79 @@ export class MfaService {
     ip: string,
     userAgent: string
   ): Promise<AuthResult | PlatformAuthResult> {
-    // Step 1: Verify the MFA temp token. We DO NOT consume it here — the
-    // token stays alive in Redis until the TOTP / recovery code passes,
+    return this.runChallenge(
+      await this.tokenManager.verifyMfaTempToken(mfaTempToken),
+      code,
+      ip,
+      userAgent
+    )
+  }
+
+  /**
+   * The challenge for an entry point that serves the platform plane only.
+   *
+   * Reads the plane from the temp token first and refuses a dashboard token with
+   * `PLATFORM_AUTH_REQUIRED` before anything is spent. The challenge consumes the token, burns the
+   * TOTP code, stores a session, stamps the last login and fires the hooks, so refusing after it
+   * leaves an orphan session nobody holds a token for. The token is verified once, here, and the
+   * challenge runs on that result; the verification only reads, so a refusal touches neither the
+   * brute-force counter nor the TOTP anti-replay key.
+   *
+   * @param mfaTempToken - Short-lived MFA challenge JWT issued at platform login.
+   * @param code - 6-digit TOTP code or `dddd-dddd-dddd` recovery code.
+   * @param ip - Client IP address for session audit.
+   * @param userAgent - User-Agent header for session description.
+   * @returns The platform auth result.
+   * @throws `PLATFORM_AUTH_REQUIRED` if the token is for the dashboard plane.
+   * @throws `MFA_TEMP_TOKEN_INVALID` if the token is invalid or already consumed.
+   * @throws `ACCOUNT_LOCKED` if the brute-force threshold has been reached.
+   * @throws `MFA_INVALID_CODE` if the submitted code is incorrect.
+   */
+  async challengePlatformOnly(
+    mfaTempToken: string,
+    code: string,
+    ip: string,
+    userAgent: string
+  ): Promise<PlatformAuthResult> {
+    const verified = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
+    if (verified.context !== 'platform') {
+      throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
+    }
+    return this.runChallenge({ ...verified, context: 'platform' }, code, ip, userAgent)
+  }
+
+  /**
+   * Runs the challenge on a temp token that has already been verified.
+   *
+   * The overload lets a caller that has established the platform plane receive the platform
+   * result type without a cast.
+   */
+  private runChallenge(
+    verified: VerifiedMfaTempToken & { context: 'platform' },
+    code: string,
+    ip: string,
+    userAgent: string
+  ): Promise<PlatformAuthResult>
+  private runChallenge(
+    verified: VerifiedMfaTempToken,
+    code: string,
+    ip: string,
+    userAgent: string
+  ): Promise<AuthResult | PlatformAuthResult>
+  private async runChallenge(
+    verified: VerifiedMfaTempToken,
+    code: string,
+    ip: string,
+    userAgent: string
+  ): Promise<AuthResult | PlatformAuthResult> {
+    // Step 1 was the verification of the MFA temp token, done by the caller. It does NOT consume
+    // the token — the token stays alive in Redis until the TOTP / recovery code passes,
     // so a single mistyped digit surfaces as `MFA_INVALID_CODE` (retryable)
     // instead of `MFA_TEMP_TOKEN_INVALID` (dead end). The brute-force
     // counter (Step 2) caps how many wrong codes can be tried under one
     // token. The token is consumed atomically in Step 5 once the code is
     // confirmed valid.
-    const {
-      userId,
-      context,
-      tenantId,
-      jti: tempTokenJti
-    } = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
+    const { userId, context, tenantId, jti: tempTokenJti } = verified
 
     // Step 2: Brute-force check. HMAC key prevents Redis key reversal.
     // The 'challenge:' prefix namespaces this counter away from the 'disable' counter —
