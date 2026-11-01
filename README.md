@@ -857,6 +857,8 @@ BymaxAuthModule.registerAsync({
 })
 
 // main.ts
+import { proxyPolicy } from './app.module' // wherever the module is configured
+
 const app = await NestFactory.create<NestExpressApplication>(AppModule)
 const expressApp = app.getHttpAdapter().getInstance()
 expressApp.set('trust proxy', 'loopback, 10.0.0.0/8')
