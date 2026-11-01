@@ -32,13 +32,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   both planes. A handler that relied on `afterLogin` or `onNewSession` firing for such a request
   no longer sees it.
 - **`MfaService` has a new public member, `challengePlatformOnly(mfaTempToken, code, ip,
-userAgent)`, and a new private one, `runChallenge`.** The public member is the challenge for an
-  entry point that serves the platform plane only: it verifies the temp token once, refuses a
-  non-platform plane with `PLATFORM_AUTH_REQUIRED` before any side effect, runs the challenge and
-  returns a `PlatformAuthResult`. A host that mounts its own platform challenge route can call it
-  to get the same refusal. `challenge()`
-  keeps its signature and behaviour and now delegates to `runChallenge`; a subclass of
-  `MfaService` that declares a member of that name has to rename it.
+userAgent)`.** It is the challenge for an entry point that serves the platform plane only: it
+  refuses a non-platform plane with `PLATFORM_AUTH_REQUIRED` before any side effect, then runs the
+  challenge and returns a `PlatformAuthResult`. A host that mounts its own platform challenge route
+  can call it to get the same refusal. `challenge()` is unchanged. The temp token is verified twice
+  on this path, once to decide the plane and once by the challenge; the plane is a signed claim, so
+  both reads agree.
 
 ### Fixed
 

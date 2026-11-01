@@ -207,10 +207,10 @@ describe('MfaService.challengePlatformOnly', () => {
     for (const [, collaborator] of SIDE_EFFECTS) expect(collaborator).not.toHaveBeenCalled()
   })
 
-  // Scenario: a platform token and a valid code. Expected: the platform result, and the token read
-  // exactly once. Why: the entry point exists to decide the plane before the work, not to read the
-  // token a second time inside the challenge.
-  it('should complete a platform-plane challenge and verify the token once', async () => {
+  // Scenario: a platform token and a valid code. Expected: the platform result. The token is read
+  // twice, once to decide the plane and once by the challenge itself, and the token is consumed
+  // exactly once. Why: the plane is a signed claim, so the two reads cannot disagree.
+  it('should complete a platform-plane challenge', async () => {
     const { base32 } = generateTotpSecret()
     const code = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
     mockTokenManager.verifyMfaTempToken.mockResolvedValue(PLATFORM_TOKEN)
@@ -223,7 +223,27 @@ describe('MfaService.challengePlatformOnly', () => {
     const result = await service.challengePlatformOnly('platform.temp.jwt', code, '1.2.3.4', 'ua')
 
     expect(result).toBe(PLATFORM_RESULT)
-    expect(mockTokenManager.verifyMfaTempToken).toHaveBeenCalledTimes(1)
+    expect(mockTokenManager.verifyMfaTempToken).toHaveBeenCalledTimes(2)
+    expect(mockTokenManager.verifyMfaTempToken).toHaveBeenNthCalledWith(1, 'platform.temp.jwt')
+    expect(mockTokenManager.consumeMfaTempToken).toHaveBeenCalledTimes(1)
     expect(mockTokenManager.consumeMfaTempToken).toHaveBeenCalledWith('jti-platform')
+  })
+
+  // Scenario: the token reads as a platform one but the challenge answers with a dashboard-shaped
+  // result. Expected: PLATFORM_AUTH_REQUIRED, and nothing of that result is returned. Why: the
+  // plane was verified, so the two disagreeing is a fault to refuse, not a result to pass on.
+  it('should refuse a dashboard-shaped result for a platform-plane token', async () => {
+    mockTokenManager.verifyMfaTempToken.mockResolvedValue(PLATFORM_TOKEN)
+    const challenge = jest
+      .spyOn(service, 'challenge')
+      .mockResolvedValue({ user: { id: 'user-1' } } as never)
+
+    await expect(
+      service.challengePlatformOnly('platform.temp.jwt', '123456', '1.2.3.4', 'ua')
+    ).rejects.toMatchObject({
+      response: { error: { code: AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED } }
+    })
+
+    expect(challenge).toHaveBeenCalledTimes(1)
   })
 })
