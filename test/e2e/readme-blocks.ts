@@ -26,7 +26,7 @@ function quickStartBlocks(): string[] {
   )
 }
 
-/** The one block that contains `marker`; zero or several is a README this suite no longer reads. */
+/** The one block that contains `marker`; zero or several is a README this suite cannot read. */
 function block(marker: string): string {
   const found = quickStartBlocks().filter((candidate) => candidate.includes(marker))
   if (found.length !== 1) {

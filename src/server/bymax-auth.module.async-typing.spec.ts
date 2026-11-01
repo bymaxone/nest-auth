@@ -71,9 +71,10 @@ describe('registerAsync options factory typing', () => {
     expect(built.module).toBe(BymaxAuthModule)
   })
 
-  // Scenario: the forms that already worked. Expected: they still do, so loosening the parameter
-  // type breaks nobody.
-  it('still accepts a factory with no parameters and one written with rest unknown', () => {
+  // Scenario: a factory with no parameters, and one declared with rest `unknown`. Expected: both
+  // are accepted, since a factory that takes nothing, or takes whatever it is given, needs nothing
+  // from its injected values.
+  it('accepts a factory with no parameters and one written with rest unknown', () => {
     const none = BymaxAuthModule.registerAsync({
       useFactory: () => optionsFor('x'),
       extraProviders
