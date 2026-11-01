@@ -1561,8 +1561,9 @@ describe('SessionService', () => {
       expect(result).toHaveLength(0)
     })
 
-    // Verifies that excludes stale members when redis.get throws.
-    it('excludes stale members when redis.get throws', async () => {
+    // A read fault is not a stale member: the listing fails instead of silently leaving the
+    // member out, and the readable sessions beside it are not returned as if they were all of them.
+    it('fails the listing, rather than omitting the member, when redis.get throws', async () => {
       const throwHash = sha256('throw-token')
       const goodHash = sha256('good-token-2')
       mockRedis.smembers.mockResolvedValue([`rt:${throwHash}`, `rt:${goodHash}`])
@@ -1572,21 +1573,25 @@ describe('SessionService', () => {
       })
       mockRedis.srem.mockResolvedValue(1)
 
-      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
-
-      expect(result.map((s) => s.sessionHash)).not.toContain(throwHash)
+      await expect(service.listSessions({ userId: userId, tenantId: 'tenant-1' })).rejects.toThrow(
+        'Redis error'
+      )
     })
 
     // The sharpest case for the guard: a transient Redis fault on the detail read says nothing
     // at all about the session, yet it lands the member in the same candidate list. Before the
     // guard, one failed GET during an outage un-indexed a live session permanently.
-    it('offers a member whose detail read threw to the guarded prune, and says the read failed', async () => {
+    it('offers a member whose detail read threw to the guarded prune, says the read failed, and fails the listing', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       const throwHash = sha256('throw-srem-token')
       mockRedis.smembers.mockResolvedValue([`rt:${throwHash}`])
       mockRedis.get.mockRejectedValue(new Error('Redis connection lost'))
 
-      await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
+      // A listing that omits a live session it could not read is a view that lies by omission:
+      // the caller cannot revoke what they cannot see. The read fault is the caller's to learn.
+      await expect(service.listSessions({ userId: userId, tenantId: 'tenant-1' })).rejects.toThrow(
+        'Redis connection lost'
+      )
 
       await flushMicrotasks()
 
@@ -1605,6 +1610,34 @@ describe('SessionService', () => {
       expect(warned).toContain(throwHash.slice(0, 8))
       expect(warned).not.toContain(throwHash)
       warnSpy.mockRestore()
+    })
+
+    // Scenario: one live session, one whose detail is gone and one whose detail read throws, in the
+    // same listing. Expected: the call rejects with the read error, and the cleanup that does not
+    // depend on the outcome still runs, with the same candidates and the same guard, so the
+    // failure costs the caller the listing and costs the index nothing.
+    it('rejects a mixed listing on the read error and still dispatches the guarded prune', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      const live = sha256('mixed-live')
+      const gone = sha256('mixed-gone')
+      const broken = sha256('mixed-broken')
+      mockRedis.smembers.mockResolvedValue([`rt:${live}`, `rt:${gone}`, `rt:${broken}`])
+      mockRedis.get.mockImplementation(async (key: string) => {
+        if (key === `sd:${live}`) {
+          return JSON.stringify({ device: 'd', ip: 'i', createdAt: 1, lastActivityAt: 2 })
+        }
+        if (key === `sd:${gone}`) return null
+        throw new Error('Redis connection lost')
+      })
+
+      await expect(service.listSessions({ userId, tenantId: 'tenant-1' })).rejects.toThrow(
+        'Redis connection lost'
+      )
+      await flushMicrotasks()
+
+      expect(mockRedis.pruneDeadMembers).toHaveBeenCalledTimes(1)
+      const offered = (mockRedis.pruneDeadMembers.mock.calls[0]?.[1] ?? []) as string[]
+      expect([...offered].sort()).toEqual([`rt:${broken}`, `rt:${gone}`].sort())
     })
 
     // A prune that fails is a tidy-up that did not happen, not a listing that should fail — but

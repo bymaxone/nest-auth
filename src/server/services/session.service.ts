@@ -20,6 +20,7 @@ import type {
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
+import { raiseFirst } from '../utils/settle-writes'
 
 // ---------------------------------------------------------------------------
 // Module-level constants
@@ -114,6 +115,48 @@ interface StoredSessionDetail {
   ip: string
   createdAt: number
   lastActivityAt: number
+}
+
+/**
+ * What reading one index member's session detail came to.
+ *
+ * `stale` is a data state, an absent or malformed record, and the member is only a candidate for
+ * pruning. `failed` is an infrastructure fault: the session may be live, so the listing that
+ * could not show it has to say so instead of omitting it.
+ */
+type MemberRead =
+  | { kind: 'session'; info: SessionInfo }
+  | { kind: 'stale'; member: string }
+  | { kind: 'failed'; member: string; error: unknown }
+
+/**
+ * Parses a stored session detail record.
+ *
+ * @param raw - The `sd:{hash}` value.
+ * @returns The record, or `null` when it is not valid JSON or lacks a field the listing shows.
+ */
+function parseStoredDetail(raw: string): StoredSessionDetail | null {
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    const p = parsed as Record<string, unknown>
+    if (
+      // Stryker disable next-line ConditionalExpression,LogicalOperator: `parsed === null` is subsumed by the adjacent `typeof parsed !== 'object'` clause (typeof null is 'object' but the field reads below reject it identically)
+      parsed === null ||
+      // Stryker disable next-line ConditionalExpression: equivalent — a non-object
+      // parsed value reaches the field reads below as `undefined` on every property,
+      // which reject it with the identical outcome
+      typeof parsed !== 'object' ||
+      typeof p['device'] !== 'string' ||
+      typeof p['ip'] !== 'string' ||
+      typeof p['createdAt'] !== 'number' ||
+      typeof p['lastActivityAt'] !== 'number'
+    ) {
+      return null
+    }
+    return parsed as StoredSessionDetail
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -426,71 +469,18 @@ export class SessionService {
 
     const members = await this.redis.smembers(this.indexKey(userId, tenantId))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
+    const reads = await Promise.all(
+      rtMembers.map((member) => this.readSession(member, currentSessionHash))
+    )
 
     const results: SessionInfo[] = []
     const staleKeys: string[] = []
-
-    await Promise.all(
-      rtMembers.map(async (member) => {
-        const hash = member.slice(3)
-        let raw: string | null = null
-
-        try {
-          raw = await this.redis.get(`sd:${hash}`)
-        } catch {
-          // A read that throws is an infrastructure fault, not a stale member — the pruning
-          // below treats them alike (both are dropped from the index), and only this line
-          // says which one happened, so a Redis outage does not read as a tidy-up.
-          this.logger.warn(`listSessions: session detail read failed hash=${hash.slice(0, 8)}`)
-          staleKeys.push(member)
-          return
-        }
-
-        if (raw === null) {
-          staleKeys.push(member)
-          return
-        }
-
-        let detail: StoredSessionDetail
-
-        try {
-          const parsed: unknown = JSON.parse(raw)
-          const p = parsed as Record<string, unknown>
-          if (
-            // Stryker disable next-line ConditionalExpression,LogicalOperator: `parsed === null` is subsumed by the adjacent `typeof parsed !== 'object'` clause (typeof null is 'object' but the field reads below reject it identically)
-            parsed === null ||
-            // Stryker disable next-line ConditionalExpression: equivalent — a non-object
-            // parsed value reaches the field reads below as `undefined` on every property,
-            // which reject it with the identical outcome
-            typeof parsed !== 'object' ||
-            typeof p['device'] !== 'string' ||
-            typeof p['ip'] !== 'string' ||
-            typeof p['createdAt'] !== 'number' ||
-            typeof p['lastActivityAt'] !== 'number'
-          ) {
-            staleKeys.push(member)
-            return
-          }
-          detail = parsed as StoredSessionDetail
-        } catch {
-          staleKeys.push(member)
-          return
-        }
-
-        results.push({
-          id: hash.slice(0, 8),
-          sessionHash: hash,
-          device: detail.device,
-          ip: detail.ip,
-          // '' fallback: timingSafeCompare returns false on length mismatch,
-          // so no hash (always 64 chars) will ever match the empty string.
-          // Stryker disable next-line StringLiteral: a 64-char session hash never length-matches the fallback sentinel, so timingSafeCompare returns false identically for '' or any other non-matching fallback
-          isCurrent: timingSafeCompare(hash, currentSessionHash ?? ''),
-          createdAt: detail.createdAt,
-          lastActivityAt: detail.lastActivityAt
-        })
-      })
-    )
+    const failures: unknown[] = []
+    for (const read of reads) {
+      if (read.kind === 'session') results.push(read.info)
+      else staleKeys.push(read.member)
+      if (read.kind === 'failed') failures.push(read.error)
+    }
 
     // Fire-and-forget: drop the dead members without blocking the response.
     //
@@ -509,9 +499,58 @@ export class SessionService {
         )
       })
 
+    // After the cleanup has been dispatched, not before: a read fault costs the caller the listing
+    // and costs the index nothing. A listing that left out a session it could not read would be a
+    // view that lies by omission, since the caller cannot revoke what they cannot see.
+    raiseFirst(failures)
+
     results.sort((a, b) => b.createdAt - a.createdAt)
 
     return results
+  }
+
+  /**
+   * Reads one index member's session detail and shapes it for the listing.
+   *
+   * @param member - The `rt:{hash}` index member.
+   * @param currentSessionHash - Hash of the caller's own refresh token, when it sent one.
+   * @returns The session, or why this member is not one: a data state or a read fault.
+   */
+  private async readSession(
+    member: string,
+    currentSessionHash: string | undefined
+  ): Promise<MemberRead> {
+    const hash = member.slice(3)
+    let raw: string | null
+
+    try {
+      raw = await this.redis.get(`sd:${hash}`)
+    } catch (error: unknown) {
+      // A read that throws is an infrastructure fault, not a stale member. The guarded prune
+      // still sees the member as a candidate, and only this line says which one happened, so a
+      // Redis outage does not read as a tidy-up.
+      this.logger.warn(`listSessions: session detail read failed hash=${hash.slice(0, 8)}`)
+      return { kind: 'failed', member, error }
+    }
+
+    const detail = raw === null ? null : parseStoredDetail(raw)
+    if (detail === null) return { kind: 'stale', member }
+
+    return {
+      kind: 'session',
+      info: {
+        id: hash.slice(0, 8),
+        sessionHash: hash,
+        device: detail.device,
+        ip: detail.ip,
+        // '' fallback: timingSafeCompare returns false on length mismatch,
+        // so no hash (always 64 chars) will ever match the empty string.
+        // Stryker disable next-line StringLiteral: a 64-char session hash never length-matches the fallback sentinel, so timingSafeCompare returns false identically for '' or any other non-matching fallback
+        isCurrent: timingSafeCompare(hash, currentSessionHash ?? ''),
+        createdAt: detail.createdAt,
+        lastActivityAt: detail.lastActivityAt
+      }
+    }
   }
 
   /**
