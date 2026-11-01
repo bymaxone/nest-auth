@@ -258,13 +258,11 @@ export class InvitationService {
         tokenHash
       )
     } catch (err: unknown) {
-      await this.redis.del(tokenKey).catch((delErr: unknown) => {
-        this.logger.warn(`invite: could not withdraw the record — ${describeChannelStatus(delErr)}`)
-      })
+      await this.withdrawRecord(tokenKey)
       throw err
     }
     if (!stillNamed.claimed) {
-      await this.redis.del(tokenKey)
+      await this.withdrawRecord(tokenKey)
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
@@ -423,6 +421,22 @@ export class InvitationService {
         `— the pending invitation kept changing under the rank check`
     )
     throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+  }
+
+  /**
+   * Removes the invitation record this call wrote, best-effort.
+   *
+   * Used where the call is already ending in a refusal or a failure of its own, so a failing
+   * delete must not replace that outcome: it is logged and the caller still raises the original.
+   * The raw token has not been emailed at that point, so a record that survives is one nobody
+   * holds the token for, until its TTL.
+   *
+   * @param tokenKey - The Redis key of the record written by this call.
+   */
+  private async withdrawRecord(tokenKey: string): Promise<void> {
+    await this.redis.del(tokenKey).catch((err: unknown) => {
+      this.logger.warn(`invite: could not withdraw the record — ${describeChannelStatus(err)}`)
+    })
   }
 
   /**

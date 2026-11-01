@@ -1376,6 +1376,25 @@ describe('InvitationService', () => {
         expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
       })
 
+      // Scenario: the index moved AND the withdrawal fails. Expected: the refusal is still what the
+      // caller sees, the failed withdrawal is logged, and no email is sent. Why: a store failure
+      // while cleaning up must not replace the answer about the invitation.
+      it('still refuses with insufficient_role when the withdrawal after a moved index fails', async () => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+        mockRedis.eval.mockResolvedValueOnce(1).mockResolvedValueOnce(0)
+        mockRedis.del.mockRejectedValueOnce(new Error('still down'))
+
+        await expect(
+          service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+        ).rejects.toMatchObject({
+          response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
+        })
+
+        expect(String(warn.mock.calls[0]?.[0])).toContain('could not withdraw the record')
+        expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
+        warn.mockRestore()
+      })
+
       // Scenario: the repeat errors AND the withdrawal errors too. Expected: the original failure
       // still surfaces, the second one is logged, and no email is sent.
       it('keeps the original failure when the withdrawal fails as well', async () => {
