@@ -148,7 +148,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = 'd42f836ab29884e2ca67c14583e30504d1bf29fb0abf7e30493eb28482403949'
+const CONTRACT_SHA256 = '04c9d56222d731851b1e2c24363ecdbcf1d4fbab52bc39a1b6f818e3210f5fed'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -372,7 +372,9 @@ describe('cross-implementation conformance', () => {
       recentAuthMarker: 'constants/recent-auth.ts',
       emailChangeToken: 'services/email-change.service.ts',
       pendingMfaSetup: 'services/mfa.service.ts',
-      mfaTempTokenMarker: 'services/token-manager.service.ts'
+      mfaTempTokenMarker: 'services/token-manager.service.ts',
+      userStatus: 'services/account-status.service.ts',
+      userEmailVerified: 'services/account-status.service.ts'
     }
 
     // Verifies each contract prefix is the one the code actually writes. A rename that lands on
