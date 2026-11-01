@@ -32,7 +32,11 @@ export const WS_TICKET_TTL_SECONDS = 30
 export interface WsTicketSnapshot {
   /** The subject — the internal user id. */
   sub: string
-  /** The tenant scope. Absent for a platform ticket. */
+  /**
+   * The tenant scope. Optional because the shared `wst:` record can be written by another
+   * backend without one; this library always sets it, and the WebSocket guard refuses a
+   * snapshot that lacks it.
+   */
   tenantId?: string
   /** The user's role at mint time. */
   role: string
