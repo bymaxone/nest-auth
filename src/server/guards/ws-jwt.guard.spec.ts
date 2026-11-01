@@ -456,15 +456,20 @@ describe('WsJwtGuard', () => {
     const resolver = jest.fn()
 
     /** A handshake carrying a header credential or a ticket, plus the headers the resolver reads. */
-    function boundContext(via: 'header' | 'ticket') {
+    function boundContext(
+      via: 'header' | 'ticket',
+      extra: { address?: string; headers?: Record<string, string> } = {}
+    ) {
       const client = {
         handshake: {
           headers: {
             Host: 'tenant-b.example.com:3000',
-            ...(via === 'header' ? { authorization: 'Bearer good' } : {})
+            ...(via === 'header' ? { authorization: 'Bearer good' } : {}),
+            ...extra.headers
           },
           query: via === 'ticket' ? { ticket: 'raw-ticket' } : {},
-          url: '/socket.io/?EIO=4'
+          url: '/socket.io/?EIO=4',
+          ...(extra.address === undefined ? {} : { address: extra.address })
         },
         data: {} as Record<string, unknown>
       }
@@ -482,6 +487,7 @@ describe('WsJwtGuard', () => {
     afterEach(() => {
       delete (mockOptions as Record<string, unknown>)['enforceTenantBinding']
       delete (mockOptions as Record<string, unknown>)['tenantIdResolver']
+      delete (mockOptions as Record<string, unknown>)['isTrustedProxy']
     })
 
     // Scenario: the resolved tenant equals the credential's. Expected: admitted, and the resolver
@@ -569,6 +575,45 @@ describe('WsJwtGuard', () => {
 
       await expect(guard.canActivate(context as never)).resolves.toBe(true)
       expect(resolver).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the transport reported the TCP peer as `handshake.address` and the host trusts it.
+    // Expected: the resolver sees the forwarded host, on both credential channels. Why: behind a
+    // Host-rewriting proxy the stream must resolve the tenant the HTTP side resolves.
+    it.each(['header', 'ticket'] as const)(
+      'resolves the forwarded host on the %s path when the peer is trusted',
+      async (via) => {
+        const isTrustedProxy = jest.fn((peer: string) => peer === '10.0.0.1')
+        Object.assign(mockOptions, { isTrustedProxy })
+        resolver.mockResolvedValue(via === 'header' ? VALID_PAYLOAD.tenantId : snapshot.tenantId)
+        const { context } = boundContext(via, {
+          address: '10.0.0.1',
+          headers: { 'X-Forwarded-Host': 'tenant-a.example.com' }
+        })
+
+        await guard.canActivate(context as never)
+
+        expect(isTrustedProxy).toHaveBeenCalledWith('10.0.0.1')
+        expect(resolver.mock.calls[0]?.[0]).toMatchObject({ hostname: 'tenant-a.example.com' })
+      }
+    )
+
+    // Scenario: the same handshake with no peer address, or an untrusted one. Expected: the Host
+    // header stands. Why: a client must never choose its own host.
+    it.each([
+      ['no peer address', undefined],
+      ['an untrusted peer', '203.0.113.9']
+    ])('keeps the Host header for %s', async (_why, address) => {
+      Object.assign(mockOptions, { isTrustedProxy: (peer: string) => peer === '10.0.0.1' })
+      resolver.mockResolvedValue(VALID_PAYLOAD.tenantId)
+      const { context } = boundContext('header', {
+        ...(address === undefined ? {} : { address }),
+        headers: { 'X-Forwarded-Host': 'tenant-a.example.com' }
+      })
+
+      await guard.canActivate(context as never)
+
+      expect(resolver.mock.calls[0]?.[0]).toMatchObject({ hostname: 'tenant-b.example.com' })
     })
   })
 

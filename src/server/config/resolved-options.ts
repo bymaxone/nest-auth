@@ -517,6 +517,16 @@ function validateTenantBinding(userOptions: BymaxAuthModuleOptions): void {
         `same host-to-tenant function used on the credential flows), or remove enforceTenantBinding.`
     )
   }
+  if (
+    userOptions.isTrustedProxy !== undefined &&
+    typeof userOptions.isTrustedProxy !== 'function'
+  ) {
+    throw new Error(
+      `[BymaxAuthModule] isTrustedProxy must be a function that takes the peer address and ` +
+        `answers a boolean. Pass \`(peer) => expressApp.get('trust proxy fn')(peer, 0)\` with ` +
+        `\`expressApp = app.getHttpAdapter().getInstance()\`, or remove it.`
+    )
+  }
 }
 
 /** Letters, digits and `: . _ -`; bounded so a scope is a name and never a payload. */

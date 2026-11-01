@@ -96,9 +96,14 @@ export interface VerifyAccessTokenOptions {
    * The binding needs the request the host's `tenantIdResolver` reads, which a token alone does
    * not carry. With `enforceTenantBinding` on and a request passed, the resolver runs on the
    * dashboard plane exactly as it does in `WsJwtGuard`: it receives an object with only `headers`
-   * (lowercased), `url` and `hostname` (the `Host` header, port cut) — no `cookies`, `ip`, `ips`
-   * or trust-proxy behaviour — and a resolver that throws on that, or answers another tenant,
-   * refuses the token with `TOKEN_INVALID`. The platform plane has no tenant and ignores it.
+   * (lowercased), `url` and `hostname` — no `cookies`, `ip` or `ips` — and a resolver that throws
+   * on that, or answers another tenant, refuses the token with `TOKEN_INVALID`. The platform plane
+   * has no tenant and ignores it.
+   *
+   * `hostname` is the `Host` header with the port cut. When the host configured `isTrustedProxy`,
+   * pass the TCP peer as `request.remoteAddress` (never a header value): if the predicate trusts
+   * it, the first element of a single `X-Forwarded-Host` is used instead, as Express does over
+   * HTTP. Without a peer the `Host` header stands.
    *
    * **Omit it and the binding is not applied for that call.** With `enforceTenantBinding` on,
    * that is logged once per service instance, because a caller that never passes it has a

@@ -41,7 +41,7 @@ export function tenantBindingEnforced(
  * @throws AuthException `TOKEN_INVALID` on a mismatch or a resolver that cannot answer.
  */
 export async function assertTenantBinding(
-  options: Pick<ResolvedOptions, 'enforceTenantBinding' | 'tenantIdResolver'>,
+  options: Pick<ResolvedOptions, 'enforceTenantBinding' | 'tenantIdResolver' | 'isTrustedProxy'>,
   handshake: HandshakeLike,
   tenantId: string
 ): Promise<void> {
@@ -49,7 +49,7 @@ export async function assertTenantBinding(
   if (options.enforceTenantBinding !== true || !resolver) return
   let requestTenant: string
   try {
-    requestTenant = await resolver(handshakeRequest(handshake))
+    requestTenant = await resolver(handshakeRequest(handshake, options.isTrustedProxy))
   } catch {
     throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
   }

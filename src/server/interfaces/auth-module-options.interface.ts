@@ -101,7 +101,8 @@ export type BymaxAuthRateLimitOptions =
  * the fields an upgrade lacks — instead of leaving that to a runtime refusal of every socket.
  *
  * `hostname` is the `Host` header with the port cut (a bracketed IPv6 literal keeps its brackets),
- * `''` when an upgrade carries none or repeats it; it never reads `X-Forwarded-Host`. `url` is `''` when the
+ * `''` when an upgrade carries none or repeats it. It reads `X-Forwarded-Host` instead only when
+ * {@link BymaxAuthModuleOptions.isTrustedProxy} approves the TCP peer. `url` is `''` when the
  * transport exposes none.
  */
 export interface TenantResolverRequest {
@@ -1019,6 +1020,34 @@ export interface BymaxAuthModuleOptions {
    * tenant are *meant* to differ.
    */
   enforceTenantBinding?: boolean
+
+  /**
+   * Whether the immediate TCP peer of a WebSocket upgrade or a stream is a proxy whose
+   * `X-Forwarded-Host` may be believed.
+   *
+   * It matters when the tenant is decided by the host name and a proxy rewrites `Host` on the way
+   * in (nginx's default `proxy_set_header Host $proxy_host` does). Over HTTP, Express resolves
+   * `req.hostname` from `X-Forwarded-Host` when its `trust proxy` setting trusts the peer; a
+   * stream has no Express request, so without this the {@link tenantIdResolver} would see the
+   * upstream host and {@link enforceTenantBinding} would refuse every stream.
+   *
+   * The predicate receives the peer address **exactly as the transport reported it**, so an
+   * IPv4-mapped form such as `::ffff:10.0.0.1` reaches it unchanged. Express's compiled setting
+   * understands that form, so the usual recipe is
+   * `(peer) => expressApp.get('trust proxy fn')(peer, 0)`, where `expressApp` is
+   * `app.getHttpAdapter().getInstance()`: `app.get()` on a Nest application resolves a provider and
+   * does not read an Express setting. Only the exact boolean `true` trusts a peer.
+   *
+   * Unset, which is the default, `X-Forwarded-Host` is never read. A missing peer address, a
+   * header handed over as separate values, an empty first element, a predicate that throws and a
+   * predicate that answers anything other than `true` all fall back to `Host`, so those cases can
+   * only make the binding stricter, never admit a tenant the client chose. Node joins a header
+   * repeated on the wire into one comma-separated string, whose first element is used, as Express
+   * does. A predicate that answers `true` for a peer it
+   * should not trust does let that peer choose the host, exactly as a wrong Express `trust proxy`
+   * setting would, so the policy must be no wider than the one given to Express.
+   */
+  isTrustedProxy?: (peerAddress: string) => boolean
 
   /**
    * Granular control over which controllers are registered.

@@ -20,6 +20,20 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
+- **New opt-in `isTrustedProxy`, for the tenant binding behind a proxy that rewrites `Host`.** With
+  `enforceTenantBinding` on, the hostname a `tenantIdResolver` sees on a WebSocket upgrade or a
+  verified stream was always the `Host` header, while Express resolves `req.hostname` from
+  `X-Forwarded-Host` when its `trust proxy` setting trusts the peer. Behind a proxy such as nginx
+  with its default `Host $proxy_host`, every stream was therefore refused. Set
+  `isTrustedProxy: (peer) => expressApp.get('trust proxy fn')(peer, 0)`, where `expressApp` is
+  `app.getHttpAdapter().getInstance()` (not `app.get()`, which resolves providers), and the first element of a single
+  `X-Forwarded-Host` is used when the TCP peer is trusted. The predicate receives the peer exactly
+  as the transport reported it (including `::ffff:` mapped forms). `AuthTokenVerifierService`
+  callers pass the peer as `request.remoteAddress`; `WsJwtGuard` reads Socket.IO's
+  `handshake.address` itself. **Nothing changes unless you set it**: unset, `X-Forwarded-Host` is
+  never read, and every uncertain case (no peer, a header handed over as separate values, an empty first element, a predicate that throws
+  or does not answer `true`) falls back to `Host`, so those cases can only refuse a stream, never
+  admit a tenant the client chose.
 - **`afterMfaEnabled` and `afterMfaDisabled` now receive the account as the transition left it.**
   Both hooks ran after the second factor was written, but the account they were handed was the
   record read before the write, so "after MFA enabled" reported `mfaEnabled: false` and "after MFA
