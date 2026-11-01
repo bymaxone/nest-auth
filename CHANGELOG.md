@@ -18,6 +18,24 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **`GET /sessions` now fails when the store cannot read one of the caller's session records.** A
+  listing that used to answer `200` with the unreadable session left out during a Redis fault
+  now answers `500` (`auth.internal` when `AuthExceptionFilter` is registered), as a failed
+  logout write does. A client that treated every `200` from this route as the complete list must
+  now handle the error. A session
+  record that is absent or malformed is still left out of the list, as before. A private method,
+  `readSession`, appears in the `SessionService` declarations; no public member changes.
+
+### Fixed
+
+- **A session listing no longer hides a session it could not read.** The list is the caller's
+  only view of their sessions, and a session left out of it is one they cannot revoke, so a read
+  fault on one record answered a list that looked complete. The index cleanup that ran after
+  every listing still runs, with the same candidates and the same guard that removes only members
+  whose refresh key is gone, so the fault costs the caller the list and the index nothing.
+
 ## [1.4.15] - 2026-11-01
 
 ### Apply to a derived backend
