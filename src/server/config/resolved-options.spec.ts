@@ -232,6 +232,24 @@ describe('resolveOptions — success', () => {
   })
 
   // The same flag WITH a resolver is the supported configuration and must resolve without throwing.
+  // Scenario: isTrustedProxy that is not a function. Expected: refused at startup. Why: a truthy
+  // non-function would otherwise be called at the first stream and throw inside the guard.
+  it.each([true, 'loopback', 1, {}])('should reject a non-function isTrustedProxy %p', (value) => {
+    const resolve = (): unknown =>
+      resolveOptions({ ...MINIMAL_OPTIONS, isTrustedProxy: value as never })
+
+    expect(resolve).toThrow('isTrustedProxy must be a function')
+  })
+
+  // Scenario: a function. Expected: carried through to the resolved options untouched.
+  it('should carry a function isTrustedProxy through', () => {
+    const isTrustedProxy = (peer: string): boolean => peer === '10.0.0.1'
+
+    expect(resolveOptions({ ...MINIMAL_OPTIONS, isTrustedProxy }).isTrustedProxy).toBe(
+      isTrustedProxy
+    )
+  })
+
   it('should accept enforceTenantBinding when a tenantIdResolver is configured', () => {
     const fn = (_req: TenantResolverRequest): string => 'tenant-1'
     expect(() =>

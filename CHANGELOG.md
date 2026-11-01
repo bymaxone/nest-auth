@@ -18,6 +18,22 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **New opt-in `isTrustedProxy`, for the tenant binding behind a proxy that rewrites `Host`.** With
+  `enforceTenantBinding` on, the hostname a `tenantIdResolver` sees on a WebSocket upgrade or a
+  verified stream was always the `Host` header, while Express resolves `req.hostname` from
+  `X-Forwarded-Host` when its `trust proxy` setting trusts the peer. Behind a proxy such as nginx
+  with its default `Host $proxy_host`, every stream was therefore refused. Set
+  `isTrustedProxy: (peer) => app.get('trust proxy fn')(peer, 0)` and the first element of a single
+  `X-Forwarded-Host` is used when the TCP peer is trusted. The predicate receives the peer exactly
+  as the transport reported it (including `::ffff:` mapped forms). `AuthTokenVerifierService`
+  callers pass the peer as `request.remoteAddress`; `WsJwtGuard` reads Socket.IO's
+  `handshake.address` itself. **Nothing changes unless you set it**: unset, `X-Forwarded-Host` is
+  never read, and every uncertain case (no peer, a repeated or empty header, a predicate that throws
+  or does not answer `true`) falls back to `Host`, so a wrong answer can only refuse a stream, never
+  admit a tenant the client chose.
+
 ## [1.4.10] - 2026-11-01
 
 ### Apply to a derived backend

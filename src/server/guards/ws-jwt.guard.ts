@@ -11,6 +11,7 @@ import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 import { AuthRevocationService } from '../services/auth-revocation.service'
 import { WsTicketService } from '../services/ws-ticket.service'
 import { assertTenantBinding } from '../utils/assert-tenant-binding'
+import type { HandshakeLike } from '../utils/handshake-request'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertTokenType, assertValidSub } from './utils/assert-token-type'
 
@@ -26,6 +27,8 @@ type WsClient = {
     query?: Record<string, string | string[] | undefined>
     /** Raw upgrade URL, the fallback for transports that do not parse the query. */
     url?: string
+    /** The TCP peer (Socket.IO reports `conn.remoteAddress` here); never read from a header. */
+    address?: string
   }
   data: Record<string, unknown>
 }
@@ -125,7 +128,7 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
     if (ticket !== undefined) {
       const snapshot = await this.wsTickets.redeem(ticket)
       assertDashboardSnapshot(snapshot)
-      await assertTenantBinding(this.options, handshake, snapshot.tenantId)
+      await assertTenantBinding(this.options, bindingInput(handshake), snapshot.tenantId)
       // The socket is authorized as the snapshot the ticket was minted from — a frozen copy of
       // what the access token proved at mint time. It is deliberately not a token: it carries
       // no signature to re-verify, and its `jti` and `epoch` are identifiers that `redeem` has
@@ -168,7 +171,7 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    await assertTenantBinding(this.options, handshake, payload.tenantId)
+    await assertTenantBinding(this.options, bindingInput(handshake), payload.tenantId)
 
     client.data.user = payload
     return true
@@ -253,4 +256,17 @@ function readUpgradeTicket(handshake: NonNullable<WsClient['handshake']>): strin
   }
   const all = params.getAll('ticket')
   return all.length === 1 && all[0] !== '' ? all[0] : undefined
+}
+
+/**
+ * The handshake as the tenant binding reads it: the same fields, with the TCP peer carried as
+ * `remoteAddress` when the transport reported one.
+ *
+ * @param handshake - The connecting client's handshake.
+ * @returns The input for {@link assertTenantBinding}.
+ */
+function bindingInput(handshake: NonNullable<WsClient['handshake']>): HandshakeLike {
+  return handshake.address === undefined
+    ? handshake
+    : { ...handshake, remoteAddress: handshake.address }
 }

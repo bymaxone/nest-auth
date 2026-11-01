@@ -13,6 +13,11 @@ import type { TenantResolverRequest } from '../interfaces/auth-module-options.in
 export interface HandshakeLike {
   headers: Record<string, string | string[] | undefined>
   url?: string
+  /**
+   * The TCP peer, as the transport reported it, never a header. Read only to decide whether
+   * `X-Forwarded-Host` may be believed; absent or empty means it may not.
+   */
+  remoteAddress?: string
 }
 
 /**
@@ -23,24 +28,68 @@ export interface HandshakeLike {
  * transport has, and nothing else.
  *
  * **Provided:** `headers` (as the transport delivered them, names lowercased), `url` (the upgrade
- * URL, `''` when the transport exposes none) and `hostname`, derived from the `Host` header with
- * Express's own rule — the port is cut, a bracketed IPv6 literal keeps its brackets — and `''` when
- * there is no usable `Host`, so a resolver deriving a tenant from it resolves nothing and is refused.
+ * URL, `''` when the transport exposes none) and `hostname`, derived with Express's own rule — the
+ * port is cut, a bracketed IPv6 literal keeps its brackets — and `''` when there is no usable
+ * value, so a resolver deriving a tenant from it resolves nothing and is refused.
+ *
+ * **Which header.** The `Host` header, unless `isTrustedProxy` approves the TCP peer, in which case
+ * the first element of a single `X-Forwarded-Host` replaces it — the check Express makes for the
+ * immediate peer. Everything else is the stricter reading: no predicate, no peer, an untrusted
+ * peer, a predicate that throws or answers anything but `true`, a repeated header, or an empty
+ * first element all give `Host`. A client therefore cannot choose its own host.
  *
  * **Absent, by type and at runtime:** `cookies` (an upgrade carries the header but nothing here
  * parses it the way `cookie-parser` does on HTTP, and half an emulation would mis-bind rather than
- * refuse), `ip`, `ips` and every trust-proxy behaviour — `hostname` is the `Host` header as
- * received, never `X-Forwarded-Host`.
+ * refuse), `ip`, `ips` and the rest of Express's trust-proxy behaviour.
  *
  * @param handshake - The connecting client's handshake.
+ * @param isTrustedProxy - The host's trust policy for the immediate peer, if it configured one.
  * @returns The request for the configured `tenantIdResolver`.
  */
-export function handshakeRequest(handshake: HandshakeLike): TenantResolverRequest {
+export function handshakeRequest(
+  handshake: HandshakeLike,
+  isTrustedProxy?: (peerAddress: string) => boolean
+): TenantResolverRequest {
   const headers: Record<string, string | string[] | undefined> = {}
   for (const [name, value] of Object.entries(handshake.headers)) {
     headers[name.toLowerCase()] = value
   }
-  return { headers, url: handshake.url ?? '', hostname: hostnameOf(headers['host']) }
+  const forwarded = trustedForwardedHost(
+    headers['x-forwarded-host'],
+    handshake.remoteAddress,
+    isTrustedProxy
+  )
+  return {
+    headers,
+    url: handshake.url ?? '',
+    hostname: hostnameOf(forwarded ?? headers['host'])
+  }
+}
+
+/**
+ * The forwarded host a trusted peer asserted, or `undefined` when the `Host` header stands.
+ *
+ * @param forwarded - The `x-forwarded-host` header value(s).
+ * @param peer - The TCP peer address, if the transport reported one.
+ * @param isTrustedProxy - The host's trust policy, if configured.
+ */
+function trustedForwardedHost(
+  forwarded: string | string[] | undefined,
+  peer: string | undefined,
+  isTrustedProxy: ((peerAddress: string) => boolean) | undefined
+): string | undefined {
+  if (isTrustedProxy === undefined || typeof forwarded !== 'string') return undefined
+  if (peer === undefined || peer.trim() === '') return undefined
+  let trusted: unknown
+  try {
+    trusted = isTrustedProxy(peer)
+  } catch {
+    return undefined
+  }
+  if (trusted !== true) return undefined
+  const comma = forwarded.indexOf(',')
+  const first = (comma === -1 ? forwarded : forwarded.slice(0, comma)).trim()
+  return first === '' ? undefined : first
 }
 
 /** Express's `req.hostname` rule on a raw `Host` value: strip the port, keep an IPv6 literal whole. */

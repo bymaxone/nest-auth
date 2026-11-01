@@ -820,20 +820,51 @@ tenant of the upgrade and refuses (`auth.token_invalid`, the same code HTTP answ
 token minted for another tenant, as `JwtAuthGuard` does on a mismatch. An upgrade has no Express request,
 so your `tenantIdResolver` is handed a request-like object with **only** these fields:
 
-| Field      | Value                                                                                             |
-| ---------- | ------------------------------------------------------------------------------------------------- |
-| `headers`  | The handshake headers, names lowercased                                                           |
-| `url`      | The upgrade URL, `''` when the transport exposes none                                             |
-| `hostname` | The `Host` header with the port cut (a bracketed IPv6 literal keeps its brackets), `''` if absent |
+| Field      | Value                                                                                                                               |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `headers`  | The handshake headers, names lowercased                                                                                             |
+| `url`      | The upgrade URL, `''` when the transport exposes none                                                                               |
+| `hostname` | The `Host` header with the port cut (a bracketed IPv6 literal keeps its brackets), `''` if absent; see below for `X-Forwarded-Host` |
 
 There is **no** `cookies` (the `Cookie` header is present in `headers`, but nothing parses it the way
-`cookie-parser` does on HTTP), no `ip` or `ips`, and no trust-proxy behaviour: `hostname` is the
-`Host` as received, never `X-Forwarded-Host`. The resolver's parameter is typed
+`cookie-parser` does on HTTP) and no `ip` or `ips`. `hostname` is the `Host` as received unless you
+set `isTrustedProxy` (below). The resolver's parameter is typed
 `TenantResolverRequest` (exported), so a resolver that reads one of the absent fields does not
 compile. If a resolver still throws at runtime, or returns anything other than the credential's
 tenant, the connection is **refused**, never bound to the wrong tenant. Resolve from `headers` or
 `hostname` so one resolver
 serves both HTTP and sockets.
+
+**Behind a proxy that rewrites `Host`.** nginx's default `proxy_set_header Host $proxy_host` presents
+the upstream name in `Host` and the public one in `X-Forwarded-Host`. Over HTTP, Express resolves
+`req.hostname` from the forwarded header when its `trust proxy` setting trusts the peer; a socket has
+no Express request, so without more the resolver sees the upstream host and the binding refuses every
+stream. Declare the same trust decision once with `isTrustedProxy`, a function that takes the TCP peer
+address and answers a boolean:
+
+```typescript
+const app = await NestFactory.create<NestExpressApplication>(AppModule)
+app.set('trust proxy', 'loopback, 10.0.0.0/8')
+
+BymaxAuthModule.registerAsync({
+  useFactory: () => ({
+    // ...
+    enforceTenantBinding: true,
+    tenantIdResolver: (req) => req.hostname.split('.')[0] ?? '',
+    isTrustedProxy: (peer) => app.get('trust proxy fn')(peer, 0)
+  })
+})
+```
+
+The predicate receives the peer **exactly as the transport reported it**, so an IPv4-mapped form such
+as `::ffff:10.0.0.1` reaches it unchanged; Express's compiled setting understands that form, which
+is why the recipe delegates to it. When it answers `true`, the first element of a single
+`X-Forwarded-Host` is used, with the port cut like `Host`. Unset, which is the default,
+`X-Forwarded-Host` is never read. Every other case falls back to `Host`: no peer address, a repeated
+header, an empty first element, a predicate that throws or answers anything but `true`. A wrong
+answer can therefore only make the binding stricter, never admit a tenant the client chose. The
+peer address comes from `WsJwtGuard` itself (Socket.IO's `handshake.address`); a caller of
+`AuthTokenVerifierService.verifyAccessToken` passes it as `request.remoteAddress`.
 
 Both channels live on the client's `handshake`, and only a **Socket.IO** client has one — with
 `@nestjs/platform-ws` the gateway receives the raw `ws` socket, which carries no `handshake` and
