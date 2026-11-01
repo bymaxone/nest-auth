@@ -1171,6 +1171,46 @@ describe('BymaxAuthModule', () => {
     })
   })
 
+  describe('registerAsync with imports and inject', () => {
+    const extraProviders = [
+      { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+    ]
+
+    // Scenario: the options factory injects a provider that only a NON-global module in `imports`
+    // exports, which is how a plain `ConfigModule` import reaches `ConfigService`. Expected: the
+    // application boots and signs with the secret the factory read. The internal JWT registration
+    // runs the same factory, so it must be given the same `imports`; without them Nest cannot
+    // resolve `JWT_MODULE_OPTIONS` and the module never starts.
+    it('boots when the factory injects a provider exported by a non-global module in imports', async () => {
+      const OPTIONS_SOURCE = Symbol('OPTIONS_SOURCE')
+
+      @Module({
+        providers: [{ provide: OPTIONS_SOURCE, useValue: validOptions }],
+        exports: [OPTIONS_SOURCE]
+      })
+      class OptionsSourceModule {}
+
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            imports: [OptionsSourceModule],
+            inject: [OPTIONS_SOURCE],
+            useFactory: (...args: unknown[]) => args[0] as BymaxAuthModuleOptions,
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      const token = module
+        .get(JwtService)
+        .sign({ sub: 'u1' }, { secret: validOptions.jwt.secret, algorithm: 'HS256' })
+      expect(module.get(JwtService).verify(token, { secret: validOptions.jwt.secret }).sub).toBe(
+        'u1'
+      )
+    })
+  })
+
   describe('SessionService and PasswordResetService wiring', () => {
     const extraProviders = [
       { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
