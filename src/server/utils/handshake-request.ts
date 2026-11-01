@@ -82,13 +82,12 @@ function trustedForwardedHost(
 ): string | undefined {
   if (isTrustedProxy === undefined || typeof forwarded !== 'string') return undefined
   if (peer === undefined || peer.trim() === '') return undefined
-  let trusted: unknown
+  // Trust is the exact boolean `true` and nothing else; a predicate that throws is not an answer.
   try {
-    trusted = isTrustedProxy(peer)
+    if (isTrustedProxy(peer) !== true) return undefined
   } catch {
     return undefined
   }
-  if (trusted !== true) return undefined
   const comma = forwarded.indexOf(',')
   const first = (comma === -1 ? forwarded : forwarded.slice(0, comma)).trim()
   return first === '' ? undefined : first

@@ -239,6 +239,8 @@ describe('resolveOptions — success', () => {
       resolveOptions({ ...MINIMAL_OPTIONS, isTrustedProxy: value as never })
 
     expect(resolve).toThrow('isTrustedProxy must be a function')
+    // The message carries the recipe a host needs to fix it, not only the complaint.
+    expect(resolve).toThrow("Pass `(peer) => app.get('trust proxy fn')(peer, 0)`, or remove it.")
   })
 
   // Scenario: a function. Expected: carried through to the resolved options untouched.
