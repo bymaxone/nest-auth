@@ -33,6 +33,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   never read, and every uncertain case (no peer, a header handed over as separate values, an empty first element, a predicate that throws
   or does not answer `true`) falls back to `Host`, so those cases can only refuse a stream, never
   admit a tenant the client chose.
+- **`afterMfaEnabled` and `afterMfaDisabled` now receive the account as the transition left it.**
+  Both hooks ran after the second factor was written, but the account they were handed was the
+  record read before the write, so "after MFA enabled" reported `mfaEnabled: false` and "after MFA
+  disabled" reported `true`, on both planes and for the administrative `resetMfa` as well. They now
+  report `true` and `false` respectively. A handler that branched on the old, inverted value (for
+  example to decide whether to send an alert) now sees the real one. The credential fields
+  (`passwordHash`, `mfaSecret`, `mfaRecoveryCodes`) are still absent from the payload, and nothing
+  else about it changes.
+
+### Fixed
+
+- **The MFA hooks reported the state from before the transition.** See the Apply note above.
 
 ## [1.4.10] - 2026-11-01
 

@@ -320,7 +320,8 @@ export interface IAuthHooks {
    * Use this hook to send security notifications (via `IEmailProvider`),
    * update audit logs, or propagate the change to downstream systems.
    *
-   * @param user - The user who enabled MFA (credential fields omitted).
+   * @param user - The user who enabled MFA, as the enrolment left it: `mfaEnabled` is `true`
+   *   (credential fields omitted).
    * @param context - Request metadata (IP, user agent, sanitized headers).
    */
   afterMfaEnabled?(user: SafeAuthUser, context: HookContext): Promise<void> | void
@@ -331,7 +332,9 @@ export interface IAuthHooks {
    * Use this hook to send security alerts, update audit logs, or enforce
    * organizational policies that require MFA.
    *
-   * @param user - The user who disabled MFA (credential fields omitted).
+   * @param user - The user whose MFA was disabled, as the removal left it: `mfaEnabled` is
+   *   `false` (credential fields omitted). Fired for a user-initiated disable and for an
+   *   administrative `resetMfa` alike.
    * @param context - Request metadata (IP, user agent, sanitized headers).
    */
   afterMfaDisabled?(user: SafeAuthUser, context: HookContext): Promise<void> | void
