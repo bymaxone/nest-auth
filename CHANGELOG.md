@@ -32,6 +32,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `useFactory: (config: ConfigService) => ...` type-checks under `strict`. A factory written with
   `...args: unknown[]` keeps compiling, and the options it returns are checked as before: a secret
   typed `string | undefined` is still refused.
+- **A request whose `refreshToken` is present but malformed now answers `400 auth.validation`.** On
+  `POST /refresh`, `/logout`, `/sessions/revoke-all` and the platform `refresh` and `logout`, a body
+  `refreshToken` that is not a string of 1 to 2048 characters used to be read as a missing token:
+  refresh answered `401`, logout answered `204`, and revoke-all answered `404`. It is now refused
+  with `400`, naming the field, before anything is done. An omitted field and JSON `null` still
+  mean no token. A client that sends `refreshToken: ''` when it holds no token, the `?? ''`
+  pattern, now gets the `400`; it should omit the field or send `null`. The field is read only
+  where the delivery mode reads the body, so in `cookie` mode a value there is ignored.
 
 ### Fixed
 
@@ -40,6 +48,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   fault on one record answered a list that looked complete. The index cleanup that ran after
   every listing still runs, with the same candidates and the same guard that removes only members
   whose refresh key is gone, so the fault costs the caller the list and the index nothing.
+- **Logout no longer answers success while leaving the refresh session alive.** With a refresh
+  token that was present but malformed it blacklisted the access token, answered `204`, and left the
+  refresh session usable, so the client believed it had signed out. The request is now refused
+  before either happens.
 
 ### Documentation
 

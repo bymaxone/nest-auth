@@ -3,10 +3,15 @@ import type { Request, Response } from 'express'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
 
 /** Hostname validation — allows only alphanumeric, dots, and hyphens. */
 const HOSTNAME_RE = /^[a-z0-9.-]+$/i
+
+/** Longest refresh token a request body may carry; the wire contract's opaque-token bound. */
+const REFRESH_TOKEN_MAX_LENGTH = 2048
 
 /**
  * Auth response for cookie mode — tokens delivered via HttpOnly cookies.
@@ -399,10 +404,31 @@ export class TokenDeliveryService {
     return parts[1]
   }
 
-  /** Reads the refresh token from the request body field. */
+  /**
+   * Reads the refresh token from the request body field.
+   *
+   * An omitted field and JSON `null` both mean "no token". Any other value that is not a string
+   * of 1 to {@link REFRESH_TOKEN_MAX_LENGTH} characters is a malformed request, not a missing
+   * token, and is refused before any caller acts on it.
+   *
+   * @throws {@link AuthException} `VALIDATION` when the field is present and malformed.
+   */
   private readBodyRefresh(req: Request): string | undefined {
     const body = req.body as Record<string, unknown> | undefined
     const value = body?.['refreshToken']
-    return typeof value === 'string' ? value : undefined
+    if (value === undefined || value === null) return undefined
+    if (
+      typeof value !== 'string' ||
+      value.length === 0 ||
+      value.length > REFRESH_TOKEN_MAX_LENGTH
+    ) {
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+        {
+          field: 'refreshToken',
+          message: `refreshToken must be a string of 1 to ${REFRESH_TOKEN_MAX_LENGTH} characters`
+        }
+      ])
+    }
+    return value
   }
 }
