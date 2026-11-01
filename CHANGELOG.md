@@ -40,9 +40,9 @@ userAgent)`.** It is the challenge for an entry point that serves the platform p
   answer success even when the store refused one of the writes that revoke the caller's
   credentials. Every credential write is now attempted, whatever the earlier ones did, and the first
   failure is raised once the rest have run. The route answers a 5xx instead of `204` and does not
-  clear the caller's cookies, so the client can retry. A session's index entry is removed only after
-  the credential it names is deleted, so a later sign-out-everywhere can still find a session that
-  logout could not end. A token that cannot be verified (absent, expired, forged) still logs out as
+  clear the caller's cookies, so the client can retry. On the platform route, a session's index entry
+  is removed only after the credential it names is deleted, so a later sign-out-everywhere can still
+  find a session that logout could not end. A token that cannot be verified (absent, expired, forged) still logs out as
   before, and a store that cannot answer the initial read still fails closed. A host that treated a
   `204` from logout as proof of revocation now sees a 5xx during a store outage. The Next.js logout
   route handler is not affected: it ignores the upstream answer and clears the browser's cookies
