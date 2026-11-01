@@ -314,8 +314,7 @@ describe('cross-implementation conformance', () => {
     // marker and the recovery-code claim — and are separated only by their prefix.
     //
     // The count is asserted rather than left open: the whole value of this block is that a key
-    // deriving from the subject and NOT listed here is invisible to the contract, which is how the
-    // session index and the token epoch stayed tenant-blind for so long.
+    // deriving from the subject and NOT listed here is invisible to the contract.
     it('derives all ten named keys from the subject', () => {
       const derived = Object.entries(contract.userSubjectDerivedKeys).filter(
         ([name]) => name !== '$comment'
