@@ -54,7 +54,7 @@ Format: `{namespace}:{prefix}:{identifier}`
 | `otp`  | OTP codes                                                 | `otpTtlSeconds`             |
 | `sess` | Session set per user                                      | Session lifetime            |
 | `sd`   | Session detail                                            | Session lifetime            |
-| `us`   | Cached account status (`us:{tenantId}:{userId}`)          | `userStatusCacheTtlSeconds` |
+| `us`   | Cached account status, keyed by `HMAC(account subject)`   | `userStatusCacheTtlSeconds` |
 | `uev`  | Cached email-verified flag (same scoping)                 | `userStatusCacheTtlSeconds` |
 
 **Do not build these keys from the format, in library code or consumer code.** `us` and `uev` are

@@ -59,8 +59,8 @@ export function assertValidJti(jti: unknown): asserts jti is string {
  * Upper bound for the `sub` (subject) claim length.
  *
  * The `sub` value is used directly as the user-identifier component of
- * several Redis keys (`us:${sub}`, the derived session index, and downstream HMAC
- * inputs). A pathologically long subject (e.g. from a custom user-id
+ * several Redis keys (the derived status cache, session index and token epoch, and downstream
+ * HMAC inputs). A pathologically long subject (e.g. from a custom user-id
  * format that accidentally concatenated metadata) would bloat key sizes
  * and Redis memory without offering any legitimate value. 256 characters
  * comfortably accommodates UUIDs, ULIDs, numeric IDs, and composite
@@ -95,7 +95,7 @@ export function assertValidSub(sub: unknown): asserts sub is string {
  * `DashboardJwtPayload` types `tenantId` as a `string`, but the payload is decoded from
  * a token and only cast — the type binds a TypeScript caller and nothing on the wire. The
  * value drives both the tenant-binding comparison and the tenant-scoped status keys
- * (`us:${tenantId}:${sub}`), so an absent or non-string tenant must be refused rather than
+ * (the tenant-scoped status cache keys), so an absent or non-string tenant must be refused rather than
  * slipping through an `undefined === undefined` binding comparison or producing a degenerate
  * key. Content is unconstrained for the same reason as `sub`; only the shape is enforced.
  *

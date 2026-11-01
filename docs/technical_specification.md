@@ -1351,7 +1351,7 @@ export interface IUserRepository {
 }
 ```
 
-> **Note:** The package automatically invalidates the user status cache in Redis (`auth:us:{userId}`) after any call to `updateStatus()`. The host application does **not** need to manage the package's Redis cache.
+> **Note:** The package automatically invalidates the user status cache in Redis (`auth:us:{hmac_sha256(hmacKey, userSubject)}`) after any call to `updateStatus()`. The host application does **not** need to manage the package's Redis cache.
 
 ### 5.3 `AuthPlatformUser` interface
 

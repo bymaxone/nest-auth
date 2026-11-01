@@ -4,6 +4,8 @@
  * (status, email verification, key shape, miss handling) and the uncached platform path.
  */
 
+import { createHmac } from 'node:crypto'
+
 import { HttpStatus } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
@@ -27,6 +29,23 @@ function errorCodeOf(err: unknown): string {
 // Test doubles
 // ---------------------------------------------------------------------------
 
+/** The library's identifier-HMAC key as the service under test is given it. */
+const HMAC_KEY = 'account-status-spec-hmac-key'
+
+/**
+ * The keys an account is cached under, derived here with `node:crypto` and the contract's subject
+ * grammar rather than by calling the library, so the expectations restate the contract and not the
+ * implementation: the HMAC over `dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}`.
+ */
+function digestFor(tenantId: string, userId: string): string {
+  const subject = `dashboard:${Buffer.byteLength(tenantId, 'utf8')}:${tenantId}:${userId}`
+  return createHmac('sha256', HMAC_KEY).update(subject, 'utf8').digest('hex')
+}
+const statusKeyFor = (tenantId: string, userId: string): string =>
+  `us:${digestFor(tenantId, userId)}`
+const verifiedKeyFor = (tenantId: string, userId: string): string =>
+  `uev:${digestFor(tenantId, userId)}`
+
 const mockRedis = {
   get: jest.fn(),
   set: jest.fn(),
@@ -42,6 +61,7 @@ const mockPlatformRepo = {
 }
 
 const mockOptions = {
+  hmacKey: HMAC_KEY,
   userStatusCacheTtlSeconds: 60,
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED', 'PENDING_APPROVAL'],
   // The status-only suites run with verification enforcement OFF, so the service reads a single
@@ -105,24 +125,41 @@ describe('AccountStatusService — dashboard', () => {
     await expect(service.assertDashboardAccountUsable(REF)).resolves.toBeUndefined()
 
     expect(mockUserRepo.findById).toHaveBeenCalledWith({ id: 'user-1', tenantId: 'tenant-1' })
-    expect(mockRedis.set).toHaveBeenCalledWith('us:tenant-1:user-1', 'active', 60)
+    expect(mockRedis.set).toHaveBeenCalledWith(statusKeyFor('tenant-1', 'user-1'), 'active', 60)
     // With verification enforcement OFF the verified flag is neither read nor written. Pins the
     // `if (requireVerified)` branch: were it always-true, this miss would also write `uev:`.
     expect(mockRedis.set).toHaveBeenCalledTimes(1)
   })
 
-  // A tenant or subject containing the `:` delimiter must not shift the key boundary: each half is
-  // percent-encoded, so `('x:y','a:b')` keys `us:x%3Ay:a%3Ab` and cannot collide with another pair.
-  it('percent-encodes tenant and subject so a `:` in either cannot shift the key boundary', async () => {
+  // A tenant or subject containing the `:` delimiter must not shift the boundary of what is
+  // hashed: the subject carries a byte-length prefix, so `('x:y','a:b')` and `('x','y:a:b')` are
+  // different accounts and are cached under different keys.
+  it('keys two accounts whose ids differ only by where a `:` falls under different entries', async () => {
     mockRedis.get.mockResolvedValue(null)
     mockUserRepo.findById.mockResolvedValue({ id: 'a:b', status: 'active' })
     mockRedis.set.mockResolvedValue(undefined)
 
-    await expect(
-      service.assertDashboardAccountUsable({ userId: 'a:b', tenantId: 'x:y' })
-    ).resolves.toBeUndefined()
+    await service.assertDashboardAccountUsable({ userId: 'a:b', tenantId: 'x:y' })
+    await service.assertDashboardAccountUsable({ userId: 'y:a:b', tenantId: 'x' })
 
-    expect(mockRedis.set).toHaveBeenCalledWith('us:x%3Ay:a%3Ab', 'active', 60)
+    expect(mockRedis.set).toHaveBeenCalledWith(statusKeyFor('x:y', 'a:b'), 'active', 60)
+    expect(mockRedis.set).toHaveBeenCalledWith(statusKeyFor('x', 'y:a:b'), 'active', 60)
+    expect(statusKeyFor('x:y', 'a:b')).not.toBe(statusKeyFor('x', 'y:a:b'))
+  })
+
+  // The ids are HMACed, not written into the key: the keyspace is shared and readable, and an
+  // account identifier in the clear is disclosed to anyone with access to the store.
+  it('writes no part of the tenant or user id into the key', async () => {
+    mockRedis.get.mockResolvedValue(null)
+    mockUserRepo.findById.mockResolvedValue({ id: 'user-1', status: 'active' })
+    mockRedis.set.mockResolvedValue(undefined)
+
+    await service.assertDashboardAccountUsable(REF)
+
+    const key = String(mockRedis.set.mock.calls[0]?.[0])
+    expect(key).toMatch(/^us:[0-9a-f]{64}$/)
+    expect(key).not.toContain('tenant-1')
+    expect(key).not.toContain('user-1')
   })
 
   // A blocked status answers 403 with the code that names it, so the client can say why.
@@ -199,8 +236,8 @@ describe('AccountStatusService — invalidate', () => {
 
     await expect(service.invalidate(REF)).resolves.toBeUndefined()
 
-    expect(mockRedis.del).toHaveBeenCalledWith('us:tenant-1:user-1')
-    expect(mockRedis.del).toHaveBeenCalledWith('uev:tenant-1:user-1')
+    expect(mockRedis.del).toHaveBeenCalledWith(statusKeyFor('tenant-1', 'user-1'))
+    expect(mockRedis.del).toHaveBeenCalledWith(verifiedKeyFor('tenant-1', 'user-1'))
     expect(mockRedis.del).toHaveBeenCalledTimes(2)
   })
 
@@ -212,8 +249,8 @@ describe('AccountStatusService — invalidate', () => {
 
     await service.invalidate({ userId: 'user-1', tenantId: 'acme' })
 
-    expect(mockRedis.del).toHaveBeenCalledWith('us:acme:user-1')
-    expect(mockRedis.del).not.toHaveBeenCalledWith('us:tenant-1:user-1')
+    expect(mockRedis.del).toHaveBeenCalledWith(statusKeyFor('acme', 'user-1'))
+    expect(mockRedis.del).not.toHaveBeenCalledWith(statusKeyFor('tenant-1', 'user-1'))
   })
 
   // The verified flag is dropped FIRST. If the second delete fails, the entry left behind should
@@ -226,21 +263,21 @@ describe('AccountStatusService — invalidate', () => {
     await service.invalidate(REF)
 
     expect(mockRedis.del.mock.calls.map((c: unknown[]) => c[0])).toEqual([
-      'uev:tenant-1:user-1',
-      'us:tenant-1:user-1'
+      verifiedKeyFor('tenant-1', 'user-1'),
+      statusKeyFor('tenant-1', 'user-1')
     ])
   })
 
-  // A `:` in either half must not shift the boundary on the way out any more than on the way in,
-  // or the delete names a different entry than the write created and silently misses it.
-  it('percent-encodes each half of the key', async () => {
+  // A `:` in either id must name the same entry on the way out as on the way in, or the delete
+  // names a different entry than the write created and silently misses it.
+  it('deletes the entries the write created for ids that contain a `:`', async () => {
     const service = await buildService()
     mockRedis.del.mockResolvedValue(undefined)
 
     await service.invalidate({ userId: 'a:b', tenantId: 'x:y' })
 
-    expect(mockRedis.del).toHaveBeenCalledWith('us:x%3Ay:a%3Ab')
-    expect(mockRedis.del).toHaveBeenCalledWith('uev:x%3Ay:a%3Ab')
+    expect(mockRedis.del).toHaveBeenCalledWith(statusKeyFor('x:y', 'a:b'))
+    expect(mockRedis.del).toHaveBeenCalledWith(verifiedKeyFor('x:y', 'a:b'))
   })
 })
 
@@ -249,7 +286,7 @@ describe('AccountStatusService — invalidate rejects an unusable account refere
     jest.clearAllMocks()
   })
 
-  // An empty or blank id builds a key no read ever wrote (`us::user-1`), so the delete removes
+  // An empty or blank id builds a key no read ever wrote (a subject no read ever wrote), so the delete removes
   // nothing and RESOLVES — the caller believes the suspension applied while the cached `active`
   // survives its TTL. Refused instead, because that is the silent failure this method exists to
   // eliminate, and an unset resolver value is how it arrives.
@@ -351,7 +388,7 @@ describe('AccountStatusService — email verification enforcement', () => {
     mockRedis.set.mockResolvedValue(undefined)
     await expect(service.assertDashboardAccountUsable(REF)).resolves.toBeUndefined()
     expect(mockUserRepo.findById).toHaveBeenCalledWith({ id: 'user-1', tenantId: 'tenant-1' })
-    expect(mockRedis.set).toHaveBeenCalledWith('uev:tenant-1:user-1', '1', 60)
+    expect(mockRedis.set).toHaveBeenCalledWith(verifiedKeyFor('tenant-1', 'user-1'), '1', 60)
   })
 
   // Both facts miss: ONE repository read refreshes both, and an unverified record caches '0'.
@@ -367,8 +404,8 @@ describe('AccountStatusService — email verification enforcement', () => {
     const thrown = await service.assertDashboardAccountUsable(REF).catch((e: unknown) => e)
     expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
     expect(mockUserRepo.findById).toHaveBeenCalledTimes(1)
-    expect(mockRedis.set).toHaveBeenCalledWith('us:tenant-1:user-1', 'active', 60)
-    expect(mockRedis.set).toHaveBeenCalledWith('uev:tenant-1:user-1', '0', 60)
+    expect(mockRedis.set).toHaveBeenCalledWith(statusKeyFor('tenant-1', 'user-1'), 'active', 60)
+    expect(mockRedis.set).toHaveBeenCalledWith(verifiedKeyFor('tenant-1', 'user-1'), '0', 60)
   })
 
   // A blocked status is refused FIRST: a banned, unverified account is told it is banned rather
@@ -385,7 +422,7 @@ describe('AccountStatusService — email verification enforcement', () => {
     const service = await buildService({ emailVerification: { required: false } })
     mockRedis.get.mockResolvedValue('active')
     await expect(service.assertDashboardAccountUsable(REF)).resolves.toBeUndefined()
-    expect(mockRedis.get).not.toHaveBeenCalledWith('uev:tenant-1:user-1')
+    expect(mockRedis.get).not.toHaveBeenCalledWith(verifiedKeyFor('tenant-1', 'user-1'))
   })
 })
 
