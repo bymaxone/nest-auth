@@ -530,6 +530,8 @@ import {
   BYMAX_AUTH_REDIS_CLIENT,
   BYMAX_AUTH_EMAIL_PROVIDER
 } from '@bymax-one/nest-auth'
+import { PrismaUserRepository } from './user.repository'
+import { ResendEmailProvider } from './email.provider'
 
 // Yours, not this library's: `ConfigModule` and `ConfigService` come from `@nestjs/config`,
 // `DatabaseModule` is your module exporting the database client the repository uses, and
@@ -541,7 +543,7 @@ import {
       imports: [ConfigModule, DatabaseModule, RedisModule],
       useFactory: (config: ConfigService) => ({
         jwt: {
-          secret: config.get('JWT_SECRET'), // min 32 chars, high entropy
+          secret: config.getOrThrow('JWT_SECRET'), // min 32 chars, high entropy
           accessExpiresIn: '15m',
           refreshExpiresInDays: 7
         },

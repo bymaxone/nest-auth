@@ -28,8 +28,6 @@
  * - Section 6 (React) and Section 7 (Next.js): they are not part of this file.
  */
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import type { Server } from 'node:http'
 import { compileFunction } from 'node:vm'
 
@@ -43,32 +41,7 @@ import request from 'supertest'
 import { ModuleKind, ScriptTarget, transpileModule } from 'typescript'
 
 import * as nestAuth from '../../src/server/index'
-
-const README = readFileSync(join(__dirname, '../../README.md'), 'utf8')
-
-const QUICK_START_START = '## 🚀 Quick Start'
-const QUICK_START_END = '## ⚙️ Configuration'
-
-/** The top-level `typescript` fences of the Quick Start, in the order the README shows them. */
-function quickStartBlocks(): string[] {
-  const start = README.indexOf(QUICK_START_START)
-  const end = README.indexOf(QUICK_START_END)
-  if (start === -1 || end === -1) throw new Error('README has no Quick Start section')
-  // Anchored to the line start so a fence inside a blockquote is not one of these.
-  return Array.from(
-    README.slice(start, end).matchAll(/^```typescript\n([\s\S]*?)^```$/gm),
-    (match) => match[1] ?? ''
-  )
-}
-
-/** The one block that contains `marker`; zero or several is a README this suite no longer reads. */
-function block(marker: string): string {
-  const found = quickStartBlocks().filter((candidate) => candidate.includes(marker))
-  if (found.length !== 1) {
-    throw new Error(`Expected one Quick Start block containing "${marker}", found ${found.length}`)
-  }
-  return found[0] as string
-}
+import { block, quickStartBlocks } from './readme-blocks'
 
 type Modules = Readonly<Record<string, unknown>>
 
@@ -171,6 +144,12 @@ class ConfigService {
   get(key: string): string | undefined {
     return ENV[key]
   }
+
+  getOrThrow(key: string): string {
+    const value = ENV[key]
+    if (value === undefined) throw new Error(`Configuration key "${key}" does not exist`)
+    return value
+  }
 }
 
 @Module({ providers: [ConfigService], exports: [ConfigService] })
@@ -249,15 +228,13 @@ function readmeAppModule(source: (marker: string) => string, db: PrismaService):
   const email = runBlock(source('// email.provider.ts'), { ...common, resend: { Resend } })
   const appModule = runBlock(
     source('// app.module.ts'),
-    { ...common },
+    { ...common, './user.repository': repository, './email.provider': email },
     {
       ConfigModule,
       ConfigService,
       DatabaseModule,
       RedisModule,
-      RedisService,
-      PrismaUserRepository: repository['PrismaUserRepository'],
-      ResendEmailProvider: email['ResendEmailProvider']
+      RedisService
     }
   )
   const controller = runBlock(source('// users.controller.ts'), common)
@@ -433,6 +410,13 @@ const PLANTED: { name: string; marker: string; from: string; to: string; fails: 
     name: 'the rate-limit client address source is dropped',
     marker: '// app.module.ts',
     from: "rateLimit: { clientIpSource: 'trusted-proxy' }, // 'peer' | 'trusted-proxy'",
+    to: '',
+    fails: 'the application did not boot'
+  },
+  {
+    name: 'the module block does not import the repository it uses',
+    marker: '// app.module.ts',
+    from: "import { PrismaUserRepository } from './user.repository'\n",
     to: '',
     fails: 'the application did not boot'
   },

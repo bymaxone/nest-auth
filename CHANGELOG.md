@@ -24,9 +24,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   listing that used to answer `200` with the unreadable session left out during a Redis fault
   now answers `500` (`auth.internal` when `AuthExceptionFilter` is registered), as a failed
   logout write does. A client that treated every `200` from this route as the complete list must
-  now handle the error. A session
-  record that is absent or malformed is still left out of the list, as before. A private method,
-  `readSession`, appears in the `SessionService` declarations; no public member changes.
+  now handle the error. A session record that is absent or malformed is still left out of the
+  list, as before. A private method, `readSession`, appears in the `SessionService` declarations;
+  no public member changes.
+- **`registerAsync` now accepts a factory with typed parameters, without a cast.** The options
+  factory is declared `(...args: never[])` instead of `(...args: unknown[])`, so
+  `useFactory: (config: ConfigService) => ...` type-checks under `strict`. A factory written with
+  `...args: unknown[]` keeps compiling, and the options it returns are checked as before: a secret
+  typed `string | undefined` is still refused.
 
 ### Fixed
 
@@ -35,6 +40,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   fault on one record answered a list that looked complete. The index cleanup that ran after
   every listing still runs, with the same candidates and the same guard that removes only members
   whose refresh key is gone, so the fault costs the caller the list and the index nothing.
+
+### Documentation
+
+- **The Quick Start module block compiles under `strict`.** It reads the secret with
+  `config.getOrThrow('JWT_SECRET')`, since `config.get` answers `string | undefined`, and it now
+  imports the repository and email provider classes it uses, which the previous steps define. A
+  test type-checks the Quick Start blocks with every name they use declared.
 
 ## [1.4.15] - 2026-11-01
 
