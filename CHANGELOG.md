@@ -40,8 +40,7 @@ userAgent)`.** It is the challenge for an entry point that serves the platform p
   answer success even when the store refused one of the writes that revoke the caller's
   credentials. Every write is now attempted, whatever the earlier ones did, and the first failure is
   raised once the rest have run: the route answers a 5xx instead of `204` and does not clear the
-  caller's cookies, so the client can retry. A retry repeats every credential write (only the
-  session-index prune can be left to expire with its TTL). A token that cannot be
+  caller's cookies, so the client can retry. A token that cannot be
   verified (absent, expired, forged) still logs out as before, and a store that cannot answer the
   initial read still fails closed. A host that treated a `204` from logout as proof of revocation
   now sees a 5xx during a store outage. The Next.js logout route handler is not affected: it
