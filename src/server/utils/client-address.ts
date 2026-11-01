@@ -55,10 +55,10 @@ function peerAddress(remoteAddress: string | undefined): string {
 /**
  * Resolves the client address of a request, or `''` when there is none.
  *
- * Candidates are tried in order and the first that is an address wins: `req.ip`, then the rest of
- * `req.ips`, then the socket peer. `req.ips` runs from the client end toward the socket, and each
- * entry after the first is a hop the trust setting already vouched for, so an unparsable client
- * entry resolves to the nearest trusted hop. That is the same answer as walking the header from
+ * Candidates are tried in order and the first that is an address wins: `req.ip`, then `req.ips`,
+ * then the socket peer. `req.ips` runs from the client end toward the socket and starts with
+ * `req.ip` itself; each entry after the first is a hop the trust setting already vouched for, so an
+ * unparsable client entry resolves to the nearest trusted hop. That is the same answer as walking the header from
  * the right and ending at the last hop that was an address.
  *
  * The value returned is a textual IPv4 or IPv6 address of at most 45 characters, which no caller
@@ -69,7 +69,8 @@ function peerAddress(remoteAddress: string | undefined): string {
  *   yields one.
  */
 export function resolveClientAddress(request: ClientAddressSource): string {
-  for (const candidate of [request.ip, ...(request.ips ?? []).slice(1)]) {
+  // Stryker disable next-line ArrayDeclaration: a substituted default is not an address, so it is skipped and the result is unchanged
+  for (const candidate of [request.ip, ...(request.ips ?? [])]) {
     if (isHeaderAddress(candidate)) return candidate
   }
   return peerAddress(request.socket?.remoteAddress)
