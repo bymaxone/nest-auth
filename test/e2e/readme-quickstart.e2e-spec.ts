@@ -30,12 +30,14 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { Server } from 'node:http'
 import { compileFunction } from 'node:vm'
 
 import * as nestCommon from '@nestjs/common'
 import { Injectable, Module } from '@nestjs/common'
 import type { INestApplication, Type } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
+import type { TestingModule } from '@nestjs/testing'
 import RedisMock from 'ioredis-mock'
 import request from 'supertest'
 import { ModuleKind, ScriptTarget, transpileModule } from 'typescript'
@@ -216,13 +218,23 @@ const READER_OWNED = [
   'RedisService'
 ]
 
-/** A fresh app built from the (possibly altered) README blocks, plus the database behind it. */
-async function buildApp(
-  alter: (marker: string, source: string) => string = (_marker, source) => source
-): Promise<{ app: INestApplication; db: PrismaService }> {
-  const db = new PrismaService()
-  sentMail.length = 0
+type Alter = (marker: string, source: string) => string
 
+const QUIET_LOGGER = {
+  log: () => undefined,
+  error: () => undefined,
+  warn: () => undefined,
+  debug: () => undefined,
+  verbose: () => undefined
+}
+
+/**
+ * The module the README builds: its repository, email provider and module blocks, with the
+ * controller block registered the way a reader registers it. The README does not show where
+ * `UsersController` goes; a reader adds it to the `controllers` of the module that imports
+ * `BymaxAuthModule`, which is what this does.
+ */
+function readmeAppModule(source: (marker: string) => string, db: PrismaService): Type<unknown> {
   @Module({ providers: [{ provide: PrismaService, useValue: db }], exports: [PrismaService] })
   class DatabaseModule {}
 
@@ -230,8 +242,6 @@ async function buildApp(
   class RedisModule {}
 
   const common: Modules = { '@nestjs/common': nestCommon, '@bymax-one/nest-auth': nestAuth }
-  const source = (marker: string): string => alter(marker, block(marker))
-
   const repository = runBlock(source('// user.repository.ts'), {
     ...common,
     './prisma.service': { PrismaService }
@@ -251,51 +261,125 @@ async function buildApp(
     }
   )
   const controller = runBlock(source('// users.controller.ts'), common)
-
-  // The README does not show where `UsersController` is registered. A reader adds it to the
-  // `controllers` of the module that imports `BymaxAuthModule`, which is what this does.
   const AppModule = appModule['AppModule'] as Type<unknown>
   Reflect.defineMetadata('controllers', [controller['UsersController']], AppModule)
+  return AppModule
+}
 
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .setLogger({
-      log: () => undefined,
-      error: () => undefined,
-      warn: () => undefined,
-      debug: () => undefined,
-      verbose: () => undefined
-    })
-    .compile()
-  // `main.ts` as the README writes it. `NestFactory.create` hands back the application this suite
-  // built (and `listen` initializes it instead of binding port 3000), so what runs is the README's
-  // own `app.use(cookieParser())`, not a parser installed here.
-  let listening: () => void = () => undefined
-  const started = new Promise<void>((resolve) => {
-    listening = resolve
-  })
+/**
+ * Runs the README's `main.ts`. `NestFactory.create` hands back the application this suite built
+ * and `listen` initializes it instead of binding port 3000, so what runs is the README's own
+ * `app.use(cookieParser())`, not a parser installed here.
+ */
+async function runMain(
+  mainSource: string,
+  moduleRef: TestingModule,
+  AppModule: Type<unknown>
+): Promise<INestApplication> {
   let app: INestApplication | undefined
-  runBlock(source("import cookieParser from 'cookie-parser'"), {
-    '@nestjs/core': {
-      NestFactory: {
-        create: async (): Promise<INestApplication> => {
-          app = moduleRef.createNestApplication()
-          app.listen = async (): Promise<never> => {
-            await (app as INestApplication).init()
-            listening()
-            return undefined as never
+  const started = new Promise<void>((listening) => {
+    runBlock(mainSource, {
+      '@nestjs/core': {
+        NestFactory: {
+          create: async (): Promise<INestApplication> => {
+            const created = moduleRef.createNestApplication()
+            created.listen = async (): Promise<never> => {
+              await created.init()
+              listening()
+              return undefined as never
+            }
+            app = created
+            return created
           }
-          return app
         }
-      }
-    },
-    'cookie-parser': { __esModule: true, default: cookieParser },
-    './app.module': { AppModule }
+      },
+      'cookie-parser': { __esModule: true, default: cookieParser },
+      './app.module': { AppModule }
+    })
   })
   await started
-  return { app: app as INestApplication, db }
+  return app as INestApplication
+}
+
+/** A fresh app built from the (possibly altered) README blocks, plus the database behind it. */
+async function buildApp(
+  alter: Alter = (_marker, source) => source
+): Promise<{ app: INestApplication; db: PrismaService }> {
+  const db = new PrismaService()
+  sentMail.length = 0
+  const source = (marker: string): string => alter(marker, block(marker))
+  const AppModule = readmeAppModule(source, db)
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    .setLogger(QUIET_LOGGER)
+    .compile()
+  const app = await runMain(
+    source("import cookieParser from 'cookie-parser'"),
+    moduleRef,
+    AppModule
+  )
+  return { app, db }
 }
 
 const CREDENTIALS = { email: 'ada@example.com', password: 'Str0ng-Passw0rd!', tenantId: 'acme' }
+
+/**
+ * The login cookies as one `Cookie` header. They are `Secure`, which a browser honours on
+ * localhost but supertest does not over plain http, so they are forwarded by hand; nothing else
+ * about them is altered.
+ */
+function cookieHeader(response: request.Response): string {
+  return (response.headers['set-cookie'] as unknown as string[])
+    .map((cookie) => cookie.split(';')[0])
+    .join('; ')
+}
+
+/** Sign up, verify the address and sign in; answers the session cookie, or why it could not. */
+async function signUp(http: Server): Promise<{ cookie: string } | { failure: string }> {
+  const registered = await request(http)
+    .post('/register')
+    .send({ ...CREDENTIALS, name: 'Ada Lovelace' })
+  if (registered.status !== 201) return { failure: `register answered ${registered.status}` }
+
+  // A new account is pending until its address is verified: the code reaches the reader's mail
+  // provider, here the README's own `ResendEmailProvider`, and comes back through `/verify-email`.
+  const verification = sentMail.find((mail) => mail['to'] === CREDENTIALS.email)
+  const otp = /<strong>(\d+)<\/strong>/.exec(String(verification?.['html'] ?? ''))?.[1]
+  if (!otp) return { failure: 'the README email provider was never handed a verification code' }
+  const verified = await request(http)
+    .post('/verify-email')
+    .send({ email: CREDENTIALS.email, tenantId: CREDENTIALS.tenantId, otp })
+  if (verified.status !== 204) return { failure: `verify-email answered ${verified.status}` }
+
+  const login = await request(http).post('/login').send(CREDENTIALS)
+  if (login.status !== 200) return { failure: `login answered ${login.status}` }
+  return { cookie: cookieHeader(login) }
+}
+
+/** The profile and the role guard, as a signed-in user and as nobody. */
+async function checkUserAccess(http: Server, cookie: string): Promise<string | null> {
+  const me = await request(http).get('/users/me').set('Cookie', cookie)
+  if (me.status !== 200) return `GET /users/me answered ${me.status} ${JSON.stringify(me.body)}`
+  const profile = me.body as Row
+  if (profile['role'] !== 'user' || profile['tenantId'] !== 'acme' || !profile['id']) {
+    return `GET /users/me answered ${JSON.stringify(profile)}`
+  }
+  const refused = await request(http).get('/users').set('Cookie', cookie)
+  if (refused.status !== 403) return `GET /users as a user answered ${refused.status}`
+  const anonymous = await request(http).get('/users/me')
+  if (anonymous.status !== 401)
+    return `GET /users/me without credentials answered ${anonymous.status}`
+  return null
+}
+
+/** Promotes the account in the reader's database and signs in again: the role rides in the token. */
+async function checkAdminAccess(http: Server, db: PrismaService): Promise<string | null> {
+  await db.user.updateMany({ where: { email: CREDENTIALS.email }, data: { role: 'admin' } })
+  const again = await request(http).post('/login').send(CREDENTIALS)
+  if (again.status !== 200) return `second login answered ${again.status}`
+  const listed = await request(http).get('/users').set('Cookie', cookieHeader(again))
+  if (listed.status !== 200) return `GET /users as an admin answered ${listed.status}`
+  return null
+}
 
 /**
  * Walks the journey the Quick Start promises and answers the first step that does not hold, or
@@ -303,56 +387,10 @@ const CREDENTIALS = { email: 'ada@example.com', password: 'Str0ng-Passw0rd!', te
  * prove each defect is caught by the same walk.
  */
 async function walk(app: INestApplication, db: PrismaService): Promise<string | null> {
-  const http = app.getHttpServer()
-  const agent = request.agent(http)
-
-  const registered = await agent.post('/register').send({ ...CREDENTIALS, name: 'Ada Lovelace' })
-  if (registered.status !== 201) return `register answered ${registered.status}`
-
-  // A new account is pending until its address is verified: the code reaches the reader's mail
-  // provider, here the README's own `ResendEmailProvider`, and comes back through `/verify-email`.
-  const verification = sentMail.find((mail) => mail['to'] === CREDENTIALS.email)
-  const otp = /<strong>(\d+)<\/strong>/.exec(String(verification?.['html'] ?? ''))?.[1]
-  if (!otp) return 'the README email provider was never handed a verification code'
-  const verified = await agent
-    .post('/verify-email')
-    .send({ email: CREDENTIALS.email, tenantId: CREDENTIALS.tenantId, otp })
-  if (verified.status !== 204)
-    return `verify-email answered ${verified.status} ${JSON.stringify(verified.body)} for otp ${otp}`
-
-  const login = await agent.post('/login').send(CREDENTIALS)
-  if (login.status !== 200) return `login answered ${login.status}`
-
-  // The login cookies are `Secure`, which a browser honours on localhost but supertest does not
-  // over plain http, so they are forwarded by hand. Nothing else about them is altered.
-  const cookie = (login.headers['set-cookie'] as unknown as string[])
-    .map((c) => c.split(';')[0])
-    .join('; ')
-  const me = await request(http).get('/users/me').set('Cookie', cookie)
-  if (me.status !== 200) return `GET /users/me answered ${me.status} ${JSON.stringify(me.body)}`
-  const profile = me.body as Row
-  if (profile['role'] !== 'user' || profile['tenantId'] !== 'acme' || !profile['id']) {
-    return `GET /users/me answered ${JSON.stringify(profile)}`
-  }
-
-  const refused = await request(http).get('/users').set('Cookie', cookie)
-  if (refused.status !== 403) return `GET /users as a user answered ${refused.status}`
-
-  const anonymous = await request(http).get('/users/me')
-  if (anonymous.status !== 401)
-    return `GET /users/me without credentials answered ${anonymous.status}`
-
-  // Promote the account in the reader's database, then sign in again: the role rides in the token.
-  await db.user.updateMany({ where: { email: CREDENTIALS.email }, data: { role: 'admin' } })
-  const again = await request(http).post('/login').send(CREDENTIALS)
-  if (again.status !== 200) return `second login answered ${again.status}`
-  const adminCookie = (again.headers['set-cookie'] as unknown as string[])
-    .map((c) => c.split(';')[0])
-    .join('; ')
-  const listed = await request(http).get('/users').set('Cookie', adminCookie)
-  if (listed.status !== 200) return `GET /users as an admin answered ${listed.status}`
-
-  return null
+  const http = app.getHttpServer() as Server
+  const session = await signUp(http)
+  if ('failure' in session) return session.failure
+  return (await checkUserAccess(http, session.cookie)) ?? (await checkAdminAccess(http, db))
 }
 
 /** The Quick Start blocks this suite compiles and runs, by a marker only that block contains. */
@@ -390,42 +428,48 @@ const NOT_EXECUTED: [marker: string, reason: string][] = [
  * removes or breaks one thing the Quick Start depends on, and `from` must occur exactly once in
  * its block so a README edit that moves it is a failure here rather than a silently dead row.
  */
-const PLANTED: { name: string; marker: string; from: string; to: string }[] = [
+const PLANTED: { name: string; marker: string; from: string; to: string; fails: string }[] = [
   {
     name: 'the rate-limit client address source is dropped',
     marker: '// app.module.ts',
     from: "rateLimit: { clientIpSource: 'trusted-proxy' }, // 'peer' | 'trusted-proxy'",
-    to: ''
+    to: '',
+    fails: 'the application did not boot'
   },
   {
     name: 'the email provider is not bound',
     marker: '// app.module.ts',
     from: 'provide: BYMAX_AUTH_EMAIL_PROVIDER',
-    to: 'provide: Symbol("unbound")'
+    to: 'provide: Symbol("unbound")',
+    fails: 'never handed a verification code'
   },
   {
     name: 'the cookie parser is never mounted',
     marker: "import cookieParser from 'cookie-parser'",
     from: 'app.use(cookieParser())',
-    to: ''
+    to: '',
+    fails: 'GET /users/me answered 401'
   },
   {
     name: 'a new account is stored with another password hash than the library supplied',
     marker: '// user.repository.ts',
     from: 'passwordHash: data.passwordHash,\n        role',
-    to: "passwordHash: 'x',\n        role"
+    to: "passwordHash: 'x',\n        role",
+    fails: 'login answered 401'
   },
   {
     name: 'a new account is created with the wrong role',
     marker: '// user.repository.ts',
     from: "role: data.role ?? 'user',\n        status: data.status ?? 'pending'",
-    to: "role: 'admin',\n        status: data.status ?? 'pending'"
+    to: "role: 'admin',\n        status: data.status ?? 'pending'",
+    fails: '"role":"admin"'
   },
   {
     name: 'the admin-only route loses its role requirement',
     marker: '// users.controller.ts',
     from: "@Roles('admin')",
-    to: ''
+    to: '',
+    fails: 'GET /users as a user answered 200'
   }
 ]
 
@@ -472,7 +516,7 @@ describe('README Quick Start executes as written (E2E)', () => {
   // Scenario: a defect is planted into one block of the README text. Expected: the application
   // either refuses to boot or the walk reports a step that does not hold; a defect nothing notices
   // would mean this suite cannot tell a working Quick Start from a broken one.
-  it.each(PLANTED)('notices when $name', async ({ marker, from, to }) => {
+  it.each(PLANTED)('notices when $name', async ({ marker, from, to, fails }) => {
     // Outside the try below: a row whose text is gone from the README must fail loudly, not be
     // counted as a defect the suite caught.
     expect(block(marker).split(from)).toHaveLength(2)
@@ -489,6 +533,8 @@ describe('README Quick Start executes as written (E2E)', () => {
     } catch (error) {
       verdict = `the application did not boot: ${String(error).slice(0, 120)}`
     }
-    expect(verdict).not.toBeNull()
+    // The step it fails at, not merely that it fails: a defect caught for another reason is a
+    // table that no longer says what it claims.
+    expect(verdict).toContain(fails)
   })
 })
