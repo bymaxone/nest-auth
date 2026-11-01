@@ -61,11 +61,11 @@ Format: `{namespace}:{prefix}:{identifier}`
 derived in exactly one place — a module-private helper in `account-status.service.ts`, deliberately
 not exported — and dropped through `AccountStatusService.invalidate` — a second statement of a key format drifts out of agreement
 silently, because a delete that stops matching raises nothing and merely defers the change by a
-TTL. The same applies to a consumer: the prefix is readable, the format is not a contract, and the
+TTL. The same applies to a consumer: the prefix is readable, and the
 supported way to name one of these entries is the method.
 
-`us` and `uev` have no platform counterpart: the platform status check is uncached, because there
-is no tenant to scope a cache key by and the population is small enough that a read per call beats
+`us` and `uev` have no platform counterpart: the platform status check is uncached, because the
+population is small enough that a read per call beats
 a keyspace nothing invalidates. The other prefixes DO mirror onto the platform plane under their
 own names (`prt`, `prp`, `pcf`, `pfam`, `pep`, …)
 so a "sign out everywhere" on one plane can never reach the other. The full keyspace, including
