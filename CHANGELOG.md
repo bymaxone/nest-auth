@@ -36,6 +36,21 @@ never>>` instead of `Promise<void>`.
   token" and the request silently degraded. It is now held to the wire contract's opaque-token
   bound: 1 to 2048 characters, answered `400 auth.validation` outside it. An absent field is
   unchanged.
+- **`registerAsync` with `imports` and `inject` from a non-global module failed at boot.** The
+  options factory was run a second time to configure the internal JWT registration, and that
+  registration was given `inject` but not `imports`, so Nest could not resolve the injected
+  provider. It worked only
+  when the module providing the injected token, typically `ConfigModule`, was global. The internal
+  registration now receives the same `imports`.
+
+### Documentation
+
+- **The Quick Start now runs as written.** A test executes its repository, email provider,
+  module, `main.ts` and controller blocks in a real application. Three gaps it found are closed:
+  the module block did not bind the email provider the previous step told the reader to bind, so a
+  verification code never reached the reader's mailer; it did not say which of the modules it
+  uses are the reader's own; and `tokenDelivery: 'cookie'` needs `cookie-parser` mounted, without
+  which a signed-in user is answered `401 auth.token_invalid` on every protected route.
 
 ## [1.4.14] - 2026-11-01
 
