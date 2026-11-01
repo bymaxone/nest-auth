@@ -357,9 +357,8 @@ describe('createAuthClient — forgotPassword', () => {
     expect(calls[0]?.body).toEqual({ email: 'user@example.com', tenantId: 'tenant-1' })
   })
 
-  // The server acknowledges with 200 and an empty JSON object; an earlier release sent no body.
-  // The client discards the body either way, so a deployment on either side of the change
-  // resolves the call and no consumer has to know which one it talks to.
+  // `forgotPassword` must resolve for any successful response, including an empty JSON object, an
+  // empty 200 and a 204, because the client discards the body of a 2xx.
   it.each([
     ['an empty JSON object', () => jsonResponse(200, {})],
     ['no body', () => new Response(null, { status: 200 })],
