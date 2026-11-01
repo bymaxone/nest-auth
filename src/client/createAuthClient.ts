@@ -315,10 +315,10 @@ async function parseJsonOrThrow<T>(response: Response): Promise<T> {
 }
 
 /**
- * Treat an empty/2xx response as success. Used by endpoints that
- * intentionally return no body (logout, forgot-password,
- * reset-password) — saves callers the boilerplate of awaiting the
- * body just to discard it.
+ * Treat any 2xx response as success and discard its body. Used by
+ * endpoints whose answer carries nothing the caller needs (logout,
+ * forgot-password, reset-password) — saves callers the boilerplate of
+ * awaiting the body just to discard it.
  */
 async function expectNoContent(response: Response): Promise<void> {
   if (!response.ok) {

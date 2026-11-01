@@ -73,7 +73,8 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
       },
       "refreshToken": {
         "type": "string",
-        "maxLength": 512
+        "maxLength": 2048,
+        "minLength": 1
       }
     },
     "required": [

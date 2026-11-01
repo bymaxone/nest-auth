@@ -78,16 +78,22 @@ export class PasswordResetController {
    * Initiates a password reset for the given email address.
    *
    * Sends a reset token or OTP to the user's email if the account exists and
-   * is eligible. Always returns `200 OK` regardless of outcome (anti-enumeration).
+   * is eligible. Always returns `200 OK` with an empty JSON object regardless of outcome
+   * (anti-enumeration; the body is pinned by the wire contract).
    *
    * @param dto - Validated DTO with `email` and `tenantId`.
+   * @returns An empty object.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.forgotPassword)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.forgotPassword)
   @HttpCode(HttpStatus.OK)
   @Post('forgot-password')
-  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request): Promise<void> {
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Req() req: Request
+  ): Promise<Record<string, never>> {
     await this.passwordResetService.initiateReset(dto, req)
+    return {}
   }
 
   // ---------------------------------------------------------------------------
@@ -199,15 +205,18 @@ export class PasswordResetController {
    * Re-sends the password-reset OTP for the given email address.
    *
    * Subject to a 60-second atomic cooldown per `(tenantId, email)` pair.
-   * Always returns `200 OK` regardless of outcome (anti-enumeration).
+   * Always returns `200 OK` with an empty JSON object regardless of outcome (anti-enumeration;
+   * the body is pinned by the wire contract).
    *
    * @param dto - Validated DTO with `email` and `tenantId`.
+   * @returns An empty object.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.resendPasswordOtp)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resendPasswordOtp)
   @HttpCode(HttpStatus.OK)
   @Post('resend-otp')
-  async resendOtp(@Body() dto: ResendOtpDto, @Req() req: Request): Promise<void> {
+  async resendOtp(@Body() dto: ResendOtpDto, @Req() req: Request): Promise<Record<string, never>> {
     await this.passwordResetService.resendOtp(dto, req)
+    return {}
   }
 }

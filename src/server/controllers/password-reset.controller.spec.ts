@@ -117,10 +117,11 @@ describe('PasswordResetController', () => {
     it('should delegate to passwordResetService.initiateReset with the dto', async () => {
       mockPasswordResetService.initiateReset.mockResolvedValue(undefined)
 
-      await controller.forgotPassword(dto, mockReq)
+      const result = await controller.forgotPassword(dto, mockReq)
 
       expect(mockPasswordResetService.initiateReset).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.initiateReset).toHaveBeenCalledTimes(1)
+      expect(result).toEqual({})
     })
   })
 
@@ -370,10 +371,11 @@ describe('PasswordResetController', () => {
     it('should delegate to passwordResetService.resendOtp with the dto', async () => {
       mockPasswordResetService.resendOtp.mockResolvedValue(undefined)
 
-      await controller.resendOtp(dto, mockReq)
+      const result = await controller.resendOtp(dto, mockReq)
 
       expect(mockPasswordResetService.resendOtp).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.resendOtp).toHaveBeenCalledTimes(1)
+      expect(result).toEqual({})
     })
   })
 })

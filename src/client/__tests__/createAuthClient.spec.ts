@@ -356,6 +356,19 @@ describe('createAuthClient — forgotPassword', () => {
     expect(calls[0]?.method).toBe('POST')
     expect(calls[0]?.body).toEqual({ email: 'user@example.com', tenantId: 'tenant-1' })
   })
+
+  // `forgotPassword` must resolve for any successful response, including an empty JSON object, an
+  // empty 200 and a 204, because the client discards the body of a 2xx.
+  it.each([
+    ['an empty JSON object', () => jsonResponse(200, {})],
+    ['no body', () => new Response(null, { status: 200 })],
+    ['a 204', () => jsonResponse(204, undefined)]
+  ])('resolves when the server acknowledges with %s', async (_what, respond) => {
+    const { authFetch } = makeAuthFetchMock(respond)
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    await expect(client.forgotPassword('user@example.com', 'tenant-1')).resolves.toBeUndefined()
+  })
 })
 
 describe('createAuthClient — resetPassword', () => {

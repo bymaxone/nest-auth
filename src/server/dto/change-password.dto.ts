@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator'
+import { IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator'
 
 /**
  * Data Transfer Object for changing the password of an already-authenticated account.
@@ -61,9 +61,13 @@ export class ChangePasswordDto {
    * `whitelist: true`, which STRIPPED the property before the controller's own pipe could refuse
    * it — so the suite exercised a request production never sees. Optional, because under cookie
    * delivery the credential arrives in the cookie and no body field exists to declare.
+   *
+   * A present value is held to the contract's opaque-token bound (1 to 2048 characters), so an
+   * empty string is refused instead of being read as "no token".
    */
   @IsOptional()
   @IsString()
-  @MaxLength(512)
+  @IsNotEmpty()
+  @MaxLength(2048)
   refreshToken?: string
 }
