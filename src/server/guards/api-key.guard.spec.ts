@@ -62,6 +62,8 @@ type Req = {
   method: string
   route?: { path?: unknown } | undefined
   ip?: string
+  ips?: string[]
+  socket?: { remoteAddress?: string }
   headers: Record<string, string | string[] | undefined>
   apiKey?: unknown
 }
@@ -333,6 +335,27 @@ describe('ApiKeyGuard', () => {
         requiredScopes: ['read', 'operate'],
         ip: '10.0.0.7'
       })
+    })
+
+    // Scenario: behind a trusted proxy `req.ip` is a string the caller wrote that is not an
+    // address. Expected: the audit event and the hook context both carry the nearest address
+    // instead. Why: both reach the consumer's audit sink, which trusts them.
+    it('records an address, never a caller-written string, in the event and the context', async () => {
+      const { guard, events } = build()
+      const written = `junk-${'x'.repeat(300)}`
+      await guard.canActivate(
+        contextFor(
+          Plain,
+          'both',
+          request(SENTINEL_KEY, {
+            ip: written,
+            ips: [written],
+            socket: { remoteAddress: '10.0.0.1' }
+          })
+        )
+      )
+      expect(events[0]?.event.ip).toBe('10.0.0.1')
+      expect(events[0]?.context.ip).toBe('10.0.0.1')
     })
 
     // A refusal for a wrong secret still names the label the attempt claimed.

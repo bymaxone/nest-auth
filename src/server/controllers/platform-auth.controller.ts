@@ -39,6 +39,7 @@ import { MfaService } from '../services/mfa.service'
 import { PlatformAuthService } from '../services/platform-auth.service'
 import type { PlatformBearerAuthResponse } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { resolveClientAddress } from '../utils/client-address'
 
 // ---------------------------------------------------------------------------
 // Type guard
@@ -138,7 +139,7 @@ export class PlatformAuthController {
     @Body() dto: PlatformLoginDto,
     @Req() req: Request
   ): Promise<PlatformBearerAuthResponse | MfaChallengeResult> {
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     // Truncate User-Agent to 512 chars — the value is stored in the Redis session record
     // (device field). Unbounded storage is a minor memory amplification vector.
     const userAgent = String(req.headers['user-agent'] ?? '').slice(0, 512)
@@ -182,7 +183,7 @@ export class PlatformAuthController {
     @Body() dto: MfaChallengeDto,
     @Req() req: Request
   ): Promise<PlatformBearerAuthResponse> {
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     // Truncate User-Agent to 512 chars (same reason as login).
     const userAgent = String(req.headers['user-agent'] ?? '').slice(0, 512)
     // The shared `MfaChallengeDto` declares `mfaTempToken` as optional so that the
@@ -286,7 +287,7 @@ export class PlatformAuthController {
   async refresh(@Req() req: Request): Promise<PlatformBearerAuthResponse> {
     // Always reads from req.body — platform sessions never use cookie delivery.
     const rawRefreshToken = this.tokenDelivery.extractPlatformRefreshToken(req) ?? ''
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     // Truncate User-Agent to 512 chars (same reason as login).
     const userAgent = String(req.headers['user-agent'] ?? '').slice(0, 512)
 

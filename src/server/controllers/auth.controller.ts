@@ -40,6 +40,7 @@ import type {
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { WsTicketService } from '../services/ws-ticket.service'
+import { resolveClientAddress } from '../utils/client-address'
 
 /**
  * Narrows `AuthResult | MfaChallengeResult` to `MfaChallengeResult` using the
@@ -178,7 +179,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response
   ): Promise<CookieAuthResponse | BearerAuthResponse | BothAuthResponse> {
     const rawRefreshToken = this.tokenDelivery.extractRefreshToken(req) ?? ''
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
 
     // `refresh` re-reads the account to re-apply the status gate, and hands the record back so

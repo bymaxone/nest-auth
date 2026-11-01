@@ -47,7 +47,18 @@ import type { AuthUser } from './user-repository.interface'
  * - `'peer'` — the socket peer address, read directly from the connection. Never consults
  *   `X-Forwarded-For`, so a spoofed header cannot buy an attacker a fresh budget.
  * - `'trusted-proxy'` — Express's `req.ip`, which honours the app's `trust proxy` setting and
- *   therefore the forwarding headers it admits.
+ *   therefore the forwarding headers it admits. When that entry is not an address the nearest
+ *   trusted hop is used instead, and a non-address string is never the key.
+ *
+ * `'trusted-proxy'` is only as honest as the hops in front of the app. Behind such a proxy each
+ * hop appends the address it saw, so the client is the rightmost entry that is not itself a
+ * trusted proxy. A hop that forwards the client's own `X-Forwarded-For` unchanged lets the client
+ * choose its address, and a client that varies a valid address gets a fresh budget every time;
+ * behind such a hop use `'peer'`, or make the hop append or overwrite the header.
+ *
+ * Whichever source keys the limit, the address recorded on a session, passed in a hook's context
+ * and carried by an API-key audit event is the same validated one: an address, or an empty
+ * string when none can be read.
  */
 export type ClientIpSource = 'peer' | 'trusted-proxy'
 

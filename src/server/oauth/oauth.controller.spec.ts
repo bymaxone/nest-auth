@@ -185,11 +185,11 @@ describe('OAuthController', () => {
       expect(result).toBe(MOCK_BEARER_RESPONSE)
     })
 
-    // Verifies that a long IP address is truncated to 64 characters before being
-    // passed to handleCallback — prevents unbounded string storage in tokens.
-    it('should truncate ip to 64 characters', async () => {
-      const longIp = 'a'.repeat(90)
-      const mockReq = makeReq(longIp)
+    // Verifies that a `req.ip` that is not an address, however long, reaches handleCallback as
+    // an empty string rather than as the caller-written text — it ends up in the session record
+    // and in the hook payload.
+    it('should not pass a non-address ip to handleCallback', async () => {
+      const mockReq = makeReq('a'.repeat(90))
       const mockRes = { clearCookie: jest.fn() } as unknown as Response
       const query = { code: 'code', state: 'state' }
 
@@ -199,9 +199,23 @@ describe('OAuthController', () => {
       await controller.callback('google', query as never, mockReq, mockRes)
 
       const ipArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[4]
-      expect(typeof ipArg).toBe('string')
-      expect((ipArg as string).length).toBe(64)
-      expect(ipArg).toBe(longIp.slice(0, 64))
+      expect(ipArg).toBe('')
+    })
+
+    // Verifies that a `req.ip` carrying a zone index, of any length, reaches handleCallback as an
+    // empty string: a header-derived entry with a zone is not an address.
+    it('should not pass a zoned ip to handleCallback', async () => {
+      const mockReq = makeReq(`fe80::1%${'z'.repeat(200)}`)
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockResolvedValue({})
+      mockTokenDelivery.deliverAuthResponse.mockResolvedValue({})
+
+      await controller.callback('google', query as never, mockReq, mockRes)
+
+      const ipArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[4]
+      expect(ipArg).toBe('')
     })
 
     // Verifies that a long User-Agent string is truncated to 512 characters —

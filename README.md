@@ -961,6 +961,13 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > `'trusted-proxy'` without a proxy lets the caller choose their own key. Both look like a
 > working limiter at runtime. Pass `rateLimit.enabled: false` if the limits are enforced at the
 > edge instead.
+>
+> `'trusted-proxy'` is only as honest as the hops in front of the app. Behind such a proxy each
+> hop appends the address it saw, so the client is the rightmost entry that is not itself a
+> trusted proxy. A hop that forwards the client's own `X-Forwarded-For` unchanged lets the client
+> choose its address, so a client that varies it gets a fresh budget every time; behind such a hop
+> use `'peer'`, or make the hop append or overwrite the header. An entry that is not an address at
+> all is never a key: the limit is charged to the nearest trusted hop instead.
 
 > [!TIP]
 > **Binding tokens to an issuer and an audience.** `jwt.issuer` and `jwt.audience` are off by

@@ -18,6 +18,7 @@ import {
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { resolveClientAddress } from '../utils/client-address'
 import { rateLimitBucket } from '../utils/rate-limit-bucket'
 
 /** Milliseconds in one second, for the window and `Retry-After` conversions. */
@@ -106,8 +107,9 @@ export class AuthRateLimitGuard implements CanActivate {
    * The address this request is counted against.
    *
    * `'peer'` — the default — reads the socket directly, so `X-Forwarded-For` cannot influence
-   * it. `'trusted-proxy'` uses `req.ip`, which honours the app's `trust proxy` setting and the
-   * forwarding headers it admits.
+   * it. `'trusted-proxy'` uses the resolved client address, which starts from `req.ip` (honouring
+   * the app's `trust proxy` setting and the forwarding headers it admits) and never returns a
+   * string that is not an address, so a caller cannot mint a bucket by writing one.
    *
    * The default is the strict one because the two failure modes are not symmetric: keying on
    * the peer address behind a proxy over-counts, which is visible and recoverable, while
@@ -120,7 +122,7 @@ export class AuthRateLimitGuard implements CanActivate {
    */
   private clientIp(request: Request): string {
     if (this.options.rateLimit.clientIpSource === 'trusted-proxy') {
-      return typeof request.ip === 'string' && request.ip !== '' ? request.ip : UNKNOWN_CLIENT
+      return resolveClientAddress(request) || UNKNOWN_CLIENT
     }
     const peer = request.socket?.remoteAddress
     return typeof peer === 'string' && peer !== '' ? peer : UNKNOWN_CLIENT

@@ -36,6 +36,7 @@ import type {
   CookieAuthResponse
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { resolveClientAddress } from '../utils/client-address'
 
 // ---------------------------------------------------------------------------
 // InvitationController
@@ -165,7 +166,7 @@ export class InvitationController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ): Promise<CookieAuthResponse | BearerAuthResponse | BothAuthResponse> {
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
     const headers = req.headers as Record<string, string | string[] | undefined>
     const result: AuthResult = await this.invitationService.acceptInvitation(

@@ -28,6 +28,7 @@ import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { MfaSetupResult } from '../services/mfa.service'
 import { MfaService } from '../services/mfa.service'
+import { resolveClientAddress } from '../utils/client-address'
 
 // ---------------------------------------------------------------------------
 // PlatformMfaController
@@ -111,7 +112,7 @@ export class PlatformMfaController {
     @Body() dto: MfaVerifyDto,
     @Req() req: Request
   ): Promise<void> {
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
     await this.mfaService.verifyAndEnable(user.sub, dto.code, ip, userAgent, 'platform')
   }
@@ -139,7 +140,7 @@ export class PlatformMfaController {
     @Body() dto: MfaDisableDto,
     @Req() req: Request
   ): Promise<void> {
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
     await this.mfaService.disable(user.sub, dto.code, ip, userAgent, 'platform')
   }
@@ -169,7 +170,7 @@ export class PlatformMfaController {
     @Body() dto: MfaRegenerateRecoveryCodesDto,
     @Req() req: Request
   ): Promise<{ recoveryCodes: string[] }> {
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
     return this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, 'platform')
   }
