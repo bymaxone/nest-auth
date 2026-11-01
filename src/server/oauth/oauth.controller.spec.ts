@@ -202,9 +202,9 @@ describe('OAuthController', () => {
       expect(ipArg).toBe('')
     })
 
-    // Verifies that an IPv6 address carrying an oversized zone index reaches handleCallback as
-    // the bare address: `isIP` accepts the zone at any length, so the cut is what bounds it.
-    it('should pass a zoned ip to handleCallback without the zone', async () => {
+    // Verifies that a `req.ip` carrying a zone index, of any length, reaches handleCallback as an
+    // empty string: a header-derived entry with a zone is not an address.
+    it('should not pass a zoned ip to handleCallback', async () => {
       const mockReq = makeReq(`fe80::1%${'z'.repeat(200)}`)
       const mockRes = { clearCookie: jest.fn() } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -215,7 +215,7 @@ describe('OAuthController', () => {
       await controller.callback('google', query as never, mockReq, mockRes)
 
       const ipArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[4]
-      expect(ipArg).toBe('fe80::1')
+      expect(ipArg).toBe('')
     })
 
     // Verifies that a long User-Agent string is truncated to 512 characters —

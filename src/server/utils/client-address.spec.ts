@@ -72,35 +72,62 @@ describe('resolveClientAddress', () => {
       expect(resolveClientAddress(source)).toBe('')
     })
 
-    // Scenario: an IPv6 address with a zone index. Expected: the bare address. Why: `isIP` accepts
-    // the zone at any length, so without the cut a caller could make the value arbitrarily long;
-    // and the zone is link-local scope, not identity.
+    // Scenario: a header-derived entry carries a zone index. Expected: it is not an address, so
+    // the walk ends at the last hop that was one. Why: `isIP` accepts a zone of any length, rust's
+    // `IpAddr::from_str` accepts none (the standard library's parser has no `%` handling for
+    // `Ipv6Addr` or `IpAddr`), and a zone names an interface on the machine that wrote it.
+    it.each(['fe80::1%eth0', `fe80::1%${'z'.repeat(5000)}`])(
+      'treats the header entry %.20s as a non-address and resolves to the next hop',
+      (entry) => {
+        expect(
+          resolveClientAddress({
+            ip: entry,
+            ips: [entry, '10.0.0.2'],
+            socket: { remoteAddress: '10.0.0.1' }
+          })
+        ).toBe('10.0.0.2')
+      }
+    )
+
+    // Scenario: the socket peer carries a zone, as a link-local peer is reported. Expected: the
+    // bare address, because the zone is scope rather than identity and the limiter drops it too.
     it.each([
-      ['fe80::1%eth0', 'fe80::1'],
-      [`fe80::1%${'z'.repeat(5000)}`, 'fe80::1']
-    ])('cuts the zone index from %s', (ip, expected) => {
-      const resolved = resolveClientAddress({ ip, ips: [ip], socket: {} })
+      ['fe80::2%en0', 'fe80::2'],
+      [`fe80::2%${'z'.repeat(5000)}`, 'fe80::2']
+    ])('cuts the zone index from the socket peer %.20s', (peer, expected) => {
+      const resolved = resolveClientAddress({
+        ip: 'junk',
+        ips: ['junk'],
+        socket: { remoteAddress: peer }
+      })
 
       expect(resolved).toBe(expected)
       expect(resolved.length).toBeLessThanOrEqual(45)
     })
 
-    // Scenario: a zone on the socket peer. Expected: the same cut.
-    it('cuts the zone index from the socket peer', () => {
+    // Scenario: a link-local peer with no trust proxy set, where Express reports the zoned socket
+    // address as `req.ip`. Expected: the bare address, through the peer path.
+    it('resolves a zoned req.ip that is the peer itself to the bare address', () => {
       expect(
         resolveClientAddress({
-          ip: 'junk',
-          ips: ['junk'],
-          socket: { remoteAddress: 'fe80::2%en0' }
+          ip: 'fe80::3%en0',
+          ips: [],
+          socket: { remoteAddress: 'fe80::3%en0' }
         })
-      ).toBe('fe80::2')
+      ).toBe('fe80::3')
     })
 
-    // Scenario: a `%` suffix on something that is not IPv6. Expected: it is not an address. Why:
-    // only an IPv6 literal carries a zone, and stripping it from anything else would turn
+    // Scenario: a `%` suffix on something that is not IPv6, on either channel. Expected: not an
+    // address. Why: only an IPv6 literal carries a zone, and accepting the rest would turn
     // caller-written text into an address.
     it('does not accept a zone suffix on an IPv4 literal', () => {
-      expect(resolveClientAddress({ ip: '1.2.3.4%eth0', ips: [], socket: {} })).toBe('')
+      expect(
+        resolveClientAddress({
+          ip: '1.2.3.4%eth0',
+          ips: [],
+          socket: { remoteAddress: '5.6.7.8%eth0' }
+        })
+      ).toBe('')
     })
 
     // Scenario: an ordinary request on a host that never set `trust proxy`. Expected: Express
@@ -167,6 +194,15 @@ describe('resolveClientAddress', () => {
       expect(seen.ip).toBe('not-an-ip')
       expect(seen.resolved).toBe(seen.peer)
       expect(isIP(seen.resolved)).not.toBe(0)
+    })
+
+    // A zoned entry is a non-address, as in rust-auth, whose parser rejects any `%` suffix: the
+    // walk ends at the last hop that was an address.
+    it('treats a zoned header entry as a non-address', async () => {
+      const seen = await resolveBehindProxy('198.51.100.7, fe80::1%eth0, 10.0.0.2')
+
+      expect(seen.ip).toBe('fe80::1%eth0')
+      expect(seen.resolved).toBe('10.0.0.2')
     })
 
     // With several trusted hops, the hop nearest the client is the one after the client entry,

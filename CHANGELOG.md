@@ -28,7 +28,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   budget each time. One function now resolves
   the address for the limiter and for every place that records it: `req.ip`, then the rest of
   `req.ips` (the trusted hops, nearest the client first), then the socket peer, taking the first
-  that is an address, with an IPv6 zone index cut off. An unparsable client entry is therefore
+  that is an address. A header entry that carries an IPv6 zone index is not one, as the paired
+  library's parser accepts none, while the socket peer's zone, which a link-local peer reports, is
+  cut. An unparsable client entry is therefore
   charged to the nearest trusted hop, so every caller that sends one shares that hop's bucket; a
   chain with no address in it at all falls back to the shared unknown bucket, as before.
   **What consumers see differently:** `HookContext.ip`, which every hook receives, and the `ip` of
