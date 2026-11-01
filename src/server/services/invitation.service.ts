@@ -234,6 +234,38 @@ export class InvitationService {
     }
     await this.redis.set(tokenKey, JSON.stringify(stored), ttl)
 
+    // The claim above and the write just done are two round trips, and a revoke or a later invite
+    // can move the index between them. A revoke in that gap reads an index naming a record that is
+    // not there yet, withdraws nothing, and answers as if it had succeeded; the write then
+    // publishes a token that no index names, redeemable for its whole TTL and out of reach of
+    // every later revoke. So the claim is repeated against this invitation's OWN hash: it holds
+    // only while the index still names it. If it does not, the record is withdrawn instead of
+    // left live, and the address is reported as changed under the caller.
+    //
+    // The same compare-and-set renews the index TTL, which started at the claim: a record written
+    // later than the claim would otherwise outlive the entry that names it.
+    //
+    // A store failure on this repeat is not an answer about the index, so the record is withdrawn
+    // on that path too, best-effort, and the original failure is the one the caller sees. Either
+    // way the email below is never sent for a record this method could not stand behind.
+    let stillNamed: { claimed: boolean }
+    try {
+      stillNamed = await this.claimInviteeIndex(
+        normalizedEmail,
+        tenantId,
+        tokenHash,
+        ttl,
+        tokenHash
+      )
+    } catch (err: unknown) {
+      await this.withdrawRecord(tokenKey)
+      throw err
+    }
+    if (!stillNamed.claimed) {
+      await this.withdrawRecord(tokenKey)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+    }
+
     const displayTenantName = tenantName ?? tenantId
     const expiresAt = new Date(Date.now() + ttl * 1_000)
 
@@ -389,6 +421,22 @@ export class InvitationService {
         `— the pending invitation kept changing under the rank check`
     )
     throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+  }
+
+  /**
+   * Removes the invitation record this call wrote, best-effort.
+   *
+   * Used where the call is already ending in a refusal or a failure of its own, so a failing
+   * delete must not replace that outcome: it is logged and the caller still raises the original.
+   * The raw token has not been emailed at that point, so a record that survives is one nobody
+   * holds the token for, until its TTL.
+   *
+   * @param tokenKey - The Redis key of the record written by this call.
+   */
+  private async withdrawRecord(tokenKey: string): Promise<void> {
+    await this.redis.del(tokenKey).catch((err: unknown) => {
+      this.logger.warn(`invite: could not withdraw the record — ${describeChannelStatus(err)}`)
+    })
   }
 
   /**

@@ -257,7 +257,8 @@ describe('InvitationService', () => {
       // One `set` — the invitation record. The invitee index is claimed through the atomic
       // read-and-set, so it is not a second `set`.
       expect(mockRedis.set).toHaveBeenCalledTimes(1)
-      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
+      // Two scripts: the claim before the record is written and the repeat after it.
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
@@ -1293,7 +1294,8 @@ describe('InvitationService', () => {
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
+      // The lost claim, the won one, and the repeat after the record is written.
+      expect(mockRedis.eval).toHaveBeenCalledTimes(3)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
@@ -1314,7 +1316,8 @@ describe('InvitationService', () => {
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
+      // The claim and its repeat after the write, both read in the same spelling.
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
