@@ -18,6 +18,23 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **`invite` can now answer `auth.insufficient_role` when the invitee index moved under it.** The
+  index is claimed before the record is written, and a revoke or a later invite landing in that gap
+  used to leave a redeemable record that nothing named, with the email already sent. `invite` now
+  repeats the claim after the write; if the index no longer names the invitation, it withdraws its
+  own record, sends no email and answers `auth.insufficient_role`, the code a lost supersede race
+  already used. A store failure on that repeat withdraws the record too and surfaces unchanged.
+  Nothing changes for an invite that is not racing a revoke.
+
+### Fixed
+
+- **A revoke landing between the index claim and the record write left an orphan invitation.** The
+  invitation was redeemable for its whole TTL, the email was sent, and no later revoke could reach
+  it. The index TTL also started at the claim and the record's at the write, so the record outlived
+  the entry that names it; the repeated claim renews the index TTL after the write.
+
 ## [1.4.8] - 2026-10-31
 
 ### Apply to a derived backend

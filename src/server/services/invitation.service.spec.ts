@@ -257,7 +257,8 @@ describe('InvitationService', () => {
       // One `set` — the invitation record. The invitee index is claimed through the atomic
       // read-and-set, so it is not a second `set`.
       expect(mockRedis.set).toHaveBeenCalledTimes(1)
-      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
+      // Two scripts: the claim before the record is written and the repeat after it.
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
@@ -1293,7 +1294,8 @@ describe('InvitationService', () => {
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
+      // The lost claim, the won one, and the repeat after the record is written.
+      expect(mockRedis.eval).toHaveBeenCalledTimes(3)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
@@ -1314,8 +1316,83 @@ describe('InvitationService', () => {
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
+      // The claim and its repeat after the write, both read in the same spelling.
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
+    })
+
+    describe('the claim is repeated once the record is written', () => {
+      beforeEach(() => {
+        mockUserRepo.findById.mockResolvedValue(INVITER)
+        mockRedis.get.mockResolvedValue(null)
+        mockRedis.set.mockResolvedValue('OK')
+        mockRedis.del.mockResolvedValue(true)
+        mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
+      })
+
+      /** The key the invitation record was written under. */
+      const recordKey = (): string => String(mockRedis.set.mock.calls[0]?.[0])
+
+      // Scenario: the happy path. Expected: the repeat claims against the invitation's OWN hash
+      // and with the full TTL. Why: it must hold only while the index still names this record,
+      // and it is what renews the TTL the first claim started.
+      it('repeats the claim against its own hash with the full TTL', async () => {
+        await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+
+        const [first, second] = mockRedis.eval.mock.calls as [string, string[], string[]][]
+        const ownHash = String(recordKey()).replace(/^inv:/, '')
+        expect(second?.[1]).toEqual(first?.[1])
+        expect(second?.[2]).toEqual([ownHash, first?.[2]?.[1], ownHash])
+      })
+
+      // Scenario: the index no longer names this invitation when the record lands (a revoke or a
+      // later invite moved it). Expected: the record is withdrawn, no email is sent and the caller
+      // is refused. Why: the record would otherwise be live with nothing naming it.
+      it('withdraws its own record and sends nothing when the index was moved', async () => {
+        mockRedis.eval.mockResolvedValueOnce(1).mockResolvedValueOnce(0)
+
+        await expect(
+          service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+        ).rejects.toMatchObject({
+          response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
+        })
+
+        expect(mockRedis.del).toHaveBeenCalledWith(recordKey())
+        expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
+      })
+
+      // Scenario: the repeat fails for a reason that says nothing about the index (the store
+      // errors). Expected: the record is withdrawn all the same, the original failure surfaces and
+      // no email is sent. Why: an invitation this method could not stand behind must not stay live.
+      it('withdraws its own record and surfaces the failure when the repeat errors', async () => {
+        const failure = new Error('connection reset')
+        mockRedis.eval.mockResolvedValueOnce(1).mockRejectedValueOnce(failure)
+
+        await expect(
+          service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+        ).rejects.toBe(failure)
+
+        expect(mockRedis.del).toHaveBeenCalledWith(recordKey())
+        expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
+      })
+
+      // Scenario: the repeat errors AND the withdrawal errors too. Expected: the original failure
+      // still surfaces, the second one is logged, and no email is sent.
+      it('keeps the original failure when the withdrawal fails as well', async () => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+        const failure = new Error('connection reset')
+        mockRedis.eval.mockResolvedValueOnce(1).mockRejectedValueOnce(failure)
+        // Once, not for good: the shared double keeps implementations across tests.
+        mockRedis.del.mockRejectedValueOnce(new Error('still down'))
+
+        await expect(
+          service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+        ).rejects.toBe(failure)
+
+        expect(String(warn.mock.calls[0]?.[0])).toContain('could not withdraw the record')
+        expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
+        warn.mockRestore()
+      })
     })
 
     // The retry has to be bounded, and the bound has to fail closed. An address under sustained
