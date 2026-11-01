@@ -30,7 +30,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   as the transport reported it (including `::ffff:` mapped forms). `AuthTokenVerifierService`
   callers pass the peer as `request.remoteAddress`; `WsJwtGuard` reads Socket.IO's
   `handshake.address` itself. **Nothing changes unless you set it**: unset, `X-Forwarded-Host` is
-  never read, and every uncertain case (no peer, a repeated or empty header, a predicate that throws
+  never read, and every uncertain case (no peer, a header handed over as separate values, an empty first element, a predicate that throws
   or does not answer `true`) falls back to `Host`, so those cases can only refuse a stream, never
   admit a tenant the client chose.
 

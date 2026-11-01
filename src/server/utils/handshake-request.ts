@@ -35,8 +35,10 @@ export interface HandshakeLike {
  * **Which header.** The `Host` header, unless `isTrustedProxy` approves the TCP peer, in which case
  * the first element of a single `X-Forwarded-Host` replaces it — the check Express makes for the
  * immediate peer. Everything else is the stricter reading: no predicate, no peer, an untrusted
- * peer, a predicate that throws or answers anything but `true`, a repeated header, or an empty
- * first element all give `Host`. A client therefore cannot choose its own host.
+ * peer, a predicate that throws or answers anything but `true`, a header handed over as separate
+ * values, or an empty first element all give `Host`. Node joins a header repeated on the wire into
+ * one comma-separated string, whose first element is used, as Express does. A client therefore
+ * cannot choose its own host.
  *
  * **Absent, by type and at runtime:** `cookies` (an upgrade carries the header but nothing here
  * parses it the way `cookie-parser` does on HTTP, and half an emulation would mis-bind rather than

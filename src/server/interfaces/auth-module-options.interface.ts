@@ -1037,9 +1037,11 @@ export interface BymaxAuthModuleOptions {
    * `(peer) => app.get('trust proxy fn')(peer, 0)`. Only the exact boolean `true` trusts a peer.
    *
    * Unset, which is the default, `X-Forwarded-Host` is never read. A missing peer address, a
-   * repeated header, an empty first element, a predicate that throws and a predicate that answers
-   * anything other than `true` all fall back to `Host`, so those cases can only make the binding
-   * stricter, never admit a tenant the client chose. A predicate that answers `true` for a peer it
+   * header handed over as separate values, an empty first element, a predicate that throws and a
+   * predicate that answers anything other than `true` all fall back to `Host`, so those cases can
+   * only make the binding stricter, never admit a tenant the client chose. Node joins a header
+   * repeated on the wire into one comma-separated string, whose first element is used, as Express
+   * does. A predicate that answers `true` for a peer it
    * should not trust does let that peer choose the host, exactly as a wrong Express `trust proxy`
    * setting would, so the policy must be no wider than the one given to Express.
    */

@@ -860,9 +860,11 @@ The predicate receives the peer **exactly as the transport reported it**, so an 
 as `::ffff:10.0.0.1` reaches it unchanged; Express's compiled setting understands that form, which
 is why the recipe delegates to it. When it answers `true`, the first element of a single
 `X-Forwarded-Host` is used, with the port cut like `Host`. Unset, which is the default,
-`X-Forwarded-Host` is never read. Every other case falls back to `Host`: no peer address, a repeated
-header, an empty first element, a predicate that throws or answers anything but `true`. Those
-cases can therefore only make the binding stricter, never admit a tenant the client chose. The
+`X-Forwarded-Host` is never read. Every other case falls back to `Host`: no peer address, a header handed
+over as separate values, an empty first element, a predicate that throws or answers anything but
+`true`. (Node joins a header repeated on the wire into one comma-separated string, and its first
+element is used, as in Express.) Those cases can therefore only make the binding stricter, never
+admit a tenant the client chose. The
 peer address comes from `WsJwtGuard` itself (Socket.IO's `handshake.address`); a caller of
 `AuthTokenVerifierService.verifyAccessToken` passes it as `request.remoteAddress`.
 
