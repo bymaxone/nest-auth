@@ -499,6 +499,8 @@ export class BymaxAuthModule {
         // in the BYMAX_AUTH_OPTIONS provider above.
         // expiresIn is omitted — TokenManagerService sets it per-call via accessSignOptions().
         JwtModule.registerAsync({
+          // The factory runs here too, so it needs the modules the consumer's `inject` tokens come from.
+          imports: options.imports ?? [],
           useFactory: async (...args: unknown[]) => {
             const userOptions = await options.useFactory(...args)
             return {

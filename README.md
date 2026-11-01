@@ -143,6 +143,9 @@ yarn add @bymax-one/nest-auth
 # Server subpath (required)
 pnpm add @nestjs/common @nestjs/core @nestjs/jwt @nestjs/throttler @nestjs/websockets ioredis class-validator class-transformer reflect-metadata
 
+# Also needed with `tokenDelivery: 'cookie'` or `'both'` (see step 4): the library reads `req.cookies`
+pnpm add cookie-parser
+
 # React subpath (optional)
 pnpm add react
 
@@ -524,8 +527,13 @@ import { Module } from '@nestjs/common'
 import {
   BymaxAuthModule,
   BYMAX_AUTH_USER_REPOSITORY,
-  BYMAX_AUTH_REDIS_CLIENT
+  BYMAX_AUTH_REDIS_CLIENT,
+  BYMAX_AUTH_EMAIL_PROVIDER
 } from '@bymax-one/nest-auth'
+
+// Yours, not this library's: `ConfigModule` and `ConfigService` come from `@nestjs/config`,
+// `DatabaseModule` is your module exporting the database client the repository uses, and
+// `RedisModule` is your module exporting `RedisService`, whose `client` is an `ioredis` instance.
 
 @Module({
   imports: [
@@ -557,6 +565,10 @@ import {
           useClass: PrismaUserRepository
         },
         {
+          provide: BYMAX_AUTH_EMAIL_PROVIDER,
+          useClass: ResendEmailProvider
+        },
+        {
           provide: BYMAX_AUTH_REDIS_CLIENT,
           useFactory: (redis: RedisService) => redis.client,
           inject: [RedisService]
@@ -566,6 +578,22 @@ import {
   ]
 })
 export class AppModule {}
+```
+
+With `tokenDelivery: 'cookie'` (or `'both'`) the library reads the credential from `req.cookies`, and it takes no dependency on a parser, so mount one yourself. Without it a correctly signed-in user is answered `401 auth.token_invalid` on every protected route.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core'
+import cookieParser from 'cookie-parser'
+import { AppModule } from './app.module'
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule)
+  app.use(cookieParser())
+  await app.listen(3000)
+}
+bootstrap()
 ```
 
 ### 5. Protect Routes
