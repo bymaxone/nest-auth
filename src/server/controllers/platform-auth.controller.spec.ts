@@ -97,7 +97,7 @@ const mockPlatformAuthService = {
 }
 
 const mockMfaService = {
-  challenge: jest.fn()
+  challengePlatformOnly: jest.fn()
 }
 
 const mockTokenDelivery = {
@@ -279,14 +279,14 @@ describe('PlatformAuthController', () => {
       mockTokenDelivery.deliverPlatformAuthResponse.mockReturnValue(PLATFORM_BEARER_RESPONSE)
     })
 
-    // Happy path: mfaService.challenge returns a PlatformAuthResult (has 'admin').
-    it('should call mfaService.challenge with correct args, then return deliverPlatformAuthResponse result', async () => {
-      mockMfaService.challenge.mockResolvedValue(PLATFORM_AUTH_RESULT)
+    // Happy path: mfaService.challengePlatformOnly returns a PlatformAuthResult (has 'admin').
+    it('should call mfaService.challengePlatformOnly with correct args, then return deliverPlatformAuthResponse result', async () => {
+      mockMfaService.challengePlatformOnly.mockResolvedValue(PLATFORM_AUTH_RESULT)
       const req = makeReq({ ip: '5.5.5.5', headers: { 'user-agent': 'AdminDashboard/2.0' } })
 
       const result = await controller.mfaChallenge(MFA_CHALLENGE_DTO, req)
 
-      expect(mockMfaService.challenge).toHaveBeenCalledWith(
+      expect(mockMfaService.challengePlatformOnly).toHaveBeenCalledWith(
         MFA_CHALLENGE_DTO.mfaTempToken,
         MFA_CHALLENGE_DTO.code,
         '5.5.5.5',
@@ -298,44 +298,10 @@ describe('PlatformAuthController', () => {
       expect(result).toBe(PLATFORM_BEARER_RESPONSE)
     })
 
-    // Cross-context abuse: mfaService returns a dashboard AuthResult (has 'user', not 'admin').
-    it('should throw PLATFORM_AUTH_REQUIRED when mfaService returns a dashboard AuthResult (cross-context abuse)', async () => {
-      const dashboardResult = {
-        user: {
-          id: 'user-1',
-          email: 'u@d.com',
-          name: 'User',
-          role: 'member',
-          status: 'active',
-          tenantId: 'tenant-1',
-          emailVerified: true,
-          mfaEnabled: false,
-          lastLoginAt: null,
-          createdAt: new Date()
-        },
-        accessToken: 'dashboard.access.jwt',
-        rawRefreshToken: 'dashboard-refresh'
-      }
-      mockMfaService.challenge.mockResolvedValue(dashboardResult)
-      const req = makeReq()
-
-      // Capture the thrown exception and inspect its error code.
-      let thrown: unknown
-      try {
-        await controller.mfaChallenge(MFA_CHALLENGE_DTO, req)
-      } catch (err) {
-        thrown = err
-      }
-
-      expect(thrown).toBeInstanceOf(AuthException)
-      const body = (thrown as AuthException).getResponse() as { error: { code: string } }
-      expect(body.error.code).toBe(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
-    })
-
     // Service throws → controller propagates the error without catching it.
-    it('should propagate errors thrown by mfaService.challenge', async () => {
+    it('should propagate errors thrown by mfaService.challengePlatformOnly', async () => {
       const error = new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
-      mockMfaService.challenge.mockRejectedValue(error)
+      mockMfaService.challengePlatformOnly.mockRejectedValue(error)
       const req = makeReq()
 
       await expect(controller.mfaChallenge(MFA_CHALLENGE_DTO, req)).rejects.toThrow(error)
@@ -343,13 +309,13 @@ describe('PlatformAuthController', () => {
 
     // User-Agent must be capped at 512 characters.
     it('should truncate User-Agent to 512 characters in mfaChallenge', async () => {
-      mockMfaService.challenge.mockResolvedValue(PLATFORM_AUTH_RESULT)
+      mockMfaService.challengePlatformOnly.mockResolvedValue(PLATFORM_AUTH_RESULT)
       const longUserAgent = 'B'.repeat(600)
       const req = makeReq({ headers: { 'user-agent': longUserAgent } })
 
       await controller.mfaChallenge(MFA_CHALLENGE_DTO, req)
 
-      const [, , , uaArg] = mockMfaService.challenge.mock.calls[0] as [
+      const [, , , uaArg] = mockMfaService.challengePlatformOnly.mock.calls[0] as [
         string,
         string,
         string,
@@ -361,56 +327,34 @@ describe('PlatformAuthController', () => {
 
     // Fallback when req.ip is undefined in mfaChallenge — empty string passed to service.
     it('should use empty string for ip when req.ip is undefined in mfaChallenge', async () => {
-      mockMfaService.challenge.mockResolvedValue(PLATFORM_AUTH_RESULT)
+      mockMfaService.challengePlatformOnly.mockResolvedValue(PLATFORM_AUTH_RESULT)
       const req = makeReq({ ip: undefined })
 
       await controller.mfaChallenge(MFA_CHALLENGE_DTO, req)
 
-      const [, , ipArg] = mockMfaService.challenge.mock.calls[0] as [string, string, string, string]
+      const [, , ipArg] = mockMfaService.challengePlatformOnly.mock.calls[0] as [
+        string,
+        string,
+        string,
+        string
+      ]
       expect(ipArg).toBe('')
     })
 
     // Fallback when user-agent header is absent in mfaChallenge — empty string passed to service.
     it('should use empty string for userAgent when user-agent header is absent in mfaChallenge', async () => {
-      mockMfaService.challenge.mockResolvedValue(PLATFORM_AUTH_RESULT)
+      mockMfaService.challengePlatformOnly.mockResolvedValue(PLATFORM_AUTH_RESULT)
       const req = makeReq({ headers: {} })
 
       await controller.mfaChallenge(MFA_CHALLENGE_DTO, req)
 
-      const [, , , uaArg] = mockMfaService.challenge.mock.calls[0] as [
+      const [, , , uaArg] = mockMfaService.challengePlatformOnly.mock.calls[0] as [
         string,
         string,
         string,
         string
       ]
       expect(uaArg).toBe('')
-    })
-
-    // Cross-context throw: deliverPlatformAuthResponse must NOT be called when context is wrong.
-    it('should NOT call deliverPlatformAuthResponse when the MFA result is from a dashboard context', async () => {
-      const dashboardResult = {
-        user: {
-          id: 'u',
-          email: 'u@d.com',
-          name: 'U',
-          role: 'member',
-          status: 'active',
-          tenantId: 't',
-          emailVerified: true,
-          mfaEnabled: false,
-          lastLoginAt: null,
-          createdAt: new Date()
-        },
-        accessToken: 'a',
-        rawRefreshToken: 'r'
-      }
-      mockMfaService.challenge.mockResolvedValue(dashboardResult)
-      const req = makeReq()
-
-      await expect(controller.mfaChallenge(MFA_CHALLENGE_DTO, req)).rejects.toBeInstanceOf(
-        AuthException
-      )
-      expect(mockTokenDelivery.deliverPlatformAuthResponse).not.toHaveBeenCalled()
     })
 
     /**
@@ -427,7 +371,7 @@ describe('PlatformAuthController', () => {
 
       await expect(controller.mfaChallenge(dto, req)).rejects.toBeInstanceOf(AuthException)
       // The guard runs BEFORE the service call.
-      expect(mockMfaService.challenge).not.toHaveBeenCalled()
+      expect(mockMfaService.challengePlatformOnly).not.toHaveBeenCalled()
 
       // An empty string is a *present* value: it reaches the guard without being defaulted,
       // so the emptiness half is the only thing stopping a verify call on ''.
@@ -437,7 +381,7 @@ describe('PlatformAuthController', () => {
       await expect(controller.mfaChallenge(emptyDto, req)).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID } }
       })
-      expect(mockMfaService.challenge).not.toHaveBeenCalled()
+      expect(mockMfaService.challengePlatformOnly).not.toHaveBeenCalled()
     })
   })
 

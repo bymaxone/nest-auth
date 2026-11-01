@@ -18,6 +18,29 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **A dashboard MFA temp token presented at `POST /platform/mfa/challenge` is refused before
+  anything is spent.** The route answered `401 auth.platform_auth_required` as documented, but only
+  after the challenge had run: it consumed the token, burned the TOTP code, stored a dashboard
+  session whose refresh token nobody received, stamped the last login and fired the login hooks.
+  That orphan session counted against the per-user session limit and could evict a real one, the
+  hooks reported a login that never answered, and the user had to start over because the token was
+  spent. The plane is now read from the token first, so the refusal spends nothing, and the same
+  token and code still complete at the dashboard challenge route. A refused attempt does not count toward the
+  brute-force counter either. The error code is unchanged, and the dashboard route keeps serving
+  both planes. A handler that relied on `afterLogin` or `onNewSession` firing for such a request
+  no longer sees it.
+- **`MfaService` has a new public member, `challengePlatformOnly(mfaTempToken, code, ip,
+userAgent)`.** It is the challenge for an entry point that serves the platform plane only: it
+  refuses a non-platform plane with `PLATFORM_AUTH_REQUIRED` before any side effect, then runs the
+  challenge and returns a `PlatformAuthResult`. A host that mounts its own platform challenge route
+  can call it to get the same refusal. `challenge()` is unchanged.
+
+### Fixed
+
+- **A refused cross-plane MFA challenge left an orphan session behind.** See the Apply note above.
+
 ## [1.4.13] - 2026-11-01
 
 ### Apply to a derived backend

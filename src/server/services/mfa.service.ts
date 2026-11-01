@@ -1282,6 +1282,44 @@ export class MfaService {
     return result
   }
 
+  /**
+   * The challenge for an entry point that serves the platform plane only.
+   *
+   * Reads the plane from the temp token first and refuses a dashboard token with
+   * `PLATFORM_AUTH_REQUIRED` before anything is spent. {@link MfaService.challenge} consumes the
+   * token, burns the TOTP code, stores a session, stamps the last login and fires the hooks, so
+   * refusing after it leaves an orphan session nobody holds a token for. The first verification only
+   * reads: it touches neither the brute-force counter nor the TOTP anti-replay key. The challenge
+   * verifies the token again, and the plane is a signed claim, so both reads see the same one.
+   *
+   * @param mfaTempToken - Short-lived MFA challenge JWT issued at platform login.
+   * @param code - 6-digit TOTP code or `dddd-dddd-dddd` recovery code.
+   * @param ip - Client IP address for session audit.
+   * @param userAgent - User-Agent header for session description.
+   * @returns The platform auth result.
+   * @throws `PLATFORM_AUTH_REQUIRED` if the token is for the dashboard plane.
+   * @throws `MFA_TEMP_TOKEN_INVALID` if the token is invalid or already consumed.
+   * @throws `ACCOUNT_LOCKED` if the brute-force threshold has been reached.
+   * @throws `MFA_INVALID_CODE` if the submitted code is incorrect.
+   */
+  async challengePlatformOnly(
+    mfaTempToken: string,
+    code: string,
+    ip: string,
+    userAgent: string
+  ): Promise<PlatformAuthResult> {
+    const { context } = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
+    if (context !== 'platform') {
+      throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
+    }
+    const result = await this.challenge(mfaTempToken, code, ip, userAgent)
+    // The plane was verified above, so a dashboard-shaped result means the two disagree.
+    if (!('admin' in result)) {
+      throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
+    }
+    return result
+  }
+
   // ---------------------------------------------------------------------------
   // disable — TOTP-verified MFA deactivation with session invalidation
   // ---------------------------------------------------------------------------

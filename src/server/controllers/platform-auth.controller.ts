@@ -27,11 +27,7 @@ import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
-import type {
-  AuthResult,
-  MfaChallengeResult,
-  PlatformAuthResult
-} from '../interfaces/auth-result.interface'
+import type { MfaChallengeResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
@@ -44,18 +40,6 @@ import { resolveClientAddress } from '../utils/client-address'
 // ---------------------------------------------------------------------------
 // Type guard
 // ---------------------------------------------------------------------------
-
-/**
- * Narrows an `AuthResult | PlatformAuthResult` union to `PlatformAuthResult`.
- *
- * Uses the `admin` property as the discriminant — `PlatformAuthResult` carries
- * `admin` while `AuthResult` carries `user`. Required to safely handle the return
- * type of `MfaService.challenge()` which may return either result type depending
- * on the context embedded in the MFA temp token.
- */
-function isPlatformResult(result: AuthResult | PlatformAuthResult): result is PlatformAuthResult {
-  return 'admin' in result
-}
 
 /**
  * Narrows `PlatformAuthResult | MfaChallengeResult` to `MfaChallengeResult` via
@@ -161,14 +145,8 @@ export class PlatformAuthController {
    * Completes a platform administrator MFA challenge.
    *
    * Exchanges a short-lived `mfaTempToken` (issued at login) and a TOTP code for
-   * full platform auth tokens. The `context: 'platform'` in the temp token directs
-   * {@link MfaService.challenge} to issue a {@link PlatformAuthResult}.
-   *
-   * Explicitly guards against cross-context token abuse: if a dashboard-context MFA
-   * temp token is submitted here, the response will contain an `AuthResult` (not a
-   * `PlatformAuthResult`). The `isPlatformResult` check detects this and throws
-   * `PLATFORM_AUTH_REQUIRED` rather than silently returning a dashboard-scoped token
-   * as if it were a platform auth response.
+   * full platform auth tokens through {@link MfaService.challengePlatformOnly}, which refuses a
+   * dashboard-context token before anything is spent.
    *
    * @param dto - Contains the MFA temp token and the TOTP (or recovery) code.
    * @param req - Incoming request (provides IP and User-Agent for brute-force tracking).
@@ -197,16 +175,9 @@ export class PlatformAuthController {
     if (dto.mfaTempToken === undefined || dto.mfaTempToken.length === 0) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
-    const result = await this.mfaService.challenge(dto.mfaTempToken, dto.code, ip, userAgent)
-
-    // Guard against cross-context token abuse: reject if the temp token had context='dashboard'.
-    // MfaService returns AuthResult (with 'user') for dashboard context and PlatformAuthResult
-    // (with 'admin') for platform context. The isPlatformResult discriminant detects the mismatch.
-    if (!isPlatformResult(result)) {
-      throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
-    }
-
-    return this.tokenDelivery.deliverPlatformAuthResponse(result)
+    return this.tokenDelivery.deliverPlatformAuthResponse(
+      await this.mfaService.challengePlatformOnly(dto.mfaTempToken, dto.code, ip, userAgent)
+    )
   }
 
   // ---------------------------------------------------------------------------
