@@ -36,10 +36,20 @@ userAgent)`.** It is the challenge for an entry point that serves the platform p
   refuses a non-platform plane with `PLATFORM_AUTH_REQUIRED` before any side effect, then runs the
   challenge and returns a `PlatformAuthResult`. A host that mounts its own platform challenge route
   can call it to get the same refusal. `challenge()` is unchanged.
+- **Logout fails when it cannot revoke.** `POST /auth/logout` and `POST /platform/logout` used to
+  answer success even when the store refused one of the writes that revoke the caller's
+  credentials. Every write is now attempted, whatever the earlier ones did, and the first failure is
+  raised once the rest have run: the route answers a 5xx instead of `204` and does not clear the
+  caller's cookies, so the client can retry, and a retried logout completes. A token that cannot be
+  verified (absent, expired, forged) still logs out as before, and a store that cannot answer the
+  initial read still fails closed. A host that treated a `204` from logout as proof of revocation
+  now sees a 5xx during a store outage. The Next.js logout route handler is not affected: it
+  ignores the upstream answer and clears the browser's cookies either way.
 
 ### Fixed
 
 - **A refused cross-plane MFA challenge left an orphan session behind.** See the Apply note above.
+- **Logout reported success when a revocation write was refused.** See the Apply note above.
 
 ## [1.4.13] - 2026-11-01
 

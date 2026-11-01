@@ -31,6 +31,7 @@ import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
+import { raiseFirst, settleWrites } from '../utils/settle-writes'
 
 /**
  * Core authentication service for platform administrators.
@@ -184,48 +185,48 @@ export class PlatformAuthService {
    * @param rawRefreshToken - The raw opaque platform refresh token.
    */
   async logout(accessToken: string, rawRefreshToken: string): Promise<string> {
-    // The stored session names its owner. Presenting the refresh token proves possession; the
-    // record proves whose it is. Claims from an unverified token would not — and claims from a
-    // *verified* one were previously the only source, which is why this route sat behind a
-    // guard that refuses an expired token: an operator who stepped away for longer than the
-    // fifteen-minute access lifetime could not sign out at all, and the seven-day refresh
-    // session of the highest-privilege identity in the system stayed live on a console they
-    // believed they had left. The dashboard plane was fixed for exactly this; the platform
-    // plane kept the old shape.
+    // The stored session names its owner: presenting the refresh token proves possession and the
+    // record proves whose it is, so an operator whose access token has long expired can still sign
+    // out. Claims read from an access token would not name the owner once it has expired.
     const tokenHash = sha256(rawRefreshToken)
     const { userId } = await this.redis.readSessionOwner(`prt:${tokenHash}`)
     this.logger.log(`logout: adminId=${logSafe(userId || '(no live session)')}`)
 
     // Verify signature and algorithm but not expiry: an expired token is the normal case here,
-    // a forged one must not be able to blacklist an id it does not own.
+    // a forged one must not be able to blacklist an id it does not own. Only the verification is
+    // tolerant: a token nobody can verify has nothing to blacklist, but a refused write is not.
+    let blacklist: Array<() => Promise<unknown>> = []
     try {
       const payload = this.tokenManager.verifyPlatformIgnoringExpiry(accessToken)
       const remainingTtl = payload.exp - Math.floor(Date.now() / 1000)
       if (remainingTtl > 0) {
-        await this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)
+        blacklist = [(): Promise<unknown> => this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)]
       }
     } catch {
       // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
-      // The refresh session below is revoked either way, which is the part that matters.
     }
 
-    // Delete the primary session key and its grace pointer (if it exists from the
-    // last rotation). Both are tracked in the per-user index SET so both must be
-    // removed from it to keep it accurate for future invalidateUserSessions calls.
-    //
-    // The index is named through `sessionIndexKey`, not by concatenating `'psess:' + userId`.
-    // Writing the raw form here while every other path writes the derived one would leave this
-    // SREM operating on a key nothing else touches: the session records would be deleted, the
-    // real index would keep their members, and it would grow with every logout until a full
-    // sweep or expiry. Silent, and only visible as an index that never shrinks.
-    await this.redis.del('prt:' + tokenHash)
-    await this.redis.del('prp:' + tokenHash)
-    if (userId) {
-      const index = sessionIndexKey('platform', userId, this.options.hmacKey, undefined)
-      await this.redis.srem(index, 'prt:' + tokenHash)
-      await this.redis.srem(index, 'prp:' + tokenHash)
-    }
-    await this.redis.del('psd:' + tokenHash)
+    // Every write is attempted whatever the earlier ones did, and the first failure is raised once
+    // they have all run: the blacklist entry, the primary session key and its grace pointer (if it
+    // exists from the last rotation), then the same two pruned from the per-user index SET so it
+    // stays accurate for future invalidateUserSessions calls. The index is named through
+    // `sessionIndexKey`, not by concatenating `'psess:' + userId`: the raw form would make the
+    // SREM operate on a key nothing else touches, and the index would grow with every logout.
+    const index = userId ? sessionIndexKey('platform', userId, this.options.hmacKey, undefined) : ''
+    const failures = await settleWrites([
+      ...blacklist,
+      (): Promise<unknown> => this.redis.del('prt:' + tokenHash),
+      (): Promise<unknown> => this.redis.del('prp:' + tokenHash),
+      ...(index === ''
+        ? []
+        : [
+            (): Promise<unknown> => this.redis.srem(index, 'prt:' + tokenHash),
+            (): Promise<unknown> => this.redis.srem(index, 'prp:' + tokenHash)
+          ]),
+      (): Promise<unknown> => this.redis.del('psd:' + tokenHash)
+    ])
+    // A refused write is not a completed logout: no hook, and the caller is told so.
+    raiseFirst(failures)
 
     this.emitPlatformLogout(userId)
 
