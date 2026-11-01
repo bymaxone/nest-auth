@@ -47,9 +47,7 @@ userAgent)`.** It is the challenge for an entry point that serves the platform p
   `204` from logout as proof of revocation now sees a 5xx during a store outage. The logout hook
   (`afterLogout`, `afterPlatformLogout`) is fired by the call that finds the session record: when an
   earlier attempt deleted the record and failed another write, it answered a 5xx without the hook,
-  and the retry that completes the logout finds no record and does not fire it. The Next.js logout
-  route handler is not affected: it ignores the upstream answer and clears the browser's cookies
-  either way.
+  and the retry that completes the logout finds no record and does not fire it.
 
 ### Fixed
 
