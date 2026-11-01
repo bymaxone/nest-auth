@@ -203,6 +203,11 @@ export interface IAuthHooks {
    * Use this hook to clean up session-related state, emit audit events, or
    * notify downstream services.
    *
+   * Fired by the call that finds the session record and names its owner. If an earlier attempt
+   * deleted the record but failed another revocation write, it answered a 5xx without this hook,
+   * and the retry that completes the logout finds no record, so it names nobody and does not fire
+   * it: that logout is never reported here.
+   *
    * @param userId - The internal ID of the user who logged out.
    * @param context - Request metadata (IP, user agent, sanitized headers).
    */
@@ -220,6 +225,10 @@ export interface IAuthHooks {
    * other. A consumer that does not implement it learns nothing when an administrator signs out:
    * the access token stays presentable until it expires, and the session's removal is unobserved.
    * That matters most for a live platform stream, which has no other signal to close on.
+   *
+   * It is fired by the call that finds the session record and names its owner. If an earlier
+   * attempt deleted the record but failed another revocation write, it answered a 5xx without this
+   * hook, and the retry that completes the logout finds no record and does not fire it.
    *
    * @param userId - The internal ID of the administrator who logged out.
    * @param context - Request metadata; `plane` is `'platform'` and there is no tenant.

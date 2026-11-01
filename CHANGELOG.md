@@ -36,10 +36,23 @@ userAgent)`.** It is the challenge for an entry point that serves the platform p
   refuses a non-platform plane with `PLATFORM_AUTH_REQUIRED` before any side effect, then runs the
   challenge and returns a `PlatformAuthResult`. A host that mounts its own platform challenge route
   can call it to get the same refusal. `challenge()` is unchanged.
+- **Logout fails when it cannot revoke.** `POST /auth/logout` and `POST /platform/logout` used to
+  answer success even when the store refused one of the writes that revoke the caller's
+  credentials. Every credential write is now attempted, whatever the earlier ones did, and the first
+  failure is raised once the rest have run. The route answers a 5xx instead of `204` and does not
+  clear the caller's cookies, so the client can retry. On the platform route, a session's index entry
+  is removed only after the credential it names is deleted, so a later sign-out-everywhere can still
+  find a session that logout could not end. A token that cannot be verified (absent, expired, forged) still logs out as
+  before, and a store that cannot answer the initial read still fails closed. A host that treated a
+  `204` from logout as proof of revocation now sees a 5xx during a store outage. The logout hook
+  (`afterLogout`, `afterPlatformLogout`) is fired by the call that finds the session record: when an
+  earlier attempt deleted the record and failed another write, it answered a 5xx without the hook,
+  and the retry that completes the logout finds no record and does not fire it.
 
 ### Fixed
 
 - **A refused cross-plane MFA challenge left an orphan session behind.** See the Apply note above.
+- **Logout reported success when a revocation write was refused.** See the Apply note above.
 
 ## [1.4.13] - 2026-11-01
 

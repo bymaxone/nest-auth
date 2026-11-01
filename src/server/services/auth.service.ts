@@ -40,6 +40,7 @@ import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { safeLogLine } from '../utils/safe-log-line'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
+import { raiseFirst, settleWrites } from '../utils/settle-writes'
 import { sleep } from '../utils/sleep'
 import { tenantScoped } from '../utils/tenant-scoped'
 
@@ -546,30 +547,27 @@ export class AuthService {
     const { userId, tenantId } = await this.redis.readSessionOwner(`rt:${sessionHash}`)
     this.logger.log(`logout: userId=${logSafe(userId || '(no live session)')}`)
 
-    // Verify signature and algorithm but not expiry: an expired token is the normal case here,
-    // a forged one must not be able to blacklist an id it does not own.
+    // Verify signature and algorithm but not expiry: an expired token is the normal case here, a
+    // forged one must not blacklist an id it does not own. Only the verification is tolerant.
+    let blacklist: Array<() => Promise<unknown>> = []
     try {
       const payload = this.tokenManager.verifyIgnoringExpiry(accessToken)
-      const now = Math.floor(Date.now() / 1000)
-      const remainingTtl = payload.exp - now
+      const remainingTtl = payload.exp - Math.floor(Date.now() / 1000)
       if (remainingTtl > 0) {
-        await this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)
+        blacklist = [(): Promise<unknown> => this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)]
       }
     } catch {
       // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
-      // The refresh session below is revoked either way, which is the part that matters.
     }
 
-    // Delete the refresh token key — always required for auth security.
-    await this.redis.del(`rt:${sessionHash}`)
-
-    // …and the rotation grace pointer for the same hash. A token presented at logout may
-    // already have been rotated and still be inside its grace window, in which case the
-    // `rt:` key above is gone but `rp:{hash}` remains — and a grace hit mints a fresh
-    // session. Deleting it is what makes logout final for the token the caller handed us,
-    // rather than final only for a token that had not yet rotated. rust-auth clears the
-    // same pointer on its logout path.
-    await this.redis.del(`rp:${sessionHash}`)
+    // Every revocation write is attempted whatever the earlier ones did, and the first failure is
+    // raised once all have run. A token presented here may have rotated and still sit inside its
+    // grace window, where a grace hit mints a fresh session, so the `rp:` pointer goes too.
+    const failures = await settleWrites([
+      ...blacklist,
+      (): Promise<unknown> => this.redis.del(`rt:${sessionHash}`),
+      (): Promise<unknown> => this.redis.del(`rp:${sessionHash}`)
+    ])
 
     // Delegate session metadata cleanup to SessionService.revokeSession(), which
     // performs an atomic SISMEMBER ownership check before deleting sd:{hash} and
@@ -603,6 +601,9 @@ export class AuthService {
           }
         })
     }
+
+    // A refused revocation write is not a completed logout: no hook, and the caller is told so.
+    raiseFirst(failures)
 
     // The hook names the user who was signed out, so it only fires when the session told us
     // who that was. A logout for an already-gone session has nobody to name.

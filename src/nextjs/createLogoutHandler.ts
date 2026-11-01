@@ -9,6 +9,9 @@
  * A user who pressed "logout" MUST end up logged out of the browser
  * session even if the upstream is unreachable — otherwise a network
  * glitch leaves them with cookies they thought they had invalidated.
+ * The upstream's answer is not surfaced to the caller, so a logout the
+ * server could not complete (it answers a 5xx when the store refuses a
+ * revocation write) looks the same as one that did.
  *
  * Two response modes are supported, expressed as a discriminated
  * union on {@link LogoutHandlerConfig}:

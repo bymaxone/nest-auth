@@ -141,8 +141,9 @@ export class AuthController {
    * token is the credential that authorizes this, and the service reads the session's owner
    * from the stored record rather than from the access token's claims.
    *
-   * Always 204: a caller presenting a token for an already-gone session gets their cookies
-   * cleared and learns nothing about whether a session existed.
+   * A caller presenting a token for an already-gone session gets a 204 with their cookies
+   * cleared and learns nothing about whether a session existed. When the store refuses a
+   * revocation write the route answers a 5xx and leaves the cookies in place, so the client can retry.
    *
    * @param req - Incoming request (used to extract tokens).
    * @param res - Response object (passthrough — used to clear cookies).
