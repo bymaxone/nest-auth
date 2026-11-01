@@ -442,8 +442,13 @@ export interface BymaxAuthModuleOptions {
     resolveDomains?: (requestDomain: string) => string[]
 
     /**
-     * `SameSite` attribute applied to every cookie issued by the module
-     * (access token, refresh token, session signal). Default: `'lax'`.
+     * `SameSite` attribute applied to the access-token and session-signal cookies issued by
+     * the module. Default: `'lax'`.
+     *
+     * The refresh-token cookie does not follow this value except for `'none'`: it is issued
+     * `Strict` under `'lax'` and `'strict'`, because only the refresh route reads it and that
+     * route refuses a cross-site caller on its own. Under `'none'` it is `None` too, since a
+     * cross-site frontend's refresh call would otherwise carry no credential.
      *
      * Trade-offs:
      * - `'lax'` (default): cookies travel on top-level cross-site GET navigations.

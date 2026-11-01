@@ -184,12 +184,14 @@ describe('TokenDeliveryService', () => {
 
     /**
      * Verifies that the resolved `cookies.sameSite` value reaches the
-     * `res.cookie()` call for every issued cookie. The default in the test
+     * `res.cookie()` call of the access and has_session cookies. The default in the test
      * fixture is `'lax'`, which mirrors the lib's startup default since v1.0.5.
      * A drift here (e.g. baseCookieOptions hardcoding 'strict' again) would
-     * silently break OAuth redirects on cross-site-initiated navigations.
+     * silently break OAuth redirects on cross-site-initiated navigations. The refresh cookie
+     * is deliberately not among them: it is Strict unless `none` is configured, and is
+     * covered in `token-delivery.refresh-samesite.spec.ts`.
      */
-    it('should apply the configured cookies.sameSite to access, refresh, and has_session cookies', async () => {
+    it('should apply the configured cookies.sameSite to the access and has_session cookies', async () => {
       const service = await buildService('cookie')
       const res = makeRes()
       const req = makeReq()
@@ -203,7 +205,7 @@ describe('TokenDeliveryService', () => {
       const refresh = calls.find((c) => c[0] === 'refresh_token')?.[2]
       const session = calls.find((c) => c[0] === 'has_session')?.[2]
       expect(access?.['sameSite']).toBe('lax')
-      expect(refresh?.['sameSite']).toBe('lax')
+      expect(refresh?.['sameSite']).toBe('strict')
       expect(session?.['sameSite']).toBe('lax')
     })
 

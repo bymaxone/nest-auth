@@ -18,6 +18,35 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **The refresh cookie is `SameSite=Strict` unless you configure `cookies.sameSite: 'none'`.**
+  Until now it followed `cookies.sameSite`, so under the default (`lax`) it was issued `Lax`. It is
+  now `Strict` under `lax` and `strict`, and `None` only when `none` is configured, which is
+  unchanged. Only the attribute changes: the access and session-signal cookies still follow
+  `cookies.sameSite`, so the OAuth return trip is unaffected, and the cookie that ends a session
+  is cleared with the same attribute it was issued with. Nothing a user could do stops working:
+  the silent-refresh route already refused every caller whose `Sec-Fetch-Site` is not
+  `same-origin` or `none`. Measured in Chromium 140 with the real proxy and route handler, a
+  `Lax` refresh cookie does reach that route on a cross-site link, and the route answers before
+  reading it, so a `Strict` cookie changes the outcome of no navigation. A deployment that
+  proxies the refresh call from a frontend on another site must already be on `none`.
+- **A cross-site entry to the silent-refresh route now redirects to the login page.** A user
+  who follows a link into the app from another site (or from another origin on the same site)
+  after the access token expired used to land on a bare `403`. The route now answers `307` to
+  `loginPath?reason=expired`, the same target a failed refresh uses, so the login page can show
+  its expired-session message. The refusal keeps its property: no refresh is attempted and no
+  `Set-Cookie` is written, so a cross-site caller still causes nothing. The logout and
+  client-refresh routes are unchanged and still answer `403`. A page that treated a `403` from
+  the silent-refresh route as a signal sees a redirect instead.
+
+### Fixed
+
+- **The refresh cookie was issued `Lax` under the default configuration.** See the Apply note
+  above.
+- **A cross-site entry to the silent-refresh route showed a bare `403`.** See the Apply note
+  above.
+
 ## [1.4.11] - 2026-11-01
 
 ### Apply to a derived backend
