@@ -44,7 +44,10 @@ userAgent)`.** It is the challenge for an entry point that serves the platform p
   is removed only after the credential it names is deleted, so a later sign-out-everywhere can still
   find a session that logout could not end. A token that cannot be verified (absent, expired, forged) still logs out as
   before, and a store that cannot answer the initial read still fails closed. A host that treated a
-  `204` from logout as proof of revocation now sees a 5xx during a store outage. The Next.js logout
+  `204` from logout as proof of revocation now sees a 5xx during a store outage. The logout hook
+  (`afterLogout`, `afterPlatformLogout`) is fired by the call that finds the session record: when an
+  earlier attempt deleted the record and failed another write, it answered a 5xx without the hook,
+  and the retry that completes the logout finds no record and does not fire it. The Next.js logout
   route handler is not affected: it ignores the upstream answer and clears the browser's cookies
   either way.
 

@@ -181,6 +181,21 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
     expect(mockRedis.set).toHaveBeenLastCalledWith(`rv:${JTI}`, '1', expect.any(Number))
   })
 
+  // Scenario: the blacklist write is refused on the first attempt, which still deletes the refresh
+  // session, and the retry then finds no session to name an owner. Expected: neither call fires the
+  // logout hook. Why: the hook is fired by the call that names the owner; this pins the documented
+  // gap so it cannot change unnoticed.
+  it('should deliver the logout hook on neither the failed attempt nor the retry that completes it', async () => {
+    mockRedis.set.mockRejectedValueOnce(STORE_REFUSED)
+    await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
+    mockRedis.readSessionOwner.mockResolvedValue({ userId: '', tenantId: undefined })
+
+    await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe('')
+    await flushMicrotasks()
+
+    expect(mockHooks.afterPlatformLogout).not.toHaveBeenCalled()
+  })
+
   // Scenario: the access token cannot be verified. Expected: no blacklist write, and logout still
   // completes. Why: that is not a store failure, and the refresh session is revoked either way.
   it('should still complete when the access token cannot be verified', async () => {
