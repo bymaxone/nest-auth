@@ -31,7 +31,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   callers pass the peer as `request.remoteAddress`; `WsJwtGuard` reads Socket.IO's
   `handshake.address` itself. **Nothing changes unless you set it**: unset, `X-Forwarded-Host` is
   never read, and every uncertain case (no peer, a repeated or empty header, a predicate that throws
-  or does not answer `true`) falls back to `Host`, so a wrong answer can only refuse a stream, never
+  or does not answer `true`) falls back to `Host`, so those cases can only refuse a stream, never
   admit a tenant the client chose.
 
 ## [1.4.10] - 2026-11-01

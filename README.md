@@ -861,8 +861,8 @@ as `::ffff:10.0.0.1` reaches it unchanged; Express's compiled setting understand
 is why the recipe delegates to it. When it answers `true`, the first element of a single
 `X-Forwarded-Host` is used, with the port cut like `Host`. Unset, which is the default,
 `X-Forwarded-Host` is never read. Every other case falls back to `Host`: no peer address, a repeated
-header, an empty first element, a predicate that throws or answers anything but `true`. A wrong
-answer can therefore only make the binding stricter, never admit a tenant the client chose. The
+header, an empty first element, a predicate that throws or answers anything but `true`. Those
+cases can therefore only make the binding stricter, never admit a tenant the client chose. The
 peer address comes from `WsJwtGuard` itself (Socket.IO's `handshake.address`); a caller of
 `AuthTokenVerifierService.verifyAccessToken` passes it as `request.remoteAddress`.
 
