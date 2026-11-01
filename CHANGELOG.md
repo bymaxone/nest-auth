@@ -36,7 +36,7 @@ userAgent)`, and a new private one, `runChallenge`.** The public member is the c
   entry point that serves the platform plane only: it verifies the temp token once, refuses a
   non-platform plane with `PLATFORM_AUTH_REQUIRED` before any side effect, runs the challenge and
   returns a `PlatformAuthResult`. A host that mounts its own platform challenge route can call it
-  to get the same refusal instead of checking the result's shape after the fact. `challenge()`
+  to get the same refusal. `challenge()`
   keeps its signature and behaviour and now delegates to `runChallenge`; a subclass of
   `MfaService` that declares a member of that name has to rename it.
 
