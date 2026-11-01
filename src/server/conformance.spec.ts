@@ -63,7 +63,7 @@ interface WireContract {
   redisKeyPrefixes: Record<string, string>
   userStatusCache: {
     emailVerifiedValue: { verified: string; unverified: string }
-    ttl: { default: number }
+    ttl: { option: string; default: number }
     invalidateOrder: string[]
     vectors: { tenantId: string; userId: string; scope: string }[]
   }
@@ -515,6 +515,17 @@ describe('cross-implementation conformance', () => {
         cache.ttl.default,
         cache.ttl.default
       ])
+    })
+
+    // Verifies the option is the TTL source, not the default that happens to equal it: a
+    // non-default value must reach both entries.
+    it('writes each entry with the configured userStatusCacheTtlSeconds', async () => {
+      const { service, calls } = build({ required: true, ttl: 17 })
+
+      await service.assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
+
+      expect(cache.ttl.option).toBe('userStatusCacheTtlSeconds')
+      expect(calls.filter((c) => c.op === 'set').map((c) => c.ttl)).toEqual([17, 17])
     })
 
     // Verifies the verified entry exists only when verification is required.
