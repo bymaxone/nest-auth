@@ -18,6 +18,25 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **`POST /password/forgot-password` and `POST /password/resend-otp` now answer `200` with an
+  empty JSON object, `{}`, where they answered `200` with no body.** The status and the
+  anti-enumeration behaviour are unchanged, and the body is the same for a known and an unknown
+  account. The wire contract now pins it. A client that asserted an empty body must accept JSON; the bundled client
+  discards the body and is unaffected. The declarations of `PasswordResetController.forgotPassword`
+  and `PasswordResetController.resendOtp` change with it: they return `Promise<Record<string,
+never>>` instead of `Promise<void>`.
+
+### Fixed
+
+- **`POST /password/change` refuses an empty `refreshToken` and accepts a long one.** The field is
+  the caller's own refresh token, sent in the body under bearer delivery. It was capped at 512
+  characters and an empty string passed validation, so a present-but-empty value was read as "no
+  token" and the request silently degraded. It is now held to the wire contract's opaque-token
+  bound: 1 to 2048 characters, answered `400 auth.validation` outside it. An absent field is
+  unchanged.
+
 ## [1.4.14] - 2026-11-01
 
 ### Apply to a derived backend

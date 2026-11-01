@@ -804,7 +804,16 @@
     "wsTicket": [
       "ticket",
       "expiresIn"
-    ]
+    ],
+    "passwordResetRequest": {
+      "routes": [
+        "password/forgot-password",
+        "password/resend-otp"
+      ],
+      "status": 200,
+      "body": {},
+      "$comment": "Both routes acknowledge with 200 and an empty JSON object, whether or not the account exists: a body that differed by outcome would be the enumeration oracle the 200 exists to close. Pinned as an object, not left empty, so a client that parses every success body as JSON needs no special case for these two routes."
+    }
   },
   "errorCatalog": {
     "$comment": [

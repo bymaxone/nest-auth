@@ -356,6 +356,20 @@ describe('createAuthClient — forgotPassword', () => {
     expect(calls[0]?.method).toBe('POST')
     expect(calls[0]?.body).toEqual({ email: 'user@example.com', tenantId: 'tenant-1' })
   })
+
+  // The server acknowledges with 200 and an empty JSON object; an earlier release sent no body.
+  // The client discards the body either way, so a deployment on either side of the change
+  // resolves the call and no consumer has to know which one it talks to.
+  it.each([
+    ['an empty JSON object', () => jsonResponse(200, {})],
+    ['no body', () => new Response(null, { status: 200 })],
+    ['a 204', () => jsonResponse(204, undefined)]
+  ])('resolves when the server acknowledges with %s', async (_what, respond) => {
+    const { authFetch } = makeAuthFetchMock(respond)
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    await expect(client.forgotPassword('user@example.com', 'tenant-1')).resolves.toBeUndefined()
+  })
 })
 
 describe('createAuthClient — resetPassword', () => {
