@@ -39,6 +39,7 @@ import { MfaService } from '../services/mfa.service'
 import { PlatformAuthService } from '../services/platform-auth.service'
 import type { PlatformBearerAuthResponse } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { TokenManagerService } from '../services/token-manager.service'
 import { resolveClientAddress } from '../utils/client-address'
 
 // ---------------------------------------------------------------------------
@@ -113,6 +114,7 @@ export class PlatformAuthController {
   constructor(
     @Inject(PlatformAuthService) private readonly platformAuthService: PlatformAuthService,
     @Inject(MfaService) private readonly mfaService: MfaService,
+    @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
     @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService
   ) {}
 
@@ -164,11 +166,9 @@ export class PlatformAuthController {
    * full platform auth tokens. The `context: 'platform'` in the temp token directs
    * {@link MfaService.challenge} to issue a {@link PlatformAuthResult}.
    *
-   * Explicitly guards against cross-context token abuse: if a dashboard-context MFA
-   * temp token is submitted here, the response will contain an `AuthResult` (not a
-   * `PlatformAuthResult`). The `isPlatformResult` check detects this and throws
-   * `PLATFORM_AUTH_REQUIRED` rather than silently returning a dashboard-scoped token
-   * as if it were a platform auth response.
+   * Refuses a dashboard-context MFA temp token before anything is spent: the plane is read from
+   * the token first, so the refusal leaves no session, no last-login stamp, no hook call, no
+   * brute-force failure and no consumed token or TOTP code.
    *
    * @param dto - Contains the MFA temp token and the TOTP (or recovery) code.
    * @param req - Incoming request (provides IP and User-Agent for brute-force tracking).
@@ -197,11 +197,21 @@ export class PlatformAuthController {
     if (dto.mfaTempToken === undefined || dto.mfaTempToken.length === 0) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
+    // The plane is read from the token BEFORE the challenge runs. The challenge consumes the
+    // token, burns the TOTP code, stores a session, stamps the last login and fires the hooks,
+    // so refusing a dashboard token afterwards leaves an orphan session nobody holds a token for.
+    // `verifyMfaTempToken` only reads: it consumes nothing, touches neither the brute-force
+    // counter nor the TOTP anti-replay key, and the plane is a signed claim, so the challenge
+    // below sees the same one.
+    const { context } = await this.tokenManager.verifyMfaTempToken(dto.mfaTempToken)
+    if (context !== 'platform') {
+      throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
+    }
+
     const result = await this.mfaService.challenge(dto.mfaTempToken, dto.code, ip, userAgent)
 
-    // Guard against cross-context token abuse: reject if the temp token had context='dashboard'.
-    // MfaService returns AuthResult (with 'user') for dashboard context and PlatformAuthResult
-    // (with 'admin') for platform context. The isPlatformResult discriminant detects the mismatch.
+    // The service must answer in the shape of the plane the token named; a result of the other
+    // plane here means the two disagree, and nothing of it is delivered.
     if (!isPlatformResult(result)) {
       throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
     }

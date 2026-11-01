@@ -26,6 +26,7 @@ import { MfaService } from '../services/mfa.service'
 import { PlatformAuthService } from '../services/platform-auth.service'
 import type { PlatformBearerAuthResponse } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { TokenManagerService } from '../services/token-manager.service'
 import { PlatformAuthController } from './platform-auth.controller'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
@@ -100,6 +101,10 @@ const mockMfaService = {
   challenge: jest.fn()
 }
 
+const mockTokenManager = {
+  verifyMfaTempToken: jest.fn()
+}
+
 const mockTokenDelivery = {
   deliverPlatformAuthResponse: jest.fn(),
   extractPlatformAccessToken: jest.fn(),
@@ -117,6 +122,7 @@ async function buildModule(): Promise<TestingModule> {
       providers: [
         { provide: PlatformAuthService, useValue: mockPlatformAuthService },
         { provide: MfaService, useValue: mockMfaService },
+        { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: TokenDeliveryService, useValue: mockTokenDelivery }
       ]
     })
@@ -277,6 +283,52 @@ describe('PlatformAuthController', () => {
   describe('mfaChallenge', () => {
     beforeEach(() => {
       mockTokenDelivery.deliverPlatformAuthResponse.mockReturnValue(PLATFORM_BEARER_RESPONSE)
+      mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+        userId: 'admin-1',
+        context: 'platform',
+        jti: 'jti-1'
+      })
+    })
+
+    // Scenario: the temp token names the dashboard plane. Expected: PLATFORM_AUTH_REQUIRED, and
+    // the challenge is never called. Why: the challenge consumes the token, burns the TOTP code,
+    // stores a session, stamps the last login and fires the hooks, so a refusal after it leaves
+    // all of that behind; the plane has to be read from the token first.
+    it('should refuse a dashboard-plane temp token before calling mfaService.challenge', async () => {
+      mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+        userId: 'user-1',
+        context: 'dashboard',
+        tenantId: 'tenant-1',
+        jti: 'jti-2'
+      })
+
+      await expect(controller.mfaChallenge(MFA_CHALLENGE_DTO, makeReq())).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED } }
+      })
+
+      expect(mockMfaService.challenge).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the token does not verify. Expected: the verifier's own error reaches the caller
+    // and nothing is delegated; the read is the same one the challenge starts with.
+    it('should propagate a temp token verification error without calling mfaService.challenge', async () => {
+      const error = new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+      mockTokenManager.verifyMfaTempToken.mockRejectedValue(error)
+
+      await expect(controller.mfaChallenge(MFA_CHALLENGE_DTO, makeReq())).rejects.toThrow(error)
+
+      expect(mockMfaService.challenge).not.toHaveBeenCalled()
+    })
+
+    // The plane is read from the submitted token itself.
+    it('should read the plane from the submitted temp token', async () => {
+      mockMfaService.challenge.mockResolvedValue(PLATFORM_AUTH_RESULT)
+
+      await controller.mfaChallenge(MFA_CHALLENGE_DTO, makeReq())
+
+      expect(mockTokenManager.verifyMfaTempToken).toHaveBeenCalledWith(
+        MFA_CHALLENGE_DTO.mfaTempToken
+      )
     })
 
     // Happy path: mfaService.challenge returns a PlatformAuthResult (has 'admin').
