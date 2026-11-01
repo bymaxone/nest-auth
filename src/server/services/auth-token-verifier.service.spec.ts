@@ -497,6 +497,7 @@ describe('AuthTokenVerifierService', () => {
     afterEach(() => {
       delete (mockOptions as Record<string, unknown>)['enforceTenantBinding']
       delete (mockOptions as Record<string, unknown>)['tenantIdResolver']
+      delete (mockOptions as Record<string, unknown>)['isTrustedProxy']
       warn.mockRestore()
     })
 
@@ -536,6 +537,26 @@ describe('AuthTokenVerifierService', () => {
 
       expect(errorCodeOf(err)).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
       expect(mockAccountStatus.assertDashboardAccountUsable).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the caller passes the TCP peer as `request.remoteAddress` and the host trusts it.
+    // Expected: the resolver sees the forwarded host. Why: the verifier is the other door a stream
+    // authenticates through, and it must resolve the tenant the way the guard does.
+    it('resolves the forwarded host for a trusted peer passed as request.remoteAddress', async () => {
+      const isTrustedProxy = jest.fn((peer: string) => peer === '10.0.0.1')
+      Object.assign(mockOptions, { isTrustedProxy })
+      resolver.mockResolvedValue('tenant-1')
+
+      await verifier.verifyAccessToken('tok', {
+        plane: 'dashboard',
+        request: {
+          headers: { host: 'upstream.internal', 'x-forwarded-host': 'tenant-1.example.com' },
+          remoteAddress: '10.0.0.1'
+        }
+      })
+
+      expect(isTrustedProxy).toHaveBeenCalledWith('10.0.0.1')
+      expect(resolver.mock.calls[0]?.[0]).toMatchObject({ hostname: 'tenant-1.example.com' })
     })
 
     // Scenario: the binding is on and no request is passed. Expected: verified as before, the
