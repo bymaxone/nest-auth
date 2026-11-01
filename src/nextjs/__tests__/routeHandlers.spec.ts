@@ -1051,7 +1051,10 @@ describe('cross-site callers are refused before any cookie is written', () => {
 
   const methodFor = { logout: 'POST', silentRefresh: 'GET', clientRefresh: 'POST' } as const
 
-  const cases = (['logout', 'silentRefresh', 'clientRefresh'] as const).flatMap((name) =>
+  // `silentRefresh` is not here: it answers a refused caller with a redirect to the login page
+  // rather than a 403, covered in `silentRefresh.crossSite.spec.ts`. The properties asserted
+  // below (no Set-Cookie, no upstream call, not storable) are asserted there too.
+  const cases = (['logout', 'clientRefresh'] as const).flatMap((name) =>
     (['cross-site', 'same-site'] as const).map((site) => [name, site] as const)
   )
 

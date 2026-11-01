@@ -958,7 +958,7 @@ export interface BymaxAuthModuleOptions {
 | `cookies.sessionSignalName`       | `string`                                  | No          | `'has_session'`                       | Signal cookie name                                                                                                                                                                                                      |
 | `cookies.refreshCookiePath`       | `string`                                  | No          | `'/auth'`                             | Refresh cookie path                                                                                                                                                                                                     |
 | `cookies.mfaTempCookiePath`       | `string`                                  | No          | `'/auth/mfa'`                         | MFA temp cookie path                                                                                                                                                                                                    |
-| `cookies.sameSite`                | `'lax' \| 'strict' \| 'none'`             | No          | `'lax'`                               | `'none'` requires `secureCookies` **and** a non-empty `trustedOrigins`                                                                                                                                                  |
+| `cookies.sameSite`                | `'lax' \| 'strict' \| 'none'`             | No          | `'lax'`                               | Applies to the access and session-signal cookies; the refresh cookie is `Strict` unless this is `'none'`. `'none'` requires `secureCookies` **and** a non-empty `trustedOrigins`                                        |
 | `cookies.trustedOrigins`          | `string[]`                                | Conditional | `[]`                                  | Origins allowed to make cross-site writes; required under `sameSite: 'none'`, and consulted under every `sameSite` value. Compared verbatim against the `Origin` header, so each entry is a bare `scheme://host[:port]` |
 | `cookies.resolveDomains`          | `function`                                | No          | `undefined`                           | Multi-domain domain resolver                                                                                                                                                                                            |
 | `mfa.encryptionKey`               | `string`                                  | Conditional | —                                     | AES-256-GCM key (required if MFA)                                                                                                                                                                                       |
@@ -3718,29 +3718,29 @@ User             Controller        AuthService         TokenDeliveryService  Red
 
 ## Appendix B: Security Checklist
 
-| Item                                                      | Implementation                                                                                       |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Passwords hashed with scrypt (N=2^17, r=8, p=1)           | `PasswordService.hash()` via `node:crypto`                                                           |
-| Constant-time comparison of passwords                     | `crypto.timingSafeEqual()` to prevent timing attacks                                                 |
-| TOTP secrets encrypted at rest                            | AES-256-GCM in `MfaService`                                                                          |
-| Recovery codes hashed individually                        | HMAC-SHA-256 of each code, keyed by `hmacKey` (derived from `identifierKey ?? jwt.secret`)           |
-| Opaque refresh tokens (not JWT)                           | Random 256-bit token, stored in Redis                                                                |
-| Refresh token rotation                                    | New token on each refresh, old one invalidated                                                       |
-| Grace window for rotation                                 | 30s `rp:` pointer for concurrent requests                                                            |
-| Access token blacklist                                    | Redis key `rv:{jti}` on logout; password reset and revoke-all advance the token epoch (`ep:`/`pep:`) |
-| HttpOnly cookies (cookie/both mode)                       | Access and refresh tokens never accessible via JS                                                    |
-| Secure storage (bearer mode)                              | Mobile uses the OS `SecureStore`/`Keychain` — inaccessible by other apps                             |
-| Configurable SameSite (`cookies.sameSite`, default `lax`) | `TrustedOriginGuard` checks cross-site writes; `none` requires `secureCookies` and `trustedOrigins`  |
-| Restricted path on the refresh cookie                     | `/auth` — not sent on other routes (cookie/both mode)                                                |
-| Brute-force protection                                    | Lockout per email after N attempts                                                                   |
-| Rate limiting per IP                                      | `AuthRateLimitGuard` (Redis, on by default via `rateLimit.enabled`) plus `@Throttle()`               |
-| Does not reveal the existence of a user                   | Generic message in login and forgot-password                                                         |
-| PII masked in logs                                        | `maskEmail()` keeps the first character and the domain                                               |
-| Status cache with TTL                                     | Redis cache of 60s avoids excessive queries                                                          |
-| Tokens with SHA-256 as the Redis key                      | Tokens never stored in plain text in Redis                                                           |
-| MFA temp token with short TTL                             | 5 minutes validity                                                                                   |
-| OTP with attempt limit                                    | Maximum 5 attempts per OTP                                                                           |
-| Invitations with TTL                                      | 48 hours by default (`invitations.tokenTtlSeconds` = 172800)                                         |
+| Item                                                                                             | Implementation                                                                                       |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Passwords hashed with scrypt (N=2^17, r=8, p=1)                                                  | `PasswordService.hash()` via `node:crypto`                                                           |
+| Constant-time comparison of passwords                                                            | `crypto.timingSafeEqual()` to prevent timing attacks                                                 |
+| TOTP secrets encrypted at rest                                                                   | AES-256-GCM in `MfaService`                                                                          |
+| Recovery codes hashed individually                                                               | HMAC-SHA-256 of each code, keyed by `hmacKey` (derived from `identifierKey ?? jwt.secret`)           |
+| Opaque refresh tokens (not JWT)                                                                  | Random 256-bit token, stored in Redis                                                                |
+| Refresh token rotation                                                                           | New token on each refresh, old one invalidated                                                       |
+| Grace window for rotation                                                                        | 30s `rp:` pointer for concurrent requests                                                            |
+| Access token blacklist                                                                           | Redis key `rv:{jti}` on logout; password reset and revoke-all advance the token epoch (`ep:`/`pep:`) |
+| HttpOnly cookies (cookie/both mode)                                                              | Access and refresh tokens never accessible via JS                                                    |
+| Secure storage (bearer mode)                                                                     | Mobile uses the OS `SecureStore`/`Keychain` — inaccessible by other apps                             |
+| Configurable SameSite (`cookies.sameSite`, default `lax`); refresh cookie `Strict` unless `none` | `TrustedOriginGuard` checks cross-site writes; `none` requires `secureCookies` and `trustedOrigins`  |
+| Restricted path on the refresh cookie                                                            | `/auth` — not sent on other routes (cookie/both mode)                                                |
+| Brute-force protection                                                                           | Lockout per email after N attempts                                                                   |
+| Rate limiting per IP                                                                             | `AuthRateLimitGuard` (Redis, on by default via `rateLimit.enabled`) plus `@Throttle()`               |
+| Does not reveal the existence of a user                                                          | Generic message in login and forgot-password                                                         |
+| PII masked in logs                                                                               | `maskEmail()` keeps the first character and the domain                                               |
+| Status cache with TTL                                                                            | Redis cache of 60s avoids excessive queries                                                          |
+| Tokens with SHA-256 as the Redis key                                                             | Tokens never stored in plain text in Redis                                                           |
+| MFA temp token with short TTL                                                                    | 5 minutes validity                                                                                   |
+| OTP with attempt limit                                                                           | Maximum 5 attempts per OTP                                                                           |
+| Invitations with TTL                                                                             | 48 hours by default (`invitations.tokenTtlSeconds` = 172800)                                         |
 
 ---
 

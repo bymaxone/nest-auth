@@ -57,7 +57,8 @@ export interface PlatformBearerAuthResponse {
  *   set. Use this for mobile/native clients or SPA with cross-origin APIs.
  * - `'both'`: Tokens are set as cookies AND returned in the response body.
  *
- * Cookie security: HttpOnly, Secure (production), SameSite=Strict.
+ * Cookie security: HttpOnly, Secure (production). The access and session-signal cookies follow
+ * `cookies.sameSite`; the refresh cookie is SameSite=Strict unless `none` is configured.
  * Refresh cookies use the configured `cookies.refreshCookiePath`.
  *
  * @layer Service
@@ -258,6 +259,7 @@ export class TokenDeliveryService {
       res.clearCookie(this.options.cookies.accessTokenName, cookieOpts)
       res.clearCookie(this.options.cookies.refreshTokenName, {
         ...cookieOpts,
+        sameSite: this.refreshSameSite(),
         path: this.options.cookies.refreshCookiePath
       })
       res.clearCookie(this.options.cookies.sessionSignalName, {
@@ -336,6 +338,7 @@ export class TokenDeliveryService {
 
     res.cookie(this.options.cookies.refreshTokenName, rawRefreshToken, {
       ...base,
+      sameSite: this.refreshSameSite(),
       httpOnly: true,
       secure: isProd,
       path: this.options.cookies.refreshCookiePath,
@@ -352,6 +355,19 @@ export class TokenDeliveryService {
       secure: isProd,
       maxAge: refreshMaxAge
     })
+  }
+
+  /**
+   * `SameSite` of the refresh cookie: Strict unless the deployment is cross-site (`none`).
+   *
+   * Only the refresh route reads this cookie, and a browser sends it there on the app's own
+   * requests; withholding it from every cross-site request costs nothing, whereas the access and
+   * session-signal cookies follow `cookies.sameSite` because the OAuth return trip needs them on
+   * a cross-site top-level navigation. A `none` deployment must keep `none`, or its refresh call
+   * would carry no credential.
+   */
+  private refreshSameSite(): 'strict' | 'none' {
+    return this.options.cookies.sameSite === 'none' ? 'none' : 'strict'
   }
 
   /** Returns base Set-Cookie options for auth cookies, optionally scoped to a domain. */

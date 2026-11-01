@@ -1461,8 +1461,10 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 - `@MaxLength(128)` on password DTOs prevents algorithmic-DoS via oversized scrypt inputs
 - JWT algorithm pinning to HS256 prevents algorithm-confusion attacks
 - Constant-time comparisons via `crypto.timingSafeEqual` for all secret comparisons
-- HttpOnly cookies; `Secure` enforced in production; `SameSite=Lax` by default on every auth
-  cookie, so the OAuth provider's cross-site redirect back to your app still carries them.
+- HttpOnly cookies; `Secure` enforced in production; `SameSite=Lax` by default on the access and
+  session-signal cookies, so the OAuth provider's cross-site redirect back to your app still
+  carries them. The refresh cookie is `Strict` under `lax` and `strict`, and `None` only when
+  you configure `cookies.sameSite: 'none'`.
   Deployments that do not need that redirect can take the stricter posture with
   `cookies.sameSite: 'strict'`. CSRF does not rest on this setting — `TrustedOriginGuard` is
   applied to every controller and runs before authentication.
@@ -1492,7 +1494,7 @@ it is the one guarantee cookie delivery exists for and the one no server-side te
 | Token Generation   | `crypto.randomBytes(32)` — 256 bits of entropy                                                         |
 | Secret Comparison  | `crypto.timingSafeEqual` (constant-time)                                                               |
 | JWT                | HS256 via `@nestjs/jwt`, JTI blacklist via Redis                                                       |
-| Cookies            | HttpOnly, Secure, SameSite=Lax (override to `strict`), path-scoped                                     |
+| Cookies            | HttpOnly, Secure, SameSite=Lax (override to `strict`), refresh cookie Strict, path-scoped              |
 | Brute-Force        | Redis atomic counters per HMAC(email, identifier key)                                                  |
 | CSRF (OAuth)       | 64-char hex state nonce, single-use via `getdel()`                                                     |
 | Refresh Rotation   | Single-use tokens with a grace window; a replay past it revokes that login's whole family lineage      |

@@ -56,10 +56,7 @@
  * Headers API.
  */
 
-// A value import, not `import type`: the cross-site refusal below is the one response this
-// module builds itself rather than getting back from `redirectToPath`.
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+import type { NextRequest, NextResponse } from 'next/server'
 
 import { AUTH_PROXY_ROUTES } from '@bymax-one/nest-auth/shared'
 
@@ -161,6 +158,8 @@ export type SilentRefreshHandler = (request: NextRequest) => Promise<NextRespons
  * Create a GET handler for `/api/auth/silent-refresh`.
  *
  * The returned handler:
+ *   0. Redirects a caller whose `Sec-Fetch-Site` is not `same-origin` or `none` to
+ *      `loginPath?reason=expired` with no refresh and no `Set-Cookie`.
  *   1. Resolves a safe `redirect` destination (see open-redirect
  *      defence above).
  *   2. Forwards the incoming cookies to the upstream refresh endpoint.
@@ -226,12 +225,12 @@ export function createSilentRefreshHandler(
     // ends in `buildLogoutRedirect`, which writes three `Max-Age=0` cookies. An attacker's
     // `<img src="/api/auth/silent-refresh">` is a cross-site subresource GET: `Lax` withholds
     // the session cookie, the upstream refresh 401s, and the handler answered with the clears.
-    // A bare 403 with no `Set-Cookie` is the only response a cross-site caller can extract.
+    // The refusal is a redirect to the login page with no `Set-Cookie`, so a caller causes no
+    // refresh and no cookie write and can extract nothing from it. It is not a bare 403 because
+    // a real user reaches this branch too: following a link into the app from another site after
+    // the access token expired is a navigation the browser marks cross-site on every hop.
     if (isCrossSiteRequest(request)) {
-      return new NextResponse(null, {
-        status: 403,
-        headers: { 'Cache-Control': 'no-store, no-cache' }
-      })
+      return buildLoginRedirect(config)
     }
 
     const origin = request.nextUrl.origin
@@ -372,8 +371,7 @@ function buildSuccessRedirect(destination: string, rawSetCookies: readonly strin
  * ping-pong between the proxy and this handler forever.
  */
 function buildLogoutRedirect(config: SilentRefreshHandlerConfig): NextResponse {
-  const response = redirectToPath(withQueryParam(config.loginPath, 'reason', 'expired'))
-  response.headers.set('Cache-Control', 'no-store, no-cache')
+  const response = buildLoginRedirect(config)
 
   const clearCookies = [
     serializeClearCookie(config.cookieNames.access, '/', config.cookieDomain),
@@ -387,6 +385,17 @@ function buildLogoutRedirect(config: SilentRefreshHandlerConfig): NextResponse {
   for (const cookie of clearCookies) {
     response.headers.append('set-cookie', cookie)
   }
+  return response
+}
+
+/**
+ * Construct the redirect to `loginPath?reason=expired` without touching any cookie. Used on its
+ * own for a refused cross-site caller, where writing cookies is exactly what must not happen, and
+ * as the base of {@link buildLogoutRedirect}.
+ */
+function buildLoginRedirect(config: SilentRefreshHandlerConfig): NextResponse {
+  const response = redirectToPath(withQueryParam(config.loginPath, 'reason', 'expired'))
+  response.headers.set('Cache-Control', 'no-store, no-cache')
   return response
 }
 
