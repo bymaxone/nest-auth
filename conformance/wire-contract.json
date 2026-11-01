@@ -92,7 +92,73 @@
     "mfaTempTokenMarker": "mfa",
     "mfaTransitionLock": "mfalock",
     "otpResendCooldown": "resend",
-    "invitationIndex": "invidx"
+    "invitationIndex": "invidx",
+    "userStatus": "us",
+    "userEmailVerified": "uev"
+  },
+  "userStatusCache": {
+    "$comment": [
+      "The account-status cache both libraries read from one Redis. A deployment that runs both",
+      "behind one store shares it, so the key, the value and the invalidation order are part of the",
+      "contract: a delete that stops matching raises nothing and merely defers a suspension or a",
+      "verification by one TTL, and nothing else would notice.",
+      "",
+      "Two entries per account: `us` holds the status string, `uev` holds whether the address is",
+      "verified. Both are keyed by the tenant and the user id TOGETHER, because a repository id is",
+      "unique only within a tenant. Each half is percent-encoded before the two are joined by ':'",
+      "so that ('a:b', 'c') and ('a', 'b:c') cannot name one key; the encoding is pinned by the",
+      "vectors below, including the characters implementations most often disagree about.",
+      "",
+      "The ids are written in the clear (percent-encoded, not hashed), which is what `scope` pins",
+      "today."
+    ],
+    "key": "{namespace}:{userStatus|userEmailVerified}:{scope}",
+    "scope": "{enc(tenantId)}:{enc(userId)}",
+    "scopeEncoding": "each of tenantId and userId is percent-encoded on its own: A-Z a-z 0-9 - _ . ! ~ * ' ( ) stay literal, every other UTF-8 byte is written %XX in UPPERCASE hex; the two encoded halves are then joined by ':'",
+    "statusValue": "the status string exactly as the repository returned it; not case-folded and not trimmed (the blocked-status comparison canonicalizes at read time)",
+    "emailVerifiedValue": {
+      "verified": "1",
+      "unverified": "0"
+    },
+    "emailVerifiedRead": "read, and written on a miss, only when email verification is required; otherwise only the status entry exists",
+    "ttl": {
+      "option": "userStatusCacheTtlSeconds",
+      "default": 60,
+      "appliesTo": "every entry written on a miss, set with the same value"
+    },
+    "fill": "a miss on the status entry, or on the verified entry when it is read, resolves both from one tenant-scoped repository read and writes both back",
+    "invalidateOrder": [
+      "userEmailVerified",
+      "userStatus"
+    ],
+    "invalidateOrderWhy": "the verified entry is deleted first so that a failure between the two deletes leaves the entry whose staleness only costs a repository read; a stale `0` would lock a just-verified account out until it expires",
+    "vectors": [
+      {
+        "tenantId": "tenant-1",
+        "userId": "user-1",
+        "scope": "tenant-1:user-1"
+      },
+      {
+        "tenantId": "a:b",
+        "userId": "c",
+        "scope": "a%3Ab:c"
+      },
+      {
+        "tenantId": "a",
+        "userId": "b:c",
+        "scope": "a:b%3Ac"
+      },
+      {
+        "tenantId": "t/1 \u00e9",
+        "userId": "u%1+x",
+        "scope": "t%2F1%20%C3%A9:u%251%2Bx"
+      },
+      {
+        "tenantId": "!~*'()-_.",
+        "userId": "AZaz09",
+        "scope": "!~*'()-_.:AZaz09"
+      }
+    ]
   },
   "graceRecoveryWrite": {
     "$comment": [

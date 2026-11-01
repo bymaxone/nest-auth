@@ -44,6 +44,7 @@ import { apiKeyDigest, formatApiKey, generateApiKeySecret, parseApiKey } from '.
 import { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
 import { PasswordService } from './services/password.service'
 import { AuthRedisService } from './redis/auth-redis.service'
+import { AccountStatusService } from './services/account-status.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
 
 import type { MfaChallengeResult, PlatformAuthResult } from './interfaces/auth-result.interface'
@@ -60,6 +61,12 @@ interface WireContract {
     }[]
   }
   redisKeyPrefixes: Record<string, string>
+  userStatusCache: {
+    emailVerifiedValue: { verified: string; unverified: string }
+    ttl: { default: number }
+    invalidateOrder: string[]
+    vectors: { tenantId: string; userId: string; scope: string }[]
+  }
   identifierPreimages: Record<string, string>
   userSubjectPreimages: Record<string, string>
   userSubjectDerivedKeys: Record<string, string>
@@ -148,7 +155,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = 'd42f836ab29884e2ca67c14583e30504d1bf29fb0abf7e30493eb28482403949'
+const CONTRACT_SHA256 = '04c9d56222d731851b1e2c24363ecdbcf1d4fbab52bc39a1b6f818e3210f5fed'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -372,7 +379,9 @@ describe('cross-implementation conformance', () => {
       recentAuthMarker: 'constants/recent-auth.ts',
       emailChangeToken: 'services/email-change.service.ts',
       pendingMfaSetup: 'services/mfa.service.ts',
-      mfaTempTokenMarker: 'services/token-manager.service.ts'
+      mfaTempTokenMarker: 'services/token-manager.service.ts',
+      userStatus: 'services/account-status.service.ts',
+      userEmailVerified: 'services/account-status.service.ts'
     }
 
     // Verifies each contract prefix is the one the code actually writes. A rename that lands on
@@ -414,6 +423,131 @@ describe('cross-implementation conformance', () => {
 
       expect(platformSessionIndex).not.toBe(dashboardSessionIndex)
       expect(contract.redisKeyPrefixes['platformSessionDetail']).not.toBe(dashboardSessionDetail)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Account-status cache
+  // -------------------------------------------------------------------------
+
+  describe('account-status cache', () => {
+    const cache = contract.userStatusCache
+
+    /** A service over a recording Redis double, so the keys it names are what is asserted. */
+    function build(options: { required: boolean; ttl?: number }) {
+      const calls: { op: 'get' | 'set' | 'del'; key: string; value?: string; ttl?: number }[] = []
+      const store = new Map<string, string>()
+      const redis = {
+        get: jest.fn((key: string) => {
+          calls.push({ op: 'get', key })
+          return Promise.resolve(store.get(key) ?? null)
+        }),
+        set: jest.fn((key: string, value: string, ttl: number) => {
+          calls.push({ op: 'set', key, value, ttl })
+          store.set(key, value)
+          return Promise.resolve()
+        }),
+        del: jest.fn((key: string) => {
+          calls.push({ op: 'del', key })
+          return Promise.resolve(store.delete(key))
+        })
+      }
+      const record = { status: 'Active', emailVerified: true }
+      const userRepo = { findById: jest.fn().mockResolvedValue(record) }
+      const resolved = {
+        userStatusCacheTtlSeconds: options.ttl ?? DEFAULT_OPTIONS.userStatusCacheTtlSeconds,
+        emailVerification: { required: options.required },
+        blockedStatuses: ['BANNED']
+      }
+      const service = new AccountStatusService(redis as never, userRepo as never, resolved as never)
+      return { service, calls, record, userRepo }
+    }
+
+    // Verifies the key both entries are written under, for every pinned scope. The ids are
+    // percent-encoded one at a time, so a delimiter inside either cannot move the boundary; the
+    // vectors include the characters implementations most often disagree about.
+    it.each(cache.vectors)(
+      'names both entries by the pinned scope for $tenantId / $userId',
+      async (v) => {
+        const { service, calls } = build({ required: true })
+
+        await service.assertDashboardAccountUsable({ tenantId: v.tenantId, userId: v.userId })
+
+        expect(calls.filter((c) => c.op === 'set').map((c) => c.key)).toEqual([
+          `${contract.redisKeyPrefixes.userStatus}:${v.scope}`,
+          `${contract.redisKeyPrefixes.userEmailVerified}:${v.scope}`
+        ])
+      }
+    )
+
+    // Verifies the scope string is the contract's own composition of the two encoded halves, so a
+    // vector cannot drift from the rule it illustrates.
+    it.each(cache.vectors)('derives the pinned scope from the encoding rule for $scope', (v) => {
+      expect(`${encodeURIComponent(v.tenantId)}:${encodeURIComponent(v.userId)}`).toBe(v.scope)
+    })
+
+    // Verifies the value forms: the status as the repository returned it, and '1' / '0' for the
+    // verified flag.
+    it.each([
+      [true, cache.emailVerifiedValue.verified],
+      [false, cache.emailVerifiedValue.unverified]
+    ])('writes %s as the verified value %p', async (emailVerified, expected) => {
+      const { service, calls, record } = build({ required: true })
+      record.emailVerified = emailVerified
+
+      await service
+        .assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
+        .catch(() => undefined)
+
+      const sets = calls.filter((c) => c.op === 'set')
+      expect(sets[0]?.value).toBe('Active')
+      expect(sets[1]?.value).toBe(expected)
+    })
+
+    // Verifies the TTL source: the option's default, applied to every entry written on a miss.
+    it('applies userStatusCacheTtlSeconds, defaulting to the contract value, to each entry', async () => {
+      const { service, calls } = build({ required: true })
+
+      await service.assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
+
+      expect(DEFAULT_OPTIONS.userStatusCacheTtlSeconds).toBe(cache.ttl.default)
+      expect(calls.filter((c) => c.op === 'set').map((c) => c.ttl)).toEqual([
+        cache.ttl.default,
+        cache.ttl.default
+      ])
+    })
+
+    // Verifies the verified entry exists only when verification is required.
+    it('reads and writes the verified entry only when email verification is required', async () => {
+      const { service, calls } = build({ required: false })
+
+      await service.assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
+
+      const prefixes = calls.map((c) => c.key.split(':')[0])
+      expect(prefixes).not.toContain(contract.redisKeyPrefixes.userEmailVerified)
+      expect(new Set(prefixes)).toEqual(new Set([contract.redisKeyPrefixes.userStatus]))
+    })
+
+    // Verifies a hit on both entries reads the repository not at all, and that a miss on the
+    // status entry alone refills both from one read.
+    it('refills both entries from one repository read when either is missing', async () => {
+      const { service, userRepo } = build({ required: true })
+
+      await service.assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
+      await service.assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
+
+      expect(userRepo.findById).toHaveBeenCalledTimes(1)
+    })
+
+    // Verifies the invalidation order the contract pins: the verified entry first, then the status.
+    it('deletes the verified entry before the status entry', async () => {
+      const { service, calls } = build({ required: true })
+
+      await service.invalidate({ tenantId: 't', userId: 'u' })
+
+      expect(calls.filter((c) => c.op === 'del').map((c) => c.key.split(':')[0])).toEqual(
+        cache.invalidateOrder.map((name) => contract.redisKeyPrefixes[name])
+      )
     })
   })
 

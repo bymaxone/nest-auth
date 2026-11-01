@@ -18,6 +18,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Documentation
+
+- **The account-status cache is part of the shared wire contract.** `conformance/wire-contract.json`
+  now declares the `us` and `uev` prefixes and a `userStatusCache` section: the key and its scope
+  encoding (each id percent-encoded on its own, with vectors for the characters implementations
+  disagree about), the value forms, the TTL source and the invalidation order (verified entry
+  first). A conformance test pins the library's behaviour to it. No behaviour changes.
+
 ## [1.4.9] - 2026-11-01
 
 ### Apply to a derived backend
