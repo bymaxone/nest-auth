@@ -1,6 +1,6 @@
 /**
- * @fileoverview A cross-site (or cross-origin) caller of the silent-refresh route is sent to the
- * login page instead of a bare 403, without any refresh and without any cookie written.
+ * @fileoverview A cross-site (or cross-origin) caller of the silent-refresh route is redirected to
+ * the login page, with no refresh attempted and no cookie written.
  */
 
 import { createSilentRefreshHandler } from '..'
@@ -48,10 +48,10 @@ describe('createSilentRefreshHandler — a refused caller is sent to the login p
     }
   )
 
-  // Scenario: the refresh fails after the caller was admitted. Expected: unchanged — the three
-  // clears are still written. Why: only the refusal is relaxed; a real failed refresh must still
-  // end the session in the browser.
-  it('still clears the three cookies when an admitted refresh fails', async () => {
+  // Scenario: the caller is admitted and the upstream refresh fails. Expected: a redirect to the
+  // login page that clears the access, refresh and has_session cookies. Why: a failed refresh
+  // must end the session in the browser, otherwise the proxy sends it straight back here.
+  it('clears the three cookies when an admitted refresh fails', async () => {
     fetchSpy.mockResolvedValue(new Response(null, { status: 401 }))
     const request = makeMockRequest({
       method: 'GET',
