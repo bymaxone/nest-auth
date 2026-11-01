@@ -313,10 +313,9 @@ describe('cross-implementation conformance', () => {
     // that silently derives from something else. Two of them share ONE preimage — the anti-replay
     // marker and the recovery-code claim — and are separated only by their prefix.
     //
-    // Eight now, not six: the session index and the token epoch joined when they stopped being
-    // keyed on the bare user id. The count is asserted rather than left open because the whole
-    // value of this block is that a key deriving from the subject and NOT listed here is invisible
-    // to the contract — which is exactly how those two spent so long tenant-blind.
+    // The count is asserted rather than left open: the whole value of this block is that a key
+    // deriving from the subject and NOT listed here is invisible to the contract, which is how the
+    // session index and the token epoch stayed tenant-blind for so long.
     it('derives all ten named keys from the subject', () => {
       const derived = Object.entries(contract.userSubjectDerivedKeys).filter(
         ([name]) => name !== '$comment'
