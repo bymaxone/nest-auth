@@ -523,7 +523,8 @@ function validateTenantBinding(userOptions: BymaxAuthModuleOptions): void {
   ) {
     throw new Error(
       `[BymaxAuthModule] isTrustedProxy must be a function that takes the peer address and ` +
-        `answers a boolean. Pass \`(peer) => app.get('trust proxy fn')(peer, 0)\`, or remove it.`
+        `answers a boolean. Pass \`(peer) => expressApp.get('trust proxy fn')(peer, 0)\` with ` +
+        `\`expressApp = app.getHttpAdapter().getInstance()\`, or remove it.`
     )
   }
 }

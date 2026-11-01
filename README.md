@@ -843,18 +843,29 @@ stream. Declare the same trust decision once with `isTrustedProxy`, a function t
 address and answers a boolean:
 
 ```typescript
-const app = await NestFactory.create<NestExpressApplication>(AppModule)
-app.set('trust proxy', 'loopback, 10.0.0.0/8')
+// The module factory runs before the app exists, so it reads the policy per connection.
+// Until main.ts fills it in, no peer is trusted.
+export const proxyPolicy = { trusts: (_peer: string): boolean => false }
 
 BymaxAuthModule.registerAsync({
   useFactory: () => ({
     // ...
     enforceTenantBinding: true,
     tenantIdResolver: (req) => req.hostname.split('.')[0] ?? '',
-    isTrustedProxy: (peer) => app.get('trust proxy fn')(peer, 0)
+    isTrustedProxy: (peer) => proxyPolicy.trusts(peer)
   })
 })
+
+// main.ts
+const app = await NestFactory.create<NestExpressApplication>(AppModule)
+const expressApp = app.getHttpAdapter().getInstance()
+expressApp.set('trust proxy', 'loopback, 10.0.0.0/8')
+proxyPolicy.trusts = (peer) => expressApp.get('trust proxy fn')(peer, 0)
 ```
+
+Read the compiled policy from the **Express instance**, `app.getHttpAdapter().getInstance()`. On a
+Nest application, `app.get()` resolves a provider from the container and does not read an Express
+setting, so `app.get('trust proxy fn')` looks for a provider of that name and fails.
 
 The predicate receives the peer **exactly as the transport reported it**, so an IPv4-mapped form such
 as `::ffff:10.0.0.1` reaches it unchanged; Express's compiled setting understands that form, which

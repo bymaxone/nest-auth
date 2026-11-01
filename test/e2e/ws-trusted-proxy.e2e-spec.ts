@@ -7,13 +7,14 @@
  * `trust proxy` setting trusts the peer; an upgrade has no Express request, so the binding has to
  * make the same decision from the TCP peer the transport reports. These cases drive a real
  * Socket.IO handshake from the loopback address the test client really connects from, and judge
- * that peer with Express's own compiled `trust proxy` function.
+ * that peer with the compiled `trust proxy` function of the Express instance behind the Nest
+ * adapter, wired the way the README documents.
  */
 
 import type { INestApplication } from '@nestjs/common'
 import { UseGuards } from '@nestjs/common'
 import { ConnectedSocket, SubscribeMessage, WebSocketGateway } from '@nestjs/websockets'
-import express from 'express'
+import type express from 'express'
 import request from 'supertest'
 import { io } from 'socket.io-client'
 import type { Socket as ClientSocket } from 'socket.io-client'
@@ -51,12 +52,25 @@ const tenantFromHost: NonNullable<BymaxAuthModuleOptions['tenantIdResolver']> = 
   return label
 }
 
-/** Express's own judgement of a peer, as the documented recipe wires it. */
-function expressTrustPolicy(setting: string): (peer: string) => boolean {
-  const app = express()
-  app.set('trust proxy', setting)
-  const trust = app.get('trust proxy fn') as (address: string, hop: number) => boolean
-  return (peer) => trust(peer, 0)
+/**
+ * The README's recipe: the module factory runs before the app exists, so it reads the policy per
+ * connection from a holder that refuses every peer until the Express instance behind the adapter
+ * has been configured. `app.get()` would resolve a provider and not read the setting.
+ */
+function proxyPolicy(): {
+  trusts: (peer: string) => boolean
+  configure: (app: INestApplication, setting: string) => void
+} {
+  const policy = {
+    trusts: (_peer: string): boolean => false,
+    configure: (app: INestApplication, setting: string): void => {
+      const expressApp = app.getHttpAdapter().getInstance() as express.Express
+      expressApp.set('trust proxy', setting)
+      policy.trusts = (peer) =>
+        (expressApp.get('trust proxy fn') as (address: string, hop: number) => boolean)(peer, 0)
+    }
+  }
+  return policy
 }
 
 /** One round trip: connect with the given headers, send `whoami`, resolve with the answer or refusal. */
@@ -119,7 +133,9 @@ describe('enforceTenantBinding behind a Host-rewriting proxy (E2E)', () => {
     let token: string
 
     beforeAll(async () => {
-      ;({ app, port, token } = await boot(expressTrustPolicy('loopback')))
+      const policy = proxyPolicy()
+      ;({ app, port, token } = await boot((peer) => policy.trusts(peer)))
+      policy.configure(app, 'loopback')
     })
 
     afterAll(async () => {

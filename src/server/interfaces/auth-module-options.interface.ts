@@ -1034,7 +1034,9 @@ export interface BymaxAuthModuleOptions {
    * The predicate receives the peer address **exactly as the transport reported it**, so an
    * IPv4-mapped form such as `::ffff:10.0.0.1` reaches it unchanged. Express's compiled setting
    * understands that form, so the usual recipe is
-   * `(peer) => app.get('trust proxy fn')(peer, 0)`. Only the exact boolean `true` trusts a peer.
+   * `(peer) => expressApp.get('trust proxy fn')(peer, 0)`, where `expressApp` is
+   * `app.getHttpAdapter().getInstance()`: `app.get()` on a Nest application resolves a provider and
+   * does not read an Express setting. Only the exact boolean `true` trusts a peer.
    *
    * Unset, which is the default, `X-Forwarded-Host` is never read. A missing peer address, a
    * header handed over as separate values, an empty first element, a predicate that throws and a

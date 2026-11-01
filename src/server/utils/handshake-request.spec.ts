@@ -5,6 +5,7 @@
  * provides and what it deliberately does not.
  */
 
+import { Test } from '@nestjs/testing'
 import express from 'express'
 
 import type { TenantResolverRequest } from '../interfaces/auth-module-options.interface'
@@ -240,6 +241,41 @@ describe('handshakeRequest', () => {
       expect(mapped.hostname).toBe('a.example.com')
       expect(loopback.hostname).toBe('a.example.com')
       expect(outside.hostname).toBe('upstream.internal')
+    })
+
+    // Scenario: the policy as the README wires it for a Nest application, read from the Express
+    // instance behind the adapter. Expected: it answers for mapped and plain loopback peers.
+    // Why: this is the recipe a host copies, so it is run against a real Nest application and not
+    // a bare Express one.
+    it('works with the Express instance of a Nest application', async () => {
+      const moduleRef = await Test.createTestingModule({}).compile()
+      const app = moduleRef.createNestApplication()
+      const expressApp = app.getHttpAdapter().getInstance() as express.Express
+      expressApp.set('trust proxy', 'loopback')
+      const isTrustedProxy = (peer: string): boolean =>
+        (expressApp.get('trust proxy fn') as (address: string, hop: number) => boolean)(peer, 0)
+
+      expect(
+        handshakeRequest({ ...behindProxy(), remoteAddress: '::ffff:127.0.0.1' }, isTrustedProxy)
+          .hostname
+      ).toBe('a.example.com')
+      expect(
+        handshakeRequest({ ...behindProxy(), remoteAddress: '203.0.113.9' }, isTrustedProxy)
+          .hostname
+      ).toBe('upstream.internal')
+      await app.close()
+    })
+
+    // Scenario: the same lookup through `app.get()` on the Nest application. Expected: it throws.
+    // Why: on a Nest application `get()` resolves a provider from the container and does not read an
+    // Express setting, which is why the recipe reads the Express instance instead.
+    it('does not find the policy through app.get() on a Nest application', async () => {
+      const moduleRef = await Test.createTestingModule({}).compile()
+      const app = moduleRef.createNestApplication()
+      app.getHttpAdapter().getInstance().set('trust proxy', 'loopback')
+
+      expect(() => app.get('trust proxy fn')).toThrow()
+      await app.close()
     })
   })
 })
