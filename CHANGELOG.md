@@ -26,9 +26,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   session whose refresh token nobody received, stamped the last login and fired the login hooks.
   That orphan session counted against the per-user session limit and could evict a real one, the
   hooks reported a login that never answered, and the user had to start over because the token was
-  spent. The plane is now read from the token first, so the refusal leaves no session, no
-  last-login stamp, no hook call and no consumed token or TOTP code, and the same token and code
-  still complete at the dashboard challenge route. A refused attempt does not count toward the
+  spent. The plane is now read from the token first, so the refusal spends nothing, and the same
+  token and code still complete at the dashboard challenge route. A refused attempt does not count toward the
   brute-force counter either. The error code is unchanged, and the dashboard route keeps serving
   both planes. A handler that relied on `afterLogin` or `onNewSession` firing for such a request
   no longer sees it.
