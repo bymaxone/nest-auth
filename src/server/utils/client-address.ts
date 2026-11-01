@@ -70,7 +70,8 @@ function peerAddress(remoteAddress: string | undefined): string {
  */
 export function resolveClientAddress(request: ClientAddressSource): string {
   // Stryker disable next-line ArrayDeclaration: a substituted default is not an address, so it is skipped and the result is unchanged
-  for (const candidate of [request.ip, ...(request.ips ?? [])]) {
+  const hops = request.ips ?? []
+  for (const candidate of [request.ip, ...hops]) {
     if (isHeaderAddress(candidate)) return candidate
   }
   return peerAddress(request.socket?.remoteAddress)
