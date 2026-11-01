@@ -31,7 +31,7 @@ import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
-import { raiseFirst, settleWrites } from '../utils/settle-writes'
+import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
 
 /**
  * Core authentication service for platform administrators.
@@ -206,24 +206,24 @@ export class PlatformAuthService {
       // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
     }
 
-    // Every write is attempted whatever the earlier ones did, and the first failure is raised once
-    // they have all run: the blacklist entry, the primary session key and its grace pointer (if it
-    // exists from the last rotation), then the same two pruned from the per-user index SET so it
-    // stays accurate for future invalidateUserSessions calls. The index is named through
-    // `sessionIndexKey`, not by concatenating `'psess:' + userId`: the raw form would make the
-    // SREM operate on a key nothing else touches, and the index would grow with every logout.
+    // Every credential write is attempted whatever the earlier ones did, and the first failure is
+    // raised once they have all run. What points at a credential (its index member, and for the
+    // session key its detail) is pruned only once that credential is gone: the revoke-all sweep
+    // ends only the sessions the index names, so a dropped member would hide a live one. The index
+    // is named through `sessionIndexKey`, never `'psess:' + userId`, which nothing else reads.
     const index = userId ? sessionIndexKey('platform', userId, this.options.hmacKey, undefined) : ''
+    const prune = (member: string): Array<() => Promise<unknown>> =>
+      index === '' ? [] : [(): Promise<unknown> => this.redis.srem(index, member)]
     const failures = await settleWrites([
       ...blacklist,
-      (): Promise<unknown> => this.redis.del('prt:' + tokenHash),
-      (): Promise<unknown> => this.redis.del('prp:' + tokenHash),
-      ...(index === ''
-        ? []
-        : [
-            (): Promise<unknown> => this.redis.srem(index, 'prt:' + tokenHash),
-            (): Promise<unknown> => this.redis.srem(index, 'prp:' + tokenHash)
-          ]),
-      (): Promise<unknown> => this.redis.del('psd:' + tokenHash)
+      settleAfter(
+        (): Promise<unknown> => this.redis.del('prt:' + tokenHash),
+        [...prune('prt:' + tokenHash), (): Promise<unknown> => this.redis.del('psd:' + tokenHash)]
+      ),
+      settleAfter(
+        (): Promise<unknown> => this.redis.del('prp:' + tokenHash),
+        prune('prp:' + tokenHash)
+      )
     ])
     // A refused write is not a completed logout: no hook, and the caller is told so.
     raiseFirst(failures)

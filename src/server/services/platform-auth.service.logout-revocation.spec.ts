@@ -101,9 +101,12 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
     expect(mockRedis.srem).toHaveBeenCalledTimes(2)
   })
 
-  // Scenario: the store refuses the refresh-key delete. Expected: logout rejects, and the blacklist
-  // entry, the grace pointer and the rest were still attempted.
-  it('should reject and still attempt the other writes when the refresh key delete is refused', async () => {
+  // Scenario: the store refuses the refresh-key delete. Expected: logout rejects, the blacklist
+  // entry and the grace pointer were still attempted, and nothing that points at the refresh key is
+  // pruned: its index member stays and its session detail stays. Why: the credential is still live,
+  // and the revoke-all sweep ends only the sessions the index names, so a member dropped while its
+  // credential survives is a session "sign out everywhere" can no longer reach.
+  it('should reject, attempt the other credential writes, and keep the index member of the refresh key it could not delete', async () => {
     mockRedis.del.mockImplementation((key: string) =>
       key === `prt:${HASH}` ? Promise.reject(STORE_REFUSED) : Promise.resolve(undefined)
     )
@@ -112,19 +115,25 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
 
     expect(mockRedis.set).toHaveBeenCalledWith(`rv:${JTI}`, '1', expect.any(Number))
     expect(mockRedis.del).toHaveBeenCalledWith(`prp:${HASH}`)
-    expect(mockRedis.del).toHaveBeenCalledWith(`psd:${HASH}`)
+    expect(mockRedis.srem).not.toHaveBeenCalledWith(expect.any(String), `prt:${HASH}`)
+    expect(mockRedis.del).not.toHaveBeenCalledWith(`psd:${HASH}`)
+    expect(mockRedis.srem).toHaveBeenCalledWith(expect.any(String), `prp:${HASH}`)
   })
 
-  // Scenario: the store refuses the rotation grace pointer delete. Expected: logout rejects. Why: a
-  // pointer left behind lets a rotated-away token mint a fresh session.
-  it('should reject when the rotation grace pointer delete is refused', async () => {
+  // Scenario: the store refuses the rotation grace pointer delete. Expected: logout rejects, the
+  // grace pointer's index member stays (it is still live, and a grace hit mints a fresh session), and
+  // the refresh key's own delete, prune and session detail still run.
+  it('should reject and keep the index member of the grace pointer it could not delete', async () => {
     mockRedis.del.mockImplementation((key: string) =>
       key === `prp:${HASH}` ? Promise.reject(STORE_REFUSED) : Promise.resolve(undefined)
     )
 
     await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
 
+    expect(mockRedis.srem).not.toHaveBeenCalledWith(expect.any(String), `prp:${HASH}`)
     expect(mockRedis.del).toHaveBeenCalledWith(`prt:${HASH}`)
+    expect(mockRedis.srem).toHaveBeenCalledWith(expect.any(String), `prt:${HASH}`)
+    expect(mockRedis.del).toHaveBeenCalledWith(`psd:${HASH}`)
   })
 
   // Scenario: the store refuses an index prune. Expected: logout rejects after attempting the rest.
@@ -145,7 +154,8 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
 
     await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
 
-    expect(mockRedis.del).toHaveBeenCalledTimes(3)
+    // The refresh key and the grace pointer; with both refused, nothing that follows from them runs.
+    expect(mockRedis.del).toHaveBeenCalledTimes(2)
   })
 
   // Scenario: a refused logout. Expected: the logout hook does not fire, because that logout did

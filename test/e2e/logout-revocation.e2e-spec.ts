@@ -13,6 +13,7 @@ import type Redis from 'ioredis'
 import request from 'supertest'
 
 import { BYMAX_AUTH_REDIS_CLIENT } from '../../src/server/bymax-auth.constants'
+import { AuthRedisService } from '../../src/server/redis/auth-redis.service'
 import { PasswordService } from '../../src/server/services/password.service'
 import {
   bootstrapTestApp,
@@ -136,6 +137,22 @@ describe('logout when the store refuses a revocation write (E2E)', () => {
       const me = await request(app.getHttpServer()).get('/me').set('Cookie', cookies)
       expectAuthError(me, 'auth.token_invalid')
     })
+
+    // Scenario: the store refuses the delete of the refresh key. Expected: whatever happens to the
+    // session index, a later revoke-all against a healthy store leaves no live refresh key. Why:
+    // the sweep revokes only what the index names, so the index must never lose a credential that
+    // is still alive; on this plane the prune and the delete run in one script.
+    it('should leave no live refresh key after revoke-all when the refresh key delete was refused', async () => {
+      refusal.current = { command: 'del', keyPart: 'rt:' }
+      const failed = await request(app.getHttpServer()).post('/logout').set('Cookie', cookies)
+      expect(failed.status).toBeGreaterThanOrEqual(500)
+
+      refusal.current = null
+      const user = [...boot.repo.users.values()][0]
+      await app.get(AuthRedisService).invalidateUserSessions(user!.id, user!.tenantId, 'dashboard')
+
+      expect(await store.keys('*rt:*')).toEqual([])
+    })
   })
 
   describe('platform plane, bearer delivery', () => {
@@ -228,6 +245,24 @@ describe('logout when the store refuses a revocation write (E2E)', () => {
         .get('/platform/me')
         .set('Authorization', `Bearer ${accessToken}`)
       expect(me.status).toBe(401)
+    })
+
+    // Scenario: the store refuses the delete of the refresh key, so that credential is still live.
+    // Expected: its member is still in the session index, and a later revoke-all against a healthy
+    // store finds it and ends it. Why: the sweep revokes only what the index names, so a member
+    // pruned while its credential survives leaves a session that "sign out everywhere" cannot reach.
+    it('should keep the index member of a credential it could not delete, so revoke-all still finds it', async () => {
+      refusal.current = { command: 'del', keyPart: 'prt:' }
+      const failed = await logout()
+      expect(failed.status).toBeGreaterThanOrEqual(500)
+      expect(await store.keys('*prt:*')).toHaveLength(1)
+
+      refusal.current = null
+      await app
+        .get(AuthRedisService)
+        .invalidateUserSessions('platform-admin-1', undefined, 'platform')
+
+      expect(await store.keys('*prt:*')).toEqual([])
     })
   })
 })

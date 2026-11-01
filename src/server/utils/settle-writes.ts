@@ -41,3 +41,26 @@ export function raiseFirst(failures: readonly unknown[]): void {
   const [first] = failures
   if (failures.length > 0) throw first
 }
+
+/**
+ * A write that runs `first` and, only if it succeeded, every follow-up, raising the first failure.
+ *
+ * For a write whose follow-ups prune what points at its target: an index member naming a credential
+ * must outlive a failed deletion of that credential, or the sweep that revokes by index can no
+ * longer find the session that is still alive. A failure of `first` therefore skips the follow-ups,
+ * while a failing follow-up does not stop the ones after it.
+ *
+ * @param first - The write the follow-ups depend on.
+ * @param followUps - Writes attempted, in order, once `first` has succeeded.
+ * @returns A write to hand to {@link settleWrites}; it raises the error `first` raised, or else the
+ *   first follow-up's.
+ */
+export function settleAfter(
+  first: () => Promise<unknown>,
+  followUps: ReadonlyArray<() => Promise<unknown>>
+): () => Promise<void> {
+  return async (): Promise<void> => {
+    await first()
+    raiseFirst(await settleWrites(followUps))
+  }
+}

@@ -3,7 +3,7 @@
  * completion and raise the first failure afterwards.
  */
 
-import { raiseFirst, settleWrites } from './settle-writes'
+import { raiseFirst, settleWrites, settleAfter } from './settle-writes'
 
 const FIRST = new Error('first refusal')
 const SECOND = new Error('second refusal')
@@ -99,5 +99,55 @@ describe('raiseFirst', () => {
     }
 
     expect(thrown).toBeUndefined()
+  })
+})
+
+describe('settleAfter', () => {
+  // Scenario: the first write succeeds. Expected: every follow-up runs, in order, and nothing is
+  // raised when they all succeed.
+  it('should run every follow-up after the first write succeeds', async () => {
+    const order: string[] = []
+
+    await settleAfter(
+      async () => void order.push('first'),
+      [async () => void order.push('a'), async () => void order.push('b')]
+    )()
+
+    expect(order).toEqual(['first', 'a', 'b'])
+  })
+
+  // Scenario: the first write fails. Expected: its error is raised and no follow-up runs. Why: the
+  // follow-ups prune what points at the first write's target, and pruning it while the target
+  // survives hides it from the sweep that revokes by index.
+  it('should raise the first write failure and run no follow-up', async () => {
+    const followUp = jest.fn().mockResolvedValue(undefined)
+
+    await expect(settleAfter(async () => Promise.reject(FIRST), [followUp])()).rejects.toBe(FIRST)
+
+    expect(followUp).not.toHaveBeenCalled()
+  })
+
+  // Scenario: the first write succeeds and a follow-up fails. Expected: the later follow-ups still
+  // run and the first follow-up failure is raised.
+  it('should attempt every follow-up and raise the first follow-up failure', async () => {
+    const last = jest.fn().mockResolvedValue(undefined)
+
+    await expect(
+      settleAfter(
+        async () => undefined,
+        [async () => Promise.reject(FIRST), async () => Promise.reject(SECOND), last]
+      )()
+    ).rejects.toBe(FIRST)
+
+    expect(last).toHaveBeenCalledTimes(1)
+  })
+
+  // Scenario: no follow-ups. Expected: just the first write.
+  it('should run only the first write when there are no follow-ups', async () => {
+    const first = jest.fn().mockResolvedValue(undefined)
+
+    await expect(settleAfter(first, [])()).resolves.toBeUndefined()
+
+    expect(first).toHaveBeenCalledTimes(1)
   })
 })
