@@ -439,16 +439,19 @@ export class SessionService {
    *
    * Reads all `rt:`-prefixed members from `sess:{userId}`, fetches the
    * corresponding `sd:{hash}` detail records, and marks the caller's own
-   * session via `isCurrent`. A member whose detail record is missing, unreadable
-   * or malformed is excluded from the result, and removed from the SET
-   * asynchronously (fire-and-forget) only if its `rt:` key is also gone — see
-   * {@link AuthRedisService.pruneDeadMembers} for why the detail record alone
-   * does not settle it.
+   * session via `isCurrent`. A member whose detail record is missing or malformed
+   * is excluded from the result. A member whose record cannot be read at all is not
+   * left out quietly: the call rejects, because a session missing from the list is
+   * one the caller cannot revoke. Either way the member is offered to a
+   * fire-and-forget prune that removes it from the SET only if its `rt:` key is
+   * also gone — see {@link AuthRedisService.pruneDeadMembers} for why the detail
+   * record alone does not settle it.
    *
    * Results are sorted by `createdAt` descending (newest session first).
    *
    * @param params - See {@link ListSessionsParams}.
    * @returns Array of {@link SessionInfo} sorted newest-first.
+   * @throws The store's error when a session's detail record cannot be read.
    */
   async listSessions({
     userId,
