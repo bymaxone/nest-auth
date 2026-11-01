@@ -46,6 +46,7 @@ import type {
   PlatformBearerAuthResponse
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { resolveClientAddress } from '../utils/client-address'
 
 // ---------------------------------------------------------------------------
 // Type guard
@@ -207,7 +208,7 @@ export class MfaController {
     @Body() dto: MfaVerifyDto,
     @Req() req: Request
   ): Promise<void> {
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
     await this.mfaService.verifyAndEnable(
       user.sub,
@@ -260,7 +261,7 @@ export class MfaController {
   ): Promise<
     CookieAuthResponse | BearerAuthResponse | BothAuthResponse | PlatformBearerAuthResponse
   > {
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
     // Prefer the body value (back-compat with the existing sessionStorage flow);
     // fall back to the HttpOnly cookie planted by the OAuth callback.
@@ -319,7 +320,7 @@ export class MfaController {
     @Body() dto: MfaDisableDto,
     @Req() req: Request
   ): Promise<void> {
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
     // Always the dashboard plane: `JwtAuthGuard` runs `assertTokenType(payload, 'dashboard')`,
     // so a platform token cannot reach this controller at all. The platform surface has its
@@ -357,7 +358,7 @@ export class MfaController {
     @Body() dto: MfaRegenerateRecoveryCodesDto,
     @Req() req: Request
   ): Promise<{ recoveryCodes: string[] }> {
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
     // See `disable`: this controller is dashboard-only by its guard.
     return this.mfaService.regenerateRecoveryCodes(

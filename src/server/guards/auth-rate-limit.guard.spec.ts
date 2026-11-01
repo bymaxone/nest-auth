@@ -226,8 +226,9 @@ describe('AuthRateLimitGuard', () => {
     it.each([
       ['peer', null, null],
       ['peer', '1.2.3.4', ''],
-      ['trusted-proxy', null, '198.51.100.9'],
-      ['trusted-proxy', '', '198.51.100.9']
+      ['trusted-proxy', null, null],
+      ['trusted-proxy', '', ''],
+      ['trusted-proxy', 'not-an-ip', '']
     ])('should fall back to a shared bucket in %s mode', async (mode, ip, peer) => {
       mockRedis.incrWithFixedTtl.mockResolvedValue(1)
       const guard = await guardWith(LIMIT, true, mode as 'peer' | 'trusted-proxy')
@@ -236,6 +237,25 @@ describe('AuthRateLimitGuard', () => {
 
       expect(keyedAddress()).toBe(`rl:AuthController.login:${hmacSha256('unknown', HMAC_KEY)}`)
     })
+
+    // Scenario: `req.ip` is absent or is a string the caller wrote that is not an address, while
+    // the socket peer is a real address. Expected: the peer is counted, so every such request
+    // shares the trusted hop's bucket. Why: a key the caller can vary per request is not a limit.
+    // The peer is the nearest hop, and over-counting the senders of such strings is recoverable
+    // where an unlimited bucket is not.
+    it.each([null, '', 'junk-1', 'junk-2', 'x'.repeat(300)])(
+      'should key on the socket peer in trusted-proxy mode when req.ip is %j',
+      async (ip) => {
+        mockRedis.incrWithFixedTtl.mockResolvedValue(1)
+        const guard = await guardWith(LIMIT, true, 'trusted-proxy')
+
+        await guard.canActivate(contextFor(ip, '198.51.100.9'))
+
+        expect(keyedAddress()).toBe(
+          `rl:AuthController.login:${hmacSha256('198.51.100.9', HMAC_KEY)}`
+        )
+      }
+    )
 
     // Scenario: a request with no socket at all, as a non-HTTP transport might present.
     it('should tolerate a request with no socket', async () => {

@@ -31,6 +31,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { resolveClientAddress } from '../utils/client-address'
 import { describeChannelStatus, describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
@@ -205,7 +206,7 @@ export class AuthService {
     req: Request
   ): Promise<AuthResult> {
     const tenantId = await this.resolveTenantId(dto.tenantId, req)
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
 
     // Canonicalize the email at the service boundary. The DTO `@Transform` is not
@@ -337,7 +338,7 @@ export class AuthService {
     req: Request
   ): Promise<AuthResult | MfaChallengeResult> {
     const tenantId = await this.resolveTenantId(dto.tenantId, req)
-    const ip = req.ip ?? ''
+    const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
 
     // Canonicalize the email before deriving ANY email-keyed value below. The DTO

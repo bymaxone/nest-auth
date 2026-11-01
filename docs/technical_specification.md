@@ -690,7 +690,8 @@ export interface BymaxAuthModuleOptions {
    * Per-IP rate limiting of the auth routes, enforced by the library over Redis.
    * REQUIRED. While the limiter is on (`enabled` defaults to `true`), `clientIpSource`
    * must name how the client IP is derived: 'peer' (socket address) or
-   * 'trusted-proxy' (Express `req.ip`, honouring the app's `trust proxy` setting).
+   * 'trusted-proxy' (Express `req.ip`, honouring the app's `trust proxy` setting; an entry that is
+   * not an address resolves to the nearest trusted hop, never to the string itself).
    */
   rateLimit:
     | { enabled?: true; clientIpSource: 'peer' | 'trusted-proxy' }

@@ -22,6 +22,7 @@ import type {
   IAuthHooks
 } from '../interfaces/auth-hooks.interface'
 import { ApiKeyVerifierService } from '../services/api-key-verifier.service'
+import { resolveClientAddress } from '../utils/client-address'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
@@ -160,7 +161,7 @@ export class ApiKeyGuard implements CanActivate {
       ...partial,
       keyId: key?.id ?? null,
       label: key?.label ?? null,
-      ip: request.ip ?? ''
+      ip: resolveClientAddress(request)
     }
     const context = this.hookContext(request)
     const run = (): Promise<void> | void => hook.call(this.hooks, event, context)
@@ -189,7 +190,7 @@ export class ApiKeyGuard implements CanActivate {
       Object.entries(request.headers).filter(([name]) => name !== this.options.apiKeys.header)
     )
     return {
-      ip: request.ip ?? '',
+      ip: resolveClientAddress(request),
       userAgent: request.headers['user-agent'] ?? '',
       sanitizedHeaders: sanitizeHeaders(headers)
     }

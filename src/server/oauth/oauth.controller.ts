@@ -61,6 +61,7 @@ import type {
   CookieAuthResponse
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { resolveClientAddress } from '../utils/client-address'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -255,7 +256,7 @@ export class OAuthController {
     // Truncate to match the limits applied in all other auth controllers:
     // 64 chars for IP (longest IPv6 address is 39 chars; 64 gives ample headroom).
     // 512 chars for User-Agent (stored in the Redis session record; prevents key bloat).
-    const ip = (req.ip ?? '').slice(0, 64)
+    const ip = resolveClientAddress(req).slice(0, 64)
     const userAgent = String(req.headers['user-agent'] ?? '').slice(0, 512)
 
     const stateCookie = readOAuthStateCookie(req)

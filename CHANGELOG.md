@@ -18,6 +18,42 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **A client address that is not an address is no longer a rate-limit key, and no longer reaches a
+  hook, a session or an audit event.** With `rateLimit.clientIpSource: 'trusted-proxy'` the limiter
+  keyed on `req.ip`, and behind a hop that forwards the client's own `X-Forwarded-For` unchanged
+  Express returns the first entry its `trust proxy` setting does not trust, which is an arbitrary
+  string when that entry is not an address. A client that varied it on every request got a fresh
+  budget each time: measured against the real guard with a limit of 5, ten requests with
+  `X-Forwarded-For: junk-<n>` made ten counters and none was refused. One function now resolves
+  the address for the limiter and for every place that records it: `req.ip`, then the rest of
+  `req.ips` (the trusted hops, nearest the client first), then the socket peer, taking the first
+  that is an address, with an IPv6 zone index cut off. An unparsable client entry is therefore
+  charged to the nearest trusted hop, so every caller that sends one shares that hop's bucket; a
+  chain with no address in it at all falls back to the shared unknown bucket, as before.
+  **What consumers see differently:** `HookContext.ip`, which every hook receives, and the `ip` of
+  the `onApiKeyRequest` audit event used to carry the raw `req.ip`, up to the 16 KiB a request
+  header can hold; they now carry an address, or an empty string when none can be read. The `ip`
+  stored on a session and shown by the sessions list and the new-session email follows the same
+  value. In `clientIpSource: 'peer'` the limiter still keys on the socket; the recorded address
+  still comes from `req.ip` when the application sets `trust proxy`, and is validated the same
+  way.
+  **Not changed, and the reason to read the new sentence in the `clientIpSource` documentation:**
+  `'trusted-proxy'` is only as honest as the hops in front of the app. Behind such a proxy each hop
+  appends the address it saw, so the client is the rightmost entry that is not itself a trusted
+  proxy. A hop that forwards the client's own `X-Forwarded-For` unchanged lets the client choose
+  its address even when every entry is a valid one, and a client that varies a valid address still
+  gets a fresh budget each time (measured: ten distinct valid addresses made ten counters). Behind
+  such a hop use `'peer'`, or make the hop append or overwrite the header.
+
+### Fixed
+
+- **The per-address rate limit could be bypassed behind a proxy that forwards `X-Forwarded-For`
+  unchanged.** See the Apply note above.
+- **A client-written non-address string could reach hook payloads and API-key audit events
+  unbounded.** See the Apply note above.
+
 ## [1.4.12] - 2026-11-01
 
 ### Apply to a derived backend
