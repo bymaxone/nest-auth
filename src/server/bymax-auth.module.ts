@@ -284,7 +284,8 @@ export class BymaxAuthModule {
     const resolvedOptionsProvider: Provider = {
       provide: BYMAX_AUTH_OPTIONS,
       useFactory: async (...args: unknown[]): Promise<ResolvedOptions> => {
-        const userOptions = await options.useFactory(...args)
+        // Nest supplies the injected values, and their types are the consumer's declaration.
+        const userOptions = await options.useFactory(...(args as never[]))
 
         // `controllers` belongs on the `registerAsync()` call, never in the factory's return
         // value. Nest decides a module's shape before any factory runs, so a `controllers` key
@@ -502,7 +503,8 @@ export class BymaxAuthModule {
           // The factory runs here too, so it needs the modules the consumer's `inject` tokens come from.
           imports: options.imports ?? [],
           useFactory: async (...args: unknown[]) => {
-            const userOptions = await options.useFactory(...args)
+            // Nest supplies the injected values, and their types are the consumer's declaration.
+            const userOptions = await options.useFactory(...(args as never[]))
             return {
               secret: userOptions.jwt.secret,
               // Stryker disable next-line ObjectLiteral: jsonwebtoken defaults to HS256 and TokenManagerService overrides signOptions per call, so the emptied `signOptions` produces identical signing

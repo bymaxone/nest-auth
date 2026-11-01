@@ -1161,8 +1161,12 @@ export interface AuthModuleAsyncOptions {
   /**
    * Factory function that produces `BymaxAuthModuleOptions`.
    * Receives injected dependencies as arguments.
+   *
+   * The parameters are typed `never[]` so a factory may declare the types of what it injects,
+   * `(config: ConfigService) => ...`: Nest supplies the values, and their types are the
+   * consumer's declaration. A factory written with `...args: unknown[]` is accepted too.
    */
-  useFactory: (...args: unknown[]) => BymaxAuthModuleOptions | Promise<BymaxAuthModuleOptions>
+  useFactory: (...args: never[]) => BymaxAuthModuleOptions | Promise<BymaxAuthModuleOptions>
 
   /** Injection tokens or providers to inject into `useFactory`. */
   inject?: (InjectionToken | OptionalFactoryDependency)[]
