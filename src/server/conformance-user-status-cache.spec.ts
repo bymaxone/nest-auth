@@ -61,7 +61,7 @@ describe('account-status cache', () => {
       blockedStatuses: ['BANNED']
     }
     const service = new AccountStatusService(redis as never, userRepo as never, resolved as never)
-    return { service, calls, record, userRepo }
+    return { service, calls, record, userRepo, store }
   }
 
   // Verifies the key both entries are written under, for every pinned scope. The ids are
@@ -140,9 +140,9 @@ describe('account-status cache', () => {
     expect(new Set(prefixes)).toEqual(new Set([contract.redisKeyPrefixes.userStatus]))
   })
 
-  // Verifies a hit on both entries reads the repository not at all, and that a miss on the
-  // status entry alone refills both from one read.
-  it('refills both entries from one repository read when either is missing', async () => {
+  // Verifies a full hit reads the repository not at all: the second call is served from the two
+  // entries the first one wrote.
+  it('serves a second call from the cache without a repository read', async () => {
     const { service, userRepo } = build({ required: true })
 
     await service.assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
@@ -150,6 +150,29 @@ describe('account-status cache', () => {
 
     expect(userRepo.findById).toHaveBeenCalledTimes(1)
   })
+
+  // Verifies the fill rule for a PARTIAL miss: with one entry present and the other gone, the next
+  // call reads the repository once and writes both entries back, whichever one was missing.
+  it.each([
+    ['status', contract.redisKeyPrefixes.userStatus],
+    ['verified', contract.redisKeyPrefixes.userEmailVerified]
+  ])(
+    'refills both entries from one repository read when only the %s entry is gone',
+    async (_which, prefix) => {
+      const { service, calls, userRepo, store } = build({ required: true })
+      await service.assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
+      store.delete(`${prefix}:t:u`)
+      calls.length = 0
+
+      await service.assertDashboardAccountUsable({ tenantId: 't', userId: 'u' })
+
+      expect(userRepo.findById).toHaveBeenCalledTimes(2)
+      expect(calls.filter((c) => c.op === 'set').map((c) => c.key)).toEqual([
+        `${contract.redisKeyPrefixes.userStatus}:t:u`,
+        `${contract.redisKeyPrefixes.userEmailVerified}:t:u`
+      ])
+    }
+  )
 
   // Verifies the invalidation order the contract pins: the verified entry first, then the status.
   it('deletes the verified entry before the status entry', async () => {
