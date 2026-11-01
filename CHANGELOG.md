@@ -18,15 +18,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.15] - 2026-11-01
+
 ### Apply to a derived backend
 
 - **`POST /password/forgot-password` and `POST /password/resend-otp` now answer `200` with an
   empty JSON object, `{}`, where they answered `200` with no body.** The status and the
   anti-enumeration behaviour are unchanged, and the body is the same for a known and an unknown
-  account. The wire contract now pins it. A client that asserted an empty body must accept JSON; the bundled client
-  discards the body and is unaffected. The declarations of `PasswordResetController.forgotPassword`
-  and `PasswordResetController.resendOtp` change with it: they return `Promise<Record<string,
-never>>` instead of `Promise<void>`.
+  account. The wire contract now pins it. A client that asserted an empty body must accept JSON;
+  the bundled client discards the body and is unaffected.
 
 ### Fixed
 
@@ -4293,7 +4293,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.14...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.15...HEAD
+[1.4.15]: https://github.com/bymaxone/nest-auth/compare/v1.4.14...v1.4.15
 [1.4.14]: https://github.com/bymaxone/nest-auth/compare/v1.4.13...v1.4.14
 [1.4.13]: https://github.com/bymaxone/nest-auth/compare/v1.4.12...v1.4.13
 [1.4.12]: https://github.com/bymaxone/nest-auth/compare/v1.4.11...v1.4.12
