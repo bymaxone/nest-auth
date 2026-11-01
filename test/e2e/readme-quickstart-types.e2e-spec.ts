@@ -5,9 +5,8 @@
  * `check:published` compiles the README's snippets but ignores the diagnostic for a name nothing
  * declares, because a snippet may lean on the paragraph above it. That also lets an undeclared
  * type degrade to an error type that behaves like `any`, so a mismatch that depends on it never
- * surfaces: the module block's typed factory parameter and its two unimported classes both got
- * through that way. Here nothing is left undeclared. The blocks are taken from the README text,
- * the reader-owned names get typed stand-ins, `@bymax-one/nest-auth` resolves to this repository's
+ * surfaces. Here nothing is left undeclared. The blocks are taken from the README text, the
+ * reader-owned names get typed stand-ins, `@bymax-one/nest-auth` resolves to this repository's
  * source, and the program must come back with no diagnostic at all.
  *
  * Stand-ins, and nothing else: the reader's database client, the mail transport, the cookie
