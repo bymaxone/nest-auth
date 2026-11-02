@@ -599,6 +599,16 @@ export class PasswordResetService {
 
     await this.bruteForce.resetFailures(bfIdentifier)
 
+    // The session to keep has to be a live one, and that is settled before the password changes:
+    // a stale token would otherwise write the new credential and then fail to keep anything.
+    if (currentRefreshToken !== undefined && currentRefreshToken.length > 0) {
+      await this.sessionService.assertLiveSession({
+        userId,
+        tenantId: user.tenantId,
+        sessionHash: sha256(currentRefreshToken)
+      })
+    }
+
     await this.passwordService.assertAcceptable(dto.newPassword, 'newPassword')
     const passwordHash = await this.passwordService.hash(dto.newPassword)
     await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash })

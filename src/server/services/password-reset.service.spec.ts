@@ -115,6 +115,7 @@ const mockBruteForce = {
 }
 
 const mockSessionService = {
+  assertLiveSession: jest.fn(),
   revokeAllExceptCurrent: jest.fn()
 }
 
@@ -172,6 +173,7 @@ describe('PasswordResetService', () => {
     mockUserRepo.findByEmail.mockResolvedValue(null)
     mockUserRepo.findById.mockResolvedValue(null)
     mockUserRepo.updatePassword.mockResolvedValue(undefined)
+    mockSessionService.assertLiveSession.mockResolvedValue(undefined)
     mockHooks.afterPasswordReset.mockResolvedValue(undefined)
     mockEmailProvider.sendPasswordResetToken.mockResolvedValue(undefined)
     mockEmailProvider.sendPasswordResetOtp.mockResolvedValue(undefined)
@@ -323,6 +325,60 @@ describe('PasswordResetService', () => {
         currentSessionHash: sha256('raw-refresh')
       })
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
+    })
+
+    // The session to keep must be a live one, and that is settled BEFORE the password is written.
+    // Settled after, a stale token would change the credential and then fail to keep anything.
+    it('requires the caller session to be live before it writes the new password', async () => {
+      await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+
+      expect(mockSessionService.assertLiveSession).toHaveBeenCalledWith({
+        userId: 'u1',
+        tenantId: 'tenant-1',
+        sessionHash: sha256('raw-refresh')
+      })
+      const checked = mockSessionService.assertLiveSession.mock.invocationCallOrder[0] ?? 0
+      const written = mockUserRepo.updatePassword.mock.invocationCallOrder[0] ?? 0
+      expect(checked).toBeGreaterThan(0)
+      expect(checked).toBeLessThan(written)
+    })
+
+    // Scenario: the token names no live session. Expected: the refusal reaches the caller and
+    // nothing happened: the password is not written, no session is revoked, no notice is sent.
+    it('changes nothing when the caller session is not live', async () => {
+      mockSessionService.assertLiveSession.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      )
+
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.SESSION_NOT_FOUND } }
+      })
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
+      expect(mockSessionService.revokeAllExceptCurrent).not.toHaveBeenCalled()
+      expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
+    })
+
+    // The credential comes first: a wrong password is answered as one, so the session check is
+    // never reachable without the password and tells a caller who lacks it nothing.
+    it('answers a wrong password before it checks the session', async () => {
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
+      })
+      expect(mockSessionService.assertLiveSession).not.toHaveBeenCalled()
+    })
+
+    // No token, and so no session to check.
+    it('does not look for a session when no token is presented', async () => {
+      await service.changePassword('u1', 'tenant-1', dto, undefined)
+      await service.changePassword('u1', 'tenant-1', dto, '')
+
+      expect(mockSessionService.assertLiveSession).not.toHaveBeenCalled()
     })
 
     // Without the caller's refresh token there is no session to spare, and the safe reading is

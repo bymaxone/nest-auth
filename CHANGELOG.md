@@ -40,6 +40,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   mean no token. A client that sends `refreshToken: ''` when it holds no token, the `?? ''`
   pattern, now gets the `400`; it should omit the field or send `null`. The field is read only
   where the delivery mode reads the body, so in `cookie` mode a value there is ignored.
+- **`POST /sessions/revoke-all` and `POST /password/change` refuse a refresh token that names no
+  live session of the caller, with `404 auth.session_not_found`, before anything changes.** Both
+  keep the caller's own session and end the rest when given a token, so they need to know which
+  one it is. A well-formed token that named none kept nothing: revoke-all answered `204` and ended
+  every session the account had, the caller's own included, and a password change wrote the new
+  password and then did the same. A password change checks the current password first, so a wrong
+  one still answers `401`, then the session, then writes. `SessionService` gains a public method,
+  `assertLiveSession`, which the password change uses, and a private one, `requireLiveMember`;
+  `LiveSessionParams` is the type of its parameter.
 
 ### Fixed
 
@@ -52,6 +61,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   token that was present but malformed it blacklisted the access token, answered `204`, and left the
   refresh session usable, so the client believed it had signed out. The request is now refused
   before either happens.
+- **"Sign out my other devices" no longer signs out every device when the token is stale.** A
+  refresh token that was well formed but no longer a live session was treated as having no session
+  to keep, so the whole account was revoked and the call answered success. It is refused instead,
+  and nothing is revoked.
 
 ### Documentation
 

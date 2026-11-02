@@ -2259,8 +2259,9 @@ describe('SessionService', () => {
       revokeSpy.mockRestore()
     })
 
-    // Verifies that correctly handles an empty session list.
-    it('correctly handles an empty session list', async () => {
+    // With no live session there is none to keep, so the call is refused rather than answering
+    // success having revoked nothing, and nothing changes: no revocation, no epoch bump.
+    it('refuses an empty session list, since the current session is not live', async () => {
       const currentHash = sha256('current-empty')
       mockRedis.smembers.mockResolvedValue([])
 
@@ -2270,8 +2271,31 @@ describe('SessionService', () => {
           tenantId: 'tenant-1',
           currentSessionHash: currentHash
         })
-      ).resolves.toBeUndefined()
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.SESSION_NOT_FOUND } }
+      })
       expect(mockRedis.eval).not.toHaveBeenCalled()
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
+    })
+
+    // Scenario: a well-formed hash that is not among the user's sessions, while other sessions
+    // exist. Expected: refused before ANY of them is revoked, since keeping nothing would end every
+    // session the account has, the caller's included.
+    it('refuses a hash that names no live session and revokes none of the others', async () => {
+      mockRedis.smembers.mockResolvedValue([`rt:${'b'.repeat(64)}`, `rt:${'c'.repeat(64)}`])
+
+      await expect(
+        service.revokeAllExceptCurrent({
+          userId: userId,
+          tenantId: 'tenant-1',
+          currentSessionHash: 'a'.repeat(64)
+        })
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.SESSION_NOT_FOUND } }
+      })
+      expect(mockRedis.eval).not.toHaveBeenCalled()
+      expect(mockRedis.del).not.toHaveBeenCalled()
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
     })
 
     // `rp:` members are not refresh sessions, so the revocation loop must not try to revoke
@@ -2348,7 +2372,7 @@ describe('SessionService', () => {
     // caller out of a device the loop never managed to revoke — the worst of both outcomes, and
     // it would report success by leaving no trace of the failure.
     it('should not advance the epoch when a revocation fails', async () => {
-      mockRedis.smembers.mockResolvedValue([`rt:${'b'.repeat(64)}`])
+      mockRedis.smembers.mockResolvedValue([`rt:${'a'.repeat(64)}`, `rt:${'b'.repeat(64)}`])
       mockRedis.eval.mockRejectedValue(new Error('redis down'))
 
       await expect(
@@ -2359,6 +2383,87 @@ describe('SessionService', () => {
         })
       ).rejects.toThrow('redis down')
       expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
+    })
+  })
+
+  // =========================================================================
+  // assertLiveSession
+  // =========================================================================
+
+  describe('assertLiveSession', () => {
+    const userId = 'user-live'
+    const live = 'a'.repeat(64)
+
+    // Scenario: the hash is one of the user's refresh sessions. Expected: it resolves and reads
+    // only the user's own index.
+    it('resolves for a hash among the user sessions', async () => {
+      mockRedis.smembers.mockResolvedValue([`rt:${live}`, `rt:${'b'.repeat(64)}`])
+
+      await expect(
+        service.assertLiveSession({ userId, tenantId: 'tenant-1', sessionHash: live })
+      ).resolves.toBeUndefined()
+    })
+
+    // Scenario: a hash that is absent, one that is only a grace pointer, and an empty index.
+    // Expected: each is refused as not found. A grace pointer is not a session to keep.
+    it.each([
+      ['absent from the index', [`rt:${'b'.repeat(64)}`]],
+      ['only a grace pointer', [`rp:${'a'.repeat(64)}`]],
+      ['an empty index', []]
+    ])('refuses a hash that is %s', async (_label, members) => {
+      mockRedis.smembers.mockResolvedValue(members)
+
+      await expect(
+        service.assertLiveSession({ userId, tenantId: 'tenant-1', sessionHash: live })
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.SESSION_NOT_FOUND } }
+      })
+    })
+
+    // A blank tenant names no session index, so it is refused before the index is read. Asserted
+    // here, beside the method, because a call inside its own describe is what lets a mutation
+    // run attribute the check to the tests that exercise it.
+    it('refuses a blank tenant before reading the session index', async () => {
+      await expect(
+        service.assertLiveSession({ userId, tenantId: '', sessionHash: live })
+      ).rejects.toMatchObject({
+        response: {
+          error: {
+            code: AUTH_ERROR_CODES.VALIDATION,
+            details: [
+              { field: 'tenantId', message: 'tenantId is required to name a session index' }
+            ]
+          }
+        }
+      })
+      expect(mockRedis.smembers).not.toHaveBeenCalled()
+    })
+
+    // The details, not only the code: the field name is what tells a caller which input to fix.
+    it('names the sessionHash field when the hash is malformed', async () => {
+      await expect(
+        service.assertLiveSession({ userId, tenantId: 'tenant-1', sessionHash: 'abc123' })
+      ).rejects.toMatchObject({
+        response: {
+          error: {
+            code: AUTH_ERROR_CODES.VALIDATION,
+            details: [
+              {
+                field: 'sessionHash',
+                message: 'sessionHash must be 64 lowercase hexadecimal characters'
+              }
+            ]
+          }
+        }
+      })
+    })
+
+    // Scenario: input that is not a session hash. Expected: refused before the index is read.
+    it('refuses a malformed hash without reading the index', async () => {
+      await expect(
+        service.assertLiveSession({ userId, tenantId: 'tenant-1', sessionHash: 'not-a-hash' })
+      ).rejects.toBeInstanceOf(AuthException)
+      expect(mockRedis.smembers).not.toHaveBeenCalled()
     })
   })
 
