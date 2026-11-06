@@ -12,6 +12,7 @@
 import type { INestApplication } from '@nestjs/common'
 import request from 'supertest'
 
+import { PasswordService } from '../../src/server/services/password.service'
 import { bootstrapTestApp, expectAuthError, type BootstrappedTestApp } from './setup'
 
 const PASSWORD = 'SuperSecret123!'
@@ -150,6 +151,35 @@ describe('"all except the current session" requires a live current session (E2E)
       expect((await signIn(email, NEW_PASSWORD)).status).toBe(200)
       expect(await refreshWorks(second.refreshToken)).toBe(false)
       expect(await refreshWorks(first.refreshToken)).toBe(true)
+    })
+
+    // Scenario: the caller's session rotates while the new password is being hashed, so it is live
+    // at the check and gone at the sweep. Expected: the change completes, the password is the new
+    // one, and EVERY session ends, the rotated one included, since there is no current session left
+    // to keep. Why: the password is already written, so the cleanup must not be aborted by the
+    // session it was told to spare; a 404 here would leave the old sessions alive on a changed
+    // password.
+    it('ends every session when the caller session rotates during the change', async () => {
+      const { email, first } = await signUp()
+      const second = toSession(await signIn(email))
+      const passwords = app.get(PasswordService)
+      const hash = passwords.hash.bind(passwords)
+      let rotated: Session | undefined
+      jest.spyOn(passwords, 'hash').mockImplementationOnce(async (plain: string) => {
+        const res = await request(app.getHttpServer())
+          .post('/refresh')
+          .send({ refreshToken: first.refreshToken })
+        rotated = toSession(res)
+        return hash(plain)
+      })
+
+      const res = await change(first, { refreshToken: first.refreshToken })
+
+      expect(res.status).toBe(204)
+      expect((await signIn(email, NEW_PASSWORD)).status).toBe(200)
+      expect(await refreshWorks(second.refreshToken)).toBe(false)
+      expect(rotated).toBeDefined()
+      expect(await refreshWorks((rotated as Session).refreshToken)).toBe(false)
     })
 
     // Scenario: no token at all. Expected: unchanged. The password changes and every session ends,

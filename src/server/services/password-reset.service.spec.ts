@@ -174,6 +174,7 @@ describe('PasswordResetService', () => {
     mockUserRepo.findById.mockResolvedValue(null)
     mockUserRepo.updatePassword.mockResolvedValue(undefined)
     mockSessionService.assertLiveSession.mockResolvedValue(undefined)
+    mockSessionService.revokeAllExceptCurrent.mockResolvedValue(undefined)
     mockHooks.afterPasswordReset.mockResolvedValue(undefined)
     mockEmailProvider.sendPasswordResetToken.mockResolvedValue(undefined)
     mockEmailProvider.sendPasswordResetOtp.mockResolvedValue(undefined)
@@ -379,6 +380,37 @@ describe('PasswordResetService', () => {
       await service.changePassword('u1', 'tenant-1', dto, '')
 
       expect(mockSessionService.assertLiveSession).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the caller's session disappears between the check and the sweep, as a rotation
+    // does while the new password is being hashed. Expected: the change completes, and since there
+    // is no current session left to keep every session ends, the epoch advances and the notice is
+    // sent. Why: the password is already written, so the cleanup that makes the change safe must
+    // not be aborted by the session it was told to spare.
+    it('ends every session when the caller session vanishes after the check', async () => {
+      mockSessionService.revokeAllExceptCurrent.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      )
+
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).resolves.toBeUndefined()
+
+      expect(mockUserRepo.updatePassword).toHaveBeenCalled()
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
+      expect(mockEmailProvider.sendPasswordChangedNotification).toHaveBeenCalled()
+    })
+
+    // Only that one refusal is absorbed: a store failure during the sweep still fails the call, so
+    // a revocation that did not happen is never reported as done.
+    it('still fails when the sweep fails for any other reason', async () => {
+      mockSessionService.revokeAllExceptCurrent.mockRejectedValue(new Error('redis down'))
+
+      await expect(service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')).rejects.toThrow(
+        'redis down'
+      )
+      expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
     })
 
     // Without the caller's refresh token there is no session to spare, and the safe reading is
