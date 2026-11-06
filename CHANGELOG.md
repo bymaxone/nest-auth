@@ -37,7 +37,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **A production deployment can no longer start with `secureCookies: false`.** `environment` is
   `'production'` when unset, so a configuration that sets `secureCookies: false` without declaring
   `environment: 'development'` or `'test'` now throws at startup, after the `SameSite=None` check,
-  with a message that begins "secureCookies is false but environment is 'production' (the default
+  with a message that contains "secureCookies is false but environment is 'production' (the default
   when unset)." Remove the option, set it to `true`, or declare the environment. A session cookie
   without `Secure` travels over plain HTTP, and a TLS-terminating proxy still serves HTTPS to the
   browser. Omitting `secureCookies` and setting it to `true` are unchanged. No public member is
