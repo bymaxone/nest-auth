@@ -387,6 +387,10 @@ export interface BymaxAuthModuleOptions {
    * @remarks
    * Set this explicitly to `true` in a non-production environment that is nonetheless served
    * over HTTPS, so the cookies are marked `Secure` there too.
+   *
+   * `false` is refused at startup unless {@link BymaxAuthModuleOptions.environment} is
+   * `'development'` or `'test'`: a session cookie without `Secure` travels over plain HTTP, and a
+   * TLS-terminating proxy does not change that for the browser's side of the connection.
    */
   secureCookies?: boolean
 
