@@ -3,9 +3,9 @@
  *
  * @layer Filter
  */
-import { Catch, HttpException, HttpStatus, Logger } from '@nestjs/common'
+import { BadRequestException, Catch, HttpException, HttpStatus, Logger } from '@nestjs/common'
 import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common'
-import type { Response } from 'express'
+import type { Request, Response } from 'express'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -24,6 +24,59 @@ function isAuthEnvelope(body: unknown): body is AuthErrorEnvelope {
 }
 
 /**
+ * The `type` values `body-parser` and `raw-body` put on the errors they raise for a request they
+ * refuse. The type is the stable part of those errors; their message text is not.
+ */
+const BODY_PARSER_ERROR_TYPES: ReadonlySet<string> = new Set([
+  'entity.parse.failed',
+  'entity.too.large',
+  'entity.verify.failed',
+  'charset.unsupported',
+  'encoding.unsupported',
+  'request.aborted',
+  'request.size.invalid',
+  'parameters.too.many'
+])
+
+/** The answer for a request refused before routing, when only the status can be named. */
+const MALFORMED_REQUEST_MESSAGE = 'Malformed request'
+
+/**
+ * The status of a request the body parser refused, or `undefined` when `exception` is not one.
+ *
+ * Matches on `type` plus a 4xx `status`, taken from the error itself. A parse failure of the
+ * JSON itself does not reach this function in this shape: Nest rewrites a `SyntaxError` into a
+ * `BadRequestException` first, which {@link isPreRoutingBadRequest} handles.
+ */
+function bodyParserStatus(exception: unknown): number | undefined {
+  if (typeof exception !== 'object' || exception === null) return undefined
+  const { type, status } = exception as { type?: unknown; status?: unknown }
+  if (typeof type !== 'string' || !BODY_PARSER_ERROR_TYPES.has(type)) return undefined
+  return typeof status === 'number' && status >= 400 && status < 500 ? status : undefined
+}
+
+/** The fixed message for a body-parser refusal, by status. Never the parser's own text. */
+function bodyParserMessage(status: number): string {
+  if (status === HttpStatus.PAYLOAD_TOO_LARGE) return 'Request entity too large'
+  if (status === HttpStatus.UNSUPPORTED_MEDIA_TYPE) return 'Unsupported media type'
+  return MALFORMED_REQUEST_MESSAGE
+}
+
+/**
+ * Whether `exception` is a 400 raised before any route matched.
+ *
+ * Nest rewrites the `SyntaxError` a malformed JSON body raises, and the `URIError` an undecodable
+ * path raises, into a plain `BadRequestException` carrying the original message and nothing
+ * else — so by the time it reaches a filter it cannot be told from one an application threw.
+ * What does tell them apart is when it happened: Express sets `req.route` when it matches a
+ * route, and the body parser and the path decoding both run before that, whereas anything thrown
+ * by a handler, guard, pipe or service runs after it.
+ */
+function isPreRoutingBadRequest(exception: HttpException, req: Request): boolean {
+  return exception instanceof BadRequestException && req.route === undefined
+}
+
+/**
  * Gives every failure the same `{ error: { code, message, details } }` body.
  *
  * Optional, and off unless a host registers it — a library does not get to decide how an
@@ -37,6 +90,11 @@ function isAuthEnvelope(body: unknown): body is AuthErrorEnvelope {
  * The cause is logged and never serialized: an internal failure's message is the one place a
  * stack detail or a connection string reaches a response body, so the answer carries the
  * generic code and nothing else.
+ *
+ * Requests the HTTP layer refused before any route ran — a malformed body, an oversized one, an
+ * unsupported charset or content-encoding — answer `auth.validation` with a fixed message and the
+ * status the transport reported, never the parser's text. Express only: the filter writes through
+ * Express's `Response` and reads `req.route`, so its behaviour on another adapter is not defined.
  *
  * **Do not register this alongside `@bymax-one/nest-core`'s envelope filter.** They are mutually
  * exclusive in practice and this one wins: `useGlobalFilters` binds ahead of an `APP_FILTER`
@@ -73,7 +131,8 @@ export class AuthExceptionFilter implements ExceptionFilter {
    * @param host - The arguments host, used to reach the HTTP response.
    */
   catch(exception: unknown, host: ArgumentsHost): void {
-    const res = host.switchToHttp().getResponse<Response>()
+    const http = host.switchToHttp()
+    const res = http.getResponse<Response>()
 
     // An AuthException already carries the envelope and the right status — pass it through
     // untouched rather than rebuilding it, so a `details` payload survives.
@@ -95,11 +154,38 @@ export class AuthExceptionFilter implements ExceptionFilter {
         res.status(exception.getStatus()).json(body)
         return
       }
+      // A request refused before it reached any route: the generic answer, not the parser's text,
+      // which can quote the start of the body.
+      if (isPreRoutingBadRequest(exception, http.getRequest<Request>())) {
+        res.status(HttpStatus.BAD_REQUEST).json({
+          error: {
+            code: AUTH_ERROR_CODES.VALIDATION,
+            message: MALFORMED_REQUEST_MESSAGE,
+            details: null
+          }
+        })
+        return
+      }
       // Anything else the surrounding application threw: keep its status, which the
       // application chose deliberately, and re-shape only the body.
       const message = typeof body === 'string' ? body : exception.message
       res.status(exception.getStatus()).json({
         error: { code: AUTH_ERROR_CODES.INTERNAL, message, details: null }
+      })
+      return
+    }
+
+    // The body parser's own refusals (oversized body, unreadable charset or encoding) arrive as
+    // raw `http-errors` objects, not as `HttpException`s: a client error that would otherwise be
+    // answered as the 500 below.
+    const refusedStatus = bodyParserStatus(exception)
+    if (refusedStatus !== undefined) {
+      res.status(refusedStatus).json({
+        error: {
+          code: AUTH_ERROR_CODES.VALIDATION,
+          message: bodyParserMessage(refusedStatus),
+          details: null
+        }
       })
       return
     }

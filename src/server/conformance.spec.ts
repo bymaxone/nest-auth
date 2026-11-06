@@ -20,6 +20,8 @@ import { join } from 'node:path'
 
 import { plainToInstance } from 'class-transformer'
 import { validate } from 'class-validator'
+import { BadRequestException } from '@nestjs/common'
+import type { ArgumentsHost } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 
 import { sessionIndexKey } from './constants/user-keys'
@@ -41,6 +43,7 @@ import type { ResolvedOptions } from './config/resolved-options'
 import { AUTH_THROTTLE_CONFIGS } from './constants/throttle-configs'
 import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES, AUTH_ERROR_STATUS } from './errors/auth-error-codes'
 import { AuthException } from './errors/auth-exception'
+import { AuthExceptionFilter } from './filters/auth-exception.filter'
 import { apiKeyDigest, formatApiKey, generateApiKeySecret, parseApiKey } from './crypto/api-key'
 import { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
 import { PasswordService } from './services/password.service'
@@ -109,6 +112,11 @@ interface WireContract {
     auditEvent: { outcome: string[]; reason: string[]; fields: string[] }
     refusals: Record<string, string>
   }
+  transportErrors: {
+    envelope: { code: string; details: null }
+    rows: { condition: string; status: number | string; message: string }[]
+    contentTypeMismatch: { status: number; code: string; message: string }
+  }
   responseBodies: {
     login: { cookie: string[]; bearer: string[] }
     platformLogin: { bearer: string[] }
@@ -149,7 +157,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = 'c1b3105f5491e472242ecf3e83ffb98b6e2ffac596f2e9b0fefb849fbac774cd'
+const CONTRACT_SHA256 = '935e10fb3a45adaf46c665ab0a286f088c38cc002643b47ff3bc5aa2edf84812'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -1338,6 +1346,67 @@ describe('cross-implementation conformance', () => {
       }).getResponse() as { error: { details: unknown } }
 
       expect(body.error.details).toEqual({ retryAfterSeconds: 300 })
+    })
+  })
+
+  describe('transport errors', () => {
+    /** Runs the real filter over `exception` for a request that matched no route. */
+    function answer(exception: unknown): { status: number; body: unknown } {
+      let status = 0
+      let body: unknown
+      const res = {
+        status: (code: number) => {
+          status = code
+          return {
+            json: (payload: unknown) => {
+              body = payload
+            }
+          }
+        }
+      }
+      const host = {
+        switchToHttp: () => ({ getResponse: () => res, getRequest: () => ({}) })
+      } as unknown as ArgumentsHost
+      new AuthExceptionFilter().catch(exception, host)
+      return { status, body }
+    }
+
+    /** What a refused request from body-parser looks like at the filter. */
+    function refused(type: string, status: number): Error {
+      return Object.assign(new Error('parser text that must not be repeated'), { type, status })
+    }
+
+    const { envelope, rows, contentTypeMismatch } = contract.transportErrors
+
+    // Verifies each row of the shared table is what the filter answers: the code, the null
+    // details and the fixed message, with the status the transport reported. The table is the
+    // contract, so the test reads it rather than restating it.
+    it.each([
+      ['malformed pre-routing 400', 0, new BadRequestException('x'), 400],
+      ['a verify failure', 1, refused('entity.verify.failed', 403), 403],
+      ['an oversized body', 2, refused('entity.too.large', 413), 413],
+      ['an unsupported charset', 3, refused('charset.unsupported', 415), 415],
+      ['an unsupported encoding', 3, refused('encoding.unsupported', 415), 415]
+    ])('answers %s as the contract row says', (_name, row, exception, status) => {
+      const expected = rows[row as number] as (typeof rows)[number]
+
+      expect(answer(exception)).toEqual({
+        status,
+        body: {
+          error: { code: envelope.code, message: expected.message, details: envelope.details }
+        }
+      })
+    })
+
+    // Verifies the row that takes its status from the error says so in the contract.
+    it('declares that the verify-failure row takes the status from the error itself', () => {
+      expect(rows[1]?.status).toBe("the error's own 4xx status")
+    })
+
+    // Verifies the content-type row names the library's own validation code and status.
+    it('keeps the content-type mismatch on auth.validation at the catalog status', () => {
+      expect(contentTypeMismatch.code).toBe(AUTH_ERROR_CODES.VALIDATION)
+      expect(contentTypeMismatch.status).toBe(AUTH_ERROR_STATUS[AUTH_ERROR_CODES.VALIDATION])
     })
   })
 })

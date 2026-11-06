@@ -8,7 +8,13 @@
  * a generic message — never the thrown one.
  */
 
-import { BadRequestException, ForbiddenException, HttpException, HttpStatus } from '@nestjs/common'
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Logger
+} from '@nestjs/common'
 import type { ArgumentsHost } from '@nestjs/common'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -20,7 +26,7 @@ import { AuthExceptionFilter } from './auth-exception.filter'
 // ---------------------------------------------------------------------------
 
 /** A response double that records the status and body the filter wrote. */
-function makeHost(): {
+function makeHost(req: { route?: unknown } = { route: {} }): {
   host: ArgumentsHost
   status: jest.Mock
   json: jest.Mock
@@ -28,7 +34,7 @@ function makeHost(): {
   const json = jest.fn()
   const status = jest.fn().mockReturnValue({ json })
   const host = {
-    switchToHttp: () => ({ getResponse: () => ({ status }) })
+    switchToHttp: () => ({ getResponse: () => ({ status }), getRequest: () => req })
   } as unknown as ArgumentsHost
   return { host, status, json }
 }
@@ -175,5 +181,133 @@ describe('AuthExceptionFilter', () => {
 
     expect(status).toHaveBeenCalledWith(500)
     expect(writtenEnvelope(json).code).toBe(AUTH_ERROR_CODES.INTERNAL)
+  })
+
+  describe('requests refused before routing', () => {
+    const MALFORMED = {
+      error: { code: 'auth.validation', message: 'Malformed request', details: null }
+    }
+
+    // Verifies a 400 raised before any route matched is answered generically, and that the
+    // parser's text, which can quote the body, is not in the answer.
+    it('answers a pre-routing BadRequestException with the generic validation envelope', () => {
+      const { host, status, json } = makeHost({})
+
+      filter.catch(new BadRequestException('Unexpected token "secret-marker"'), host)
+
+      expect(status).toHaveBeenCalledWith(400)
+      expect(json).toHaveBeenCalledWith(MALFORMED)
+    })
+
+    // Verifies the same exception raised after a route matched keeps the application's text.
+    it('leaves a BadRequestException from a matched route to the application', () => {
+      const { host, status, json } = makeHost({ route: { path: '/login' } })
+
+      filter.catch(new BadRequestException('the application said no'), host)
+
+      expect(status).toHaveBeenCalledWith(400)
+      expect(writtenEnvelope(json)).toEqual({
+        code: 'auth.internal',
+        message: 'the application said no',
+        details: null
+      })
+    })
+
+    // Verifies a pre-routing exception whose body is the envelope is passed through, so
+    // an application's own answer is not replaced by the generic one.
+    it('passes a pre-routing envelope body through unchanged', () => {
+      const { host, json } = makeHost({})
+      const envelope = { error: { code: 'auth.forbidden', message: 'no', details: ['why'] } }
+
+      filter.catch(new HttpException(envelope, HttpStatus.BAD_REQUEST), host)
+
+      expect(json).toHaveBeenCalledWith(envelope)
+    })
+
+    // Verifies a pre-routing exception of another class is not swept in: only the 400 Nest
+    // produces for a parse or decode failure is generic.
+    it('does not generalise a pre-routing exception that is not a BadRequestException', () => {
+      const { host, status, json } = makeHost({})
+
+      filter.catch(new ForbiddenException('no'), host)
+
+      expect(status).toHaveBeenCalledWith(403)
+      expect(writtenEnvelope(json).code).toBe('auth.internal')
+    })
+
+    // Verifies each parser type answers its own status with the fixed message, the status taken
+    // from the error and not from the type.
+    it.each([
+      ['entity.too.large', 413, 'Request entity too large'],
+      ['charset.unsupported', 415, 'Unsupported media type'],
+      ['encoding.unsupported', 415, 'Unsupported media type'],
+      ['entity.verify.failed', 403, 'Malformed request'],
+      ['entity.parse.failed', 400, 'Malformed request'],
+      ['request.aborted', 400, 'Malformed request'],
+      ['request.size.invalid', 400, 'Malformed request'],
+      ['parameters.too.many', 413, 'Request entity too large']
+    ])('answers a %s refusal as %i', (type, code, message) => {
+      const { host, status, json } = makeHost()
+
+      filter.catch(Object.assign(new Error('parser text'), { type, status: code }), host)
+
+      expect(status).toHaveBeenCalledWith(code)
+      expect(json).toHaveBeenCalledWith({
+        error: { code: 'auth.validation', message, details: null }
+      })
+    })
+
+    // Verifies a refusal whose status is not a client error, or whose type is not one the parser
+    // raises, is an unhandled failure: matching on the type alone would turn a 500 into a
+    // validation answer.
+    it.each([
+      ['a parser type with a 5xx status', { type: 'entity.too.large', status: 500 }],
+      ['a parser type with no status', { type: 'entity.too.large' }],
+      [
+        'a parser type with a status that is not a number',
+        { type: 'entity.too.large', status: '413' }
+      ],
+      ['a 4xx error with an unknown type', { type: 'something.else', status: 413 }],
+      ['a 4xx error with no type', { status: 413 }],
+      ['a parser type with a status below 400', { type: 'entity.too.large', status: 399 }],
+      ['a type that is not a string', { type: 413, status: 413 }]
+    ])('keeps %s as an internal failure', (_name, fields) => {
+      const { host, status, json } = makeHost()
+      jest.spyOn(Logger.prototype, 'error').mockImplementation()
+
+      filter.catch(Object.assign(new Error('boom'), fields), host)
+
+      expect(status).toHaveBeenCalledWith(500)
+      expect(writtenEnvelope(json).code).toBe('auth.internal')
+    })
+    // Verifies the boundary of the client-error range is inclusive at 400 and 499 on the parser
+    // path: a refusal at either edge is answered, not treated as an internal failure.
+    it.each([400, 499])('answers a parser refusal at the edge status %i', (code) => {
+      const { host, status } = makeHost()
+
+      filter.catch(
+        Object.assign(new Error('parser text'), { type: 'request.aborted', status: code }),
+        host
+      )
+
+      expect(status).toHaveBeenCalledWith(code)
+    })
+
+    // Verifies a thrown value that is not an object, or is null, is an internal failure: the
+    // parser check must read `type` off an object only, and a null thrown by application code
+    // must not crash the filter that answers it.
+    it.each([
+      ['a string', 'boom'],
+      ['null', null],
+      ['undefined', undefined]
+    ])('keeps a thrown %s as an internal failure', (_name, thrown) => {
+      const { host, status, json } = makeHost()
+      jest.spyOn(Logger.prototype, 'error').mockImplementation()
+
+      filter.catch(thrown, host)
+
+      expect(status).toHaveBeenCalledWith(500)
+      expect(writtenEnvelope(json).code).toBe('auth.internal')
+    })
   })
 })
