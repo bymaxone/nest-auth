@@ -854,8 +854,8 @@ describe('SessionService', () => {
     })
 
     // Scenario: the same over-limit account where every detail reads fine except one that is absent.
-    // Expected: the absent one is the oldest and is evicted, as it always was. Why: an absent record
-    // is a state the store reported, not a fault, so it keeps its documented ranking.
+    // Expected: the absent one ranks as the oldest and is evicted. Why: an absent record is a state
+    // the store reported, not a fault, so it keeps its documented ranking.
     it('still evicts a session whose detail is absent as the oldest', async () => {
       const now = Date.now()
       const hashes = Array.from({ length: 6 }, (_, i) => sha256(`absent-detail-${i}`))

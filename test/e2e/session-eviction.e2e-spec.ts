@@ -245,9 +245,17 @@ describe('session FIFO eviction (E2E)', () => {
           .post('/logout')
           .set('Authorization', `Bearer ${register.body.accessToken as string}`)
           .send({ refreshToken: register.body.refreshToken })
-        const login = async (): Promise<{ status: number; refreshToken: string }> => {
+        const login = async (): Promise<{
+          status: number
+          accessToken: string
+          refreshToken: string
+        }> => {
           const res = await request(app.getHttpServer()).post('/login').send(credentials)
-          return { status: res.status, refreshToken: res.body.refreshToken as string }
+          return {
+            status: res.status,
+            accessToken: res.body.accessToken as string,
+            refreshToken: res.body.refreshToken as string
+          }
         }
         const refreshes = async (token: string): Promise<boolean> =>
           (await request(app.getHttpServer()).post('/refresh').send({ refreshToken: token }))
@@ -272,6 +280,12 @@ describe('session FIFO eviction (E2E)', () => {
 
         const fourth = await login()
         expect(fourth.status).toBe(200)
+        const listed = await request(app.getHttpServer())
+          .get('/sessions')
+          .set('Authorization', `Bearer ${fourth.accessToken}`)
+          .send({ refreshToken: fourth.refreshToken })
+        expect(listed.status).toBe(200)
+        expect(listed.body).toHaveLength(2)
       } finally {
         await app.close()
       }
