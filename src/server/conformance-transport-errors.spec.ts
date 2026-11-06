@@ -60,11 +60,11 @@ describe('cross-implementation conformance: transport errors', () => {
 
   const { envelope, rows, contentTypeMismatch } = contract.transportErrors
 
-  // Verifies the filter's answer to EVERY body-parser type it matches is the contract row that
-  // names that type: exactly one row, the row's fixed message, and the row's status or, for
-  // the row that takes its status from the error, the status the parser reported. The types and
-  // the statuses body-parser gives them are listed here rather than read from the filter, so a
-  // type matched by the filter but named by no row fails this test, and so does one in two rows.
+  // Verifies each body-parser type listed here is named by exactly one contract row and answered
+  // with that row's fixed message and status, or, for the row that takes its status from the
+  // error, the status the parser reported. The list and the statuses body-parser gives the types
+  // are written out here, not read from the filter, so a type added to the filter has to be added
+  // here too; a listed type named by no row, or by two, fails.
   it.each([
     ['entity.parse.failed', 400],
     ['entity.verify.failed', 403],
