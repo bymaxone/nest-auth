@@ -115,7 +115,7 @@ const mockBruteForce = {
 }
 
 const mockSessionService = {
-  assertLiveSession: jest.fn(),
+  resolveLiveSession: jest.fn(),
   revokeAllExceptCurrent: jest.fn()
 }
 
@@ -173,7 +173,7 @@ describe('PasswordResetService', () => {
     mockUserRepo.findByEmail.mockResolvedValue(null)
     mockUserRepo.findById.mockResolvedValue(null)
     mockUserRepo.updatePassword.mockResolvedValue(undefined)
-    mockSessionService.assertLiveSession.mockResolvedValue(undefined)
+    mockSessionService.resolveLiveSession.mockResolvedValue(sha256('raw-refresh'))
     mockSessionService.revokeAllExceptCurrent.mockResolvedValue(undefined)
     mockHooks.afterPasswordReset.mockResolvedValue(undefined)
     mockEmailProvider.sendPasswordResetToken.mockResolvedValue(undefined)
@@ -328,17 +328,32 @@ describe('PasswordResetService', () => {
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
     })
 
+    // Scenario: the caller's token has rotated, so the live session it stands for has another
+    // hash. Expected: that session is the one kept. Why: sparing the presented hash would spare
+    // nothing, and the sweep would end the caller's own device.
+    it('keeps the session the presented token resolves to', async () => {
+      mockSessionService.resolveLiveSession.mockResolvedValue(sha256('successor-token'))
+
+      await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+
+      expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith({
+        userId: 'u1',
+        tenantId: 'tenant-1',
+        currentSessionHash: sha256('successor-token')
+      })
+    })
+
     // The session to keep must be a live one, and that is settled BEFORE the password is written.
     // Settled after, a stale token would change the credential and then fail to keep anything.
     it('requires the caller session to be live before it writes the new password', async () => {
       await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
 
-      expect(mockSessionService.assertLiveSession).toHaveBeenCalledWith({
+      expect(mockSessionService.resolveLiveSession).toHaveBeenCalledWith({
         userId: 'u1',
         tenantId: 'tenant-1',
         sessionHash: sha256('raw-refresh')
       })
-      const checked = mockSessionService.assertLiveSession.mock.invocationCallOrder[0] ?? 0
+      const checked = mockSessionService.resolveLiveSession.mock.invocationCallOrder[0] ?? 0
       const written = mockUserRepo.updatePassword.mock.invocationCallOrder[0] ?? 0
       expect(checked).toBeGreaterThan(0)
       expect(checked).toBeLessThan(written)
@@ -347,7 +362,7 @@ describe('PasswordResetService', () => {
     // Scenario: the token names no live session. Expected: the refusal reaches the caller and
     // nothing happened: the password is not written, no session is revoked, no notice is sent.
     it('changes nothing when the caller session is not live', async () => {
-      mockSessionService.assertLiveSession.mockRejectedValue(
+      mockSessionService.resolveLiveSession.mockRejectedValue(
         new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
       )
 
@@ -371,7 +386,7 @@ describe('PasswordResetService', () => {
       ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
-      expect(mockSessionService.assertLiveSession).not.toHaveBeenCalled()
+      expect(mockSessionService.resolveLiveSession).not.toHaveBeenCalled()
     })
 
     // No token, and so no session to check.
@@ -379,7 +394,7 @@ describe('PasswordResetService', () => {
       await service.changePassword('u1', 'tenant-1', dto, undefined)
       await service.changePassword('u1', 'tenant-1', dto, '')
 
-      expect(mockSessionService.assertLiveSession).not.toHaveBeenCalled()
+      expect(mockSessionService.resolveLiveSession).not.toHaveBeenCalled()
     })
 
     // Scenario: the caller's session disappears between the check and the sweep, as a rotation
