@@ -985,34 +985,27 @@ export class SessionService {
 
     if (rtMembers.length <= limit) return
 
-    // Fetch createdAt for each rt: member to determine eviction order.
-    const withTimestamps = await Promise.all(
-      rtMembers.map(async (member) => {
-        // member is "rt:{hash}" — extract just the hash portion.
-        const memberHash = member.slice(3)
-        let createdAt = 0
-
-        try {
-          const raw = await this.redis.get(`sd:${memberHash}`)
-          if (raw !== null) {
-            const parsed: unknown = JSON.parse(raw)
-            if (
-              // Stryker disable next-line ConditionalExpression: defensive `parsed !== null` guard masked by the surrounding try/catch fallback, yielding the same result
-              parsed !== null &&
-              typeof parsed === 'object' &&
-              'createdAt' in parsed &&
-              typeof (parsed as Record<string, unknown>)['createdAt'] === 'number'
-            ) {
-              createdAt = (parsed as StoredSessionDetail).createdAt
-            }
-          }
-        } catch {
-          // Parse error — treat as oldest (createdAt = 0).
-        }
-
-        return { member, memberHash, createdAt }
-      })
-    )
+    // Fetch createdAt for each rt: member to determine eviction order. A read the store fails is
+    // not an age: ranking that session oldest would evict a live newest device for a transient
+    // fault, so no session is evicted this time and the limit is checked again by the next login.
+    // Every read finishes before the first eviction, which is what makes the skip all-or-nothing.
+    let withTimestamps: { member: string; memberHash: string; createdAt: number }[]
+    try {
+      withTimestamps = await Promise.all(
+        rtMembers.map(async (member) => ({
+          member,
+          // member is "rt:{hash}" — extract just the hash portion.
+          memberHash: member.slice(3),
+          createdAt: await this.readCreatedAt(member.slice(3))
+        }))
+      )
+    } catch (err: unknown) {
+      this.logger.error(
+        `enforceSessionLimit: eviction skipped for user ${logSafe(userId)}, ` +
+          `a session record could not be read: ${describeChannelStatus(err)}`
+      )
+      return
+    }
 
     // Sort ascending by createdAt — oldest first.
     withTimestamps.sort((a, b) => a.createdAt - b.createdAt)
@@ -1061,6 +1054,34 @@ export class SessionService {
         )
       }
     }
+  }
+
+  /**
+   * The creation time of a session, for ranking sessions by age.
+   *
+   * An absent record and one that is not a detail record both rank as `0`, the oldest: a state the
+   * store reported, not a fault. A read the store fails propagates, because no age can be named.
+   *
+   * @param memberHash - SHA-256 hash of the session's refresh token.
+   */
+  private async readCreatedAt(memberHash: string): Promise<number> {
+    const raw = await this.redis.get(`sd:${memberHash}`)
+    if (raw === null) return 0
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (
+        // Stryker disable next-line ConditionalExpression: defensive `parsed !== null` guard masked by the surrounding try/catch fallback, yielding the same result
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        'createdAt' in parsed &&
+        typeof (parsed as Record<string, unknown>)['createdAt'] === 'number'
+      ) {
+        return (parsed as StoredSessionDetail).createdAt
+      }
+    } catch {
+      // Parse error — ranks as oldest, like an absent record.
+    }
+    return 0
   }
 
   /**

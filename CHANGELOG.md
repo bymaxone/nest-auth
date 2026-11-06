@@ -49,6 +49,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `params: LiveSessionParams`, and private `isLiveMember`, `resolveLiveMember` and `graceSuccessor`
   replace the private `requireLiveMember`. In `PasswordResetService` the private `requireLiveCurrentSession` becomes
   `resolveCurrentSession`, and `endOtherSessions` now takes the hash to keep.
+- **A login no longer evicts a session when the store fails to read a session record.** The
+  session limit ranks sessions by the creation time in each one's detail record; a read the store
+  failed was ranked as the oldest, so a transient Redis fault could end a live, newest device. Now
+  no session is evicted by that login, one error is logged without any key or hash, and the limit
+  is checked again by the next login. An absent or unparseable detail record is not a fault and
+  still ranks as the oldest. The overshoot is bounded: under a persistent store fault, creating a
+  session fails as well. A private `readCreatedAt` appears in the `SessionService` declarations.
 
 ### Fixed
 
@@ -56,6 +63,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   above.
 - **A password change or revoke-all no longer fails when the caller refreshes the session
   concurrently.** See the note above.
+- **A store fault while ranking sessions no longer evicts a live session.** See the note above.
 
 ## [1.4.16] - 2026-11-06
 

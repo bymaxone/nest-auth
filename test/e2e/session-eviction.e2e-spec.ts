@@ -16,6 +16,7 @@
 import type { INestApplication } from '@nestjs/common'
 import request from 'supertest'
 
+import { AuthRedisService } from '../../src/server/redis/auth-redis.service'
 import { bootstrapTestApp } from './setup'
 
 // ---------------------------------------------------------------------------
@@ -216,6 +217,64 @@ describe('session FIFO eviction (E2E)', () => {
       expect(res.status).toBe(401)
       expect(res.body?.accessToken).toBeUndefined()
       expect(res.body?.refreshToken).toBeUndefined()
+    })
+  })
+
+  // Scenario: the account is at its limit and the store fails to read a session detail during the
+  // login that would evict. Expected: the login succeeds, nobody is evicted, and every refresh token
+  // still works; the next login, with the store healthy, evicts the oldest. Why: a session whose age
+  // cannot be read has no place in an oldest-first ranking, and ending a live device for a transient
+  // fault is worse than exceeding the limit until the next login checks again.
+  describe('a session detail that cannot be read', () => {
+    it('evicts nobody, and the next healthy login evicts the oldest', async () => {
+      const bootstrap = await bootstrapTestApp({
+        tokenDelivery: 'bearer',
+        sessions: { enabled: true, defaultMaxSessions: 2 }
+      })
+      const app = bootstrap.app
+      try {
+        const credentials = {
+          email: 'readfault@example.com',
+          password: 'ReadFaultSecret123!',
+          tenantId: 'tenant-1'
+        }
+        const register = await request(app.getHttpServer())
+          .post('/register')
+          .send({ ...credentials, name: 'Read Fault User' })
+        await request(app.getHttpServer())
+          .post('/logout')
+          .set('Authorization', `Bearer ${register.body.accessToken as string}`)
+          .send({ refreshToken: register.body.refreshToken })
+        const login = async (): Promise<{ status: number; refreshToken: string }> => {
+          const res = await request(app.getHttpServer()).post('/login').send(credentials)
+          return { status: res.status, refreshToken: res.body.refreshToken as string }
+        }
+        const refreshes = async (token: string): Promise<boolean> =>
+          (await request(app.getHttpServer()).post('/refresh').send({ refreshToken: token }))
+            .status === 200
+
+        const first = await login()
+        const second = await login()
+        const redis = app.get(AuthRedisService)
+        const read = redis.get.bind(redis)
+        const faulty = jest
+          .spyOn(redis, 'get')
+          .mockImplementation((key: string) =>
+            key.startsWith('sd:') ? Promise.reject(new Error('ECONNRESET')) : read(key)
+          )
+
+        const third = await login()
+        faulty.mockRestore()
+
+        expect(third.status).toBe(200)
+        expect(await refreshes(first.refreshToken)).toBe(true)
+        expect(await refreshes(second.refreshToken)).toBe(true)
+
+        const fourth = await login()
+        expect(fourth.status).toBe(200)
+      } finally {
+        await app.close()
+      }
     })
   })
 })

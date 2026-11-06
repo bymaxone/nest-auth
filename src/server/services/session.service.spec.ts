@@ -816,6 +816,66 @@ describe('SessionService', () => {
       expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hashes[0]}`)
     })
 
+    // Scenario: the account is over its limit and the store fails to read ONE session's detail.
+    // Expected: nobody is evicted, the login that triggered the check still succeeds, and one error
+    // is logged without a key or a hash. Why: that session's age is unknown, and ranking it oldest
+    // would end a live newest device for a transient fault; skipping leaves the limit exceeded until
+    // the next login checks again.
+    it('evicts nobody when a session detail cannot be read', async () => {
+      const now = Date.now()
+      const hashes = Array.from({ length: 6 }, (_, i) => sha256(`read-fault-${i}`))
+      mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
+      mockRedis.get.mockImplementation((key: string) => {
+        const hashPart = key.replace(/^sd:/, '')
+        if (hashPart === hashes[3]) return Promise.reject(new Error('ECONNRESET sd read'))
+        return Promise.resolve(makeDetailJson(now - hashes.indexOf(hashPart) * 100))
+      })
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await expect(
+        service.createSession({
+          userId: userId,
+          tenantId: 'tenant-1',
+          rawRefreshToken: rawToken,
+          ip: ip,
+          userAgent: userAgent
+        })
+      ).resolves.toBe(sha256(rawToken))
+
+      expect(mockRedis.del).not.toHaveBeenCalled()
+      expect(mockRedis.srem).not.toHaveBeenCalled()
+      expect(mockHooks.onSessionEvicted).not.toHaveBeenCalled()
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      const logged = String(errorSpy.mock.calls[0]?.[0])
+      expect(logged).toContain('enforceSessionLimit')
+      expect(logged).not.toContain(hashes[3] as string)
+      expect(logged).not.toContain('sd:')
+    })
+
+    // Scenario: the same over-limit account where every detail reads fine except one that is absent.
+    // Expected: the absent one is the oldest and is evicted, as it always was. Why: an absent record
+    // is a state the store reported, not a fault, so it keeps its documented ranking.
+    it('still evicts a session whose detail is absent as the oldest', async () => {
+      const now = Date.now()
+      const hashes = Array.from({ length: 6 }, (_, i) => sha256(`absent-detail-${i}`))
+      mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
+      mockRedis.get.mockImplementation((key: string) => {
+        const hashPart = key.replace(/^sd:/, '')
+        if (hashPart === hashes[2]) return Promise.resolve(null)
+        return Promise.resolve(makeDetailJson(now - hashes.indexOf(hashPart) * 100))
+      })
+
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
+
+      expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hashes[2]}`)
+    })
+
     // Verifies that a rejection from the onSessionEvicted hook is caught and logged without propagating to the caller.
     it('logs error and does not throw when onSessionEvicted hook throws', async () => {
       // Arrange: set up 6 sessions so eviction fires
