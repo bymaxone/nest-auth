@@ -848,6 +848,7 @@ describe('SessionService', () => {
       expect(errorSpy).toHaveBeenCalledTimes(1)
       const logged = String(errorSpy.mock.calls[0]?.[0])
       expect(logged).toContain('enforceSessionLimit')
+      expect(logged).toContain('a session record could not be read')
       expect(logged).not.toContain(hashes[3] as string)
       expect(logged).not.toContain('sd:')
     })
