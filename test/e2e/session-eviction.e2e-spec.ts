@@ -297,6 +297,7 @@ describe('session FIFO eviction (E2E)', () => {
         .set('Authorization', `Bearer ${fourth.accessToken}`)
         .send({ refreshToken: fourth.refreshToken })
       expect(fourth.status).toBe(200)
+      expect(listed.status).toBe(200)
       expect(listed.body).toHaveLength(2)
     })
   })
