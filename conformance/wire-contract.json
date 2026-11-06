@@ -1035,7 +1035,7 @@
         "message": "Malformed request"
       },
       {
-        "condition": "body-parser type entity.verify.failed, request.aborted or request.size.invalid",
+        "condition": "body-parser type entity.verify.failed, request.aborted, request.size.invalid or querystring.parse.rangeError",
         "status": "the error's own 4xx status",
         "message": "Malformed request"
       },

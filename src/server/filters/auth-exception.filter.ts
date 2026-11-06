@@ -25,7 +25,9 @@ function isAuthEnvelope(body: unknown): body is AuthErrorEnvelope {
 
 /**
  * The `type` values `body-parser` and `raw-body` put on the errors they raise for a request they
- * refuse. The type is the stable part of those errors; their message text is not.
+ * refuse. The type is the stable part of those errors; their message text is not. Every type those
+ * packages raise with a 4xx status is listed; `stream.encoding.set` and `stream.not.readable` are
+ * server-side faults with a 5xx status and stay unmatched.
  */
 const BODY_PARSER_ERROR_TYPES: ReadonlySet<string> = new Set([
   'entity.parse.failed',
@@ -35,6 +37,7 @@ const BODY_PARSER_ERROR_TYPES: ReadonlySet<string> = new Set([
   'encoding.unsupported',
   'request.aborted',
   'request.size.invalid',
+  'querystring.parse.rangeError',
   'parameters.too.many'
 ])
 

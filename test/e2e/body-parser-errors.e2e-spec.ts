@@ -58,6 +58,18 @@ describe('Body-parser failures over HTTP (E2E)', () => {
     expect(res.body).toEqual(MALFORMED)
   })
 
+  // Verifies a form body nested deeper than the urlencoded parser allows is a client error. The
+  // parser reports it as a 400 http-error of its own type, which no other case reaches.
+  it('answers 400 auth.validation for a form body nested past the parser depth limit', async () => {
+    const res = await request(boot.app.getHttpServer())
+      .post('/login')
+      .set('Content-Type', 'application/x-www-form-urlencoded')
+      .send(`a${'[b]'.repeat(40)}=1`)
+
+    expect(res.status).toBe(400)
+    expect(res.body).toEqual(MALFORMED)
+  })
+
   // Verifies an oversized body is a 413 client error, not a 500.
   it('answers 413 auth.validation for a body over the limit', async () => {
     const res = await request(boot.app.getHttpServer())

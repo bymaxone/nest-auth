@@ -245,6 +245,7 @@ describe('AuthExceptionFilter', () => {
       ['entity.parse.failed', 400, 'Malformed request'],
       ['request.aborted', 400, 'Malformed request'],
       ['request.size.invalid', 400, 'Malformed request'],
+      ['querystring.parse.rangeError', 400, 'Malformed request'],
       ['parameters.too.many', 413, 'Request entity too large']
     ])('answers a %s refusal as %i', (type, code, message) => {
       const { host, status, json } = makeHost()
