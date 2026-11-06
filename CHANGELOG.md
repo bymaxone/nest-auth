@@ -34,11 +34,30 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   handler, guard, pipe or service keeps its message and `auth.internal`. The new `transportErrors`
   section of `conformance/wire-contract.json` lists the rows; `errorCatalog.statuses` still holds
   one status per code. No public member is added or changed.
+- **A refresh token that rotated a moment ago now stands for the session that replaced it, on
+  `POST /password/change` and `POST /sessions/revoke-all`.** A refresh of the caller's own session
+  that landed while the request was being handled turned the token it carried into a rotation
+  predecessor, and both routes answered `404 auth.session_not_found`; a password change left the
+  password unchanged. A presented token now counts when it is a live session or when its grace
+  pointer (`rp:{hash}`) names a live successor, and that successor is the session kept. It is one
+  hop, the pointer is read and never consumed or extended, and a token past the grace window is
+  still refused with `404`. The current password still gates the change. When the session to keep
+  cannot be resolved after the new password is written, every session still ends, as before; a
+  session that rotated while the new password was being hashed is no longer among them, since it
+  is the caller's device and now survives. `SessionService` gains a public
+  `resolveLiveSession(params)` returning the hash to keep, `assertLiveSession` takes its argument
+  as `params: LiveSessionParams` (the same type, no longer destructured in the declaration), and a
+  private `isLiveMember`,
+  `resolveLiveMember` and `graceSuccessor` appear in its declarations, which replace the private
+  `requireLiveMember`. In `PasswordResetService` the private `requireLiveCurrentSession` becomes
+  `resolveCurrentSession`, and `endOtherSessions` now takes the hash to keep.
 
 ### Fixed
 
 - **Requests refused by the body parser no longer answer `500` or echo the body.** See the note
   above.
+- **A password change or revoke-all no longer fails when the caller refreshes the session
+  concurrently.** See the note above.
 
 ## [1.4.16] - 2026-11-06
 
