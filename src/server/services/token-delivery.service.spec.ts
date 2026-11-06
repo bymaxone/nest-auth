@@ -4,10 +4,14 @@
  * resolution for multi-domain cookie scenarios.
  */
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { Test } from '@nestjs/testing'
 import type { Request, Response } from 'express'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { AuthException } from '../errors/auth-exception'
 import { TokenDeliveryService } from './token-delivery.service'
 
 // An `Authorization` header carrying some scheme other than Bearer. A Basic credential is
@@ -994,12 +998,12 @@ describe('TokenDeliveryService', () => {
       expect(service.extractPlatformRefreshToken(req)).toBeUndefined()
     })
 
-    // Non-string body.refreshToken values are rejected — only strings are valid tokens.
-    it('should return undefined when body.refreshToken is not a string (e.g. a number)', async () => {
+    // A body.refreshToken that is present but not a usable string is refused, not read as absent.
+    it('should refuse a body.refreshToken that is not a string (e.g. a number)', async () => {
       const service = await buildService('bearer')
       const req = makeReq({ body: { refreshToken: 12345 } })
 
-      expect(service.extractPlatformRefreshToken(req as Request)).toBeUndefined()
+      expect(() => service.extractPlatformRefreshToken(req as Request)).toThrow(AuthException)
     })
 
     // Always reads from body regardless of the module-level tokenDelivery mode.
@@ -1019,6 +1023,117 @@ describe('TokenDeliveryService', () => {
   // ---------------------------------------------------------------------------
   // extractPlatformAccessToken
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // A refresh token in the body that is present but malformed
+  // ---------------------------------------------------------------------------
+
+  describe('a present but malformed body.refreshToken', () => {
+    const contract = JSON.parse(
+      readFileSync(join(__dirname, '../../../conformance/wire-contract.json'), 'utf8')
+    ) as { requestFieldBounds: { opaqueToken: { min: number; max: number } } }
+    const { min, max } = contract.requestFieldBounds.opaqueToken
+
+    const MALFORMED: [string, unknown][] = [
+      ['an empty string', ''],
+      ['a number', 123],
+      ['an object', { a: 1 }],
+      ['an array', ['x']],
+      ['a boolean', false],
+      ['a string one over the contract bound', 'a'.repeat(max + 1)]
+    ]
+
+    // Scenario: each malformed value on the dashboard reader in a mode that reads the body.
+    // Expected: a validation refusal naming the field, so no caller treats it as a missing token.
+    it.each(MALFORMED)('refuses %s in bearer mode with a validation error', async (_l, value) => {
+      const service = await buildService('bearer')
+      const req = makeReq({ body: { refreshToken: value } }) as Request
+
+      const attempt = (): unknown => service.extractRefreshToken(req)
+
+      expect(attempt).toThrow(AuthException)
+      expect(attempt).toThrow(expect.objectContaining({ status: 400 }))
+    })
+
+    // The refusal's payload, not only its type: the field name and the reason are what tell a
+    // client which input to fix, and the number in the reason is the contract's own bound.
+    it('names the field and the contract bound in the validation details', async () => {
+      const service = await buildService('bearer')
+      const req = makeReq({ body: { refreshToken: 123 } }) as Request
+
+      expect(() => service.extractRefreshToken(req)).toThrow(
+        expect.objectContaining({
+          response: {
+            error: expect.objectContaining({
+              code: 'auth.validation',
+              details: [
+                {
+                  field: 'refreshToken',
+                  message: `refreshToken must be a string of ${min} to ${max} characters`
+                }
+              ]
+            })
+          }
+        })
+      )
+    })
+
+    // Scenario: the same values on the platform reader, which reads the body in every mode.
+    it.each(MALFORMED)('refuses %s on the platform reader', async (_l, value) => {
+      const service = await buildService('cookie')
+      const req = makeReq({ body: { refreshToken: value } }) as Request
+
+      expect(() => service.extractPlatformRefreshToken(req)).toThrow(AuthException)
+    })
+
+    // Scenario: values at the edges of the contract's bound. Expected: accepted, so the bound is the
+    // contract's own number and not a stricter one.
+    it('accepts a token of exactly the minimum and the maximum length from the contract', async () => {
+      const service = await buildService('bearer')
+
+      expect(
+        service.extractRefreshToken(makeReq({ body: { refreshToken: 'a'.repeat(min) } }) as Request)
+      ).toBe('a'.repeat(min))
+      expect(
+        service.extractRefreshToken(makeReq({ body: { refreshToken: 'a'.repeat(max) } }) as Request)
+      ).toBe('a'.repeat(max))
+    })
+
+    // Scenario: JSON null, an omitted field and an array body. Expected: all mean no token.
+    it.each([
+      ['null', { refreshToken: null }],
+      ['omitted', {}],
+      ['an array body', [1]]
+    ])('reads %s as no token', async (_l, body) => {
+      const service = await buildService('bearer')
+
+      expect(service.extractRefreshToken(makeReq({ body }) as Request)).toBeUndefined()
+    })
+
+    // Scenario: a junk body field in a mode that does not read the body. Expected: ignored, with no
+    // refusal, since the mode never looks at it. In 'both' the cookie wins and the body is not read.
+    it('ignores a junk body field in cookie mode, and in both mode when a cookie is present', async () => {
+      const cookieService = await buildService('cookie')
+      const bothService = await buildService('both')
+      const junk = { refreshToken: 123 }
+
+      expect(cookieService.extractRefreshToken(makeReq({ body: junk }) as Request)).toBeUndefined()
+      expect(
+        bothService.extractRefreshToken(
+          makeReq({ body: junk, cookies: { refresh_token: 'cookie-token' } }) as Request
+        )
+      ).toBe('cookie-token')
+    })
+
+    // Scenario: 'both' mode with no cookie reads the body, so a junk field is refused there.
+    it('refuses a junk body field in both mode when there is no cookie', async () => {
+      const service = await buildService('both')
+
+      expect(() =>
+        service.extractRefreshToken(makeReq({ body: { refreshToken: 123 } }) as Request)
+      ).toThrow(AuthException)
+    })
+  })
 
   describe('extractPlatformAccessToken', () => {
     // Returns the bearer token from the Authorization header when correctly formatted.

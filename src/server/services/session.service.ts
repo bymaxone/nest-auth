@@ -279,6 +279,16 @@ export interface RevokeSessionParams {
   sessionHash: string
 }
 
+/** Names the session {@link SessionService.assertLiveSession} checks. See {@link CreateSessionParams}. */
+export interface LiveSessionParams {
+  /** Internal user ID that must own the session. */
+  userId: string
+  /** Tenant that user belongs to; scopes the session index. */
+  tenantId: string
+  /** SHA-256 hash of the session that must be live. */
+  sessionHash: string
+}
+
 /** Everything {@link SessionService.revokeAllExceptCurrent} needs. See {@link CreateSessionParams}. */
 export interface RevokeAllExceptCurrentParams {
   /** Internal user ID whose other sessions are ending. */
@@ -625,11 +635,30 @@ export class SessionService {
   }
 
   /**
+   * Refuses a session hash that names no live session of this user.
+   *
+   * For an operation that keeps one session and ends the rest and so has to be told which one,
+   * checked before it changes anything. The membership test is the same one
+   * {@link revokeAllExceptCurrent} applies.
+   *
+   * @param params - See {@link LiveSessionParams}.
+   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the hash is not a live session.
+   */
+  async assertLiveSession({ userId, tenantId, sessionHash }: LiveSessionParams): Promise<void> {
+    this.assertTenant(tenantId)
+    this.assertValidSessionHash(sessionHash, 'sessionHash')
+
+    this.requireLiveMember(await this.redis.smembers(this.indexKey(userId, tenantId)), sessionHash)
+  }
+
+  /**
    * Revokes all sessions for a user except the caller's current session.
    *
    * Reads all `rt:`-prefixed members from `sess:{userId}` and calls
    * {@link revokeSession} for each session whose hash differs from
-   * `currentSessionHash`. The current session is always preserved.
+   * `currentSessionHash`. The current session is always preserved, and it has to exist: a hash
+   * that names no live session of this user is refused before anything is revoked, since keeping
+   * nothing would revoke every session the account has, the caller's own included.
    *
    * The user's token epoch is advanced as part of this, which is what makes the revocation
    * take effect *now* rather than whenever each device's access token happens to expire.
@@ -648,6 +677,8 @@ export class SessionService {
    *
    * @param userId - Internal user ID whose other sessions are being revoked.
    * @param currentSessionHash - SHA-256 hash of the session to preserve.
+   * @throws {@link AuthException} `SESSION_NOT_FOUND` when `currentSessionHash` names no live
+   *   session of this user.
    * @throws {unknown} Propagates any error thrown by `revokeSession` — including
    *   {@link AuthException} with various codes, Redis errors, or other runtime errors.
    */
@@ -660,6 +691,7 @@ export class SessionService {
     this.assertValidSessionHash(currentSessionHash, 'currentSessionHash')
 
     const members = await this.redis.smembers(this.indexKey(userId, tenantId))
+    this.requireLiveMember(members, currentSessionHash)
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
 
     for (const member of rtMembers) {
@@ -833,6 +865,18 @@ export class SessionService {
         }
       ])
     }
+  }
+
+  /**
+   * Throws unless `members` holds a live refresh session with this hash.
+   *
+   * @throws {@link AuthException} `SESSION_NOT_FOUND`.
+   */
+  private requireLiveMember(members: readonly string[], sessionHash: string): void {
+    const live = members.some(
+      (member) => member.startsWith('rt:') && timingSafeCompare(member.slice(3), sessionHash)
+    )
+    if (!live) throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
   }
 
   /**

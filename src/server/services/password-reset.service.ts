@@ -98,6 +98,11 @@ interface ResetContext {
 // PasswordResetService
 // ---------------------------------------------------------------------------
 
+/** The envelope an {@link AuthException} carries, read to tell one refusal from another. */
+interface ErrorBody {
+  error?: { code?: string }
+}
+
 /**
  * Manages the password-reset lifecycle for dashboard users.
  *
@@ -599,6 +604,10 @@ export class PasswordResetService {
 
     await this.bruteForce.resetFailures(bfIdentifier)
 
+    // The session to keep has to be a live one, and that is settled before the password changes:
+    // a stale token would otherwise write the new credential and then fail to keep anything.
+    await this.requireLiveCurrentSession(userId, user.tenantId, currentRefreshToken)
+
     await this.passwordService.assertAcceptable(dto.newPassword, 'newPassword')
     const passwordHash = await this.passwordService.hash(dto.newPassword)
     await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash })
@@ -606,18 +615,59 @@ export class PasswordResetService {
     // End every other session, and the access tokens with them. `revokeAllExceptCurrent`
     // bumps the epoch itself, which is what reaches the stateless access tokens — the ones a
     // session sweep alone leaves valid until they expire.
-    if (currentRefreshToken !== undefined && currentRefreshToken.length > 0) {
-      await this.sessionService.revokeAllExceptCurrent({
-        userId,
-        tenantId: user.tenantId,
-        currentSessionHash: sha256(currentRefreshToken)
-      })
-    } else {
-      await this.redis.invalidateUserSessions(userId, user.tenantId, 'dashboard')
-      await this.redis.bumpUserTokenEpoch(userId, user.tenantId, 'dashboard')
-    }
+    await this.endOtherSessions(userId, user.tenantId, currentRefreshToken)
 
     await this.notifyPasswordChanged(user)
+  }
+
+  /** Refuses a presented refresh token that names no live session of the account. */
+  private async requireLiveCurrentSession(
+    userId: string,
+    tenantId: string,
+    currentRefreshToken: string | undefined
+  ): Promise<void> {
+    if (currentRefreshToken === undefined || currentRefreshToken.length === 0) return
+    await this.sessionService.assertLiveSession({
+      userId,
+      tenantId,
+      sessionHash: sha256(currentRefreshToken)
+    })
+  }
+
+  /**
+   * Ends every session but the caller's, once the new password is already written.
+   *
+   * With no presented token there is no session to spare and every session ends. A token that was
+   * live when it was checked can rotate away while the new password is hashed, and then there is
+   * no current session left to keep either: every session ends, so the cleanup that makes the
+   * change safe is never aborted by the session it was told to spare. Any other failure of the
+   * sweep propagates.
+   */
+  private async endOtherSessions(
+    userId: string,
+    tenantId: string,
+    currentRefreshToken: string | undefined
+  ): Promise<void> {
+    if (currentRefreshToken === undefined || currentRefreshToken.length === 0) {
+      return this.endAllSessions(userId, tenantId)
+    }
+    try {
+      await this.sessionService.revokeAllExceptCurrent({
+        userId,
+        tenantId,
+        currentSessionHash: sha256(currentRefreshToken)
+      })
+    } catch (err: unknown) {
+      const body = err instanceof AuthException ? (err.getResponse() as ErrorBody) : undefined
+      if (body?.error?.code !== AUTH_ERROR_CODES.SESSION_NOT_FOUND) throw err
+      await this.endAllSessions(userId, tenantId)
+    }
+  }
+
+  /** Ends every session the account has and advances its token epoch. */
+  private async endAllSessions(userId: string, tenantId: string): Promise<void> {
+    await this.redis.invalidateUserSessions(userId, tenantId, 'dashboard')
+    await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
   }
 
   /**

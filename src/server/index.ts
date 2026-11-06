@@ -325,6 +325,7 @@ export type { SessionInfo } from './services/session.service'
 export type {
   CreateSessionParams,
   ListSessionsParams,
+  LiveSessionParams,
   RevokeAllExceptCurrentParams,
   RevokeSessionParams
 } from './services/session.service'
