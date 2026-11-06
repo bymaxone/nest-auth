@@ -18,6 +18,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.16] - 2026-11-06
+
 ### Apply to a derived backend
 
 - **`GET /sessions` now fails when the store cannot read one of the caller's session records.** A
@@ -26,7 +28,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   logout write does. A client that treated every `200` from this route as the complete list must
   now handle the error. A session record that is absent or malformed is still left out of the
   list, as before. A private method, `readSession`, appears in the `SessionService` declarations;
-  no public member changes.
+  this change adds no public member.
 - **`registerAsync` now accepts a factory with typed parameters, without a cast.** The options
   factory is declared `(...args: never[])` instead of `(...args: unknown[])`, so
   `useFactory: (config: ConfigService) => ...` type-checks under `strict`. A factory written with
@@ -49,7 +51,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   password and then did the same. A password change checks the current password first, so a wrong
   one still answers `401`, then the session, then writes. `SessionService` gains a public method,
   `assertLiveSession`, which the password change uses, and a private one, `requireLiveMember`;
-  `LiveSessionParams` is the type of its parameter.
+  `LiveSessionParams`, the type of its parameter, is exported from the package entry point.
+  `PasswordResetService` gains three private methods, `requireLiveCurrentSession`,
+  `endOtherSessions` and `endAllSessions`.
 
 ### Fixed
 
@@ -66,6 +70,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   refresh token that was well formed but no longer a live session was treated as having no session
   to keep, so the whole account was revoked and the call answered success. It is refused instead,
   and nothing is revoked.
+
+### Changed
+
+- **The package is built with tsup 9.** The JavaScript bundles are byte-for-byte what tsup 8
+  produced. The declaration files spell each entry point's export list as `export { … }` followed
+  by `export type { … }` where they wrote inline `type` modifiers; the exported names and which of
+  them are types are unchanged.
 
 ### Documentation
 
@@ -4349,7 +4360,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.15...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.16...HEAD
+[1.4.16]: https://github.com/bymaxone/nest-auth/compare/v1.4.15...v1.4.16
 [1.4.15]: https://github.com/bymaxone/nest-auth/compare/v1.4.14...v1.4.15
 [1.4.14]: https://github.com/bymaxone/nest-auth/compare/v1.4.13...v1.4.14
 [1.4.13]: https://github.com/bymaxone/nest-auth/compare/v1.4.12...v1.4.13
