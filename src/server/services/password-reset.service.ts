@@ -98,6 +98,11 @@ interface ResetContext {
 // PasswordResetService
 // ---------------------------------------------------------------------------
 
+/** The envelope an {@link AuthException} carries, read to tell one refusal from another. */
+interface ErrorBody {
+  error?: { code?: string }
+}
+
 /**
  * Manages the password-reset lifecycle for dashboard users.
  *
@@ -123,11 +128,6 @@ interface ResetContext {
  *
  * @layer Service
  */
-/** The envelope an {@link AuthException} carries, read to tell one refusal from another. */
-interface ErrorBody {
-  error?: { code?: string }
-}
-
 @Injectable()
 export class PasswordResetService {
   private readonly logger = new Logger(PasswordResetService.name)
