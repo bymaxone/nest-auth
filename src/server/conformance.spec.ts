@@ -157,7 +157,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = '935e10fb3a45adaf46c665ab0a286f088c38cc002643b47ff3bc5aa2edf84812'
+const CONTRACT_SHA256 = 'ae9977a77905220980594d24a5ffa6b084a9381cab00743c14c50aeeabd70f12'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -1378,23 +1378,38 @@ describe('cross-implementation conformance', () => {
 
     const { envelope, rows, contentTypeMismatch } = contract.transportErrors
 
-    // Verifies each row of the shared table is what the filter answers: the code, the null
-    // details and the fixed message, with the status the transport reported. The table is the
-    // contract, so the test reads it rather than restating it.
+    // Verifies the filter's answer to EVERY body-parser type it matches is the contract row that
+    // names that type: exactly one row, the row's fixed message, and the row's status or, for
+    // the row that takes its status from the error, the status the parser reported. The types and
+    // the statuses body-parser gives them are listed here rather than read from the filter, so a
+    // type matched by the filter but named by no row fails this test, and so does one in two rows.
     it.each([
-      ['malformed pre-routing 400', 0, new BadRequestException('x'), 400],
-      ['a verify failure', 1, refused('entity.verify.failed', 403), 403],
-      ['an oversized body', 2, refused('entity.too.large', 413), 413],
-      ['an unsupported charset', 3, refused('charset.unsupported', 415), 415],
-      ['an unsupported encoding', 3, refused('encoding.unsupported', 415), 415]
-    ])('answers %s as the contract row says', (_name, row, exception, status) => {
-      const expected = rows[row as number] as (typeof rows)[number]
+      ['entity.parse.failed', 400],
+      ['entity.verify.failed', 403],
+      ['request.aborted', 400],
+      ['request.size.invalid', 400],
+      ['parameters.too.many', 413],
+      ['entity.too.large', 413],
+      ['charset.unsupported', 415],
+      ['encoding.unsupported', 415]
+    ])('answers the %s refusal as the one contract row naming it', (type, reported) => {
+      const named = rows.filter((row) => row.condition.includes(type))
+      expect(named).toHaveLength(1)
+      const row = named[0] as (typeof rows)[number]
 
-      expect(answer(exception)).toEqual({
-        status,
-        body: {
-          error: { code: envelope.code, message: expected.message, details: envelope.details }
-        }
+      expect(answer(refused(type, reported))).toEqual({
+        status: typeof row.status === 'number' ? row.status : reported,
+        body: { error: { code: envelope.code, message: row.message, details: envelope.details } }
+      })
+    })
+
+    // Verifies a malformed body refused before routing is answered as the row that says so.
+    it('answers a pre-routing BadRequestException as the malformed-body row', () => {
+      const row = rows.find((candidate) => candidate.condition.includes('malformed JSON body'))
+
+      expect(answer(new BadRequestException('x'))).toEqual({
+        status: row?.status,
+        body: { error: { code: envelope.code, message: row?.message, details: envelope.details } }
       })
     })
 

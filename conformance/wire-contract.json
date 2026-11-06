@@ -1030,17 +1030,17 @@
     "envelope": { "code": "auth.validation", "details": null },
     "rows": [
       {
-        "condition": "malformed JSON body (including a bare string or number), or an undecodable path, refused before routing",
+        "condition": "malformed JSON body (body-parser type entity.parse.failed, or the bare 400 Nest makes of it; a bare string or number included), or an undecodable path, refused before routing",
         "status": 400,
         "message": "Malformed request"
       },
       {
-        "condition": "body-parser type entity.verify.failed, request.aborted, request.size.invalid or parameters.too.many",
+        "condition": "body-parser type entity.verify.failed, request.aborted or request.size.invalid",
         "status": "the error's own 4xx status",
         "message": "Malformed request"
       },
       {
-        "condition": "body-parser type entity.too.large",
+        "condition": "body-parser type entity.too.large or parameters.too.many",
         "status": 413,
         "message": "Request entity too large"
       },
