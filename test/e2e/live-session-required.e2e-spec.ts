@@ -99,6 +99,29 @@ describe('"all except the current session" requires a live current session (E2E)
       expect(await refreshWorks(second.refreshToken)).toBe(false)
       expect(await refreshWorks(first.refreshToken)).toBe(true)
     })
+
+    // Scenario: the token the request carries was refreshed a moment before, so it is a rotation
+    // predecessor. Expected: 204, the other sessions end, and the session the refresh produced
+    // survives. Why: the predecessor names the caller's device within the grace window; refusing it
+    // would answer 404 to a caller who only raced their own refresh.
+    it('keeps the session a just-rotated token stands for', async () => {
+      const { email, first } = await signUp()
+      const second = toSession(await signIn(email))
+      const rotated = toSession(
+        await request(app.getHttpServer())
+          .post('/refresh')
+          .send({ refreshToken: first.refreshToken })
+      )
+
+      const res = await request(app.getHttpServer())
+        .post('/sessions/revoke-all')
+        .set('Authorization', rotated.authorization)
+        .send({ refreshToken: first.refreshToken })
+
+      expect(res.status).toBe(204)
+      expect(await refreshWorks(second.refreshToken)).toBe(false)
+      expect(await refreshWorks(rotated.refreshToken)).toBe(true)
+    })
   })
 
   describe('POST /password/change', () => {
@@ -154,12 +177,11 @@ describe('"all except the current session" requires a live current session (E2E)
     })
 
     // Scenario: the caller's session rotates while the new password is being hashed, so it is live
-    // at the check and gone at the sweep. Expected: the change completes, the password is the new
-    // one, and EVERY session ends, the rotated one included, since there is no current session left
-    // to keep. Why: the password is already written, so the cleanup must not be aborted by the
-    // session it was told to spare; a 404 here would leave the old sessions alive on a changed
-    // password.
-    it('ends every session when the caller session rotates during the change', async () => {
+    // at the check and a predecessor at the sweep. Expected: the change completes, the password is
+    // the new one, the other sessions end, and the session the rotation produced survives. Why: the
+    // sweep follows the rotation to its successor, which is the caller's device; ending it would
+    // sign out the one device that just proved the password.
+    it('keeps the session the caller token rotated into during the hash', async () => {
       const { email, first } = await signUp()
       const second = toSession(await signIn(email))
       const passwords = app.get(PasswordService)
@@ -179,7 +201,62 @@ describe('"all except the current session" requires a live current session (E2E)
       expect((await signIn(email, NEW_PASSWORD)).status).toBe(200)
       expect(await refreshWorks(second.refreshToken)).toBe(false)
       expect(rotated).toBeDefined()
-      expect(await refreshWorks((rotated as Session).refreshToken)).toBe(false)
+      expect(await refreshWorks((rotated as Session).refreshToken)).toBe(true)
+    })
+
+    // Scenario: the caller's session is signed out while the new password is being hashed, so it is
+    // live at the check and gone, with no successor, at the sweep. Expected: the change completes,
+    // the password is the new one, and EVERY session ends. Why: the password is already written, so
+    // the cleanup must not be aborted by the session it was told to spare; a 404 here would leave the
+    // old sessions alive on a changed password.
+    it('ends every session when the caller session is signed out during the change', async () => {
+      const { email, first } = await signUp()
+      const second = toSession(await signIn(email))
+      const passwords = app.get(PasswordService)
+      const hash = passwords.hash.bind(passwords)
+      jest.spyOn(passwords, 'hash').mockImplementationOnce(async (plain: string) => {
+        await request(app.getHttpServer())
+          .post('/logout')
+          .set('Authorization', first.authorization)
+          .send({ refreshToken: first.refreshToken })
+        return hash(plain)
+      })
+
+      const res = await change(first, { refreshToken: first.refreshToken })
+
+      expect(res.status).toBe(204)
+      expect((await signIn(email, NEW_PASSWORD)).status).toBe(200)
+      expect(await refreshWorks(second.refreshToken)).toBe(false)
+      expect(await refreshWorks(first.refreshToken)).toBe(false)
+    })
+
+    // Scenario: the caller's own session is refreshed while the current password is being
+    // verified, so the token the request carries has become a rotation predecessor by the time it
+    // is checked. Expected: the change completes, the password is the new one, the other sessions
+    // end, and the session the refresh produced survives, since it is the caller's device. Why: the
+    // predecessor still names that device within the grace window, so refusing it with 404 leaves
+    // the password unchanged for a caller who did nothing wrong.
+    it('keeps the caller session when it rotates while the password is verified', async () => {
+      const { email, first } = await signUp()
+      const second = toSession(await signIn(email))
+      const passwords = app.get(PasswordService)
+      const compare = passwords.compare.bind(passwords)
+      let rotated: Session | undefined
+      jest.spyOn(passwords, 'compare').mockImplementationOnce(async (plain, hash) => {
+        const res = await request(app.getHttpServer())
+          .post('/refresh')
+          .send({ refreshToken: first.refreshToken })
+        rotated = toSession(res)
+        return compare(plain, hash)
+      })
+
+      const res = await change(first, { refreshToken: first.refreshToken })
+
+      expect(res.status).toBe(204)
+      expect((await signIn(email, NEW_PASSWORD)).status).toBe(200)
+      expect(await refreshWorks(second.refreshToken)).toBe(false)
+      expect(rotated).toBeDefined()
+      expect(await refreshWorks((rotated as Session).refreshToken)).toBe(true)
     })
 
     // Scenario: no token at all. Expected: unchanged. The password changes and every session ends,

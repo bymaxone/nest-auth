@@ -2400,6 +2400,7 @@ describe('SessionService', () => {
     // The parameter type is named through the package entry point, as a consumer calling this
     // method would, so the suite stops compiling if the entry point stops exporting it.
     it('resolves for a hash among the user sessions', async () => {
+      mockRedis.get.mockResolvedValue(null)
       mockRedis.smembers.mockResolvedValue([`rt:${live}`, `rt:${'b'.repeat(64)}`])
       const params: LiveSessionParams = { userId, tenantId: 'tenant-1', sessionHash: live }
 
@@ -2413,6 +2414,7 @@ describe('SessionService', () => {
       ['only a grace pointer', [`rp:${'a'.repeat(64)}`]],
       ['an empty index', []]
     ])('refuses a hash that is %s', async (_label, members) => {
+      mockRedis.get.mockResolvedValue(null)
       mockRedis.smembers.mockResolvedValue(members)
 
       await expect(
@@ -2466,6 +2468,121 @@ describe('SessionService', () => {
         service.assertLiveSession({ userId, tenantId: 'tenant-1', sessionHash: 'not-a-hash' })
       ).rejects.toBeInstanceOf(AuthException)
       expect(mockRedis.smembers).not.toHaveBeenCalled()
+    })
+  })
+
+  // =========================================================================
+  // resolveLiveSession
+  // =========================================================================
+
+  describe('resolveLiveSession', () => {
+    const userId = 'user-resolve'
+    const presented = 'a'.repeat(64)
+    const successor = 'b'.repeat(64)
+    const params = { userId, tenantId: 'tenant-1', sessionHash: presented }
+
+    beforeEach(() => {
+      mockRedis.get.mockResolvedValue(null)
+    })
+
+    // Scenario: the hash is itself a live session. Expected: it is the session to keep, and the
+    // grace pointer is not consulted.
+    it('names the presented hash when it is a live session', async () => {
+      mockRedis.smembers.mockResolvedValue([`rt:${presented}`])
+
+      await expect(service.resolveLiveSession(params)).resolves.toBe(presented)
+      expect(mockRedis.get).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the token rotated a moment ago, so the index holds a grace pointer for it and the
+    // session the rotation produced. Expected: that successor is the session to keep.
+    it('names the live successor of a token that rotated away', async () => {
+      mockRedis.smembers.mockResolvedValue([`rp:${presented}`, `rt:${successor}`])
+      mockRedis.get.mockResolvedValue(`${successor}:{"userId":"u"}`)
+
+      await expect(service.resolveLiveSession(params)).resolves.toBe(successor)
+      expect(mockRedis.get).toHaveBeenCalledWith(`rp:${presented}`)
+    })
+
+    // Scenario: resolving through a pointer. Expected: nothing is written or deleted, so the grace
+    // window the pointer sits in is neither consumed nor extended and the rotation script can still
+    // honour the pointer for the retry it exists for.
+    it('only reads the grace pointer', async () => {
+      mockRedis.smembers.mockResolvedValue([`rp:${presented}`, `rt:${successor}`])
+      mockRedis.get.mockResolvedValue(`${successor}:{}`)
+
+      await service.resolveLiveSession(params)
+
+      expect(mockRedis.get).toHaveBeenCalledTimes(1)
+      expect(mockRedis.del).not.toHaveBeenCalled()
+      expect(mockRedis.eval).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the presented token's pointer names a session that is itself no longer live, and
+    // that session has a pointer of its own naming a live one. Expected: refused. Resolution stops
+    // at one hop, so a chain of rotations never lets an old token stand for a distant session.
+    it('does not follow a successor through its own pointer', async () => {
+      const further = 'd'.repeat(64)
+      mockRedis.smembers.mockResolvedValue([`rp:${presented}`, `rp:${successor}`, `rt:${further}`])
+      mockRedis.get.mockImplementation(async (key: string) =>
+        key === `rp:${presented}` ? `${successor}:{}` : `${further}:{}`
+      )
+
+      await expect(service.resolveLiveSession(params)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.SESSION_NOT_FOUND } }
+      })
+      expect(mockRedis.get).toHaveBeenCalledTimes(1)
+    })
+
+    // Scenario: the pointer names a successor the index no longer holds, one that was revoked, or
+    // there is no pointer at all, or its value is not `{hash}:{record}`. Expected: nothing is live,
+    // so the call is refused as not found. Why: a pointer outlives its successor and must not
+    // resurrect a session the user ended; a value that does not parse names no session.
+    it.each([
+      ['a successor that is not in the index', [`rp:${presented}`], `${successor}:{}`],
+      ['no pointer', [`rp:${presented}`, `rt:${successor}`], null],
+      ['a pointer with no separator', [`rt:${successor}`], successor],
+      ['a pointer whose successor is not a session hash', [`rt:${successor}`], 'nothex:{}']
+    ])('refuses %s', async (_label, members, pointer) => {
+      mockRedis.smembers.mockResolvedValue(members)
+      mockRedis.get.mockResolvedValue(pointer)
+
+      await expect(service.resolveLiveSession(params)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.SESSION_NOT_FOUND } }
+      })
+    })
+
+    // The same input checks as assertLiveSession, before anything is read.
+    it('refuses a blank tenant and a malformed hash before reading the index', async () => {
+      await expect(service.resolveLiveSession({ ...params, tenantId: '' })).rejects.toBeInstanceOf(
+        AuthException
+      )
+      await expect(
+        service.resolveLiveSession({ ...params, sessionHash: 'not-a-hash' })
+      ).rejects.toBeInstanceOf(AuthException)
+      expect(mockRedis.smembers).not.toHaveBeenCalled()
+    })
+
+    // Scenario: revoke-all with a token that rotated away. Expected: the successor is the session
+    // kept and every other session is revoked, the predecessor's pointer included.
+    it('keeps the successor in revokeAllExceptCurrent', async () => {
+      const other = 'c'.repeat(64)
+      mockRedis.smembers.mockResolvedValue([`rp:${presented}`, `rt:${successor}`, `rt:${other}`])
+      mockRedis.get.mockResolvedValue(`${successor}:{}`)
+      const revoke = jest.spyOn(service, 'revokeSession').mockResolvedValue(undefined)
+
+      await service.revokeAllExceptCurrent({
+        userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: presented
+      })
+
+      expect(revoke).toHaveBeenCalledTimes(1)
+      expect(revoke).toHaveBeenCalledWith({
+        userId,
+        tenantId: 'tenant-1',
+        sessionHash: other
+      })
     })
   })
 

@@ -638,17 +638,40 @@ export class SessionService {
    * Refuses a session hash that names no live session of this user.
    *
    * For an operation that keeps one session and ends the rest and so has to be told which one,
-   * checked before it changes anything. The membership test is the same one
-   * {@link revokeAllExceptCurrent} applies.
+   * checked before it changes anything. The membership test is the one {@link resolveLiveSession}
+   * applies, so a token that has just rotated is accepted here exactly as it is there.
    *
    * @param params - See {@link LiveSessionParams}.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the hash is not a live session.
    */
-  async assertLiveSession({ userId, tenantId, sessionHash }: LiveSessionParams): Promise<void> {
+  async assertLiveSession(params: LiveSessionParams): Promise<void> {
+    await this.resolveLiveSession(params)
+  }
+
+  /**
+   * Names the live session a presented refresh-token hash stands for.
+   *
+   * The hash itself when it is a live session. When it is a token that rotated away moments ago,
+   * the session the rotation produced: the rotation grace pointer `rp:{hash}` names that successor,
+   * and the presented token still identifies the same device. A request that carries a refresh
+   * token can lose a race to a refresh of the same session, and an operation that must keep "the
+   * caller's session" would otherwise refuse the caller for having been refreshed. The pointer is
+   * read, never consumed, and the successor has to be live in the index too, so a pointer left
+   * behind by a session that was since revoked names nothing.
+   *
+   * @param params - See {@link LiveSessionParams}.
+   * @returns The hash of the live session to keep: `sessionHash`, or its live successor.
+   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the hash is neither a live session nor
+   *   the predecessor of one.
+   */
+  async resolveLiveSession({ userId, tenantId, sessionHash }: LiveSessionParams): Promise<string> {
     this.assertTenant(tenantId)
     this.assertValidSessionHash(sessionHash, 'sessionHash')
 
-    this.requireLiveMember(await this.redis.smembers(this.indexKey(userId, tenantId)), sessionHash)
+    return this.resolveLiveMember(
+      await this.redis.smembers(this.indexKey(userId, tenantId)),
+      sessionHash
+    )
   }
 
   /**
@@ -691,13 +714,13 @@ export class SessionService {
     this.assertValidSessionHash(currentSessionHash, 'currentSessionHash')
 
     const members = await this.redis.smembers(this.indexKey(userId, tenantId))
-    this.requireLiveMember(members, currentSessionHash)
+    const keptHash = await this.resolveLiveMember(members, currentSessionHash)
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
 
     for (const member of rtMembers) {
       const hash = member.slice(3)
 
-      if (timingSafeCompare(hash, currentSessionHash)) continue
+      if (timingSafeCompare(hash, keptHash)) continue
 
       try {
         await this.revokeSession({ userId, tenantId, sessionHash: hash })
@@ -868,15 +891,40 @@ export class SessionService {
   }
 
   /**
-   * Throws unless `members` holds a live refresh session with this hash.
+   * The hash of the live refresh session `sessionHash` stands for within `members`.
    *
    * @throws {@link AuthException} `SESSION_NOT_FOUND`.
    */
-  private requireLiveMember(members: readonly string[], sessionHash: string): void {
-    const live = members.some(
+  private async resolveLiveMember(
+    members: readonly string[],
+    sessionHash: string
+  ): Promise<string> {
+    if (this.isLiveMember(members, sessionHash)) return sessionHash
+    const successor = await this.graceSuccessor(sessionHash)
+    if (successor !== undefined && this.isLiveMember(members, successor)) return successor
+    throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+  }
+
+  /** Whether `members` holds a live refresh session with this hash. */
+  private isLiveMember(members: readonly string[], sessionHash: string): boolean {
+    return members.some(
       (member) => member.startsWith('rt:') && timingSafeCompare(member.slice(3), sessionHash)
     )
-    if (!live) throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+  }
+
+  /**
+   * The successor hash a rotation grace pointer names, or `undefined` when there is none.
+   *
+   * The pointer's value is `{successorHash}:{record}`, split on the first colon exactly as the
+   * rotation script writes it.
+   */
+  private async graceSuccessor(sessionHash: string): Promise<string | undefined> {
+    const pointer = await this.redis.get(`rp:${sessionHash}`)
+    if (pointer === null) return undefined
+    const separator = pointer.indexOf(':')
+    if (separator < 0) return undefined
+    const successor = pointer.slice(0, separator)
+    return SESSION_HASH_RE.test(successor) ? successor : undefined
   }
 
   /**
