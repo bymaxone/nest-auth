@@ -24,10 +24,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   envelope, not `auth.internal`.** Applies only where the filter is registered, and only on
   Express (the filter writes through Express's `Response`; nothing here is defined for Fastify).
   A malformed JSON body, a bare JSON string or number, a form body nested past the parser's
-  depth limit, and a path that cannot be decoded now answer `400 auth.validation` with the fixed message `Malformed request`; the parser's own text,
-  which could quote the start of the body, is no longer in the response. An oversized body answers
-  `413` and an unsupported charset or content-encoding `415`, both `auth.validation`, where they
-  answered `500 auth.internal`. A client that branched on `auth.internal` for these must branch on
+  depth limit, and a path that cannot be decoded now answer `400 auth.validation` with the fixed
+  message `Malformed request`; the parser's own text, which could quote the start of the body, is
+  no longer in the response. An oversized body answers `413` and an unsupported charset or
+  content-encoding `415`, both `auth.validation`, where they answered `500 auth.internal`. A client that branched on `auth.internal` for these must branch on
   `auth.validation` and the status. The 400 is recognised by having been raised before any route
   matched (`req.route` unset), so a `BadRequestException` thrown by the application's own
   middleware that runs before routing is answered the same generic way; one thrown from a
