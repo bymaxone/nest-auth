@@ -4,9 +4,9 @@
  * Every route that reads the refresh token from the request body reads it through one place, and
  * what that place does with a value that is not a token decides what the client is told. A value
  * that is not a string, is empty, or exceeds the contract's opaque-token bound is not a missing
- * token: treating it as one answered 401 on refresh, 204 on logout while the refresh session
+ * token: treating it as one would answer 401 on refresh, 204 on logout while the refresh session
  * stayed alive, and 404 on revoke-all. These specs drive the real HTTP stack for the dashboard
- * and platform routes and assert the answer and the side effect, because a 204 that left a
+ * and platform routes and assert the answer and the side effect, because a 204 that leaves a
  * session alive is the failure this exists to prevent.
  */
 
@@ -93,9 +93,9 @@ describe('a present but malformed refreshToken (E2E)', () => {
     })
 
     // Scenario: logout of a real session, carrying its access token, with a malformed refresh
-    // token. Expected: 400, and NOTHING happened: the access token still works and the refresh
-    // session is still there. Why: a 204 here told the client it was signed out while the
-    // refresh token it holds kept working.
+    // token. Expected: 400, and NOTHING happened: the access token works and the refresh
+    // session is in place. Why: a 204 here would tell the client it is signed out while the
+    // refresh token it holds keeps working.
     it('answers logout with 400 and changes nothing', async () => {
       const session = await signUp()
       const before = await liveSessions()
@@ -186,9 +186,9 @@ describe('a present but malformed refreshToken (E2E)', () => {
     expectAuthError(res, 'auth.refresh_token_invalid')
   })
 
-  // Scenario: a real token on logout. Expected: still revokes the session, so the validation
-  // did not cost the working path.
-  it('still signs out a real session', async () => {
+  // Scenario: a real token on logout. Expected: it revokes the session, so the validation does
+  // not touch the working path.
+  it('signs out a real session', async () => {
     const session = await signUp()
     const before = await liveSessions()
 

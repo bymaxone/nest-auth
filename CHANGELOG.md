@@ -33,13 +33,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `...args: unknown[]` keeps compiling, and the options it returns are checked as before: a secret
   typed `string | undefined` is still refused.
 - **A request whose `refreshToken` is present but malformed now answers `400 auth.validation`.** On
-  `POST /refresh`, `/logout`, `/sessions/revoke-all` and the platform `refresh` and `logout`, a body
-  `refreshToken` that is not a string of 1 to 2048 characters used to be read as a missing token:
-  refresh answered `401`, logout answered `204`, and revoke-all answered `404`. It is now refused
-  with `400`, naming the field, before anything is done. An omitted field and JSON `null` still
-  mean no token. A client that sends `refreshToken: ''` when it holds no token, the `?? ''`
-  pattern, now gets the `400`; it should omit the field or send `null`. The field is read only
-  where the delivery mode reads the body, so in `cookie` mode a value there is ignored.
+  `POST /refresh`, `/logout`, `/sessions/revoke-all`, `GET /sessions` and the platform `refresh` and
+  `logout`, a body `refreshToken` that is not a string of 1 to 2048 characters used to be read as a
+  missing token: refresh answered `401`, logout answered `204`, revoke-all answered `404`, and the
+  listing ignored it. It is now refused with `400`, naming the field, before anything is done. An
+  omitted field and JSON `null` still mean no token. A client that sends `refreshToken: ''` when it
+  holds no token, the `?? ''` pattern, now gets the `400`; it should omit the field or send
+  `null`. The field is read only where the delivery mode reads the body, so in `cookie` mode a
+  value there is ignored.
 - **`POST /sessions/revoke-all` and `POST /password/change` refuse a refresh token that names no
   live session of the caller, with `404 auth.session_not_found`, before anything changes.** Both
   keep the caller's own session and end the rest when given a token, so they need to know which

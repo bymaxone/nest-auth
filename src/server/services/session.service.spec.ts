@@ -19,6 +19,7 @@ import {
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import type { LiveSessionParams } from '../index'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from './session.service'
 
@@ -2396,12 +2397,13 @@ describe('SessionService', () => {
 
     // Scenario: the hash is one of the user's refresh sessions. Expected: it resolves and reads
     // only the user's own index.
+    // The parameter type is named through the package entry point, as a consumer calling this
+    // method would, so the suite stops compiling if the entry point stops exporting it.
     it('resolves for a hash among the user sessions', async () => {
       mockRedis.smembers.mockResolvedValue([`rt:${live}`, `rt:${'b'.repeat(64)}`])
+      const params: LiveSessionParams = { userId, tenantId: 'tenant-1', sessionHash: live }
 
-      await expect(
-        service.assertLiveSession({ userId, tenantId: 'tenant-1', sessionHash: live })
-      ).resolves.toBeUndefined()
+      await expect(service.assertLiveSession(params)).resolves.toBeUndefined()
     })
 
     // Scenario: a hash that is absent, one that is only a grace pointer, and an empty index.
