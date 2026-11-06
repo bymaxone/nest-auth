@@ -45,11 +45,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   cannot be resolved after the new password is written, every session still ends, as before; a
   session that rotated while the new password was being hashed is no longer among them, since it
   is the caller's device and now survives. `SessionService` gains a public
-  `resolveLiveSession(params)` returning the hash to keep, `assertLiveSession` takes its argument
-  as `params: LiveSessionParams` (the same type, no longer destructured in the declaration), and a
-  private `isLiveMember`,
-  `resolveLiveMember` and `graceSuccessor` appear in its declarations, which replace the private
-  `requireLiveMember`. In `PasswordResetService` the private `requireLiveCurrentSession` becomes
+  `resolveLiveSession(params)` returning the hash to keep, `assertLiveSession` takes
+  `params: LiveSessionParams`, and private `isLiveMember`, `resolveLiveMember` and `graceSuccessor`
+  replace the private `requireLiveMember`. In `PasswordResetService` the private `requireLiveCurrentSession` becomes
   `resolveCurrentSession`, and `endOtherSessions` now takes the hash to keep.
 
 ### Fixed
