@@ -81,6 +81,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Documentation
 
+- **A password-reset lookup slower than the resend cooldown can remove a later request's
+  cooldown.** The flows release the cooldown by key when the lookup throws, so a lookup that
+  fails after more than the cooldown (60 seconds) releases a key that may by then belong to a
+  later request. Keep `findByEmail` well under the cooldown; the library does not guard against it.
 - **A host `updateMfa` that outlasts the MFA transition lock can reorder MFA writes.** The lock
   expires on its own after `MFA_TRANSITION_LOCK_TTL_SECONDS` (10 seconds), a write still running then is
   overtaken and lands after the next change, and the interface has no compare-and-set for the

@@ -371,6 +371,50 @@ describe('JwtPlatformGuard', () => {
       expect(response.error.code).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
     })
 
+    // A revocation store that FAILS is not an answer, so the guard refuses the request without
+    // saying the token is invalid: the store's own failure propagates, which the HTTP layer
+    // answers as a 5xx, and `request.user` is never set. Fail-closed and honest at once; a
+    // `TOKEN_INVALID` here would tell a legitimate admin their token is bad during an outage.
+    it.each([
+      ['the blacklist read', (error: Error) => mockRedis.get.mockRejectedValue(error)],
+      [
+        'the epoch read',
+        (error: Error) => {
+          mockRedis.get.mockResolvedValue(null)
+          mockRedis.getUserTokenEpoch.mockRejectedValue(error)
+        }
+      ]
+    ])('should refuse with the store failure itself when %s fails', async (_label, fail) => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      const storeFailure = new Error('ECONNRESET')
+      fail(storeFailure)
+      const ctx = makeContext('some.jwt.token')
+
+      const failure = await guard.canActivate(ctx as never).catch((err: unknown) => err)
+
+      expect(failure).toBe(storeFailure)
+      expect(failure).not.toBeInstanceOf(AuthException)
+      expect(ctx.switchToHttp().getRequest()['user']).toBeUndefined()
+    })
+
+    // A dashboard token is refused on its type before the store is consulted, so it never depends
+    // on the store: the answer is the same `PLATFORM_AUTH_REQUIRED` whether the store is up or down.
+    it('should refuse a dashboard token on its type without reading a failing store', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, type: 'dashboard' })
+      mockRedis.get.mockRejectedValue(new Error('ECONNRESET'))
+      const ctx = makeContext('some.jwt.token')
+
+      const failure = await guard.canActivate(ctx as never).catch((err: unknown) => err)
+
+      expect(failure).toBeInstanceOf(AuthException)
+      expect((failure as AuthException).getResponse()).toMatchObject({
+        error: { code: AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED }
+      })
+      expect(mockRedis.get).not.toHaveBeenCalled()
+    })
+
     // Confirms the guard queries Redis with the correct key pattern: 'rv:{jti}'
     it('should query Redis with key rv:{jti}', async () => {
       jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
