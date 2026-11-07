@@ -1071,7 +1071,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > replica may not be). A guard of your own inside `updateMfa` can narrow the window only for a stall
 > that happens after the guard's own read, such as a wait on a row lock inside the `UPDATE`: the
 > library passes `updateMfa` the new values and not the ones it read, so closing the window
-> completely would need those values passed in, which the interface does not do. The lock is held
+> completely would need those values passed in. The lock is held
 > across the read the transition makes inside it as well as the write, so a slow `findById` counts
 > against the same lifetime.
 
