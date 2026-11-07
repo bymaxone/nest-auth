@@ -18,6 +18,25 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **The Next.js logout handler keeps the cookies when the upstream logout did not complete.**
+  `createLogoutHandler` clears the three auth cookies only once the upstream has given a final
+  answer below `500` (a `2xx`, or a `4xx` such as an expired or already-revoked session). When the
+  upstream answers `5xx`, which it does when a revocation write failed and the session is still
+  alive, the handler answers that status and touches no cookie; when the upstream is unreachable or
+  the request fails, it answers `502` and touches no cookie. In `'redirect'` mode neither failure
+  redirects. The cookies are the client's only handle for retrying the same logout, and the
+  upstream endpoint is idempotent, so the retry completes it. A caller that treated the handler's
+  answer as always successful sees a `5xx` or `502` it did not see before; `AuthClient.logout()`
+  and the React `logout()` reject on it, as they do for any non-2xx. Cross-site and non-`POST`
+  requests are answered as before. The rule is in the handler's file header in a form the
+  rust-auth twin copies. No contract change and no public declaration change.
+
+### Fixed
+
+- **A failed logout through the Next.js proxy no longer looks successful.** See the note above.
+
 ## [1.4.18] - 2026-11-07
 
 ### Apply to a derived backend
