@@ -150,6 +150,7 @@ describe('PasswordResetService — a password-reset request that fails', () => {
       expect(elapsedMs).toBeGreaterThanOrEqual(FLOOR_MS)
       expect(mockRedis.del).not.toHaveBeenCalled()
       expect(mockUserRepo.findByEmail).not.toHaveBeenCalled()
+      expect(errorSpy).toHaveBeenCalledWith(`${entry}: cooldown store failed: <error>`)
     }
   )
 
@@ -195,7 +196,7 @@ describe('PasswordResetService — a password-reset request that fails', () => {
 
       expect(error).toBeUndefined()
       expect(elapsedMs).toBeGreaterThanOrEqual(FLOOR_MS)
-      expect(errorSpy).toHaveBeenCalled()
+      expect(errorSpy).toHaveBeenCalledWith(`${entry}: unexpected error: <error>`)
       const [key] = mockRedis.setnx.mock.calls[0] as [string]
       expect(mockRedis.del).toHaveBeenCalledWith(key)
     }
