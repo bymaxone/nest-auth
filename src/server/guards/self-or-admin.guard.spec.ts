@@ -299,6 +299,60 @@ describe('SelfOrAdminGuard', () => {
     })
   })
 
+  // ----------------- The id is one segment -----------------
+
+  describe('the id parameter', () => {
+    /** The error code a refused request carries, or `undefined` when the guard admitted it. */
+    function codeFor(
+      user: ReturnType<typeof makeUser>,
+      params: Record<string, string | string[]>
+    ): string | undefined {
+      try {
+        guard.canActivate(makeContext(user, params) as never)
+        return undefined
+      } catch (e) {
+        const body = (e as AuthException).getResponse() as { error: { code: string } }
+        return body.error.code
+      }
+    }
+
+    // Scenario: the id is not one non-empty path segment: empty, or a decoded `%2F` that carries a
+    // slash. Expected: refused for an admin and for the owner alike. Why: the id names one
+    // resource, and a value that spans segments names a different one or none; the handler would
+    // receive a path the route never matched.
+    it.each([
+      ['empty', ''],
+      ['carrying a slash', 'user-1/../user-2'],
+      ['a lone slash', '/']
+    ])('should refuse an id that is %s, even for an admin', (_label, id) => {
+      expect(codeFor(makeUser({ sub: 'admin-1', role: 'admin' }), { userId: id })).toBe(
+        AUTH_ERROR_CODES.INSUFFICIENT_ROLE
+      )
+    })
+
+    it('should refuse an owner whose own id carries a slash', () => {
+      expect(codeFor(makeUser({ sub: 'a/b' }), { userId: 'a/b' })).toBe(
+        AUTH_ERROR_CODES.INSUFFICIENT_ROLE
+      )
+    })
+
+    // The segment rule comes before the session-hash rule, as the tenant rule does.
+    it('should refuse the id before it looks at a hash-shaped value', () => {
+      expect(
+        codeFor(makeUser({ sub: 'admin-1', role: 'admin' }), {
+          id: `${'A'.repeat(32)}/${'b'.repeat(31)}`
+        })
+      ).toBe(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+    })
+
+    it('should still admit a plain id for its owner and for an admin', () => {
+      expect(codeFor(makeUser({ sub: 'user-1' }), { userId: 'user-1' })).toBeUndefined()
+      expect(
+        codeFor(makeUser({ sub: 'admin-1', role: 'admin' }), { userId: 'user-9' })
+      ).toBeUndefined()
+    })
+  })
+
   // ----------------- Tenant capture -----------------
 
   describe('a route that captures the tenant', () => {
@@ -436,6 +490,32 @@ describe('SelfOrAdminGuard', () => {
     it('should refuse an empty capture when the token tenant is empty too', () => {
       expect(
         refusal(makeUser({ sub: 'user-1', tenantId: '' }), { tenantId: '', userId: 'user-1' })
+      ).toEqual(REFUSED)
+    })
+
+    // A wildcard capture that carries the tenant arrives as the array of the segments it matched
+    // (Express 5 `*tenant`), whatever its length, so it is refused even for an admin.
+    it.each([
+      ['one segment', ['tenant-1']],
+      ['two segments', ['tenant-1', 'x']],
+      ['a star', ['*']]
+    ])('should refuse a wildcard tenant capture of %s even for an admin', (_label, value) => {
+      expect(
+        refusal(makeUser({ sub: 'admin-1', role: 'admin', tenantId: 'tenant-1' }), {
+          tenant: value,
+          userId: 'user-9'
+        })
+      ).toEqual(REFUSED)
+    })
+
+    // A literal star is only the value of a named capture: it is not the token's tenant, so it is
+    // refused for a member and for an admin alike.
+    it('should refuse a literal star as the tenant, even for an admin', () => {
+      expect(
+        refusal(makeUser({ sub: 'admin-1', role: 'admin', tenantId: 'tenant-1' }), {
+          tenantId: '*',
+          userId: 'user-9'
+        })
       ).toEqual(REFUSED)
     })
 

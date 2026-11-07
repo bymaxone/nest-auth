@@ -22,9 +22,19 @@ import { hasRole } from '../utils/roles.util'
  * refused with `INSUFFICIENT_ROLE` before the self-or-admin decision is made. An id is only
  * unique within a tenant, and the `admin` role is held inside one, so neither identity nor role
  * reaches across the boundary. Captures that disagree with one another, are empty, or are arrays
- * name no tenant the token can equal and are refused. A route that captures no tenant is decided
- * by identity and role alone, and the controller or service MUST then enforce ownership against
- * `req.user.tenantId` itself, as this guard has nothing to compare.
+ * name no tenant the token can equal and are refused; a wildcard capture arrives as an array of
+ * the segments it matched, so it is refused even for an admin.
+ *
+ * **What the tenant check cannot see:** only those three capture names are read. A route that
+ * names the tenant any other way, `{org}` for instance, is decided by identity and role alone, and
+ * the handler must bind that capture to the token's tenant itself, as must a route with no tenant
+ * capture. Where Express resolves a capture name used at two nesting levels, the inner value wins
+ * (measured on Express 5, with or without `mergeParams`), and a capture on a parent router
+ * mounted without `mergeParams` is not visible to the inner route, so the guard sees none.
+ * Nest controllers compose the full path on one route and are not affected by the second.
+ *
+ * **The id:** the `userId` or `id` capture must be one non-empty path segment. An empty value or
+ * one carrying a slash (a decoded `%2F`) is refused with `INSUFFICIENT_ROLE`, for an admin too.
  *
  * **Admin role convention:** The literal `'admin'` role is checked against the
  * configured hierarchy. If the consuming application uses a different convention
@@ -83,6 +93,13 @@ export class SelfOrAdminGuard implements CanActivate {
     const paramValue = resolveParamString(rawParam)
 
     if (paramValue === undefined) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+    }
+
+    // The id names one resource, so it is one non-empty path segment. An empty value, or a decoded
+    // `%2F` that carries a slash, spans segments the route never matched, and not even an admin is
+    // admitted on it.
+    if (paramValue === '' || paramValue.includes('/')) {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
