@@ -31,7 +31,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   the controller or service must still enforce the tenant there. A host that relied on the guard
   to admit an admin across tenants on such a route now gets a `403`. The `userId` or `id` capture
   must now be one non-empty path segment: an empty value or one carrying a slash (a decoded `%2F`)
-  is refused with `INSUFFICIENT_ROLE` for an admin as well. Only the three capture names are read, so
+  is refused with `INSUFFICIENT_ROLE` for an admin as well, and so is an owner whose own id contains a
+  slash, who could reach their own resource through a `%2F` before. Only the three capture names are read, so
   a route that names the tenant any other way, or sits on a router mounted without `mergeParams`,
   is decided by identity and role alone, as before.
 

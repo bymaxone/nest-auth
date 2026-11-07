@@ -34,7 +34,8 @@ import { hasRole } from '../utils/roles.util'
  * Nest controllers compose the full path on one route and are not affected by the second.
  *
  * **The id:** the `userId` or `id` capture must be one non-empty path segment. An empty value or
- * one carrying a slash (a decoded `%2F`) is refused with `INSUFFICIENT_ROLE`, for an admin too.
+ * one carrying a slash (a decoded `%2F`) is refused with `INSUFFICIENT_ROLE`, for an admin too and
+ * for an owner whose own id contains a slash.
  *
  * **Admin role convention:** The literal `'admin'` role is checked against the
  * configured hierarchy. If the consuming application uses a different convention
