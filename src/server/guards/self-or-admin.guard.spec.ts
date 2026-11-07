@@ -298,4 +298,256 @@ describe('SelfOrAdminGuard', () => {
       }
     })
   })
+
+  // ----------------- The id is one segment -----------------
+
+  describe('the id parameter', () => {
+    /** The error code a refused request carries, or `undefined` when the guard admitted it. */
+    function codeFor(
+      user: ReturnType<typeof makeUser>,
+      params: Record<string, string | string[]>
+    ): string | undefined {
+      try {
+        guard.canActivate(makeContext(user, params) as never)
+        return undefined
+      } catch (e) {
+        const body = (e as AuthException).getResponse() as { error: { code: string } }
+        return body.error.code
+      }
+    }
+
+    // Scenario: the id is not one non-empty path segment: empty, or a decoded `%2F` that carries a
+    // slash. Expected: refused for an admin and for the owner alike. Why: the id names one
+    // resource, and a value that spans segments names a different one or none; the handler would
+    // receive a path the route never matched.
+    it.each([
+      ['empty', ''],
+      ['carrying a slash', 'user-1/../user-2'],
+      ['a lone slash', '/']
+    ])('should refuse an id that is %s, even for an admin', (_label, id) => {
+      expect(codeFor(makeUser({ sub: 'admin-1', role: 'admin' }), { userId: id })).toBe(
+        AUTH_ERROR_CODES.INSUFFICIENT_ROLE
+      )
+    })
+
+    it('should refuse an owner whose own id carries a slash', () => {
+      expect(codeFor(makeUser({ sub: 'a/b' }), { userId: 'a/b' })).toBe(
+        AUTH_ERROR_CODES.INSUFFICIENT_ROLE
+      )
+    })
+
+    // The segment rule comes before the session-hash rule, as the tenant rule does.
+    it('should refuse the id before it looks at a hash-shaped value', () => {
+      expect(
+        codeFor(makeUser({ sub: 'admin-1', role: 'admin' }), {
+          id: `${'A'.repeat(32)}/${'b'.repeat(31)}`
+        })
+      ).toBe(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+    })
+
+    it('should still admit a plain id for its owner and for an admin', () => {
+      expect(codeFor(makeUser({ sub: 'user-1' }), { userId: 'user-1' })).toBeUndefined()
+      expect(
+        codeFor(makeUser({ sub: 'admin-1', role: 'admin' }), { userId: 'user-9' })
+      ).toBeUndefined()
+    })
+  })
+
+  // ----------------- Tenant capture -----------------
+
+  describe('a route that captures the tenant', () => {
+    /** The error a refused request carries, or `undefined` when the guard admitted it. */
+    function refusal(
+      user: ReturnType<typeof makeUser>,
+      params: Record<string, string | string[]>
+    ): { status: number; code: string } | undefined {
+      try {
+        guard.canActivate(makeContext(user, params) as never)
+        return undefined
+      } catch (e) {
+        const error = e as AuthException
+        const body = error.getResponse() as { error: { code: string } }
+        return { status: error.getStatus(), code: body.error.code }
+      }
+    }
+
+    const REFUSED = { status: HttpStatus.FORBIDDEN, code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE }
+
+    // Scenario: a member of tenant-1 asks for their own id on a route that names tenant-2.
+    // Expected: refused with INSUFFICIENT_ROLE. Why: the id alone proves nothing across tenants,
+    // since ids are only unique within one; the route says which tenant the resource is in.
+    it('should refuse a user whose own id is requested under another tenant', () => {
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), {
+          tenantId: 'tenant-2',
+          userId: 'user-1'
+        })
+      ).toEqual(REFUSED)
+    })
+
+    // Scenario: an admin of tenant-1 asks for a user of tenant-2. Expected: refused. Why: the admin
+    // role is held inside one tenant and carries no authority over another.
+    it('should refuse an admin acting on another tenant', () => {
+      expect(
+        refusal(makeUser({ sub: 'admin-1', role: 'admin', tenantId: 'tenant-1' }), {
+          tenantId: 'tenant-2',
+          userId: 'user-9'
+        })
+      ).toEqual(REFUSED)
+    })
+
+    // Each of the three capture names the guard recognizes is held to the token's tenant.
+    it.each(['tenantId', 'tenant_id', 'tenant'])(
+      'should refuse a mismatching %s capture',
+      (name) => {
+        expect(
+          refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), {
+            [name]: 'tenant-2',
+            userId: 'user-1'
+          })
+        ).toEqual(REFUSED)
+      }
+    )
+
+    // The same capture equal to the token's tenant leaves the decision to the self-or-admin rule.
+    it.each(['tenantId', 'tenant_id', 'tenant'])(
+      'should admit a matching %s capture for the owner',
+      (name) => {
+        expect(
+          refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), {
+            [name]: 'tenant-1',
+            userId: 'user-1'
+          })
+        ).toBeUndefined()
+      }
+    )
+
+    it('should admit an admin of the same tenant on another user', () => {
+      expect(
+        refusal(makeUser({ sub: 'admin-1', role: 'admin', tenantId: 'tenant-1' }), {
+          tenantId: 'tenant-1',
+          userId: 'user-9'
+        })
+      ).toBeUndefined()
+    })
+
+    it('should still refuse a member of the same tenant on another user', () => {
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), {
+          tenantId: 'tenant-1',
+          userId: 'user-2'
+        })
+      ).toEqual(REFUSED)
+    })
+
+    // Scenario: two capture names are present and disagree. Expected: refused, even though one of
+    // them equals the token's tenant. Why: the route is ambiguous about which tenant it means.
+    it('should refuse captures that disagree, even when one matches', () => {
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), {
+          tenantId: 'tenant-1',
+          tenant: 'tenant-2',
+          userId: 'user-1'
+        })
+      ).toEqual(REFUSED)
+    })
+
+    it('should admit captures that agree on the token tenant', () => {
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), {
+          tenantId: 'tenant-1',
+          tenant_id: 'tenant-1',
+          userId: 'user-1'
+        })
+      ).toBeUndefined()
+    })
+
+    // A capture that is empty, or is an array, names no tenant the token can equal.
+    it.each([
+      ['an empty string', ''],
+      ['an array', ['tenant-1']],
+      ['an empty array', []]
+    ])('should refuse a capture that is %s', (_label, value) => {
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), {
+          tenantId: value as string | string[],
+          userId: 'user-1'
+        })
+      ).toEqual(REFUSED)
+    })
+
+    // A token with no tenant cannot equal any capture.
+    it('should refuse a token with no tenant when the route names one', () => {
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: '' }), {
+          tenantId: 'tenant-1',
+          userId: 'user-1'
+        })
+      ).toEqual(REFUSED)
+    })
+
+    // An empty tenant on the token equals an empty capture, and neither names a tenant.
+    it('should refuse an empty capture when the token tenant is empty too', () => {
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: '' }), { tenantId: '', userId: 'user-1' })
+      ).toEqual(REFUSED)
+    })
+
+    // A wildcard capture that carries the tenant arrives as the array of the segments it matched
+    // (Express 5 `*tenant`), whatever its length, so it is refused even for an admin.
+    it.each([
+      ['one segment', ['tenant-1']],
+      ['two segments', ['tenant-1', 'x']],
+      ['a star', ['*']]
+    ])('should refuse a wildcard tenant capture of %s even for an admin', (_label, value) => {
+      expect(
+        refusal(makeUser({ sub: 'admin-1', role: 'admin', tenantId: 'tenant-1' }), {
+          tenant: value,
+          userId: 'user-9'
+        })
+      ).toEqual(REFUSED)
+    })
+
+    // A literal star is only the value of a named capture: it is not the token's tenant, so it is
+    // refused for a member and for an admin alike.
+    it('should refuse a literal star as the tenant, even for an admin', () => {
+      expect(
+        refusal(makeUser({ sub: 'admin-1', role: 'admin', tenantId: 'tenant-1' }), {
+          tenantId: '*',
+          userId: 'user-9'
+        })
+      ).toEqual(REFUSED)
+    })
+
+    // Scenario: a cross-tenant request that would also fail another check. Expected: the tenant
+    // refusal comes first, so INSUFFICIENT_ROLE and not TOKEN_INVALID. Why: a cross-tenant request
+    // must not learn anything from a later check, and must never reach the role decision.
+    it('should refuse on the tenant before it looks at the id', () => {
+      const upperHash = 'A'.repeat(64)
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), {
+          tenantId: 'tenant-2',
+          id: upperHash
+        })
+      ).toEqual(REFUSED)
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), { tenantId: 'tenant-2' })
+      ).toEqual(REFUSED)
+    })
+
+    // Routes that capture no tenant are decided exactly as before: by identity and role.
+    it('should leave a route without a tenant capture to the self-or-admin rule', () => {
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), { userId: 'user-1' })
+      ).toBeUndefined()
+      expect(
+        refusal(makeUser({ sub: 'admin-1', role: 'admin', tenantId: 'tenant-1' }), {
+          userId: 'user-9'
+        })
+      ).toBeUndefined()
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: 'tenant-1' }), { userId: 'user-2' })
+      ).toEqual(REFUSED)
+    })
+  })
 })

@@ -17,11 +17,25 @@ import { hasRole } from '../utils/roles.util'
  * `req.user` before this guard runs.
  *
  * @remarks
- * **Multi-tenant ownership limitation:** This guard does NOT verify that the
- * target resource belongs to the same `tenantId` as the JWT. In multi-tenant
- * deployments the controller or service MUST additionally enforce ownership
- * against `req.user.tenantId` to prevent cross-tenant IDOR. This guard only
- * enforces the *identity* boundary (self vs. other), not the *tenant* boundary.
+ * **Tenant boundary:** when the route captures the tenant under `tenantId`, `tenant_id` or
+ * `tenant`, every capture present must equal the token's `tenantId`; otherwise the request is
+ * refused with `INSUFFICIENT_ROLE` before the self-or-admin decision is made. An id is only
+ * unique within a tenant, and the `admin` role is held inside one, so neither identity nor role
+ * reaches across the boundary. Captures that disagree with one another, are empty, or are arrays
+ * name no tenant the token can equal and are refused; a wildcard capture arrives as an array of
+ * the segments it matched, so it is refused even for an admin.
+ *
+ * **What the tenant check cannot see:** only those three capture names are read. A route that
+ * names the tenant any other way, `{org}` for instance, is decided by identity and role alone, and
+ * the handler must bind that capture to the token's tenant itself, as must a route with no tenant
+ * capture. Where Express resolves a capture name used at two nesting levels, the inner value wins
+ * (measured on Express 5, with or without `mergeParams`), and a capture on a parent router
+ * mounted without `mergeParams` is not visible to the inner route, so the guard sees none.
+ * Nest controllers compose the full path on one route and are not affected by the second.
+ *
+ * **The id:** the `userId` or `id` capture must be one non-empty path segment. An empty value or
+ * one carrying a slash (a decoded `%2F`) is refused with `INSUFFICIENT_ROLE`, for an admin too and
+ * for an owner whose own id contains a slash.
  *
  * **Admin role convention:** The literal `'admin'` role is checked against the
  * configured hierarchy. If the consuming application uses a different convention
@@ -62,6 +76,12 @@ export class SelfOrAdminGuard implements CanActivate {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
+    // The tenant comes before the id: a request for another tenant never reaches the decision
+    // below, and what it is refused for does not depend on the rest of the route.
+    if (!capturesOnlyTokenTenant(request.params, request.user.tenantId)) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+    }
+
     const rawParam = request.params['userId'] ?? request.params['id']
 
     if (rawParam === undefined) {
@@ -74,6 +94,13 @@ export class SelfOrAdminGuard implements CanActivate {
     const paramValue = resolveParamString(rawParam)
 
     if (paramValue === undefined) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+    }
+
+    // The id names one resource, so it is one non-empty path segment. An empty value, or a decoded
+    // `%2F` that carries a slash, spans segments the route never matched, and not even an admin is
+    // admitted on it.
+    if (paramValue === '' || paramValue.includes('/')) {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
@@ -90,6 +117,22 @@ export class SelfOrAdminGuard implements CanActivate {
 
     throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
   }
+}
+
+/**
+ * Whether every tenant capture on the route (`tenantId`, `tenant_id` or `tenant`) equals the
+ * token's tenant. A route with none passes. A capture that is empty, or that differs from the
+ * token's tenant, fails; an array or any other non-string always differs, and a token with no
+ * tenant cannot equal any capture.
+ */
+function capturesOnlyTokenTenant(
+  params: Request['params'],
+  tokenTenant: string | undefined
+): boolean {
+  const captures: unknown[] = [params.tenantId, params.tenant_id, params.tenant]
+  return captures.every(
+    (captured) => captured === undefined || (captured !== '' && captured === tokenTenant)
+  )
 }
 
 /** Matches a valid SHA-256 hash — 64 strictly lowercase hex characters. */

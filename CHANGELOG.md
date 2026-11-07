@@ -18,6 +18,27 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **`SelfOrAdminGuard` no longer admits a request addressed to another tenant.** It decided by the
+  caller's id and role alone, so a token for tenant `t1` and user `u1` was admitted on
+  `/tenants/t2/users/u1`, and the `admin` role, which is held inside one tenant, was admitted on any
+  tenant's users; the guard's documentation left the tenant check to the controller. When the route
+  captures the tenant as `tenantId`, `tenant_id` or `tenant`, every capture present must now equal
+  the token's `tenantId`, otherwise the guard answers `INSUFFICIENT_ROLE` (`403`) before it looks at
+  the id or the role. Captures that disagree with one another, are empty, or are arrays are refused,
+  and so is a token with no tenant. A route that captures no tenant is not tenant-checked, and
+  the controller or service must still enforce the tenant there. A host that relied on the guard
+  to admit an admin across tenants on such a route now gets a `403`. The `userId` or `id` capture
+  must now be one non-empty path segment: an empty value or one carrying a slash (a decoded `%2F`)
+  is refused with `INSUFFICIENT_ROLE` for an admin as well, and so is an owner whose own id contains a
+  slash, who could reach their own resource through a `%2F` before. A route that names the tenant any
+  other way, or sits on a router mounted without `mergeParams`, is not tenant-checked either.
+
+### Fixed
+
+- **A cross-tenant request is no longer admitted by `SelfOrAdminGuard`.** See the note above.
+
 ## [1.4.19] - 2026-11-07
 
 ### Apply to a derived backend
