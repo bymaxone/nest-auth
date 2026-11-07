@@ -101,6 +101,7 @@ describe('refresh concurrency with grace window (E2E)', () => {
     let secondResponse: request.Response
     // The mock Redis and the account, so a test can read the index the rotation script wrote.
     let redisClient: BootstrappedTestApp['redis']
+    let namespace: string
     let userId: string
 
     // Shared state IS shared across the it() blocks below — each test
@@ -116,6 +117,7 @@ describe('refresh concurrency with grace window (E2E)', () => {
       })
       app = bootstrap.app
       redisClient = bootstrap.redis
+      namespace = bootstrap.options.redisNamespace ?? 'auth'
 
       // ioredis-mock returns `undefined` when a Lua script returns nil, but the
       // production `TokenManagerService.reissueTokens` checks `oldSessionJson !==
@@ -204,7 +206,9 @@ describe('refresh concurrency with grace window (E2E)', () => {
     // the window in which "log out everywhere" could sweep past a session a concurrent
     // rotation was in the middle of minting.
     it('indexes the rotated session and its grace pointer from inside the script', async () => {
-      const members = await redisClient.smembers(`auth:${sessionIndexFor(userId, 'tenant-1')}`)
+      const members = await redisClient.smembers(
+        `${namespace}:${sessionIndexFor(userId, 'tenant-1')}`
+      )
 
       // Both freshly minted sessions are in the index — a revoke-all sweeping now removes them.
       expect(members).toContain(`rt:${sha256(firstResponse.body.refreshToken as string)}`)

@@ -50,7 +50,11 @@ function bootAfter(
   return bootstrapTestApp(
     {
       jwt: { secret: NEW_SECRET, previousSecrets: [OLD_SECRET] },
-      ...(identifierKey === undefined ? {} : { identifierKey })
+      ...(identifierKey === undefined ? {} : { identifierKey }),
+      // The same Redis, so the same keyspace: a namespace of its own would hide the first app's keys.
+      ...(before.options.redisNamespace === undefined
+        ? {}
+        : { redisNamespace: before.options.redisNamespace })
     },
     {
       mutateBuilder: (builder) =>

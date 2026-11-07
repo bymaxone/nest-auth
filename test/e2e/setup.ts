@@ -11,11 +11,14 @@
  * through ioredis-mock.
  */
 
+import { randomUUID } from 'node:crypto'
+
 import type { INestApplication } from '@nestjs/common'
 import type { Provider, Type } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { TestingModuleBuilder } from '@nestjs/testing'
 import type { NextFunction, Request, Response } from 'express'
+import IORedis from 'ioredis'
 import RedisMock from 'ioredis-mock'
 import type { Redis } from 'ioredis'
 
@@ -453,6 +456,38 @@ export function createMockRedis(): Redis {
   return new RedisMock({ port: nextMockRedisPort++ }) as unknown as Redis
 }
 
+/**
+ * The address of a real Redis server, set by the real-Redis jest run (`pnpm test:e2e:redis`)
+ * and absent in every other run.
+ */
+const REAL_REDIS_URL = process.env['BYMAX_E2E_REDIS_URL']
+
+/** Whether this run drives the suites against a real Redis instead of the in-memory mock. */
+export const usesRealRedis = REAL_REDIS_URL !== undefined && REAL_REDIS_URL.length > 0
+
+/**
+ * A key namespace no other bootstrap in this run shares, or `undefined` against the mock.
+ *
+ * A real server has one keyspace for every worker and every bootstrap, where each mock instance
+ * brings its own. The library prefixes every key it writes, scripts included, with the module's
+ * `redisNamespace`, so a distinct namespace per bootstrap isolates the suites without flushing a
+ * database another worker is using. The name is random, not a counter: Jest gives every test file
+ * a fresh module registry, so a counter restarts at each file and two files that run in one worker
+ * would share a namespace on the same server.
+ */
+export function realRedisNamespace(): string | undefined {
+  if (!usesRealRedis) return undefined
+  return `e2e-${randomUUID()}`
+}
+
+/**
+ * The Redis client a bootstrap injects: a connection to the real server under
+ * `BYMAX_E2E_REDIS_URL`, or a fresh mock when that variable is unset.
+ */
+export function createRedis(): Redis {
+  return usesRealRedis ? new IORedis(REAL_REDIS_URL as string) : createMockRedis()
+}
+
 // ---------------------------------------------------------------------------
 // Test app bootstrap
 // ---------------------------------------------------------------------------
@@ -593,7 +628,8 @@ export async function bootstrapTestApp(
   const repo = createMockUserRepository()
   const platformRepo = createMockPlatformUserRepository()
   const email = createMockEmailProvider()
-  const redis = createMockRedis()
+  const redis = createRedis()
+  const namespace = realRedisNamespace()
 
   const baseOptions: BymaxAuthModuleOptions = {
     jwt: { secret: JWT_SECRET },
@@ -601,6 +637,7 @@ export async function bootstrapTestApp(
       hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] },
       platformHierarchy: { SUPER_ADMIN: [] }
     },
+    ...(namespace === undefined ? {} : { redisNamespace: namespace }),
     tokenDelivery: 'bearer',
     emailVerification: { required: false },
     sessions: { enabled: true },
@@ -658,6 +695,14 @@ export async function bootstrapTestApp(
   applyTestMiddleware(app, extra.withoutCookieParser !== true)
   extra.beforeInit?.(app)
   await app.init()
+  if (usesRealRedis) {
+    // A mock holds no connection; a real client does, and the suite that closed the app owns it.
+    const close = app.close.bind(app)
+    app.close = async (): Promise<void> => {
+      await close()
+      redis.disconnect()
+    }
+  }
 
   return { app, repo, platformRepo, email, redis, options }
 }

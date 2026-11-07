@@ -80,6 +80,25 @@ jobs:
       - name: Documentation matches the built package
         run: pnpm check:published
 
+  # The Lua scripts behind refresh rotation, revocation, claims and rate limits run here against
+  # a real Redis 8 started by Testcontainers (the image is pinned by digest in
+  # `test/e2e/real-redis/redis-container.ts`). The default e2e run uses `ioredis-mock`, which only
+  # approximates them. The list of suites, and why each is on it, is in `jest.e2e.redis.config.ts`.
+  e2e-redis:
+    name: E2E (Testcontainers · Redis 8)
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The install step below runs the repository's own scripts; the token must not stay
+          # in the repository's git configuration for them to read.
+          persist-credentials: false
+      - uses: bymaxone/.github/.github/actions/setup-node-pnpm@v1
+      - name: End-to-end tests against a real Redis
+        run: pnpm test:e2e:redis
+
   security:
     if: github.event_name == 'pull_request' && github.event.repository.visibility == 'public'
     uses: bymaxone/.github/.github/workflows/security.yml@v1
@@ -106,7 +125,7 @@ jobs:
   ci-pass:
     name: CI passed
     if: always()
-    needs: [ci, verify, security]
+    needs: [ci, verify, e2e-redis, security]
     runs-on: ubuntu-latest
     # Once this is the required check, a hung runner holds every merge behind it
     # for GitHub's default of six hours. The job is one comparison, so a short

@@ -74,6 +74,14 @@ an "Apply to a derived backend" note, because the version number says nothing ab
 here. The release workflow runs it after `prepublishOnly` and before the publish; `prepublishOnly`
 itself does not include it. There is no override: write the note.
 
+End-to-end suites run on `ioredis-mock` (`pnpm test:e2e`), which needs no container runtime. The Lua
+scripts behind refresh rotation, revocation, claims and rate limits are also run against a real Redis
+(`pnpm test:e2e:redis`): the global setup starts one Testcontainers container, with the image pinned
+by digest in `test/e2e/real-redis/redis-container.ts`, and the harness in `test/e2e/setup.ts` connects
+every bootstrap to it under a namespace of its own. It needs Docker, and CI runs it as the `e2e-redis`
+job. The suites on that run are listed, with a reason per group, in `jest.e2e.redis.config.ts`; a
+suite that reads or scans Redis keys directly must bound itself to its app's `redisNamespace`.
+
 ---
 
 ## Pre-task checklist

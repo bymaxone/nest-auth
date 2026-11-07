@@ -97,6 +97,7 @@
     "test:cov": "jest --coverage",
     "test:cov:all": "jest --config jest.coverage.config.ts --coverage",
     "test:e2e": "jest --config jest.e2e.config.ts",
+    "test:e2e:redis": "jest --config jest.e2e.redis.config.ts",
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json"
   },
@@ -222,6 +223,7 @@
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "supertest": "^7.2.2",
+    "testcontainers": "^12.2.1",
     "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
     "tsup": "^9.0.0",
