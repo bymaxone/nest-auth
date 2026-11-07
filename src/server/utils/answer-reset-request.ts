@@ -10,9 +10,11 @@
  *   every address, so it answers `auth.internal` (500) after the floor;
  * - a failure AFTER the account is known (issuing or storing the code) happens only for a
  *   registered address, so it is logged and the 200 acknowledgement stands;
- * - the cooldown this call took is released on any failure, so the retry a 500 invites is not
- *   refused for a minute. A cooldown hit takes the same floor as every other exit, so releasing it
- *   for some accounts opens no timing difference.
+ * - the cooldown this call took is released when the request itself observes the failure (the lookup
+ *   or the code store), so the retry a 500 invites is not refused for the rest of the window. A send
+ *   that fails after the response has left is detached and never releases it: a release from there
+ *   is a delete by key that can remove a later request's fresh cooldown. A cooldown hit takes the
+ *   same floor as every other exit, so releasing it for some accounts opens no timing difference.
  *
  * @layer Utility
  */
