@@ -14,6 +14,8 @@
 import type { Logger } from '@nestjs/common'
 
 import { describeChannelStatus } from './describe-error'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import type { AuthRedisService } from '../redis/auth-redis.service'
 
 /** The account a logout belongs to, as the marker records it. */
@@ -59,21 +61,34 @@ export async function rememberPendingLogout(
  * Settles the marker once a logout has completed, and says whether the logout is announced.
  *
  * The marker is removed whatever its source, so a later repeat finds nothing. When the owner came
- * from the stored session the logout is announced regardless. When it came from a marker the
- * logout is announced only if this call removed it, which is what keeps the announcement to one
- * when retries race: the removal is a single atomic operation and only one caller sees it succeed.
- * A removal the store refuses never turns a completed logout into a failure.
+ * from the marker the logout is announced only if this call removed it, which is what keeps the
+ * announcement to one when retries race: the removal is a single atomic operation and only one
+ * caller sees it succeed. A removal the store refuses never turns a completed logout into a
+ * failure, except where a stale marker is left behind (below).
+ *
+ * When the owner came from the stored session the logout is announced regardless, but a stale
+ * marker whose removal the store refuses would let a later retry claim it and announce the same
+ * logout again. A second read decides: no marker left, announce; a marker left, answer an error
+ * and announce nothing, because the session is already gone and the retry claims the marker and
+ * announces once; the read refused too, so whether a marker is left is unknown: the owner is
+ * recorded again, best effort, and the error is answered, so the retry has a marker to claim.
  *
  * @param redis - The Redis wrapper.
  * @param key - The un-namespaced marker key.
  * @param fromSession - Whether the owner came from the stored session rather than the marker.
+ * @param owner - The account the logout belongs to, recorded again when the marker cannot be
+ *   shown absent.
+ * @param ttlSeconds - The lifetime a marker written again is given.
  * @param logger - Where a refused removal is reported, without the key.
  * @returns `true` when the completed logout is to be announced.
+ * @throws {@link AuthException} `INTERNAL` when a stale marker may remain, so the client retries.
  */
 export async function settlePendingLogout(
   redis: AuthRedisService,
   key: string,
   fromSession: boolean,
+  owner: PendingLogoutOwner,
+  ttlSeconds: number,
   logger: Logger
 ): Promise<boolean> {
   try {
@@ -81,6 +96,28 @@ export async function settlePendingLogout(
     return fromSession || removed
   } catch (err: unknown) {
     logger.warn(`logout: the retry marker could not be cleared — ${describeChannelStatus(err)}`)
-    return fromSession
+    if (!fromSession) return false
+    return confirmNoStaleMarker(redis, key, owner, ttlSeconds, logger)
   }
+}
+
+/**
+ * Decides whether a stale marker that could not be removed is still there.
+ *
+ * @returns `true` when a second read finds no marker.
+ * @throws {@link AuthException} `INTERNAL` when a marker is left, or when that cannot be told.
+ */
+async function confirmNoStaleMarker(
+  redis: AuthRedisService,
+  key: string,
+  owner: PendingLogoutOwner,
+  ttlSeconds: number,
+  logger: Logger
+): Promise<boolean> {
+  try {
+    if ((await redis.get(key)) === null) return true
+  } catch {
+    await rememberPendingLogout(redis, key, owner, ttlSeconds, logger)
+  }
+  throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
 }

@@ -569,12 +569,13 @@ export class AuthService {
 
     // A refused revocation write is not a completed logout: no hook, and the caller is told so.
     // The session record is already gone, so the owner is kept for the retry that will finish it.
+    const markerTtl = logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn)
     if (failures.length > 0 && fromSession) {
       await rememberPendingLogout(
         this.redis,
         markerKey,
         { userId, tenantId },
-        logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn),
+        markerTtl,
         this.logger
       )
     }
@@ -584,7 +585,14 @@ export class AuthService {
     // told us who that was. A logout for an already-gone session has nobody to name.
     if (
       userId !== '' &&
-      (await settlePendingLogout(this.redis, markerKey, fromSession, this.logger))
+      (await settlePendingLogout(
+        this.redis,
+        markerKey,
+        fromSession,
+        { userId, tenantId },
+        markerTtl,
+        this.logger
+      ))
     ) {
       this.emitLogout(userId, tenantId)
     }

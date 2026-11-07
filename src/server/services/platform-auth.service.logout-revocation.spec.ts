@@ -35,7 +35,13 @@ const HASH = createHash('sha256').update(RAW_REFRESH).digest('hex')
 const JTI = 'platform-jti-under-test'
 const ADMIN_ID = 'admin-1'
 
-const mockRedis = { readSessionOwner: jest.fn(), set: jest.fn(), del: jest.fn(), srem: jest.fn() }
+const mockRedis = {
+  readSessionOwner: jest.fn(),
+  set: jest.fn(),
+  del: jest.fn(),
+  get: jest.fn(),
+  srem: jest.fn()
+}
 const mockTokenManager = { verifyPlatformIgnoringExpiry: jest.fn() }
 const mockHooks = { afterPlatformLogout: jest.fn() }
 
@@ -293,26 +299,68 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
     await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
   })
 
-  // Scenario: the marker cannot be removed once the logout has completed. Expected: from the session
-  // the logout still announces; from the marker it does not, since there was no claim.
-  it.each([
-    ['the session', ADMIN_ID, '', 1],
-    ['the marker', '', ADMIN_ID, 0]
-  ])(
-    'should complete when the marker cannot be removed and the owner came from %s',
-    async (_name, session, marker, announced) => {
-      ownerKnownBy(session, marker)
+  // Scenario: the marker cannot be claimed once the logout has completed and the owner came from
+  // the marker. Expected: the logout completes without announcing, since there was no claim.
+  it('should complete without announcing when the marker cannot be claimed', async () => {
+    ownerKnownBy('', ADMIN_ID)
+    mockRedis.del.mockImplementation(async (key: string) => {
+      if (key.startsWith('plp:')) throw STORE_REFUSED
+      return true
+    })
+
+    await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe(ADMIN_ID)
+    await flushMicrotasks()
+
+    expect(mockHooks.afterPlatformLogout).not.toHaveBeenCalled()
+  })
+
+  describe('a stale marker the store refuses to remove, with the owner from the session', () => {
+    beforeEach(() => {
+      ownerKnownBy(ADMIN_ID, '')
       mockRedis.del.mockImplementation(async (key: string) => {
         if (key.startsWith('plp:')) throw STORE_REFUSED
         return true
       })
+    })
+
+    // Scenario: a second read shows no marker is left. Expected: the logout completes and announces.
+    it('should announce when a second read shows no marker is left', async () => {
+      mockRedis.get.mockResolvedValue(null)
 
       await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe(ADMIN_ID)
       await flushMicrotasks()
 
-      expect(mockHooks.afterPlatformLogout).toHaveBeenCalledTimes(announced)
-    }
-  )
+      expect(mockHooks.afterPlatformLogout).toHaveBeenCalledTimes(1)
+    })
+
+    // Scenario: a second read still finds the marker. Expected: the logout answers an error and
+    // announces nothing. Why: the retry claims the marker and announces once; announcing now would
+    // announce the same logout twice.
+    it('should answer an error and announce nothing when the marker is still there', async () => {
+      mockRedis.get.mockResolvedValue('{"userId":"x"}')
+
+      await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBeInstanceOf(AuthException)
+      await flushMicrotasks()
+
+      expect(mockHooks.afterPlatformLogout).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the second read is refused too. Expected: the owner is recorded again for the retry
+    // and the logout answers an error without announcing.
+    it('should record the owner again and answer an error when the second read fails', async () => {
+      mockRedis.get.mockRejectedValue(STORE_REFUSED)
+
+      await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBeInstanceOf(AuthException)
+      await flushMicrotasks()
+
+      expect(mockRedis.set).toHaveBeenCalledWith(
+        expect.stringMatching(/^plp:/),
+        expect.stringContaining('"userId"'),
+        expect.any(Number)
+      )
+      expect(mockHooks.afterPlatformLogout).not.toHaveBeenCalled()
+    })
+  })
 
   // Scenario: a retry that found only the marker fails again. Expected: the marker is not rewritten;
   // it is written from the session record only, and the existing one is left to expire.

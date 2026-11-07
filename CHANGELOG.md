@@ -20,6 +20,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
+- **A logout whose stale retry marker cannot be removed no longer announces itself twice.** When
+  the owner comes from the stored session and the store refuses to remove a leftover `lp:` or
+  `plp:` marker, the logout reads the marker again. With no marker left it completes and announces;
+  with the marker still there it answers `500` `auth.internal` and announces nothing, because the
+  session is already gone and the retry claims the marker and announces once; when that read is
+  refused too, the owner is recorded again, best effort, and the logout answers `500`. A client
+  that retries a `5xx` logout needs no change; a monitor can see this `500` during a Redis fault.
+  The delivery guarantee in the shared contract is unchanged. `settlePendingLogout` takes the owner
+  and the marker lifetime as two more parameters; it is not exported from the package.
 - **A password-reset request that cannot be served answers `500` instead of a silent `200` when
   the failure is the same for every address.** `POST /password/forgot-password` and
   `POST /password/resend-otp` used to acknowledge `200` whatever failed. A failure before the
@@ -56,6 +65,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 ### Fixed
 
 - **A password-reset request no longer hides an outage behind `200`.** See the note above.
+- **A logout no longer announces itself twice when its stale marker cannot be removed.** See the note
+  above.
 - **A failed logout through the Next.js proxy no longer looks successful.** See the note above.
 - **A failed logout no longer shows the UI as signed out while the session is alive.** See the
   note above.
