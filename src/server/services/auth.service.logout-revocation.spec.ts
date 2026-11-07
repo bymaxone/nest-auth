@@ -222,6 +222,29 @@ describe('AuthService.logout — refused revocation writes', () => {
     )
   })
 
+  // Scenario: two attempts of one logout that both read the live session, a successful one that
+  // finishes first and a failing one that writes its marker afterwards, then a retry. Expected: the
+  // successful attempt announces, the failing one does not, and the retry claims the marker the
+  // failing one left and announces again. Why: this pins the documented guarantee, which is
+  // exactly-once for sequential retries and at-least-once when attempts of one logout run
+  // concurrently; a change to it has to be a decision, not a surprise.
+  it('should announce twice when a failed attempt that read the session early writes its marker late', async () => {
+    await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe('user-1')
+    await flushMicrotasks()
+    expect(mockHooks.afterLogout).toHaveBeenCalledTimes(1)
+
+    mockRedis.set.mockRejectedValueOnce(STORE_REFUSED)
+    await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
+    expect(mockRedis.set).toHaveBeenCalledWith(`lp:${HASH}`, expect.any(String), 300)
+
+    ownerKnownBy(NO_OWNER, OWNER)
+    mockRedis.del.mockResolvedValue(true)
+    await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe('user-1')
+    await flushMicrotasks()
+
+    expect(mockHooks.afterLogout).toHaveBeenCalledTimes(2)
+  })
+
   // Scenario: a retry that finds the marker already removed, because another retry claimed it.
   // Expected: it completes and answers the owner, and fires nothing. Why: the removal is the claim,
   // and only the caller that removed the marker announces the logout.

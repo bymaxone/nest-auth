@@ -2,6 +2,12 @@
  * @fileoverview The two halves of the marker a failed logout leaves for its retry: writing it when
  * an attempt fails, and settling it when a logout completes.
  *
+ * The guarantee is exactly-once for sequential retries: a failed attempt, then retries one after
+ * another, announce the logout once. It is at-least-once when attempts of one logout run
+ * concurrently, because attempts that all read the live session each announce on completing, and
+ * a failed attempt that is slower than a successful one can write its marker after that one has
+ * cleared it, leaving a marker a later retry claims.
+ *
  * @layer Utility
  */
 

@@ -13,8 +13,9 @@ export type LogoutPlane = 'dashboard' | 'platform'
 /**
  * The shortest a marker lives, in seconds.
  *
- * Five minutes, the span the library already treats as "the user is still at the keyboard": long
- * enough for a client's own retry, and the floor for a deployment whose access tokens are shorter.
+ * Five minutes, the span of "the user is still at the keyboard" used for recent authentication:
+ * long enough for a client's own retry, and the floor for a deployment whose access tokens are
+ * shorter.
  */
 export const LOGOUT_PENDING_MIN_TTL_SECONDS = 300
 

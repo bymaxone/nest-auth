@@ -222,6 +222,28 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
     )
   })
 
+  // Scenario: two attempts of one logout that both read the live session, a successful one that
+  // finishes first and a failing one that writes its marker afterwards, then a retry. Expected: the
+  // retry claims the marker the failing attempt left and announces a second time. Why: this pins
+  // the documented guarantee, exactly-once for sequential retries and at-least-once when attempts
+  // of one logout run concurrently.
+  it('should announce twice when a failed attempt that read the session early writes its marker late', async () => {
+    await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe(ADMIN_ID)
+    await flushMicrotasks()
+    expect(mockHooks.afterPlatformLogout).toHaveBeenCalledTimes(1)
+
+    mockRedis.set.mockRejectedValueOnce(STORE_REFUSED)
+    await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
+    expect(mockRedis.set).toHaveBeenCalledWith(`plp:${HASH}`, expect.any(String), 300)
+
+    ownerKnownBy('', ADMIN_ID)
+    mockRedis.del.mockResolvedValue(true)
+    await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe(ADMIN_ID)
+    await flushMicrotasks()
+
+    expect(mockHooks.afterPlatformLogout).toHaveBeenCalledTimes(2)
+  })
+
   // Scenario: a retry that finds the marker already removed by another retry. Expected: it completes
   // and fires nothing; only the caller that removed the marker announces.
   it('should not announce a logout whose marker another retry already claimed', async () => {

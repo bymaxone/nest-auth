@@ -49,8 +49,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   dashboard plane and `plp:{...}` on the platform plane, holding the owner and tenant from the
   session record; it lives for the access-token lifetime and never less than 300 seconds. A retry
   that finds no session reads the owner from the marker, and when it completes with no failure it
-  removes the marker and fires the hook only if that removal removed it, so racing retries announce
-  once and a repeat of a completed logout announces nothing. The owner is never taken from an access
+  removes the marker and fires the hook only if that removal removed it, so sequential retries
+  announce once and a repeat announces nothing; attempts of one logout that run concurrently are
+  at-least-once. The owner is never taken from an access
   token's claims. A marker that cannot be written leaves the retry silent, as before, and a marker
   that cannot be removed never fails a completed logout. HTTP statuses, bodies and cookies are
   unchanged. The shared contract gains the two key prefixes and a `logoutPending` record row. A
