@@ -1,3 +1,10 @@
+/**
+ * @fileoverview The metadata a route sets to say how strictly {@link RequestEncodingGuard} checks
+ * the `Content-Encoding` of its request: the policy type, the key it is stored under, and the
+ * `@RequestEncoding()` decorator that sets it.
+ *
+ * @layer Decorator
+ */
 import { SetMetadata } from '@nestjs/common'
 
 /**
