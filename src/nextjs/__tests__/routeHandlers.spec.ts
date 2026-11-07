@@ -8,8 +8,9 @@
  *     deduplication, cookie clearing on failure.
  *   - `createClientRefreshHandler`: success, upstream failure,
  *     method guard, Cache-Control on all responses.
- *   - `createLogoutHandler`: cookies cleared regardless of upstream
- *     response, redirect vs status mode, method guard.
+ *   - `createLogoutHandler`: cookies cleared on a final upstream answer,
+ *     redirect vs status mode, method guard. The upstream-failure cases
+ *     live in `createLogoutHandler.upstream-failure.spec.ts`.
  *   - `resolveSafeDestination`: every vector from the open-redirect
  *     defence rule set.
  *
@@ -709,8 +710,7 @@ describe('createLogoutHandler', () => {
     fetchSpy = jest.spyOn(globalThis, 'fetch' as never) as jest.SpyInstance
   })
 
-  // Redirect mode: 302 to loginPath + 3 cookies cleared regardless
-  // of upstream response.
+  // Redirect mode: 302 to loginPath + 3 cookies cleared on a final upstream answer.
   it('clears cookies and redirects to loginPath in redirect mode on upstream success', async () => {
     fetchSpy.mockResolvedValueOnce(stubUpstreamResponse({ status: 200 }))
 
@@ -730,9 +730,9 @@ describe('createLogoutHandler', () => {
     expect(getSetCookies(response).filter((c) => /Max-Age=0/i.test(c))).toHaveLength(3)
   })
 
-  // Upstream failure: cookies STILL cleared. This is the one
-  // guarantee logout absolutely must preserve.
-  it('clears cookies even when the upstream fetch throws', async () => {
+  // Upstream unreachable: the logout is unconfirmed, so the cookies stay and the answer is a
+  // 502 — the client keeps the handle it needs to retry.
+  it('keeps the cookies and answers 502 when the upstream fetch throws', async () => {
     fetchSpy.mockRejectedValueOnce(new Error('network down'))
 
     const handler = createLogoutHandler({
@@ -746,7 +746,8 @@ describe('createLogoutHandler', () => {
     })
 
     const response = await handler(request as never)
-    expect(getSetCookies(response).filter((c) => /Max-Age=0/i.test(c))).toHaveLength(3)
+    expect(response.status).toBe(502)
+    expect(getSetCookies(response)).toEqual([])
   })
 
   // Status mode: 200 empty body + cookies cleared.

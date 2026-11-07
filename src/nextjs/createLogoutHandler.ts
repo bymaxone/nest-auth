@@ -4,14 +4,24 @@
  *
  * The handler forwards the incoming cookies to the upstream NestJS
  * `POST /auth/logout` endpoint (which revokes the refresh token
- * server-side) and, regardless of whether the upstream responds with
- * success or failure, clears the three auth cookies on the browser.
- * A user who pressed "logout" MUST end up logged out of the browser
- * session even if the upstream is unreachable — otherwise a network
- * glitch leaves them with cookies they thought they had invalidated.
- * The upstream's answer is not surfaced to the caller, so a logout the
- * server could not complete (it answers a 5xx when the store refuses a
- * revocation write) looks the same as one that did.
+ * server-side) and clears the three auth cookies on the browser once the
+ * upstream has given a final answer.
+ *
+ * Rule, one line per upstream outcome:
+ *
+ *   - the upstream answers below 500 (2xx, and a 4xx such as an expired or
+ *     already-revoked session): the logout is final, so the three cookies
+ *     are cleared and the configured response (200, or the redirect) is sent;
+ *   - the upstream answers 5xx: the logout did not complete and the session
+ *     is still alive, so NO cookie is touched and the upstream status is
+ *     answered as it is, with no redirect in `'redirect'` mode;
+ *   - the upstream is unreachable or the request fails: NO cookie is touched
+ *     and 502 is answered, with no redirect in `'redirect'` mode.
+ *
+ * The cookies are the client's only handle for retrying the same logout, so
+ * clearing them after a failed revocation would leave a live session the
+ * user believes is gone. The idempotent retry of the NestJS endpoint is
+ * what completes it.
  *
  * Two response modes are supported, expressed as a discriminated
  * union on {@link LogoutHandlerConfig}:
@@ -52,6 +62,12 @@ import { redirectToPath } from './internal/redirectToPath'
 
 /** Default upstream logout endpoint, matching the NestJS module defaults. */
 const DEFAULT_LOGOUT_PATH = `/auth/${AUTH_DASHBOARD_ROUTES.logout}`
+
+/** First status the handler treats as a logout the upstream did not complete. */
+const SERVER_ERROR_STATUS = 500
+
+/** The answer when the upstream could not be reached at all. */
+const BAD_GATEWAY_STATUS = 502
 
 /** Default cookie path used when clearing the refresh-token cookie. */
 const DEFAULT_REFRESH_COOKIE_PATH = '/api/auth'
@@ -155,9 +171,7 @@ export function createLogoutHandler(config: LogoutHandlerConfig): LogoutHandler 
       return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store, no-cache' } })
     }
 
-    // Best-effort upstream logout. We intentionally ignore the
-    // response: whether the upstream succeeds or fails, the browser
-    // cookies MUST be cleared so the user is locally logged out.
+    // The upstream's answer decides whether the cookies may go: see the rule in the file header.
     //
     // Forward both `cookie` (cookie-mode tokenDelivery) and `authorization`
     // (bearer-mode tokenDelivery). Without forwarding `authorization`, the
@@ -171,18 +185,21 @@ export function createLogoutHandler(config: LogoutHandlerConfig): LogoutHandler 
     const incomingAuth = request.headers.get('authorization')
     if (incomingAuth) upstreamHeaders.authorization = incomingAuth
 
+    let upstreamStatus: number
     try {
-      await fetch(logoutUrl, {
+      const upstream = await fetch(logoutUrl, {
         method: 'POST',
         headers: upstreamHeaders,
         redirect: 'manual'
       })
+      upstreamStatus = upstream.status
     } catch {
-      // Swallow — clearing cookies locally is the user-visible
-      // guarantee.
+      return failedLogoutResponse(BAD_GATEWAY_STATUS)
     }
 
-    return buildLogoutResponse(request, config, refreshCookiePath)
+    if (upstreamStatus >= SERVER_ERROR_STATUS) return failedLogoutResponse(upstreamStatus)
+
+    return buildLogoutResponse(config, refreshCookiePath)
   }
 }
 
@@ -219,15 +236,19 @@ function validateLogoutConfig(config: LogoutHandlerConfig): string {
 }
 
 /**
+ * The answer for a logout the upstream did not complete: `status`, an empty body and no
+ * `Set-Cookie`, so the browser keeps the cookies a retry needs. Never a redirect, in either mode.
+ */
+function failedLogoutResponse(status: number): Response {
+  return new Response(null, { status, headers: { 'Cache-Control': 'no-store, no-cache' } })
+}
+
+/**
  * Build the final response — either a 302 to `loginPath` or a 200
  * empty body, depending on the configured `mode`. In both cases the
  * three auth cookies are cleared.
  */
-function buildLogoutResponse(
-  request: NextRequest,
-  config: LogoutHandlerConfig,
-  refreshCookiePath: string
-): Response {
+function buildLogoutResponse(config: LogoutHandlerConfig, refreshCookiePath: string): Response {
   if (config.mode === 'redirect') {
     // Relative `Location`, so a forged `Host` has nothing to change — see `redirectToPath`.
     const response = redirectToPath(config.loginPath)

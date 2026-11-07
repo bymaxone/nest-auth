@@ -887,7 +887,7 @@ export const POST = createLogoutHandler({
 })
 ```
 
-The handler forwards the logout request to the NestJS backend and clears all auth cookies on the response.
+The handler forwards the logout request to the NestJS backend and clears all auth cookies on the response once the backend has given a final answer (below 500). When the backend answers 5xx or cannot be reached, the cookies are kept and the failure is answered (the backend's status, or 502), with no redirect in `'redirect'` mode, so the client can retry the same logout.
 
 ### 6.7 The 500ms Redirect Delay
 
