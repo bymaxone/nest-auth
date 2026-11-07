@@ -5,8 +5,8 @@
  * The re-encryption rewrites the whole MFA record, so it is a read-modify-write like every other
  * MFA transition and must not land over a `disable` or a re-enrolment that completed in the
  * meantime. The repository is an in-memory store whose first `updateMfa` can be held, which makes
- * the interleaving deterministic instead of timing-dependent. Kept apart from
- * `mfa.service.spec.ts` because that file is already over the size limit.
+ * the interleaving deterministic, not timing-dependent. Kept apart from
+ * `mfa.service.spec.ts` because that file is over the size limit.
  */
 
 import { createHash } from 'node:crypto'
@@ -310,7 +310,7 @@ describe('MfaService — re-encryption against a concurrent MFA transition', () 
   // Scenario: nothing else touches the account. Expected: the secret ends up readable under the
   // current key, with the plaintext unchanged and the recovery digests untouched. Why: the
   // serialization must not cost the migration it exists to protect.
-  it('still re-encrypts the secret when nothing else changed the record', async () => {
+  it('re-encrypts the secret when nothing else changed the record', async () => {
     const { base32 } = generateTotpSecret()
     await build(record({ mfaSecret: encrypt(base32, RETIRED_KEY), mfaRecoveryCodes: ['digest-a'] }))
 
@@ -373,7 +373,7 @@ describe('MfaService — re-encryption against a concurrent MFA transition', () 
   // RECOVERY-code challenge was in flight. Expected: the code is still removed from the list.
   // Why: only the ciphertext changed, so treating it as a re-enrolment would skip the splice and
   // leave a spent code redeemable once its single-use claim expires.
-  it('still spends the recovery code when a sibling only re-encrypted the same secret', async () => {
+  it('spends the recovery code when a sibling only re-encrypted the same secret', async () => {
     const { base32 } = generateTotpSecret()
     const plain = '1234-5678-9012'
     const other = hmacSha256('9999-9999-9999', HMAC_KEY)
