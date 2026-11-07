@@ -18,6 +18,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.18] - 2026-11-07
+
 ### Apply to a derived backend
 
 - **A request body declared compressed is now refused with `415 auth.validation`, whatever the
@@ -69,7 +71,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   writes back the list without the used code. A sibling challenge that only re-encrypted the same secret does not count as a
   change. Accounts already past the migration, and deployments with no retired key, are not
   affected; draining the retired keys closes the exposure. When another transition holds the lock
-  the migration is skipped and retried by the next challenge. No contract change.
+  the migration is skipped and retried by the next challenge. No contract change. Private
+  `holdsSecret` appears in the `MfaService` declarations, and the private `reencryptSecret` loses
+  its recovery-codes parameter.
 
 ### Fixed
 
@@ -4479,7 +4483,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.17...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.18...HEAD
+[1.4.18]: https://github.com/bymaxone/nest-auth/compare/v1.4.17...v1.4.18
 [1.4.17]: https://github.com/bymaxone/nest-auth/compare/v1.4.16...v1.4.17
 [1.4.16]: https://github.com/bymaxone/nest-auth/compare/v1.4.15...v1.4.16
 [1.4.15]: https://github.com/bymaxone/nest-auth/compare/v1.4.14...v1.4.15
