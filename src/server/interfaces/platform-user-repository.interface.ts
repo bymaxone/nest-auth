@@ -176,9 +176,9 @@ export interface IPlatformUserRepository {
    * `MFA_TRANSITION_LOCK_TTL_SECONDS` (10 seconds), so a process that dies mid-write cannot strand
    * the account. A write still running when the lock expires is overtaken: a second change takes
    * the lock, reads the record and writes it, and this write then lands after it and overwrites it.
-   * The interface has no compare-and-set for the library to use, so it cannot detect that. An
-   * implementation that may be slow SHOULD make the write a compare-and-set on the previous
-   * `mfaSecret` and recovery-code values.
+   * The interface has no compare-and-set for the library to use, so it cannot detect that. The
+   * parameters carry only the new values, so a guard inside this method can narrow the window only
+   * for a stall after its own read; closing it would need the values the library read passed in.
    *
    * @param id - The platform administrator's unique identifier.
    * @param data - New MFA state. See {@link UpdatePlatformMfaData}.

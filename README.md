@@ -1059,7 +1059,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > enrolled users have had time to authenticate at least once.
 
 > [!WARNING]
-> **Keep your `updateMfa` fast, or make it a compare-and-set.** Every MFA state change
+> **Keep your `updateMfa` fast.** Every MFA state change
 > rewrites the account's MFA record through your repository's `updateMfa`, and the library
 > serializes those writes per account with a lock that expires on its own
 > (`MFA_TRANSITION_LOCK_TTL_SECONDS`, 10 seconds) so a process that dies mid-write cannot strand
@@ -1068,10 +1068,12 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > write then lands _after_ it and overwrites it. The repository interface offers no
 > compare-and-set for the library to use, so it cannot detect this. Keep `updateMfa` well under the
 > lock's lifetime (a plain single-row update is, but a call that waits on a contended lock or a slow
-> replica may not be), or give your implementation a compare-and-set of its own, for example a
-> `WHERE` on the previous `mfaSecret` and recovery-code values. The lock is held across the read the
-> transition makes inside it as well as the write, so a slow `findById` counts against the same
-> lifetime.
+> replica may not be). A guard of your own inside `updateMfa` can narrow the window only for a stall
+> that happens after the guard's own read, such as a wait on a row lock inside the `UPDATE`: the
+> library passes `updateMfa` the new values and not the ones it read, so closing the window
+> completely would need those values passed in, which the interface does not do. The lock is held
+> across the read the transition makes inside it as well as the write, so a slow `findById` counts
+> against the same lifetime.
 
 > [!IMPORTANT]
 > **The parameters that carry a control's strength are bounded at startup.** `mfa.totpWindow`
