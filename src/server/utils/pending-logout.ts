@@ -36,12 +36,14 @@ export async function rememberPendingLogout(
   ttlSeconds: number,
   logger: Logger
 ): Promise<void> {
-  const record =
-    owner.tenantId === undefined
-      ? { userId: owner.userId }
-      : { userId: owner.userId, tenantId: owner.tenantId }
   try {
-    await redis.set(key, JSON.stringify(record), ttlSeconds)
+    // `JSON.stringify` omits an undefined `tenantId`, which is how a record with no tenant is
+    // written: the field is absent, never the string `undefined`.
+    await redis.set(
+      key,
+      JSON.stringify({ userId: owner.userId, tenantId: owner.tenantId }),
+      ttlSeconds
+    )
   } catch (err: unknown) {
     logger.warn(`logout: the owner could not be kept for a retry — ${describeChannelStatus(err)}`)
   }
