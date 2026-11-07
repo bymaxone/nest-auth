@@ -177,23 +177,134 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
 
     await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe(ADMIN_ID)
 
-    expect(mockRedis.set).toHaveBeenCalledTimes(2)
+    const blacklistWrites = mockRedis.set.mock.calls.filter(([key]) =>
+      String(key).startsWith('rv:')
+    )
+    expect(blacklistWrites).toHaveLength(2)
     expect(mockRedis.set).toHaveBeenLastCalledWith(`rv:${JTI}`, '1', expect.any(Number))
   })
 
+  /** Makes the owner lookup answer by key: the live `prt:` record and the retry marker `plp:`. */
+  function ownerKnownBy(sessionOwner: string, markerOwner: string): void {
+    mockRedis.readSessionOwner.mockImplementation(async (key: string) => ({
+      userId: key.startsWith('prt:') ? sessionOwner : markerOwner,
+      tenantId: undefined
+    }))
+  }
+
   // Scenario: the blacklist write is refused on the first attempt, which still deletes the refresh
-  // session, and the retry then finds no session to name an owner. Expected: neither call fires the
-  // logout hook. Why: the hook is fired by the call that names the owner; this pins the documented
-  // gap so it cannot change unnoticed.
-  it('should deliver the logout hook on neither the failed attempt nor the retry that completes it', async () => {
+  // session, and the retry finds no session to name an owner. Expected: the failed attempt fires no
+  // hook and writes a marker naming the administrator under the platform key with a lifetime of at
+  // least five minutes; the retry reads the marker, completes, removes it and fires the hook once.
+  // Why: only the marker still says whose logout it was.
+  it('should announce the logout on the retry that completes it, for the owner the marker names', async () => {
     mockRedis.set.mockRejectedValueOnce(STORE_REFUSED)
     await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
-    mockRedis.readSessionOwner.mockResolvedValue({ userId: '', tenantId: undefined })
+    await flushMicrotasks()
+
+    expect(mockHooks.afterPlatformLogout).not.toHaveBeenCalled()
+    expect(mockRedis.set).toHaveBeenCalledWith(
+      `plp:${HASH}`,
+      JSON.stringify({ userId: ADMIN_ID }),
+      300
+    )
+
+    ownerKnownBy('', ADMIN_ID)
+    mockRedis.del.mockResolvedValue(true)
+    await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe(ADMIN_ID)
+    await flushMicrotasks()
+
+    expect(mockRedis.del).toHaveBeenCalledWith(`plp:${HASH}`)
+    expect(mockHooks.afterPlatformLogout).toHaveBeenCalledTimes(1)
+    expect(mockHooks.afterPlatformLogout).toHaveBeenCalledWith(
+      ADMIN_ID,
+      expect.objectContaining({ plane: 'platform', userId: ADMIN_ID })
+    )
+  })
+
+  // Scenario: a retry that finds the marker already removed by another retry. Expected: it completes
+  // and fires nothing; only the caller that removed the marker announces.
+  it('should not announce a logout whose marker another retry already claimed', async () => {
+    ownerKnownBy('', ADMIN_ID)
+    mockRedis.del.mockResolvedValue(false)
+
+    await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe(ADMIN_ID)
+    await flushMicrotasks()
+
+    expect(mockHooks.afterPlatformLogout).not.toHaveBeenCalled()
+  })
+
+  // Scenario: no session and no marker. Expected: silent, and the marker key is left alone.
+  it('should stay silent, and leave the marker key alone, when nothing names an owner', async () => {
+    ownerKnownBy('', '')
 
     await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe('')
     await flushMicrotasks()
 
     expect(mockHooks.afterPlatformLogout).not.toHaveBeenCalled()
+    expect(mockRedis.del).not.toHaveBeenCalledWith(`plp:${HASH}`)
+  })
+
+  // Scenario: a logout that needed no retry. Expected: no marker is written, the hook fires once, and
+  // a stale marker is removed so it cannot announce a second time.
+  it('should announce once from the session and clear any stale marker', async () => {
+    await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe(ADMIN_ID)
+    await flushMicrotasks()
+
+    expect(mockRedis.set).not.toHaveBeenCalledWith(
+      `plp:${HASH}`,
+      expect.anything(),
+      expect.anything()
+    )
+    expect(mockRedis.del).toHaveBeenCalledWith(`plp:${HASH}`)
+    expect(mockHooks.afterPlatformLogout).toHaveBeenCalledTimes(1)
+  })
+
+  // Scenario: the marker cannot be written while the logout is already failing. Expected: the caller
+  // still gets the original refusal.
+  it('should raise the original refusal when the marker cannot be written', async () => {
+    mockRedis.set.mockImplementation(async (key: string) => {
+      if (key.startsWith('rv:')) throw STORE_REFUSED
+      throw OTHER_REFUSAL
+    })
+
+    await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
+  })
+
+  // Scenario: the marker cannot be removed once the logout has completed. Expected: from the session
+  // the logout still announces; from the marker it does not, since there was no claim.
+  it.each([
+    ['the session', ADMIN_ID, '', 1],
+    ['the marker', '', ADMIN_ID, 0]
+  ])(
+    'should complete when the marker cannot be removed and the owner came from %s',
+    async (_name, session, marker, announced) => {
+      ownerKnownBy(session, marker)
+      mockRedis.del.mockImplementation(async (key: string) => {
+        if (key.startsWith('plp:')) throw STORE_REFUSED
+        return true
+      })
+
+      await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe(ADMIN_ID)
+      await flushMicrotasks()
+
+      expect(mockHooks.afterPlatformLogout).toHaveBeenCalledTimes(announced)
+    }
+  )
+
+  // Scenario: a retry that found only the marker fails again. Expected: the marker is not rewritten;
+  // it is written from the session record only, and the existing one is left to expire.
+  it('should not rewrite the marker when a retry that found only the marker fails again', async () => {
+    ownerKnownBy('', ADMIN_ID)
+    mockRedis.set.mockRejectedValue(STORE_REFUSED)
+
+    await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
+
+    expect(mockRedis.set).not.toHaveBeenCalledWith(
+      `plp:${HASH}`,
+      expect.anything(),
+      expect.anything()
+    )
   })
 
   // Scenario: the access token cannot be verified. Expected: no blacklist write, and logout still

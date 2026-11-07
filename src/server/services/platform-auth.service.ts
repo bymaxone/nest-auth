@@ -9,6 +9,7 @@ import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { logoutPendingKey, logoutPendingTtlSeconds } from '../constants/logout-pending'
 import { sessionIndexKey } from '../constants/user-keys'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import type { PlatformLoginDto } from '../dto/platform-login.dto'
@@ -30,6 +31,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
+import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
 
@@ -188,23 +190,16 @@ export class PlatformAuthService {
     // The stored session names its owner: presenting the refresh token proves possession and the
     // record proves whose it is, so an operator whose access token has long expired can still sign
     // out. Claims read from an access token would not name the owner once it has expired.
+    //
+    // A session that is gone may belong to an earlier attempt that failed part-way: that attempt
+    // deletes the refresh session whatever else it could not write, and leaves a short-lived
+    // marker naming its owner for exactly this call, written from the session record.
     const tokenHash = sha256(rawRefreshToken)
-    const { userId } = await this.redis.readSessionOwner(`prt:${tokenHash}`)
+    const markerKey = logoutPendingKey('platform', tokenHash)
+    const live = await this.redis.readSessionOwner(`prt:${tokenHash}`)
+    const fromSession = live.userId !== ''
+    const { userId } = fromSession ? live : await this.redis.readSessionOwner(markerKey)
     this.logger.log(`logout: adminId=${logSafe(userId || '(no live session)')}`)
-
-    // Verify signature and algorithm but not expiry: an expired token is the normal case here,
-    // a forged one must not be able to blacklist an id it does not own. Only the verification is
-    // tolerant: a token nobody can verify has nothing to blacklist, but a refused write is not.
-    let blacklist: Array<() => Promise<unknown>> = []
-    try {
-      const payload = this.tokenManager.verifyPlatformIgnoringExpiry(accessToken)
-      const remainingTtl = payload.exp - Math.floor(Date.now() / 1000)
-      if (remainingTtl > 0) {
-        blacklist = [(): Promise<unknown> => this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)]
-      }
-    } catch {
-      // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
-    }
 
     // Every credential write is attempted whatever the earlier ones did, and the first failure is
     // raised once they have all run. What points at a credential (its index member, and for the
@@ -215,7 +210,7 @@ export class PlatformAuthService {
     const prune = (member: string): Array<() => Promise<unknown>> =>
       index === '' ? [] : [(): Promise<unknown> => this.redis.srem(index, member)]
     const failures = await settleWrites([
-      ...blacklist,
+      ...this.blacklistWrites(accessToken),
       settleAfter(
         (): Promise<unknown> => this.redis.del('prt:' + tokenHash),
         [...prune('prt:' + tokenHash), (): Promise<unknown> => this.redis.del('psd:' + tokenHash)]
@@ -225,12 +220,52 @@ export class PlatformAuthService {
         prune('prp:' + tokenHash)
       )
     ])
-    // A refused write is not a completed logout: no hook, and the caller is told so.
+
+    // A refused write is not a completed logout: no hook, and the caller is told so. The session
+    // record is already gone, so the owner is kept for the retry that will finish it.
+    if (failures.length > 0 && fromSession) {
+      await rememberPendingLogout(
+        this.redis,
+        markerKey,
+        { userId, tenantId: undefined },
+        logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn),
+        this.logger
+      )
+    }
     raiseFirst(failures)
 
-    this.emitPlatformLogout(userId)
+    if (
+      userId !== '' &&
+      (await settlePendingLogout(this.redis, markerKey, fromSession, this.logger))
+    ) {
+      this.emitPlatformLogout(userId)
+    }
 
     return userId
+  }
+
+  /**
+   * The access-token blacklist write for a platform logout, or none when there is nothing to
+   * revoke.
+   *
+   * Verifies signature and algorithm but not expiry: an expired token is the normal case here, a
+   * forged one must not be able to blacklist an id it does not own. Only the verification is
+   * tolerant: a token nobody can verify has nothing to blacklist, but a refused write is not.
+   *
+   * @param accessToken - Raw platform access token; absent, malformed or expired yields no write.
+   * @returns The writes to hand to `settleWrites`.
+   */
+  private blacklistWrites(accessToken: string): Array<() => Promise<unknown>> {
+    try {
+      const payload = this.tokenManager.verifyPlatformIgnoringExpiry(accessToken)
+      const remainingTtl = payload.exp - Math.floor(Date.now() / 1000)
+      if (remainingTtl > 0) {
+        return [(): Promise<unknown> => this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)]
+      }
+    } catch {
+      // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
+    }
+    return []
   }
 
   /**

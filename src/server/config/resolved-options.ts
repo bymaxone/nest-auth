@@ -1652,7 +1652,7 @@ const DURATION_AMOUNT_PREFIX = /^[\d.\s]+/
  * @returns The span in seconds, or `undefined` when the string is not a positive time span
  *   `ms` accepts.
  */
-function durationToSeconds(value: string): number | undefined {
+export function durationToSeconds(value: string): number | undefined {
   const trimmed = value.trim()
   const unit = trimmed.replace(DURATION_AMOUNT_PREFIX, '').toLowerCase()
   const seconds = DURATION_UNIT_SECONDS[unit]
