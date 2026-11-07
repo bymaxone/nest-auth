@@ -88,19 +88,26 @@ describe('pending logout marker', () => {
       expect(logger.warn).not.toHaveBeenCalled()
     })
 
-    // An owner read from the marker whose claim the store refuses is not announced, and the
-    // completed logout is not turned into a failure.
-    it('reports a refused claim and does not announce a logout whose owner came from the marker', async () => {
+    // An owner read from the marker whose claim the store refuses answers an error and announces
+    // nothing: answering success would keep the client from retrying, and no later call would ever
+    // announce this logout. The marker stays, so the retry claims it and announces once.
+    it('answers an error when the claim of a marker-sourced owner is refused', async () => {
       redis.del.mockRejectedValue(REFUSED)
 
-      await expect(settlePendingLogout(asRedis, KEY, false, OWNER, 900, asLogger)).resolves.toBe(
-        false
+      const failure = await settlePendingLogout(asRedis, KEY, false, OWNER, 900, asLogger).catch(
+        (err: unknown) => err
       )
 
+      expect(failure).toBeInstanceOf(AuthException)
+      expect((failure as AuthException).getResponse()).toMatchObject({
+        error: { code: AUTH_ERROR_CODES.INTERNAL }
+      })
       expect(logger.warn).toHaveBeenCalledTimes(1)
       const logged = String(logger.warn.mock.calls[0]?.[0])
       expect(logged).toContain('the retry marker could not be cleared')
       expect(logged).not.toContain(KEY)
+      expect(redis.get).not.toHaveBeenCalled()
+      expect(redis.set).not.toHaveBeenCalled()
     })
 
     describe('a stale marker whose removal the store refuses', () => {

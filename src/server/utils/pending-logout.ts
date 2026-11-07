@@ -63,8 +63,8 @@ export async function rememberPendingLogout(
  * The marker is removed whatever its source, so a later repeat finds nothing. When the owner came
  * from the marker the logout is announced only if this call removed it, which is what keeps the
  * announcement to one when retries race: the removal is a single atomic operation and only one
- * caller sees it succeed. A removal the store refuses never turns a completed logout into a
- * failure, except where a stale marker is left behind (below).
+ * caller sees it succeed. A claim the store refuses answers an error and announces nothing: the
+ * marker is left, and the retry claims it and announces once.
  *
  * When the owner came from the stored session the logout is announced regardless, but a stale
  * marker whose removal the store refuses would let a later retry claim it and announce the same
@@ -81,7 +81,8 @@ export async function rememberPendingLogout(
  * @param ttlSeconds - The lifetime a marker written again is given.
  * @param logger - Where a refused removal is reported, without the key.
  * @returns `true` when the completed logout is to be announced.
- * @throws {@link AuthException} `INTERNAL` when a stale marker may remain, so the client retries.
+ * @throws {@link AuthException} `INTERNAL` when the claim of a marker-sourced owner is refused, or
+ *   when a stale marker may remain, so the client retries.
  */
 export async function settlePendingLogout(
   redis: AuthRedisService,
@@ -96,7 +97,9 @@ export async function settlePendingLogout(
     return fromSession || removed
   } catch (err: unknown) {
     logger.warn(`logout: the retry marker could not be cleared — ${describeChannelStatus(err)}`)
-    if (!fromSession) return false
+    // A claim that cannot be made answers an error too: success would keep the client from
+    // retrying, and the marker that is left is what lets the retry announce once.
+    if (!fromSession) throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
     return confirmNoStaleMarker(redis, key, owner, ttlSeconds, logger)
   }
 }

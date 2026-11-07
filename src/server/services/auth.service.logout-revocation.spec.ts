@@ -300,15 +300,16 @@ describe('AuthService.logout — refused revocation writes', () => {
   })
 
   // Scenario: the marker cannot be claimed once the logout has completed and the owner came from
-  // the marker. Expected: the logout completes without announcing, since there was no claim.
-  it('should complete without announcing when the marker cannot be claimed', async () => {
+  // the marker. Expected: the logout answers an error and announces nothing. Why: answering success
+  // would keep the client from retrying, and the retry is what claims the marker and announces.
+  it('should answer an error and announce nothing when the marker cannot be claimed', async () => {
     ownerKnownBy(NO_OWNER, OWNER)
     mockRedis.del.mockImplementation(async (key: string) => {
       if (key.startsWith('lp:')) throw STORE_REFUSED
       return true
     })
 
-    await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe('user-1')
+    await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBeInstanceOf(AuthException)
     await flushMicrotasks()
 
     expect(mockHooks.afterLogout).not.toHaveBeenCalled()
