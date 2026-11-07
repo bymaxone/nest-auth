@@ -29,6 +29,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { answerResetRequest } from '../utils/answer-reset-request'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -36,7 +37,6 @@ import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { safeLogLine } from '../utils/safe-log-line'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
-import { sleep } from '../utils/sleep'
 import { tenantScoped } from '../utils/tenant-scoped'
 
 // ---------------------------------------------------------------------------
@@ -157,12 +157,14 @@ export class PasswordResetService {
    * inactive, or suspended), issues a reset token or OTP (depending on
    * `options.passwordReset.method`) and sends it via the email provider.
    *
-   * **Always returns without throwing**, even when:
+   * **Resolves the same way** whether or not the account exists:
    * - The email does not exist in the tenant.
    * - The account is blocked.
-   * - The email provider fails.
+   * - Issuing or storing the code, or the email provider, fails for an account that exists.
    *
-   * This anti-enumeration design ensures the response cannot be used to probe
+   * A failure that is the same for every address, the resend-cooldown store or the account
+   * lookup, throws `INTERNAL` (500) after the floor, and the cooldown this call took is
+   * released. This anti-enumeration design ensures the response cannot be used to probe
    * whether an email address is registered.
    *
    * Timing normalization: the method always takes at least {@link ANTI_ENUM_MIN_MS}
@@ -186,41 +188,12 @@ export class PasswordResetService {
     dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const start = Date.now()
 
-    // The SAME cooldown key `resendOtp` uses, so the two entry points share one budget rather
-    // than one throttling itself while the other hands out fresh sends for free. Two things
-    // depended on that: every issuance re-writes the OTP record with `attempts: 0`, so an
-    // untimed initiate turns the 5-attempt ceiling into 5 attempts *per call* — an unbounded
-    // supply of guesses at a six-digit code — and each call also mails the victim, which is a
-    // mail bomb aimed at an address the caller merely has to know. Silent success on a
-    // cooldown hit, with the same anti-enumeration floor as every other exit, so the throttle
-    // does not itself answer whether the account exists.
-    const cooldownKey = `resend:${PASSWORD_RESET_PURPOSE}:${this.otpIdentifier(tenantId, dto.email)}`
-    const wasSet = await this.redis.setnx(cooldownKey, RESEND_COOLDOWN_SECONDS)
-    if (!wasSet) {
-      await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
-      return
-    }
-
-    try {
-      const user = tenantScoped(
-        await this.userRepo.findByEmail({ email: dto.email, tenantId }),
-        tenantId
-      )
-
-      if (user && !this.isBlocked(user.status)) {
-        const { method } = this.options.passwordReset
-
-        if (method === 'otp') {
-          await this.sendOtp(dto.email, tenantId, user.id)
-        } else {
-          await this.sendToken(dto.email, tenantId, user.id)
-        }
-      }
-    } catch (err: unknown) {
-      this.logger.error(`initiateReset: unexpected error: ${describeChannelStatus(err)}`)
-    } finally {
-      await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
-    }
+    const { method } = this.options.passwordReset
+    await this.answerResetRequest('initiateReset', dto.email, tenantId, start, (userId) =>
+      method === 'otp'
+        ? this.sendOtp(dto.email, tenantId, userId)
+        : this.sendToken(dto.email, tenantId, userId)
+    )
   }
 
   /**
@@ -365,8 +338,9 @@ export class PasswordResetService {
    * Requests a new password-reset OTP for the given email address.
    *
    * Subject to an atomic 60-second cooldown enforced via a Redis NX key to
-   * prevent OTP flooding. Always returns success regardless of whether the
-   * user exists — anti-enumeration principle.
+   * prevent OTP flooding. Resolves the same way whether or not the user exists —
+   * anti-enumeration principle; a failure of the cooldown store or the account lookup
+   * throws `INTERNAL` (500) after the floor and releases the cooldown.
    *
    * Timing normalization: always takes at least {@link ANTI_ENUM_MIN_MS} ms.
    *
@@ -382,36 +356,42 @@ export class PasswordResetService {
     dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const start = Date.now()
 
-    const identifier = this.otpIdentifier(tenantId, dto.email)
-    const cooldownKey = `resend:${PASSWORD_RESET_PURPOSE}:${identifier}`
+    // `sendOtp` stores the OTP in Redis synchronously, then fires the email provider call as
+    // fire-and-forget (void). The timing floor in `answerResetRequest` is correct only because
+    // the email send is NOT awaited here. If this is changed to `await`, the email RTT is added
+    // to the synchronous path, creating a timing difference between "user found" and "user not
+    // found" responses.
+    await this.answerResetRequest('resendOtp', dto.email, tenantId, start, (userId) =>
+      this.sendOtp(dto.email, tenantId, userId)
+    )
+  }
 
-    // Atomic NX: one send per cooldown window, shared with `initiateReset` — see the note
-    // there for why both doors have to draw on the same budget.
-    const wasSet = await this.redis.setnx(cooldownKey, RESEND_COOLDOWN_SECONDS)
-    if (!wasSet) {
-      await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
-      return // Cooldown active — silently succeed.
-    }
+  // ---------------------------------------------------------------------------
+  // Private helpers — reset requests
+  // ---------------------------------------------------------------------------
 
-    try {
-      const user = tenantScoped(
-        await this.userRepo.findByEmail({ email: dto.email, tenantId }),
-        tenantId
-      )
-      if (user && !this.isBlocked(user.status)) {
-        // `sendOtp` stores the OTP in Redis synchronously, then fires the email
-        // provider call as fire-and-forget (void). Timing normalization in the
-        // `finally` block below is correct only because the email send is NOT
-        // awaited here. If this is changed to `await`, the email RTT will be
-        // added to the synchronous path, potentially creating a timing difference
-        // between "user found" and "user not found" responses.
-        await this.sendOtp(dto.email, tenantId, user.id)
+  /** Runs one `forgot-password` or `resend-otp` request through the shared failure rule. */
+  private answerResetRequest(
+    label: 'initiateReset' | 'resendOtp',
+    email: string,
+    tenantId: string,
+    start: number,
+    issue: (userId: string) => Promise<void>
+  ): Promise<void> {
+    return answerResetRequest(
+      { redis: this.redis, logger: this.logger },
+      {
+        label,
+        cooldownKey: `resend:${PASSWORD_RESET_PURPOSE}:${this.otpIdentifier(tenantId, email)}`,
+        cooldownSeconds: RESEND_COOLDOWN_SECONDS,
+        floorMs: ANTI_ENUM_MIN_MS,
+        start,
+        findAccount: async () =>
+          tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId),
+        isBlocked: (status) => this.isBlocked(status),
+        issue
       }
-    } catch (err: unknown) {
-      this.logger.error(`resendOtp: unexpected error: ${describeChannelStatus(err)}`)
-    } finally {
-      await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
-    }
+    )
   }
 
   // ---------------------------------------------------------------------------

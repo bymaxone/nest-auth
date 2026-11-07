@@ -79,8 +79,9 @@ export class PasswordResetController {
    * Initiates a password reset for the given email address.
    *
    * Sends a reset token or OTP to the user's email if the account exists and
-   * is eligible. Always returns `200 OK` with an empty JSON object regardless of outcome
-   * (anti-enumeration; the body is pinned by the wire contract).
+   * is eligible. Answers `200 OK` with an empty JSON object whether or not the account exists
+   * (anti-enumeration; the body is pinned by the wire contract). Only a failure that is the same
+   * for every address, the cooldown store or the account lookup, answers `500` `auth.internal`.
    *
    * @param dto - Validated DTO with `email` and `tenantId`.
    * @returns An empty object.
@@ -206,8 +207,9 @@ export class PasswordResetController {
    * Re-sends the password-reset OTP for the given email address.
    *
    * Subject to a 60-second atomic cooldown per `(tenantId, email)` pair.
-   * Always returns `200 OK` with an empty JSON object regardless of outcome (anti-enumeration;
-   * the body is pinned by the wire contract).
+   * Answers `200 OK` with an empty JSON object whether or not the account exists
+   * (anti-enumeration; the body is pinned by the wire contract). Only a failure that is the same
+   * for every address, the cooldown store or the account lookup, answers `500` `auth.internal`.
    *
    * @param dto - Validated DTO with `email` and `tenantId`.
    * @returns An empty object.
