@@ -14,6 +14,7 @@ import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { logoutPendingKey, logoutPendingTtlSeconds } from '../constants/logout-pending'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -36,6 +37,7 @@ import { describeChannelStatus, describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
+import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { safeLogLine } from '../utils/safe-log-line'
@@ -543,73 +545,115 @@ export class AuthService {
   async logout(accessToken: string, rawRefreshToken: string): Promise<string> {
     // The stored session names its owner. Presenting the refresh token proves possession;
     // the record proves whose it is. Claims from an unverified token would not.
+    //
+    // A session that is gone may belong to an earlier attempt that failed part-way: that attempt
+    // deletes the refresh session whatever else it could not write, and leaves a short-lived
+    // marker naming its owner for exactly this call. The owner then comes from the marker, which
+    // this library wrote from the session record, never from a token's claims.
     const sessionHash = sha256(rawRefreshToken)
-    const { userId, tenantId } = await this.redis.readSessionOwner(`rt:${sessionHash}`)
+    const markerKey = logoutPendingKey('dashboard', sessionHash)
+    const live = await this.redis.readSessionOwner(`rt:${sessionHash}`)
+    const fromSession = live.userId !== ''
+    const { userId, tenantId } = fromSession ? live : await this.redis.readSessionOwner(markerKey)
     this.logger.log(`logout: userId=${logSafe(userId || '(no live session)')}`)
-
-    // Verify signature and algorithm but not expiry: an expired token is the normal case here, a
-    // forged one must not blacklist an id it does not own. Only the verification is tolerant.
-    let blacklist: Array<() => Promise<unknown>> = []
-    try {
-      const payload = this.tokenManager.verifyIgnoringExpiry(accessToken)
-      const remainingTtl = payload.exp - Math.floor(Date.now() / 1000)
-      if (remainingTtl > 0) {
-        blacklist = [(): Promise<unknown> => this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)]
-      }
-    } catch {
-      // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
-    }
 
     // Every revocation write is attempted whatever the earlier ones did, and the first failure is
     // raised once all have run. A token presented here may have rotated and still sit inside its
     // grace window, where a grace hit mints a fresh session, so the `rp:` pointer goes too.
     const failures = await settleWrites([
-      ...blacklist,
+      ...this.blacklistWrites(accessToken),
       (): Promise<unknown> => this.redis.del(`rt:${sessionHash}`),
       (): Promise<unknown> => this.redis.del(`rp:${sessionHash}`)
     ])
-
-    // Delegate session metadata cleanup to SessionService.revokeSession(), which
-    // performs an atomic SISMEMBER ownership check before deleting sd:{hash} and
-    // SREMing from sess:{userId}. The rt:{hash} DEL above already ran — revokeSession's
-    // internal DEL will be a no-op (Redis DEL is idempotent when key is absent).
-    // SESSION_NOT_FOUND: session was evicted, already revoked, or the refresh token
-    // does not belong to this user — in all cases authentication is already invalidated.
-    //
-    // The tenant is REQUIRED to name the index, and it comes off the record rather than from the
-    // caller. A record without one is a pre-upgrade write: the contract lists `tenantId` among
-    // the refresh session's fields, so a live record always has it. Skipping the call is the
-    // honest end for one that does not — `rt:{hash}` is already deleted above, so the session is
-    // dead either way, and guessing a tenant would name an index belonging to nobody while
-    // reading like a revocation that happened.
-    if (this.options.sessions.enabled && userId && tenantId !== undefined) {
-      await this.sessionService
-        .revokeSession({ userId, tenantId, sessionHash })
-        .catch((err: unknown) => {
-          const errCode =
-            err instanceof AuthException
-              ? (err.getResponse() as { error: { code: string } }).error.code
-              : undefined
-          if (errCode !== AUTH_ERROR_CODES.SESSION_NOT_FOUND) {
-            // `describeError`, not `String(err)`. The rejection comes from Redis, so its text is not
-            // a channel's quoted body — but `String()` strips nothing, and a value that reaches a
-            // line-oriented pipeline carrying CR/LF closes the record and opens a forged one. This
-            // one also names the failing KEY, and session keys embed the consumer's user id. Nothing
-            // is passed as `secrets`: a session-cleanup failure holds none, and saying so with an
-            // empty array is how a caller states that, rather than by omitting the argument.
-            this.logger.warn(`logout: session cleanup failed — ${describeChannelStatus(err)}`)
-          }
-        })
-    }
+    await this.revokeSessionMetadata(userId, tenantId, sessionHash)
 
     // A refused revocation write is not a completed logout: no hook, and the caller is told so.
+    // The session record is already gone, so the owner is kept for the retry that will finish it.
+    if (failures.length > 0 && fromSession) {
+      await rememberPendingLogout(
+        this.redis,
+        markerKey,
+        { userId, tenantId },
+        logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn),
+        this.logger
+      )
+    }
     raiseFirst(failures)
 
-    // The hook names the user who was signed out, so it only fires when the session told us
-    // who that was. A logout for an already-gone session has nobody to name.
-    this.emitLogout(userId, tenantId)
+    // The hook names the user who was signed out, so it only fires when the session or the marker
+    // told us who that was. A logout for an already-gone session has nobody to name.
+    if (
+      userId !== '' &&
+      (await settlePendingLogout(this.redis, markerKey, fromSession, this.logger))
+    ) {
+      this.emitLogout(userId, tenantId)
+    }
 
     return userId
+  }
+
+  /**
+   * The access-token blacklist write for a logout, or none when there is nothing to revoke.
+   *
+   * Verifies signature and algorithm but not expiry: an expired token is the normal case here, a
+   * forged one must not blacklist an id it does not own. Only the verification is tolerant.
+   *
+   * @param accessToken - Raw access token; absent, malformed or expired yields no write.
+   * @returns The writes to hand to `settleWrites`.
+   */
+  private blacklistWrites(accessToken: string): Array<() => Promise<unknown>> {
+    try {
+      const payload = this.tokenManager.verifyIgnoringExpiry(accessToken)
+      const remainingTtl = payload.exp - Math.floor(Date.now() / 1000)
+      if (remainingTtl > 0) {
+        return [(): Promise<unknown> => this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)]
+      }
+    } catch {
+      // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
+    }
+    return []
+  }
+
+  /**
+   * Cleans up the session's metadata through `SessionService.revokeSession()`.
+   *
+   * It performs an atomic SISMEMBER ownership check before deleting `sd:{hash}` and SREMing from
+   * `sess:{userId}`. The `rt:{hash}` DEL already ran — revokeSession's internal DEL is a no-op
+   * (Redis DEL is idempotent when the key is absent). SESSION_NOT_FOUND means the session was
+   * evicted, already revoked, or the refresh token does not belong to this user — in all cases
+   * authentication is already invalidated.
+   *
+   * The tenant is REQUIRED to name the index, and it comes off the record rather than from the
+   * caller. A record without one is a pre-upgrade write: the contract lists `tenantId` among the
+   * refresh session's fields, so a live record always has it. Skipping the call is the honest end
+   * for one that does not — `rt:{hash}` is already deleted, so the session is dead either way, and
+   * guessing a tenant would name an index belonging to nobody while reading like a revocation that
+   * happened.
+   *
+   * @param userId - The owner, empty when none is known.
+   * @param tenantId - The owner's tenant, absent when the record carried none.
+   * @param sessionHash - The SHA-256 of the raw refresh token.
+   */
+  private async revokeSessionMetadata(
+    userId: string,
+    tenantId: string | undefined,
+    sessionHash: string
+  ): Promise<void> {
+    if (!this.options.sessions.enabled || !userId || tenantId === undefined) return
+    await this.sessionService
+      .revokeSession({ userId, tenantId, sessionHash })
+      .catch((err: unknown) => {
+        const errCode =
+          err instanceof AuthException
+            ? (err.getResponse() as { error: { code: string } }).error.code
+            : undefined
+        if (errCode !== AUTH_ERROR_CODES.SESSION_NOT_FOUND) {
+          // `describeChannelStatus`, not `String(err)`: the rejection comes from Redis, and
+          // `String()` strips nothing — a value carrying CR/LF would close the log record and open
+          // a forged one, and this one names the failing KEY, which embeds the consumer's user id.
+          this.logger.warn(`logout: session cleanup failed — ${describeChannelStatus(err)}`)
+        }
+      })
   }
 
   /**

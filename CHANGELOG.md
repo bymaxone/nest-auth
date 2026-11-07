@@ -41,11 +41,29 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   decorator and its `RequestEncodingPolicy` type, which set a route's policy (a route with none is
   strict). `content-encoding`, `content-length` and `transfer-encoding` join the headers the library reads,
   so `apiKeys.header` can no longer name them.
+- **A logout that needed a retry now fires `afterLogout` (and `afterPlatformLogout`) once, on the
+  retry that completes it.** A logout attempts every revocation write and answers `5xx` when one
+  failed, and the attempt had already deleted the refresh session, so the retry found no record to
+  say whose logout it was and the hook never fired for it. An attempt that fails a write while it
+  still has the session's owner now leaves a short-lived marker, `lp:{sha256(refreshToken)}` on the
+  dashboard plane and `plp:{...}` on the platform plane, holding the owner and tenant from the
+  session record; it lives for the access-token lifetime and never less than 300 seconds. A retry
+  that finds no session reads the owner from the marker, and when it completes with no failure it
+  removes the marker and fires the hook only if that removal removed it, so sequential retries
+  announce once and a repeat announces nothing; attempts of one logout that run concurrently are
+  at-least-once. The owner is never taken from an access
+  token's claims. A marker that cannot be written leaves the retry silent, as before, and a marker
+  that cannot be removed never fails a completed logout. HTTP statuses, bodies and cookies are
+  unchanged. The shared contract gains the two key prefixes and a `logoutPending` record row. A
+  consumer whose hook assumed a logout is announced only by the call that found the session now
+  also receives it from the completing retry. Private `blacklistWrites` (both services) and
+  `revokeSessionMetadata` (`AuthService`) appear in the declarations.
 
 ### Fixed
 
 - **Compressed request bodies are refused the way rust-auth refuses them, and a corrupt one no
   longer answers `500`.** See the note above.
+- **A logout completed by a retry no longer goes unannounced.** See the note above.
 
 ## [1.4.17] - 2026-11-07
 
