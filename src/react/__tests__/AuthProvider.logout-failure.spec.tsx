@@ -49,6 +49,7 @@ describe('AuthProvider.logout — a server logout that did not complete', () => 
     ['a 500', answered(500)],
     ['a 502', answered(502)],
     ['a 503', answered(503)],
+    ['a 429', answered(429)],
     ['a network failure', new TypeError('fetch failed')]
   ])('keeps the authenticated state and rethrows on %s', async (_label, failure) => {
     const client = createMockClient()
@@ -66,7 +67,7 @@ describe('AuthProvider.logout — a server logout that did not complete', () => 
   // Scenario: the answer is final and below 500. Expected: the state clears and the rejection
   // still reaches the caller. Why: the session is gone or was never valid, and the proxy has
   // cleared the cookies, so signed-out is the true state.
-  it.each([400, 401, 403, 404, 429, 499])(
+  it.each([400, 401, 403, 404, 428, 430, 499])(
     'clears the state and rethrows on a final %i answer',
     async (status) => {
       const client = createMockClient()
@@ -80,6 +81,37 @@ describe('AuthProvider.logout — a server logout that did not complete', () => 
 
       expect(result.current?.status).toBe('unauthenticated')
       expect(result.current?.user).toBeNull()
+    }
+  )
+
+  // Scenario: the rejection comes from a second copy of the error class, as it does when the
+  // client and the provider load different module formats of the package. Expected: the same
+  // decision by name and status. Why: `instanceof` is false across copies, which would read every
+  // 4xx as "unconfirmed" and keep a session the server has already ended.
+  it.each([
+    [401, 'unauthenticated'],
+    [429, 'authenticated'],
+    [503, 'authenticated']
+  ] as const)(
+    'decides a foreign-copy %i rejection by name and status',
+    async (status, expected) => {
+      class ForeignAuthClientError extends Error {
+        readonly status: number
+        constructor(code: number) {
+          super(`Request failed with status ${code}`)
+          this.name = 'AuthClientError'
+          this.status = code
+        }
+      }
+      const client = createMockClient()
+      client.logout.mockRejectedValue(new ForeignAuthClientError(status))
+      const { result } = await renderAuthenticated(client)
+
+      await act(async () => {
+        await expect(result.current?.logout()).rejects.toThrow()
+      })
+
+      expect(result.current?.status).toBe(expected)
     }
   )
 

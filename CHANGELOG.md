@@ -45,25 +45,29 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `responseBodies.passwordResetRequest` gains a `failures` note stating the rule. Private `answerResetRequest` appears in the `PasswordResetService` declarations.
 - **The Next.js logout handler keeps the cookies when the upstream logout did not complete.**
   `createLogoutHandler` clears the three auth cookies only once the upstream has given a final
-  answer below `500` (a `2xx`, or a `4xx` such as an expired or already-revoked session). When the
-  upstream answers `5xx`, which it does when a revocation write failed and the session is still
-  alive, the handler answers that status and touches no cookie; when the upstream is unreachable or
-  the request fails, it answers `502` and touches no cookie. In `'redirect'` mode neither failure
-  redirects. The cookies are the client's only handle for retrying the same logout, and the
+  answer below `500` other than `429` (a `2xx`, or a `4xx` such as an expired or already-revoked
+  session). When the upstream answers `5xx`, which it does when a revocation write failed and the
+  session is still alive, the handler answers that status and touches no cookie; a `429` from the
+  throttled logout route, answered before anything is revoked, is handled the same way and passes
+  on the upstream `Retry-After`; when the upstream is unreachable or the request fails, it answers
+  `502` and touches no cookie. In `'redirect'` mode none of these redirects. The cookies are the client's only handle for retrying the same logout, and the
   upstream endpoint is idempotent, so the retry completes it. A caller that treated the handler's
   answer as always successful sees a `5xx` or `502` it did not see before; `AuthClient.logout()`
   rejects on it, as it does for any non-2xx. Cross-site and non-`POST` requests are answered as
   before.
 - **The React `logout()` keeps the authenticated state when the server logout did not
   complete.** `AuthProvider` clears the session state after a successful logout and after a final
-  answer, an `AuthClientError` with a status below `500`, and rethrows in the second case. After a
-  `5xx` (`502` included) or a failure with no answer at all, such as a network failure, the state
-  stays `authenticated` with the same user and the error is rethrown, because the session may be
+  answer, an `AuthClientError` with a status below `500` and not `429`, and rethrows in the second
+  case. After a `5xx` (`502` included), a `429` or a failure with no answer at all, such as a
+  network failure, the state stays `authenticated` with the same user and the error is rethrown, because the session may be
   alive and the UI must not read signed-out. A consumer that relied on the state being cleared
   whenever `logout()` rejected now finds it still `authenticated` after such a rejection and
   should offer a retry; repeating the call is safe because the server logout is idempotent. A
   session probe already in flight is applied after a failed logout, not discarded. The rule is
-  written in the `logout` documentation on `AuthContextValue`. No contract change.
+  written in the `logout` documentation on `AuthContextValue`, which also says which statuses the
+  hook can see behind the proxy route. The error is recognized by its `name` and numeric `status`,
+  not by `instanceof`, so a second copy of the error class decides the same way. No contract
+  change.
 
 ### Fixed
 

@@ -91,13 +91,20 @@ export interface AuthContextValue {
    *
    *   - it succeeds: the session is revoked and the context state clears;
    *   - it fails with a final answer, an `AuthClientError` whose status is
-   *     below 500 (the session is gone or was never valid, and the proxy
-   *     has cleared the cookies): the context state clears and the error
-   *     is rethrown;
-   *   - it fails with a 5xx (502 included) or with no answer at all (a
-   *     network failure, an abort): the logout is unconfirmed and the
+   *     below 500 and not 429 (the session is gone or was never valid, and
+   *     the proxy has cleared the cookies): the context state clears and the
+   *     error is rethrown;
+   *   - it fails with a 5xx (502 included), with a 429 (the logout route's
+   *     throttle, answered before anything is revoked) or with no answer at
+   *     all (a network failure, an abort): the logout is unconfirmed and the
    *     session may be alive, so the context state stays authenticated and
    *     the error is rethrown.
+   *
+   * Which statuses the hook can see depends on the topology. Behind the
+   * Next.js proxy route, an upstream answer below 500 other than 429 is
+   * answered 200 (or a redirect) after the cookies are cleared, so the hook
+   * sees no 4xx there: only a 5xx, a 502 or a 429, which keep the cookies.
+   * Talking to the NestJS server directly, it sees the server's own 4xx.
    *
    * @throws The underlying error raised by `AuthClient.logout`. A caller
    *   that finds the status still `authenticated` after the rejection

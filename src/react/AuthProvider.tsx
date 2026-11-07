@@ -31,11 +31,18 @@ const DEFAULT_REVALIDATE_INTERVAL_MS = 300_000
 
 /**
  * Whether a rejected `client.logout()` carries a final server answer: an `AuthClientError` with a
- * status below 500. Anything else (a 5xx, a network failure, an abort) leaves the logout
- * unconfirmed.
+ * numeric status below 500 other than 429. The status 429 is the logout route's throttle, which
+ * answers before anything is revoked, so the session is still alive. Anything else (a 5xx, a 429,
+ * a network failure, an abort) leaves the logout unconfirmed.
+ *
+ * The error is recognized by its `name` and its numeric `status`, not by `instanceof`: a client and
+ * a provider loaded as different module formats of the package hold different copies of the class,
+ * and `instanceof` is false across them, which would keep a session the server has already ended.
  */
 function isFinalAnswer(error: unknown): boolean {
-  return error instanceof AuthClientError && error.status < 500
+  if (!(error instanceof Error) || error.name !== 'AuthClientError') return false
+  const { status } = error as { status?: unknown }
+  return typeof status === 'number' && status < 500 && status !== 429
 }
 
 /**
@@ -378,11 +385,12 @@ export function AuthProvider({
   const logout = useCallback<AuthContextValue['logout']>(async () => {
     // Rule, by what `client.logout()` did:
     //   - resolved: the session is revoked, so the local state clears;
-    //   - rejected with an `AuthClientError` whose status is below 500: the server gave a final
-    //     answer (the session is gone or was never valid, and the proxy has cleared the cookies),
-    //     so the local state clears and the rejection propagates;
-    //   - rejected with a 5xx (502 included) or with anything that is not an `AuthClientError`
-    //     (a network failure, an abort): the server never confirmed the logout and the session
+    //   - rejected with an `AuthClientError` whose status is below 500 and not 429: the server
+    //     gave a final answer (the session is gone or was never valid, and the proxy has cleared
+    //     the cookies), so the local state clears and the rejection propagates;
+    //   - rejected with a 5xx (502 included), a 429 (the route's throttle, answered before
+    //     anything is revoked) or with anything that is not an `AuthClientError` (a network
+    //     failure, an abort): the server never confirmed the logout and the session
     //     may be alive, so the state stays authenticated and the rejection propagates for
     //     the caller to offer a retry. Showing signed-out there would be false on a shared
     //     machine, where the next person finds a live session.
