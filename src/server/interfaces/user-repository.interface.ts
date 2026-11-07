@@ -314,6 +314,11 @@ export interface IUserRepository {
   /**
    * Finds a user by email address within a specific tenant.
    *
+   * **Keep this call well under the password-reset resend cooldown (60 seconds).** The reset flows
+   * claim the cooldown before they call this, and release it by key when this call throws. A call
+   * that takes longer than the cooldown and then fails releases a key that may by then belong to a
+   * later request, whose cooldown is removed early. The library does not guard against it.
+   *
    * @returns The matching user record, or null if not found.
    */
   findByEmail(params: FindUserByEmailParams): Promise<AuthUser | null>

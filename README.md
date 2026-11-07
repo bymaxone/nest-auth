@@ -2416,6 +2416,17 @@ went one release stated and unenforced.
 > (`auth.otp_invalid`) at one status (`401`) — a `429` on the ceiling would say the address was
 > registered, since only a record that exists can reach one.
 
+> **When a password-reset request fails.** A failure that is the same for every address, the
+> resend-cooldown store or your repository's `findByEmail` throwing, answers `500`
+> (`auth.internal`) after the same timing floor as every other exit, and the cooldown that request
+> took is released so the retry is not refused. A failure after the account is known (storing the
+> code, or the mail provider failing after the response has left) is logged and the `200` stands,
+> because it happens only for a registered address. Two limits are left as they are. A `findByEmail`
+> that takes longer than the cooldown (60 seconds) and then fails releases the cooldown by key, and
+> by then that key may belong to a later request, whose cooldown is removed early: keep
+> `findByEmail` well under the cooldown. A mail provider that fails late never touches the
+> cooldown, so the address stays throttled for the rest of its window.
+
 ### Server Decorators
 
 | Decorator                  | Usage                                                                        |

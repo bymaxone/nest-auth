@@ -68,7 +68,7 @@ const mockOptions = {
   previousHmacKeys: []
 }
 
-const mockUserRepo = { findByEmail: jest.fn() }
+const mockUserRepo = { findByEmail: jest.fn(), findById: jest.fn() }
 const mockEmailProvider = { sendPasswordResetOtp: jest.fn(), sendPasswordResetToken: jest.fn() }
 const mockOtpService = { generate: jest.fn(), store: jest.fn(), verify: jest.fn() }
 const mockRedis = { setnx: jest.fn(), del: jest.fn(), set: jest.fn(), get: jest.fn() }
@@ -85,6 +85,33 @@ const dto = { email: 'user@example.com', tenantId: 'tenant1' }
 function codeOf(err: unknown): string | undefined {
   if (!(err instanceof AuthException)) return undefined
   return (err.getResponse() as { error?: { code?: string } }).error?.code
+}
+
+/** Lets queued continuations and detached tasks run. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+}
+
+/** A service configured for `method`, over the shared doubles. */
+async function buildService(method: 'otp' | 'token'): Promise<PasswordResetService> {
+  const module = await Test.createTestingModule({
+    providers: [
+      PasswordResetService,
+      {
+        provide: BYMAX_AUTH_OPTIONS,
+        useValue: { ...mockOptions, passwordReset: { ...mockOptions.passwordReset, method } }
+      },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+      { provide: BYMAX_AUTH_HOOKS, useValue: null },
+      { provide: OtpService, useValue: mockOtpService },
+      { provide: PasswordService, useValue: {} },
+      { provide: AuthRedisService, useValue: mockRedis },
+      { provide: SessionService, useValue: {} },
+      { provide: BruteForceService, useValue: {} }
+    ]
+  }).compile()
+  return module.get(PasswordResetService)
 }
 
 describe('PasswordResetService — a password-reset request that fails', () => {
@@ -115,21 +142,7 @@ describe('PasswordResetService — a password-reset request that fails', () => {
     mockEmailProvider.sendPasswordResetOtp.mockResolvedValue(undefined)
     errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
 
-    const module = await Test.createTestingModule({
-      providers: [
-        PasswordResetService,
-        { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
-        { provide: BYMAX_AUTH_HOOKS, useValue: null },
-        { provide: OtpService, useValue: mockOtpService },
-        { provide: PasswordService, useValue: {} },
-        { provide: AuthRedisService, useValue: mockRedis },
-        { provide: SessionService, useValue: {} },
-        { provide: BruteForceService, useValue: {} }
-      ]
-    }).compile()
-    service = module.get(PasswordResetService)
+    service = await buildService('otp')
   })
 
   afterEach(() => {
@@ -243,4 +256,37 @@ describe('PasswordResetService — a password-reset request that fails', () => {
     expect(CONTRACT.responseBodies.passwordResetRequest.failures.floorMs).toBe(300)
     expect(CONTRACT.errorCatalog.statuses[AUTH_ERROR_CODES.INTERNAL]).toBe(500)
   })
+
+  // Scenario: the account exists and the mail provider fails AFTER the response has left, however
+  // late. Expected: the response does not wait for the send, the failure is logged, and the resend
+  // cooldown is never touched. Why: the send is detached from the request, so nothing about it can
+  // hold the response, and a release from there would delete the fresh cooldown of a LATER request
+  // once the send fails after the cooldown's own lifetime.
+  it.each([
+    ['otp', 'initiateReset'],
+    ['otp', 'resendOtp'],
+    ['token', 'initiateReset']
+  ] as const)(
+    'leaves the cooldown alone when the %s send fails late, through %s',
+    async (method, entry) => {
+      const svc = await buildService(method)
+      mockUserRepo.findByEmail.mockResolvedValue(REGISTERED)
+      mockUserRepo.findById.mockResolvedValue({ ...REGISTERED, passwordHash: 'hash' })
+      let rejectSend: (err: Error) => void = () => undefined
+      const pending = new Promise<void>((_resolve, reject) => {
+        rejectSend = reject
+      })
+      mockEmailProvider.sendPasswordResetOtp.mockReturnValue(pending)
+      mockEmailProvider.sendPasswordResetToken.mockReturnValue(pending)
+
+      await svc[entry](dto, mockReq)
+      const [cooldownKey] = mockRedis.setnx.mock.calls[0] as [string]
+      rejectSend(new Error('smtp down'))
+      await flush()
+
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/send\w+ failed for user/))
+      expect(mockRedis.del.mock.calls.map((call) => call[0])).not.toContain(cooldownKey)
+      expect(mockRedis.setnx).toHaveBeenCalledTimes(1)
+    }
+  )
 })
