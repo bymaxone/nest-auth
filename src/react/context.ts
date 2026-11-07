@@ -96,8 +96,8 @@ export interface AuthContextValue {
    *     is rethrown;
    *   - it fails with a 5xx (502 included) or with no answer at all (a
    *     network failure, an abort): the logout is unconfirmed and the
-   *     session may be alive, so the context state is left as it was, still
-   *     authenticated, and the error is rethrown.
+   *     session may be alive, so the context state stays authenticated and
+   *     the error is rethrown.
    *
    * @throws The underlying error raised by `AuthClient.logout`. A caller
    *   that finds the status still `authenticated` after the rejection

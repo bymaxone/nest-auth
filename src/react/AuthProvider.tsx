@@ -383,7 +383,7 @@ export function AuthProvider({
     //     so the local state clears and the rejection propagates;
     //   - rejected with a 5xx (502 included) or with anything that is not an `AuthClientError`
     //     (a network failure, an abort): the server never confirmed the logout and the session
-    //     may be alive, so the state is left exactly as it was and the rejection propagates for
+    //     may be alive, so the state stays authenticated and the rejection propagates for
     //     the caller to offer a retry. Showing signed-out there would be false on a shared
     //     machine, where the next person finds a live session.
     try {
