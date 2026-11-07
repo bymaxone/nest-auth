@@ -55,8 +55,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   that cannot be removed never fails a completed logout. HTTP statuses, bodies and cookies are
   unchanged. The shared contract gains the two key prefixes and a `logoutPending` record row. A
   consumer whose hook assumed a logout is announced only by the call that found the session now
-  also receives it from the completing retry. `AuthService` and `PlatformAuthService` gain private
-  `blacklistWrites` methods and `AuthService` a private `revokeSessionMetadata`.
+  also receives it from the completing retry. Private `blacklistWrites` (both services) and
+  `revokeSessionMetadata` (`AuthService`) appear in the declarations.
 
 ### Fixed
 
