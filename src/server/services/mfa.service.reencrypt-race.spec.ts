@@ -414,4 +414,18 @@ describe('MfaService — re-encryption against a concurrent MFA transition', () 
       expect(store.writes).toEqual([])
     }
   )
+
+  // Scenario: a TOTP challenge against a secret already under the current key. Expected: the
+  // record is not written. Why: the re-encryption exists only to drain retired keys, and a write
+  // on every challenge would take the account's lock and rewrite its record for nothing.
+  it('writes nothing for a secret already under the current key', async () => {
+    const { base32 } = generateTotpSecret()
+    await build(record({ mfaSecret: encrypt(base32, CURRENT_KEY), mfaRecoveryCodes: ['digest-a'] }))
+
+    await service.challenge('mfa.temp', stepCode(base32, 0), '1.2.3.4', 'Browser')
+    await flush()
+
+    expect(store.writes).toEqual([])
+    expect(mockRedis.setIfAbsent).not.toHaveBeenCalled()
+  })
 })
