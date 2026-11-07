@@ -29,16 +29,16 @@ import { AuthContext, type AuthContextValue, type AuthStatus } from './context'
  */
 const DEFAULT_REVALIDATE_INTERVAL_MS = 300_000
 
-/** The lowest and highest status the provider takes for an HTTP answer. */
+/** The lowest status the provider takes for an HTTP answer. */
 const HTTP_STATUS_MIN = 100
-const HTTP_STATUS_MAX = 599
 
 /**
  * The HTTP status of a client error, or `undefined` when `error` is not one.
  *
- * A client error is an object named `AuthClientError` whose `status` is an integer HTTP status
- * (100 to 599). Anything else, such as a missing, fractional, non-finite, out-of-range or
- * non-numeric status, is not a server answer, so no decision below acts on it.
+ * A client error is an object named `AuthClientError` whose `status` is an integer of at least 100.
+ * Anything else, such as a missing, fractional, non-finite, below-100 or non-numeric status, is not
+ * a server answer, so no decision below acts on it. There is no upper bound: every decision below
+ * treats a status of 500 or more as unconfirmed, so a bound there could not change one.
  *
  * It is recognized by name, not by `instanceof`: a client and a provider loaded as different
  * module formats of the package (the ESM and the CJS build) hold different copies of the class, and
@@ -50,7 +50,7 @@ function clientErrorStatus(error: unknown): number | undefined {
   const { name, status } = error as { name?: unknown; status?: unknown }
   if (name !== 'AuthClientError' || !Number.isInteger(status)) return undefined
   const code = status as number
-  return code >= HTTP_STATUS_MIN && code <= HTTP_STATUS_MAX ? code : undefined
+  return code >= HTTP_STATUS_MIN ? code : undefined
 }
 
 /**

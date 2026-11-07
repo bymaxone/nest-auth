@@ -6,7 +6,7 @@
  * `AuthProvider` — which rejections are recognized as a client error, and with which status.
  *
  * The provider acts on a status only when the rejection is an object named `AuthClientError`
- * whose `status` is an integer HTTP status (100 to 599). Anything else is not a server answer, so
+ * whose `status` is an integer of at least 100. Anything else is not a server answer, so
  * it decides nothing: a logout stays unconfirmed and the session is not reported expired. Every
  * cell of that rule has its own case here, for both decisions that read it: the logout and the
  * expiry check on a revalidation. Kept apart from `AuthProvider.spec.tsx` because that file is over
@@ -88,7 +88,7 @@ describe('AuthProvider — recognizing a client error by name and integer HTTP s
     ['below the range', 99],
     ['zero', 0],
     ['negative', -1],
-    ['above the range', 600],
+    ['above the usual range', 600],
     ['a fraction', 401.5],
     ['not a number', Number.NaN],
     ['infinite', Number.POSITIVE_INFINITY],
