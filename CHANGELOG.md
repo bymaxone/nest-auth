@@ -43,13 +43,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Changed
 
-- **`MfaService` moves private methods to internal modules.** The secret cipher, the
-  pending-setup parsers, the recovery-code scan and the credential-stripping projections moved out
-  of the class as plain functions; behaviour, error codes and log text are unchanged. The private
-  `holdsSecret`, `encryptSecret`, `decryptSecret`, `decryptWithRotation`, `parseSetupData`,
-  `parsePlainRecoveryCodes`, `hashRecoveryCodes`, `digestRecoveryCode`, `verifyRecoveryCode`,
-  `toSafeUser`, `toSafePlatformUser`, `platformUserAsSafeUser` and `committedSafeUser` no longer
-  appear in the `MfaService` declarations.
+- **`MfaService` moves private methods to internal modules.** They moved out of the class as plain
+  functions; behaviour, error codes and log text are unchanged, and none of them was part of the
+  public API.
 
 ### Documentation
 
