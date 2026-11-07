@@ -1049,18 +1049,19 @@ describe('PasswordResetService', () => {
       nowSpy.mockRestore()
     })
 
-    // Verifies that logs error when unexpected error occurs during initiation.
-    it('logs error when unexpected error occurs during initiation', async () => {
+    // An account lookup that fails is the same for every address, so it answers 500 after the floor
+    // and is logged. The failure split by phase is in `password-reset.service.failure-split.spec.ts`.
+    it('logs the failure and answers 500 when the account lookup fails', async () => {
       // Arrange
-      const unexpectedError = new Error('Database connection failed')
-      mockUserRepo.findByEmail.mockRejectedValue(unexpectedError)
+      mockUserRepo.findByEmail.mockRejectedValue(new Error('Database connection failed'))
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
 
       // Act
-      await service.initiateReset(dto, mockReq)
+      const failure = await service.initiateReset(dto, mockReq).catch((err: unknown) => err)
 
       // Assert
-      expect(errorSpy).toHaveBeenCalledWith('initiateReset: unexpected error: <error>')
+      expect(getErrorCode(failure)).toBe(AUTH_ERROR_CODES.INTERNAL)
+      expect(errorSpy).toHaveBeenCalledWith('initiateReset: account lookup failed: <error>')
       expect(mockSleep).toHaveBeenCalledTimes(1)
       errorSpy.mockRestore()
     })
@@ -2294,19 +2295,19 @@ describe('PasswordResetService', () => {
       nowSpy.mockRestore()
     })
 
-    // Verifies that logs error on unexpected error inside resendOtp.
-    it('logs error on unexpected error inside resendOtp', async () => {
+    // An account lookup that fails answers 500 after the floor and is logged.
+    it('logs the failure and answers 500 when the account lookup fails inside resendOtp', async () => {
       // Arrange
       mockRedis.setnx.mockResolvedValue(true)
-      const unexpectedError = new Error('Unexpected failure')
-      mockUserRepo.findByEmail.mockRejectedValue(unexpectedError)
+      mockUserRepo.findByEmail.mockRejectedValue(new Error('Unexpected failure'))
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
 
       // Act
-      await otpMethodService.resendOtp(dto, mockReq)
+      const failure = await otpMethodService.resendOtp(dto, mockReq).catch((err: unknown) => err)
 
       // Assert
-      expect(errorSpy).toHaveBeenCalledWith('resendOtp: unexpected error: <error>')
+      expect(getErrorCode(failure)).toBe(AUTH_ERROR_CODES.INTERNAL)
+      expect(errorSpy).toHaveBeenCalledWith('resendOtp: account lookup failed: <error>')
       errorSpy.mockRestore()
     })
 

@@ -574,18 +574,21 @@ describe('TokenManagerService', () => {
     // tenant claim, which every dashboard guard then refuses. The caller would hold a session
     // that cannot be used and cannot be revoked. A forced re-login is the documented cost of the
     // migration; a keyspace nobody sweeps is not a cost, it is a hole.
+    // The live record is refused before the rotation script runs, so nothing is rotated or
+    // deleted; the grace record can only be seen after the script has answered `grace`.
     it.each([
-      ['the live record, tenant absent', () => armLiveRotation(PRE_UPGRADE_SESSION)],
-      ['the grace record, tenant absent', () => armGraceRotation(PRE_UPGRADE_SESSION)],
-      ['the live record, tenant blank', () => armLiveRotation(BLANK_TENANT_SESSION)],
-      ['the grace record, tenant blank', () => armGraceRotation(BLANK_TENANT_SESSION)]
-    ])('refuses to rotate a dashboard session named by %s', async (_l, arm) => {
+      ['the live record, tenant absent', () => armLiveRotation(PRE_UPGRADE_SESSION), false],
+      ['the grace record, tenant absent', () => armGraceRotation(PRE_UPGRADE_SESSION), true],
+      ['the live record, tenant blank', () => armLiveRotation(BLANK_TENANT_SESSION), false],
+      ['the grace record, tenant blank', () => armGraceRotation(BLANK_TENANT_SESSION), true]
+    ])('refuses to rotate a dashboard session named by %s', async (_l, arm, scriptRuns) => {
       arm()
 
       await expect(
         service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
       expect(mockRedis.writeRecoveredSession).not.toHaveBeenCalled()
+      expect(mockRedis.rotateRefreshSession).toHaveBeenCalledTimes(scriptRuns ? 1 : 0)
     })
 
     // The placeholder path, asserted directly rather than relied on. `readSeedSession` answers
