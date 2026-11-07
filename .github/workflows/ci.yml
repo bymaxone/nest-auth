@@ -79,6 +79,18 @@ jobs:
         run: pnpm check:runtime
       - name: Documentation matches the built package
         run: pnpm check:published
+      # A source file over 800 lines is a finding unless it is on the frozen baseline, which can only
+      # shrink. On a pull request the baseline is also compared with the base branch's, so a change
+      # cannot admit the offender it adds by editing the list.
+      - name: Source files stay within 800 lines
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            node scripts/check-file-length.mjs --base "origin/$BASE_REF"
+          else
+            node scripts/check-file-length.mjs
+          fi
 
   # The Lua scripts behind refresh rotation, revocation, claims and rate limits run here against
   # a real Redis 8 started by Testcontainers (the image is pinned by digest in
