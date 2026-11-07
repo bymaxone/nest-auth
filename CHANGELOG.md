@@ -18,6 +18,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.20] - 2026-11-07
+
 ### Apply to a derived backend
 
 - **`SelfOrAdminGuard` no longer admits a request addressed to another tenant.** It decided by the
@@ -39,6 +41,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 - **A cross-tenant request is no longer admitted by `SelfOrAdminGuard`.** See the note above.
 
+### Changed
+
+- **`MfaService` moves private methods to internal modules.** They moved out of the class as plain
+  functions; behaviour, error codes and log text are unchanged, and none of them was part of the
+  public API.
+
 ### Documentation
 
 - **The shared contract states when the password-reset cooldown is released.**
@@ -47,6 +55,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   code or token store, or a send awaited inside the request), and that a send which fails after the
   response has left never releases it. No behaviour changes. The contract's sha256 changes with it, so a copy kept elsewhere is refreshed
   from `conformance/wire-contract.json`.
+- **Correction to the 1.4.19 notes on the resend cooldown.** The 1.4.19 entry for the password-reset
+  `500` split says the cooldown a request took "is released on any failure". That is wrong for a
+  send that fails after the response has left (a detached send): it keeps the cooldown, as the code
+  and its documentation state. The cooldown is released only for a failure the request
+  itself observes. The 1.4.19 text stands as published; this line supersedes it.
 
 ## [1.4.19] - 2026-11-07
 
@@ -4587,7 +4600,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.19...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.20...HEAD
+[1.4.20]: https://github.com/bymaxone/nest-auth/compare/v1.4.19...v1.4.20
 [1.4.19]: https://github.com/bymaxone/nest-auth/compare/v1.4.18...v1.4.19
 [1.4.18]: https://github.com/bymaxone/nest-auth/compare/v1.4.17...v1.4.18
 [1.4.17]: https://github.com/bymaxone/nest-auth/compare/v1.4.16...v1.4.17
