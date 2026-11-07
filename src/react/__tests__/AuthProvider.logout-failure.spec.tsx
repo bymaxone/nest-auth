@@ -115,6 +115,25 @@ describe('AuthProvider.logout — a server logout that did not complete', () => 
     }
   )
 
+  // Scenario: a rejection that carries the client error's name but no numeric status (a string,
+  // or none). Expected: it is unconfirmed, so the context stays authenticated and the error is
+  // rethrown. Why: only a numeric status can say the server gave a final answer.
+  it.each([
+    ['a string status', { status: '401' }],
+    ['no status', {}]
+  ])('keeps the authenticated state for a named error with %s', async (_label, extra) => {
+    const named = Object.assign(new Error('boom'), { name: 'AuthClientError' }, extra)
+    const client = createMockClient()
+    client.logout.mockRejectedValue(named)
+    const { result } = await renderAuthenticated(client)
+
+    await act(async () => {
+      await expect(result.current?.logout()).rejects.toBe(named)
+    })
+
+    expect(result.current?.status).toBe('authenticated')
+  })
+
   // Scenario: a retry after the failure succeeds. Expected: the state clears and the call
   // resolves. Why: keeping the state on failure exists to make this retry possible.
   it('clears the state when a retry after a failed logout succeeds', async () => {
