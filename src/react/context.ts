@@ -85,15 +85,25 @@ export interface AuthContextValue {
 
   /**
    * Revoke the current session server-side and clear the local
-   * context state.
+   * context state once the server has confirmed or finally answered.
    *
-   * @throws The underlying error raised by `AuthClient.logout` when
-   *   the network call fails. Local context state is STILL cleared
-   *   before the error propagates — consumers can treat a rejection
-   *   as "you are signed out locally, but the server revocation
-   *   request did not complete" and decide whether to retry.
-   *   Callers that do not care about the server-side outcome should
-   *   wrap the call in a try/catch and ignore the error.
+   * Rule, by what the server logout did:
+   *
+   *   - it succeeds: the session is revoked and the context state clears;
+   *   - it fails with a final answer, an `AuthClientError` whose status is
+   *     below 500 (the session is gone or was never valid, and the proxy
+   *     has cleared the cookies): the context state clears and the error
+   *     is rethrown;
+   *   - it fails with a 5xx (502 included) or with no answer at all (a
+   *     network failure, an abort): the logout is unconfirmed and the
+   *     session may be alive, so the context state is left as it was, still
+   *     authenticated, and the error is rethrown.
+   *
+   * @throws The underlying error raised by `AuthClient.logout`. A caller
+   *   that finds the status still `authenticated` after the rejection
+   *   should offer a retry; repeating the call is safe because the server
+   *   logout is idempotent. Callers that do not care about the server-side
+   *   outcome should wrap the call in a try/catch and ignore the error.
    */
   logout: () => Promise<void>
 
