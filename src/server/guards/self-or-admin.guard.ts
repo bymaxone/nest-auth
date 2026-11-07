@@ -17,11 +17,14 @@ import { hasRole } from '../utils/roles.util'
  * `req.user` before this guard runs.
  *
  * @remarks
- * **Multi-tenant ownership limitation:** This guard does NOT verify that the
- * target resource belongs to the same `tenantId` as the JWT. In multi-tenant
- * deployments the controller or service MUST additionally enforce ownership
- * against `req.user.tenantId` to prevent cross-tenant IDOR. This guard only
- * enforces the *identity* boundary (self vs. other), not the *tenant* boundary.
+ * **Tenant boundary:** when the route captures the tenant under `tenantId`, `tenant_id` or
+ * `tenant`, every capture present must equal the token's `tenantId`; otherwise the request is
+ * refused with `INSUFFICIENT_ROLE` before the self-or-admin decision is made. An id is only
+ * unique within a tenant, and the `admin` role is held inside one, so neither identity nor role
+ * reaches across the boundary. Captures that disagree with one another, are empty, or are arrays
+ * name no tenant the token can equal and are refused. A route that captures no tenant is decided
+ * by identity and role alone, and the controller or service MUST then enforce ownership against
+ * `req.user.tenantId` itself, as this guard has nothing to compare.
  *
  * **Admin role convention:** The literal `'admin'` role is checked against the
  * configured hierarchy. If the consuming application uses a different convention
@@ -62,6 +65,12 @@ export class SelfOrAdminGuard implements CanActivate {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
+    // The tenant comes before the id: a request for another tenant never reaches the decision
+    // below, and what it is refused for does not depend on the rest of the route.
+    if (!capturesOnlyTokenTenant(request.params, request.user.tenantId)) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+    }
+
     const rawParam = request.params['userId'] ?? request.params['id']
 
     if (rawParam === undefined) {
@@ -90,6 +99,23 @@ export class SelfOrAdminGuard implements CanActivate {
 
     throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
   }
+}
+
+/**
+ * Whether every tenant capture on the route (`tenantId`, `tenant_id` or `tenant`) equals the
+ * token's tenant. A route with none passes. A capture that is not a non-empty string, or that
+ * differs from the token's tenant, fails, and a token with no tenant cannot equal any capture.
+ */
+function capturesOnlyTokenTenant(
+  params: Request['params'],
+  tokenTenant: string | undefined
+): boolean {
+  const captures: unknown[] = [params.tenantId, params.tenant_id, params.tenant]
+  return captures.every(
+    (captured) =>
+      captured === undefined ||
+      (typeof captured === 'string' && captured !== '' && captured === tokenTenant)
+  )
 }
 
 /** Matches a valid SHA-256 hash — 64 strictly lowercase hex characters. */

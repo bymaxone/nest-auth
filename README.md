@@ -2263,7 +2263,7 @@ conditional on nothing having invalidated in between, which this service does no
 | `ApiKeyGuard`        | `@ServiceKey('read')`           | Service API key for machine callers; fails closed without scopes |
 
 > [!NOTE]
-> Three additional guards — `SelfOrAdminGuard` (ownership checks), `OptionalAuthGuard` (routes that behave differently for anonymous vs authenticated users), and `WsJwtGuard` (JWT authentication on WebSocket gateways) — are exported from the public `@bymax-one/nest-auth` barrel. Use them exactly like the core guards above.
+> Three additional guards — `SelfOrAdminGuard` (ownership checks), `OptionalAuthGuard` (routes that behave differently for anonymous vs authenticated users), and `WsJwtGuard` (JWT authentication on WebSocket gateways) — are exported from the public `@bymax-one/nest-auth` barrel. Use them exactly like the core guards above. `SelfOrAdminGuard` also holds a route that captures the tenant (`:tenantId`, `:tenant_id` or `:tenant`) to the token's tenant: a capture that differs from `req.user.tenantId`, disagrees with another capture, or is empty is refused with `403` before the self-or-admin decision, so neither a matching id nor the `admin` role reaches into another tenant. A route that captures no tenant is decided by identity and role alone, and your controller must enforce the tenant itself.
 
 ### One error envelope
 
