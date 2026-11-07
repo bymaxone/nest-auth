@@ -45,8 +45,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `responseBodies.passwordResetRequest.failures.cooldown` said "released on any failure"; it now says
   the cooldown is released when the request itself observes the failure (the account lookup, the
   code or token store, or a send awaited inside the request), and that a send which fails after the
-  response has left never releases it. The wording was made to match what both libraries do; no
-  behaviour changes. The contract's sha256 changes with it, so a copy kept elsewhere is refreshed
+  response has left never releases it. No behaviour changes. The contract's sha256 changes with it, so a copy kept elsewhere is refreshed
   from `conformance/wire-contract.json`.
 
 ## [1.4.19] - 2026-11-07
