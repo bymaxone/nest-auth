@@ -149,8 +149,12 @@ describe('invitation claim-then-write window (E2E)', () => {
       boot.options.redisNamespace ?? 'auth'
     )
     expect(res.status).toBe(204)
-    const recordTtl = await boot.redis.pttl(records[0] as string)
+    // The index is read FIRST. Its expiry is the record's or later, and a remaining time shrinks as
+    // the clock advances, so reading it earlier keeps `indexTtl >= recordTtl` true however coarse
+    // the clock: reading the record first lets a real server's clock tick between the two reads and
+    // report the index a millisecond lower with an equal expiry.
     const indexTtl = await boot.redis.pttl(indexes[0] as string)
+    const recordTtl = await boot.redis.pttl(records[0] as string)
     expect(indexTtl).toBeGreaterThanOrEqual(recordTtl)
   })
 })
