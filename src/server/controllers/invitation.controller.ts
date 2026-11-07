@@ -23,6 +23,7 @@ import { CreateInvitationDto } from '../dto/create-invitation.dto'
 import { RevokeInvitationDto } from '../dto/revoke-invitation.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
@@ -62,7 +63,7 @@ import { resolveClientAddress } from '../utils/client-address'
  */
 @UseInterceptors(NoStoreInterceptor)
 @Controller('invitations')
-@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UseGuards(RequestEncodingGuard, TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(createAuthValidationPipe())
 export class InvitationController {
   constructor(

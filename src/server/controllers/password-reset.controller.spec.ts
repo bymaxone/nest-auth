@@ -25,6 +25,7 @@ const mockTokenDelivery = {
 }
 import { PasswordResetController } from './password-reset.controller'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
+import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { Request } from 'express'
 
@@ -97,13 +98,14 @@ describe('PasswordResetController', () => {
   })
 
   // Verifies that no access guards are attached at the controller level because @Public() marks it as open.
-  // Neither class-level guard authorizes anything: one refuses a cross-site state-changing
-  // request riding in on the session cookie, the other enforces the per-IP limit. Every route
-  // here stays public — a password reset is performed by someone who cannot authenticate.
-  it('applies only the origin and rate-limit guards at the controller level', () => {
+  // None of the class-level guards authorizes anything: one refuses a compressed body, one refuses
+  // a cross-site state-changing request riding in on the session cookie, the other enforces the
+  // per-IP limit. Every route here stays public — a password reset is performed by someone who
+  // cannot authenticate.
+  it('applies only the encoding, origin and rate-limit guards at the controller level', () => {
     const guards = Reflect.getMetadata(GUARDS_METADATA, PasswordResetController) as unknown[]
 
-    expect(guards).toEqual([TrustedOriginGuard, AuthRateLimitGuard])
+    expect(guards).toEqual([RequestEncodingGuard, TrustedOriginGuard, AuthRateLimitGuard])
   })
 
   // ---------------------------------------------------------------------------

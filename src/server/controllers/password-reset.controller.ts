@@ -25,6 +25,7 @@ import { ResetPasswordDto } from '../dto/reset-password.dto'
 import { VerifyOtpDto } from '../dto/verify-otp.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
@@ -62,7 +63,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 @Public()
 @UseInterceptors(NoStoreInterceptor)
 @Controller('password')
-@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UseGuards(RequestEncodingGuard, TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(createAuthValidationPipe())
 export class PasswordResetController {
   constructor(

@@ -19,12 +19,14 @@ import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
+import { RequestEncoding } from '../decorators/request-encoding.decorator'
 import { LoginDto } from '../dto/login.dto'
 import { RegisterDto } from '../dto/register.dto'
 import { ResendVerificationDto } from '../dto/resend-verification.dto'
 import { VerifyEmailDto } from '../dto/verify-email.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
@@ -71,7 +73,7 @@ function isMfaChallenge(result: AuthResult | MfaChallengeResult): result is MfaC
  */
 @UseInterceptors(NoStoreInterceptor)
 @Controller()
-@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UseGuards(RequestEncodingGuard, TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(createAuthValidationPipe())
 export class AuthController {
   constructor(
@@ -152,6 +154,7 @@ export class AuthController {
   @Throttle(AUTH_THROTTLE_CONFIGS.logout)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.logout)
   @HttpCode(HttpStatus.NO_CONTENT)
+  @RequestEncoding('unchecked')
   @Post('logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
     const accessToken = this.tokenDelivery.extractAccessToken(req) ?? ''
@@ -174,6 +177,7 @@ export class AuthController {
   @Throttle(AUTH_THROTTLE_CONFIGS.refresh)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.refresh)
   @HttpCode(HttpStatus.OK)
+  @RequestEncoding('unchecked')
   @Post('refresh')
   async refresh(
     @Req() req: Request,
@@ -240,6 +244,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, UserStatusGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.wsTicket)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.wsTicket)
+  @RequestEncoding('unchecked')
   @Post('ws-ticket')
   @HttpCode(HttpStatus.OK)
   async wsTicket(

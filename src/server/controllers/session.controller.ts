@@ -19,10 +19,12 @@ import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { sha256 } from '../crypto/secure-token'
 import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
+import { RequestEncoding } from '../decorators/request-encoding.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
@@ -72,7 +74,13 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 // before `AuthRateLimitGuard` ever ran, so bad tokens were never metered: the route's limiter
 // sat permanently at zero while every request still paid `verifyWithRotation` (one HMAC per
 // configured secret, including every `previousSecrets` entry) and a Redis round trip.
-@UseGuards(TrustedOriginGuard, AuthRateLimitGuard, JwtAuthGuard, UserStatusGuard)
+@UseGuards(
+  RequestEncodingGuard,
+  TrustedOriginGuard,
+  AuthRateLimitGuard,
+  JwtAuthGuard,
+  UserStatusGuard
+)
 @UsePipes(createAuthValidationPipe())
 export class SessionController {
   constructor(
@@ -143,6 +151,7 @@ export class SessionController {
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
   @HttpCode(HttpStatus.NO_CONTENT)
+  @RequestEncoding('unchecked')
   @Post('revoke-all')
   async revokeAllSessions(
     @CurrentUser() user: DashboardJwtPayload,

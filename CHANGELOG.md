@@ -18,6 +18,35 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **A request body declared compressed is now refused with `415 auth.validation`, whatever the
+  host's body parser does.** Express's default parser decompresses `gzip`, `deflate` and `br`
+  before a handler runs, so these requests used to be accepted; rust-auth refuses them. The
+  library now answers `415` "Unsupported media type" in the library envelope for any
+  `Content-Encoding` other than `identity` on its JSON-body routes, before the handler. Refresh,
+  logout, revoke-all and the WebSocket ticket request are unchecked; the MFA setup routes, which
+  accept an empty body, refuse it only when a body is present; `GET`, `HEAD`, `OPTIONS` and
+  `DELETE` requests are never checked. The route-by-route scope is the new `requestEncoding`
+  section of `conformance/wire-contract.json`, and a test fails when a controller route is added
+  without a decision. A client that compresses its request bodies must send them uncompressed;
+  browsers and `fetch` do not compress them. A host that also sets `inflate: false` on its JSON
+  parser refuses earlier, with the same `415` through `AuthExceptionFilter`.
+- **A body that claims to be compressed and is not now answers `400 auth.validation`
+  `Malformed request`, not `500`.** The body parser raises that failure as a plain 400 with no
+  `type`, so `AuthExceptionFilter` now answers a 400 error of that shape that arrived before any
+  route matched with the fixed message. The `transportErrors` section lists the row.
+- **New public API:** `RequestEncodingGuard`, applied at class level to every library controller
+  and available for a host's own controllers; the `@RequestEncoding('unchecked' | 'when-body')`
+  decorator and its `RequestEncodingPolicy` type, which set a route's policy (a route with none is
+  strict). `content-encoding`, `content-length` and `transfer-encoding` join the headers the library reads,
+  so `apiKeys.header` can no longer name them.
+
+### Fixed
+
+- **Compressed request bodies are refused the way rust-auth refuses them, and a corrupt one no
+  longer answers `500`.** See the note above.
+
 ## [1.4.17] - 2026-11-07
 
 ### Apply to a derived backend

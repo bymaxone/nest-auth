@@ -16,12 +16,14 @@ import type { Request } from 'express'
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
+import { RequestEncoding } from '../decorators/request-encoding.decorator'
 import { MfaDisableDto } from '../dto/mfa-disable.dto'
 import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-codes.dto'
 import { MfaSetupDto } from '../dto/mfa-setup.dto'
 import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
+import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
@@ -63,7 +65,7 @@ import { resolveClientAddress } from '../utils/client-address'
  */
 @UseInterceptors(NoStoreInterceptor)
 @Controller('platform/mfa')
-@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UseGuards(RequestEncodingGuard, TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(createAuthValidationPipe({ forbidUnknownValues: true }))
 export class PlatformMfaController {
   constructor(@Inject(MfaService) private readonly mfaService: MfaService) {}
@@ -81,6 +83,7 @@ export class PlatformMfaController {
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
+  @RequestEncoding('when-body')
   @Post('setup')
   async setup(
     @CurrentUser() user: PlatformJwtPayload,

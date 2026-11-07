@@ -27,6 +27,10 @@ export const LIBRARY_READ_HEADERS: readonly string[] = [
   // The cross-site request checks of `TrustedOriginGuard`.
   'origin',
   'sec-fetch-site',
+  // The compressed-body refusal of `RequestEncodingGuard`, and the check of whether a body is present.
+  'content-encoding',
+  'content-length',
+  'transfer-encoding',
   // What the client address (`request.ip`) is derived from behind a trusted proxy.
   'x-forwarded-for',
   'x-forwarded-host',

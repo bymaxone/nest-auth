@@ -310,5 +310,69 @@ describe('AuthExceptionFilter', () => {
       expect(status).toHaveBeenCalledWith(500)
       expect(writtenEnvelope(json).code).toBe('auth.internal')
     })
+    describe('a plain 400 from the body parser', () => {
+      /** The shape `createError(400, error)` leaves on an error with no parser `type`. */
+      const untyped = (fields: Record<string, unknown> = {}): Error =>
+        Object.assign(new Error('incorrect header check'), {
+          status: 400,
+          statusCode: 400,
+          expose: true,
+          ...fields
+        })
+
+      // Verifies a corrupt compressed body, which the parser reports as a 400 with no `type`, is
+      // answered as a malformed request when no route matched.
+      it('answers the generic validation envelope before routing', () => {
+        const { host, status, json } = makeHost({})
+
+        filter.catch(untyped(), host)
+
+        expect(status).toHaveBeenCalledWith(400)
+        expect(json).toHaveBeenCalledWith({
+          error: { code: 'auth.validation', message: 'Malformed request', details: null }
+        })
+      })
+
+      // Verifies the same shape after a route matched is the application's own error and stays an
+      // internal failure, because only the absence of a route says the parser raised it.
+      it('keeps the same shape after routing as an internal failure', () => {
+        const { host, status, json } = makeHost({ route: { path: '/login' } })
+        jest.spyOn(Logger.prototype, 'error').mockImplementation()
+
+        filter.catch(untyped(), host)
+
+        expect(status).toHaveBeenCalledWith(500)
+        expect(writtenEnvelope(json).code).toBe('auth.internal')
+      })
+
+      // Verifies each property of the shape is required: a 400 that is not exposed, whose two
+      // status properties disagree or are another status, that carries a type the parser did not
+      // raise, or that is not an Error, is not this refusal.
+      it.each([
+        ['not exposed', { expose: false }],
+        ['exposure missing', { expose: undefined }],
+        ['status 413', { status: 413, statusCode: 413 }],
+        ['status 400 but statusCode 500', { statusCode: 500 }],
+        ['statusCode 400 but status 500', { status: 500 }],
+        ['carrying a type the parser does not raise', { type: 'something.else' }]
+      ])('does not treat a 400 %s as the parser refusal', (_name, fields) => {
+        const { host, status, json } = makeHost({})
+        jest.spyOn(Logger.prototype, 'error').mockImplementation()
+
+        filter.catch(untyped(fields), host)
+
+        expect(status).toHaveBeenCalledWith(500)
+        expect(writtenEnvelope(json).code).toBe('auth.internal')
+      })
+
+      it('does not treat a plain object with the same properties as the parser refusal', () => {
+        const { host, status } = makeHost({})
+        jest.spyOn(Logger.prototype, 'error').mockImplementation()
+
+        filter.catch({ status: 400, statusCode: 400, expose: true }, host)
+
+        expect(status).toHaveBeenCalledWith(500)
+      })
+    })
   })
 })
