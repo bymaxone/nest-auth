@@ -24,9 +24,15 @@ import { bootstrapTestApp } from './setup'
 const TTL_SECONDS = 3_600
 const INVITEE = 'window@example.com'
 
-/** The keys the invitation flow owns, as the mock Redis holds them. */
-async function invitationKeys(redis: Redis): Promise<{ records: string[]; indexes: string[] }> {
-  const keys = await redis.keys('*')
+/**
+ * The keys the invitation flow owns under `namespace`, as the Redis the suite runs on holds them.
+ * A real server is shared by every suite in the run, so the scan is bounded to the namespace.
+ */
+async function invitationKeys(
+  redis: Redis,
+  namespace: string
+): Promise<{ records: string[]; indexes: string[] }> {
+  const keys = await redis.keys(`${namespace}:*`)
   return {
     records: keys.filter((key) => key.includes(':inv:')),
     indexes: keys.filter((key) => key.includes(':invidx:'))
@@ -116,7 +122,10 @@ describe('invitation claim-then-write window (E2E)', () => {
 
     const res = await invite()
 
-    const { records, indexes } = await invitationKeys(boot.redis)
+    const { records, indexes } = await invitationKeys(
+      boot.redis,
+      boot.options.redisNamespace ?? 'auth'
+    )
     expect({ status: res.status, records: records.length, indexes: indexes.length }).toEqual({
       status: 403,
       records: 0,
@@ -135,7 +144,10 @@ describe('invitation claim-then-write window (E2E)', () => {
 
     const res = await invite()
 
-    const { records, indexes } = await invitationKeys(boot.redis)
+    const { records, indexes } = await invitationKeys(
+      boot.redis,
+      boot.options.redisNamespace ?? 'auth'
+    )
     expect(res.status).toBe(204)
     const recordTtl = await boot.redis.pttl(records[0] as string)
     const indexTtl = await boot.redis.pttl(indexes[0] as string)

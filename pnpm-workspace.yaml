@@ -24,7 +24,12 @@ allowBuilds:
   # here needs it, so it stays off.
   '@scarf/scarf': false
   '@swc/core': true
+  # Denied on purpose: optional native builds reached transitively through testcontainers that
+  # nothing here executes. Recording them as `false` states the decision.
+  cpu-features: false
   esbuild: true
+  protobufjs: false
+  ssh2: false
   unrs-resolver: true
 
 # Forced versions for vulnerable transitive dev dependencies. These live here and

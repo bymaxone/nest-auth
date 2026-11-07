@@ -246,6 +246,7 @@ describe('password reset flow (E2E)', () => {
     let app: INestApplication
     let sentEmails: CapturedEmail[]
     let redis: Redis
+    let namespace: string
 
     beforeAll(async () => {
       const bootstrap = await bootstrapTestApp({
@@ -254,6 +255,7 @@ describe('password reset flow (E2E)', () => {
       })
       app = bootstrap.app
       redis = bootstrap.redis
+      namespace = bootstrap.options.redisNamespace ?? 'auth'
       sentEmails = instrumentPasswordResetEmails(bootstrap.email)
     })
 
@@ -293,8 +295,9 @@ describe('password reset flow (E2E)', () => {
 
       const first = await requestToken()
       // Release the 60-second send cooldown the way waiting would, so the second request is
-      // issued at all — the cooldown is a separate control with its own tests.
-      for (const key of await redis.keys('*resend:password_reset:*')) {
+      // issued at all — the cooldown is a separate control with its own tests. Bounded to this app's
+      // namespace: a shared server holds every other app's cooldown keys too.
+      for (const key of await redis.keys(`${namespace}:*resend:password_reset:*`)) {
         await redis.del(key)
       }
       const second = await requestToken()
