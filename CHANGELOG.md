@@ -24,14 +24,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   the failure is the same for every address.** `POST /password/forgot-password` and
   `POST /password/resend-otp` used to acknowledge `200` whatever failed. A failure before the
   account is known, the resend-cooldown store or the account lookup, now answers `500`
-  `auth.internal` after the usual 300 ms floor, because it tells the caller nothing about the
+  `auth.internal` after the usual floor, because it tells the caller nothing about the
   address. A failure after the account is known, issuing or storing the code, is logged and still
   answers `200`, because it happens only for a registered address. The resend cooldown a request
-  took is released on any failure, so the retry a `500` invites is not refused for a minute. A
+  took is released on any failure, so the retry a `500` invites is not refused for the rest of the cooldown window. A
   cooldown hit takes the same floor as every other exit. A client or monitor that treated these
   routes as always `200` sees `500` during a Redis or repository outage. The contract's
-  `responseBodies.passwordResetRequest` gains a `failures` note stating the rule, and rust-auth
-  mirrors it. Private `answerResetRequest` appears in the `PasswordResetService` declarations.
+  `responseBodies.passwordResetRequest` gains a `failures` note stating the rule. Private `answerResetRequest` appears in the `PasswordResetService` declarations.
 - **The Next.js logout handler keeps the cookies when the upstream logout did not complete.**
   `createLogoutHandler` clears the three auth cookies only once the upstream has given a final
   answer below `500` (a `2xx`, or a `4xx` such as an expired or already-revoked session). When the
