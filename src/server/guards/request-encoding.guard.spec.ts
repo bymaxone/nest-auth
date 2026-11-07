@@ -88,7 +88,9 @@ describe('RequestEncodingGuard', () => {
 
   // A route that opted out is never refused, whatever the header says.
   it('lets an unchecked route through with a compressed body', () => {
-    expect(refusal({ headers: { 'content-encoding': 'gzip' } }, 'unchecked')).toBeUndefined()
+    expect(
+      guard().canActivate(contextWith({ headers: { 'content-encoding': 'gzip' } }, 'unchecked'))
+    ).toBe(true)
   })
 
   // The when-body policy: refused with a body, in either of the two ways a body is declared, and
@@ -107,13 +109,17 @@ describe('RequestEncodingGuard', () => {
     ['a zero Content-Length', { 'content-length': '0' }]
   ])('lets a when-body route through with %s', (_name, extra) => {
     expect(
-      refusal({ headers: { 'content-encoding': 'gzip', ...extra } }, 'when-body')
-    ).toBeUndefined()
+      guard().canActivate(
+        contextWith({ headers: { 'content-encoding': 'gzip', ...extra } }, 'when-body')
+      )
+    ).toBe(true)
   })
 
   // A path-only or query-only request has no body to decode; none of these methods is checked.
   it.each(['GET', 'HEAD', 'OPTIONS', 'DELETE'])('never checks a %s request', (method) => {
-    expect(refusal({ method, headers: { 'content-encoding': 'gzip' } })).toBeUndefined()
+    expect(
+      guard().canActivate(contextWith({ method, headers: { 'content-encoding': 'gzip' } }))
+    ).toBe(true)
   })
 
   // The body methods are checked.
