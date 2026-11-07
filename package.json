@@ -77,6 +77,7 @@
     "build": "pnpm clean && tsup",
     "check:api": "node scripts/check-api-surface.mjs",
     "check:exports": "node scripts/check-exports.mjs",
+    "check:file-length": "node scripts/check-file-length.mjs",
     "check:published": "node scripts/check-published-surface.mjs",
     "check:runtime": "node scripts/check-consumer-runtime.mjs",
     "clean": "rm -rf dist coverage",
