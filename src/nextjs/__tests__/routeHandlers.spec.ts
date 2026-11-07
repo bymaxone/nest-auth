@@ -731,7 +731,7 @@ describe('createLogoutHandler', () => {
   })
 
   // Upstream unreachable: the logout is unconfirmed, so the cookies stay and the answer is a
-  // 502 — the client keeps the handle it needs to retry. Flipped on purpose from "always clears".
+  // 502 — the client keeps the handle it needs to retry.
   it('keeps the cookies and answers 502 when the upstream fetch throws', async () => {
     fetchSpy.mockRejectedValueOnce(new Error('network down'))
 
