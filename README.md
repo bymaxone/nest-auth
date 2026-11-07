@@ -1058,6 +1058,23 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > otherwise surface at a user's first challenge rather than at boot. Drop the entry once your
 > enrolled users have had time to authenticate at least once.
 
+> [!WARNING]
+> **Keep your `updateMfa` fast.** Every MFA state change
+> rewrites the account's MFA record through your repository's `updateMfa`, and the library
+> serializes those writes per account with a lock that expires on its own
+> (`MFA_TRANSITION_LOCK_TTL_SECONDS`, 10 seconds) so a process that dies mid-write cannot strand
+> the account. The lock cannot outlast a write that is still running: if your `updateMfa` stalls
+> past that time, a second change takes the lock, reads the record, and writes it, and the stalled
+> write then lands _after_ it and overwrites it. The repository interface offers no
+> compare-and-set for the library to use, so it cannot detect this. Keep `updateMfa` well under the
+> lock's lifetime (a plain single-row update is, but a call that waits on a contended lock or a slow
+> replica may not be). A guard of your own inside `updateMfa` can narrow the window only for a stall
+> that happens after the guard's own read, such as a wait on a row lock inside the `UPDATE`: the
+> library passes `updateMfa` the new values and not the ones it read, so closing the window
+> completely would need those values passed in. The lock is held
+> across the read the transition makes inside it as well as the write, so a slow `findById` counts
+> against the same lifetime.
+
 > [!IMPORTANT]
 > **The parameters that carry a control's strength are bounded at startup.** `mfa.totpWindow`
 > must be `0..=10`: the window counts 30-second steps on _either_ side of now, so `2n + 1`

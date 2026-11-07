@@ -353,6 +353,15 @@ export interface IUserRepository {
    * spent recovery code in the account's list. An implementation MUST scope the update by both the
    * id and the tenant, exactly as its read does.
    *
+   * **Keep this call well under the MFA transition lock's lifetime.** The library serializes MFA
+   * state changes per account with a lock that expires on its own after
+   * `MFA_TRANSITION_LOCK_TTL_SECONDS` (10 seconds), so a process that dies mid-write cannot strand
+   * the account. A write still running when the lock expires is overtaken: a second change takes
+   * the lock, reads the record and writes it, and this write then lands after it and overwrites it.
+   * The interface has no compare-and-set for the library to use, so it cannot detect that. The
+   * parameters carry only the new values, so a guard inside this method can narrow the window only
+   * for a stall after its own read; closing it would need the values the library read passed in.
+   *
    * @param params - See {@link UpdateMfaParams}.
    */
   updateMfa(params: UpdateMfaParams): Promise<void>
