@@ -117,8 +117,8 @@ describe('createLogoutHandler — an upstream logout that did not complete', () 
     }
   )
 
-  // Scenario: the answer is below 500 in redirect mode. Expected: the redirect to the login
-  // page is unchanged.
+  // Scenario: a final answer below 500 in redirect mode. Expected: a redirect to the configured
+  // login path and the three cookies cleared.
   it('redirects to the login path when the upstream answers 401 in redirect mode', async () => {
     fetchSpy.mockResolvedValueOnce(upstreamAnswering(401))
 
