@@ -29,9 +29,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   redirects. The cookies are the client's only handle for retrying the same logout, and the
   upstream endpoint is idempotent, so the retry completes it. A caller that treated the handler's
   answer as always successful sees a `5xx` or `502` it did not see before; `AuthClient.logout()`
-  and the React `logout()` reject on it, as they do for any non-2xx. Cross-site and non-`POST`
-  requests are answered as before. The rule is in the handler's file header in a form the
-  rust-auth twin copies. No contract change and no public declaration change.
+  rejects on it, as it does for any non-2xx. Cross-site and non-`POST` requests are answered as
+  before.
 
 ### Fixed
 
