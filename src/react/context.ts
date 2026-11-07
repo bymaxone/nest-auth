@@ -102,9 +102,12 @@ export interface AuthContextValue {
    *
    * Which statuses the hook can see depends on the topology. Behind the
    * Next.js proxy route, an upstream answer below 500 other than 429 is
-   * answered 200 (or a redirect) after the cookies are cleared, so the hook
-   * sees no 4xx there: only a 5xx, a 502 or a 429, which keep the cookies.
-   * Talking to the NestJS server directly, it sees the server's own 4xx.
+   * answered 200 (or a redirect) after the cookies are cleared, so an
+   * upstream 4xx is never relayed: the hook sees a 5xx, a 502 or a 429,
+   * which keep the cookies. A 4xx the route answers itself (403 for a
+   * cross-site request, 405 for another method) or one from something in
+   * front of it reaches the hook and clears the context. Talking to the
+   * NestJS server directly, the hook sees the server's own 4xx.
    *
    * @throws The underlying error raised by `AuthClient.logout`. A caller
    *   that finds the status still `authenticated` after the rejection
