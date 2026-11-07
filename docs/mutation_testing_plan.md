@@ -296,6 +296,35 @@ poll the log instead of blocking on it.
 
 ⚠️ A CLI `--mutate` glob **overrides** the config's `mutate` (including the `!**/*.spec.ts` exclusions). Never pass a broad glob like `src/server/guards/**/*.ts` — it will also mutate the `*.spec.ts` files and pollute the score with meaningless test-code mutants. List specific production files, or append `"!src/**/*.spec.ts" "!src/**/*.spec.tsx"` to the `--mutate` arguments.
 
+### 5.4 Constant tables, which Stryker does not mutate
+
+Stryker changes operators and literals; it does not remove an entry from an `as const` object or
+array, or change a number inside one. An entry can therefore disappear, or a limit drift, with every
+test green. `scripts/mutate-const-tables.mjs` closes that gap: for every entry of every `as const`
+table in `src/` (nested literals included) it makes one mutant that removes the entry and, for a
+plain integer, one that adds one, and it counts the mutant as killed when the test command fails.
+
+```bash
+pnpm mutate:tables                                  # every file; see the cost below
+node scripts/mutate-const-tables.mjs --only src/server/constants/throttle-configs.ts -- \
+  pnpm exec jest --config jest.mutants.config.ts --findRelatedTests {file} --coverage=false --silent --bail=1
+```
+
+- **It rewrites tracked source files in place** and restores them after every mutant and on
+  SIGINT or SIGTERM. Run it in a worktree of its own, on a clean tree, and touch nothing in that
+  worktree while it runs. A `SIGKILL` leaves the last mutant behind: `git status` shows it.
+- **`jest.mutants.config.ts`** is the unit config with ts-jest's type check off. With the check on, a
+  removed property that other code reads would fail to compile and count as killed, which a test did
+  not do.
+- **Cost.** The command runs once per mutant, serially. The constants are imported by most of the
+  suite, so `--findRelatedTests` selects most of it: measured here at about 45 seconds per mutant,
+  and about 26 with `--bail=1`, which stops a run at its first failing suite. The whole repository
+  has 97 tables, 373 entries and 448 mutants in 11 files, which is about three and a half hours.
+  Run it file by file with `--only`, and start with the tables that carry a security limit
+  (`throttle-configs.ts`).
+- A survivor means no test pins that entry. Pin it with a test that reads the entry, or, when it is
+  genuinely free, say why in the table's own comment.
+
 ---
 
 ## 6. File and Script Changes
