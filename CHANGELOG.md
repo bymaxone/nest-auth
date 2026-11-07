@@ -66,12 +66,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   restore the removed factor or the replaced secret and recovery digests. The re-encryption is now
   one of the serialized MFA transitions and writes only when the stored secret still decrypts to
   the secret the challenge opened, and the recovery-code challenge makes the same check before it
-  spends a code. A sibling challenge that only re-encrypted the same secret does not count as a
+  writes back the list without the used code. A sibling challenge that only re-encrypted the same secret does not count as a
   change. Accounts already past the migration, and deployments with no retired key, are not
   affected; draining the retired keys closes the exposure. When another transition holds the lock
-  the migration is skipped and retried by the next challenge. No contract change. Private
-  `holdsSecret` appears in the `MfaService` declarations and `reencryptSecret` takes one
-  argument fewer.
+  the migration is skipped and retried by the next challenge. No contract change.
 
 ### Fixed
 
