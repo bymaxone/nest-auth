@@ -79,6 +79,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **A failed logout no longer shows the UI as signed out while the session is alive.** See the
   note above.
 
+### Documentation
+
+- **A host `updateMfa` that outlasts the MFA transition lock can reorder MFA writes.** The README
+  and the `updateMfa` documentation on both repository interfaces now state it: the lock expires
+  on its own after `MFA_TRANSITION_LOCK_TTL_SECONDS` (10 seconds), a write still running then is
+  overtaken and lands after the next change, and the interface has no compare-and-set for the
+  library to use. Keep `updateMfa` well under the lock's lifetime or make it a compare-and-set.
+
 ## [1.4.18] - 2026-11-07
 
 ### Apply to a derived backend

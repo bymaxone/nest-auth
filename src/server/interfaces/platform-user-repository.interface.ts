@@ -171,6 +171,15 @@ export interface IPlatformUserRepository {
    * `mfaSecret` with AES-256-GCM and hash `mfaRecoveryCodes` with SHA-256
    * before passing them here.
    *
+   * **Keep this call well under the MFA transition lock's lifetime.** The library serializes MFA
+   * state changes per account with a lock that expires on its own after
+   * `MFA_TRANSITION_LOCK_TTL_SECONDS` (10 seconds), so a process that dies mid-write cannot strand
+   * the account. A write still running when the lock expires is overtaken: a second change takes
+   * the lock, reads the record and writes it, and this write then lands after it and overwrites it.
+   * The interface has no compare-and-set for the library to use, so it cannot detect that. An
+   * implementation that may be slow SHOULD make the write a compare-and-set on the previous
+   * `mfaSecret` and recovery-code values.
+   *
    * @param id - The platform administrator's unique identifier.
    * @param data - New MFA state. See {@link UpdatePlatformMfaData}.
    */
