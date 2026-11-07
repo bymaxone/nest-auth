@@ -46,13 +46,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **The Next.js logout handler keeps the cookies when the upstream logout did not complete.**
   `createLogoutHandler` clears the three auth cookies only once the upstream has given a final
   answer below `500` other than `429` (a `2xx`, or a `4xx` such as an expired or already-revoked
-  session). When the upstream answers `5xx`, which it does when a revocation write failed and the
-  session is still alive, the handler answers that status and touches no cookie; a `429` from the
+  session). When the upstream answers `5xx`, the handler answers that status and touches no cookie; a `429` from the
   throttled logout route, answered before anything is revoked, is handled the same way and passes
   on the upstream `Retry-After`; when the upstream is unreachable or the request fails, it answers
   `502` and touches no cookie. In `'redirect'` mode none of these redirects. The cookies are the client's only handle for retrying the same logout, and the
   upstream endpoint is idempotent, so the retry completes it. A caller that treated the handler's
-  answer as always successful sees a `5xx` or `502` it did not see before; `AuthClient.logout()`
+  answer as always successful sees a `5xx`, `502` or `429` it did not see before; `AuthClient.logout()`
   rejects on it, as it does for any non-2xx. Cross-site and non-`POST` requests are answered as
   before.
 - **The React `logout()` keeps the authenticated state when the server logout did not
