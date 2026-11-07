@@ -3,9 +3,9 @@
  * account that signed out.
  *
  * A logout attempts every revocation write and answers 5xx when any failed. The refresh session
- * is deleted along the way, so by the time the client retries there is no stored record to say
- * whose logout it is, and the hook stayed silent for a logout that did complete. These cases fail
- * a revocation write once and then drive the retry over real HTTP:
+ * is deleted by the first attempt, so the retry must recover whose logout it is from the pending
+ * marker, and must announce it. These cases fail a revocation write once and then drive the retry
+ * over real HTTP:
  *
  *   - the retry completes the logout and fires `afterLogout` once, for the right account;
  *   - a repeat after that does not fire it again;
