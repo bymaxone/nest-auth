@@ -16,8 +16,8 @@ import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { recentAuthKey } from '../constants/recent-auth'
 import { userSubject } from '../constants/user-subject'
-import { decrypt, encrypt } from '../crypto/aes-gcm'
-import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
+import { encrypt } from '../crypto/aes-gcm'
+import { hmacSha256 } from '../crypto/secure-token'
 import {
   buildTotpUri,
   generateTotpSecret,
@@ -32,18 +32,27 @@ import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.i
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type {
   AuthPlatformUser,
-  IPlatformUserRepository,
-  SafeAuthPlatformUser
+  IPlatformUserRepository
 } from '../interfaces/platform-user-repository.interface'
-import type {
-  AuthUser,
-  IUserRepository,
-  SafeAuthUser
-} from '../interfaces/user-repository.interface'
+import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
+import { generateRecoveryCodes, verifyRecoveryCode } from '../utils/mfa-recovery-codes'
+import {
+  committedSafeUser,
+  platformUserAsSafeUser,
+  toSafePlatformUser,
+  toSafeUser
+} from '../utils/mfa-safe-user'
+import {
+  decryptMfaSecret,
+  decryptWithRotation,
+  encryptMfaSecret,
+  holdsSecret
+} from '../utils/mfa-secret-cipher'
+import { parsePlainRecoveryCodes, parseSetupData, type MfaSetupData } from '../utils/mfa-setup-data'
 import { runDetached } from '../utils/run-detached'
 import { safeLogLine } from '../utils/safe-log-line'
 
@@ -178,53 +187,6 @@ export interface MfaSetupResult {
   recoveryCodes: string[]
 }
 
-/**
- * Shape stored in Redis during a pending MFA setup.
- *
- * `encryptedSecret` and `encryptedPlainCodes` are both AES-256-GCM encrypted so
- * that a Redis compromise during the 10-minute setup window does not expose the
- * TOTP secret or plain-text recovery codes.
- *
- * @internal
- */
-interface MfaSetupData {
-  /** AES-256-GCM encrypted Base32 TOTP secret. */
-  encryptedSecret: string
-  /** Keyed HMAC-SHA-256 digests of the recovery codes (stored in the DB after enable). */
-  hashedCodes: string[]
-  /**
-   * AES-256-GCM encrypted JSON array of plain-text recovery codes.
-   * Stored only to support idempotent re-display within the setup window.
-   */
-  encryptedPlainCodes: string
-}
-
-/**
- * Whether an unknown value is a well-formed {@link MfaSetupData}.
- *
- * @param value - The `JSON.parse` result.
- * @returns `true` when every field is present and correctly typed.
- */
-function isMfaSetupData(value: unknown): value is MfaSetupData {
-  if (value === null) return false
-  // Unobservable either way. A primitive answers `undefined` to every field read below, so the
-  // conjunction returns false without this arm, and returning true from it hands the caller a
-  // value whose fields are all `undefined` — refused a step later by the same MFA_SETUP_REQUIRED.
-  // Only `null` has to be stopped before the reads, because taking a property off it throws.
-  // Kept as a stated precondition rather than as behaviour.
-  //
-  // Stryker disable ConditionalExpression,BooleanLiteral: subsumed by the field reads below
-  if (typeof value !== 'object') return false
-  // Stryker restore ConditionalExpression,BooleanLiteral
-  const v = value as Record<string, unknown>
-  return (
-    typeof v['encryptedSecret'] === 'string' &&
-    typeof v['encryptedPlainCodes'] === 'string' &&
-    Array.isArray(v['hashedCodes']) &&
-    v['hashedCodes'].every((code) => typeof code === 'string')
-  )
-}
-
 // ---------------------------------------------------------------------------
 // MfaService
 // ---------------------------------------------------------------------------
@@ -320,10 +282,11 @@ export class MfaService {
   ): Promise<void> {
     try {
       await this.transitionMfaRecord(context, userId, tenantId, (current) => {
-        if (!current.mfaEnabled || !this.holdsSecret(current.mfaSecret, secretBase32)) return null
+        if (!current.mfaEnabled || !holdsSecret(current.mfaSecret, secretBase32, this.mfaOptions))
+          return null
         return {
           mfaEnabled: true,
-          mfaSecret: this.encryptSecret(secretBase32),
+          mfaSecret: encryptMfaSecret(secretBase32, this.mfaOptions),
           mfaRecoveryCodes: current.mfaRecoveryCodes ?? []
         }
       })
@@ -465,230 +428,6 @@ export class MfaService {
   }
 
   /**
-   * Whether `stored` decrypts, under the current or a retired key, to `secretBase32`.
-   *
-   * Compares plaintext, so a record that was only re-encrypted still matches and one holding a
-   * different secret does not. A ciphertext no key opens does not match either.
-   */
-  private holdsSecret(stored: string | null | undefined, secretBase32: string): boolean {
-    if (!stored) return false
-    try {
-      return timingSafeCompare(this.decryptWithRotation(stored).secret, secretBase32)
-    } catch {
-      return false
-    }
-  }
-
-  /**
-   * Encrypts a TOTP secret for storage in the database using AES-256-GCM.
-   */
-  private encryptSecret(secret: string): string {
-    return encrypt(secret, this.mfaOptions.encryptionKey)
-  }
-
-  /**
-   * Decrypts a stored TOTP secret, falling back to keys retired by a rotation.
-   *
-   * The ciphertext records no key identifier, so without the retired keys, changing
-   * `mfa.encryptionKey` makes every stored secret undecryptable — every enrolled user's
-   * authenticator stops matching at once, with no way back. AES-GCM authenticates, so a wrong
-   * key fails unambiguously rather than returning garbage; trying them in order is safe.
-   *
-   * Re-throws any decryption failure as an opaque `TOKEN_INVALID` to prevent
-   * error-type oracle attacks (callers cannot distinguish format vs. tamper errors).
-   */
-  private decryptSecret(encrypted: string): string {
-    return this.decryptWithRotation(encrypted).secret
-  }
-
-  /**
-   * Decrypt under the current key, then under each retired one.
-   *
-   * @param encrypted - The stored ciphertext.
-   * @returns The plaintext and whether a retired key produced it — the signal that the record
-   *   should be re-encrypted under the current key.
-   * @throws {@link AuthException} `TOKEN_INVALID` when no key decrypts it.
-   */
-  private decryptWithRotation(encrypted: string): { secret: string; stale: boolean } {
-    try {
-      return { secret: decrypt(encrypted, this.mfaOptions.encryptionKey), stale: false }
-    } catch {
-      for (const key of this.mfaOptions.previousEncryptionKeys ?? []) {
-        try {
-          return { secret: decrypt(encrypted, key), stale: true }
-        } catch {
-          // Try the next retired key. A ciphertext none of them opens is tampered, truncated,
-          // or from a key nobody holds any more — all the same opaque failure to the caller.
-        }
-      }
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
-  }
-
-  /**
-   * Safely parses a Redis-stored {@link MfaSetupData} JSON payload.
-   *
-   * A corrupted or tampered Redis value would otherwise raise an unhandled
-   * `SyntaxError` from the service boundary (uncaught 500). We translate the
-   * failure into an opaque `MFA_SETUP_REQUIRED`, which mirrors the response
-   * the caller would receive if the key were absent — preventing an attacker
-   * with Redis write access from distinguishing "no setup pending" from
-   * "setup payload corrupted".
-   */
-  private parseSetupData(raw: string, userId: string): MfaSetupData {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      // Recorded, not just refused. The caller gets an opaque MFA_SETUP_REQUIRED — correct, since
-      // it must learn nothing about the payload's structure — which leaves this line as the only
-      // trace of an event the docstring above calls either a downgrade of the stored value or an
-      // internal bug. Both are things an operator needs to see, and neither is visible anywhere
-      // else.
-      this.logger.warn(
-        `parseSetupData: pending-setup payload is not valid JSON userId=${logSafe(userId)}`
-      )
-      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so `!isMfaSetupData(parsed)` on the next statement refuses the record with the identical MFA_SETUP_REQUIRED.
-      throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
-    }
-    // The shape is checked, not asserted. `hashedCodes` missing would enable MFA on an
-    // account with no recovery codes at all — a lockout waiting to happen that the user
-    // discovers only when they lose their authenticator. `rust-auth` deserializes into a
-    // struct with every field required, so a record like that is refused there too.
-    if (!isMfaSetupData(parsed)) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
-    }
-    return parsed
-  }
-
-  /**
-   * Safely parses the AES-decrypted JSON array of plain-text recovery codes.
-   *
-   * A decrypted value that fails JSON parsing indicates either a downgrade of
-   * the stored payload (highly unlikely, since AES-GCM authenticates the
-   * ciphertext) or an internal bug. Both cases are surfaced opaquely as
-   * `MFA_SETUP_REQUIRED` so callers do not learn structural details of the
-   * encrypted payload.
-   */
-  private parsePlainRecoveryCodes(raw: string, userId: string): string[] {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      // Same reasoning as `parseSetupData`, and a stronger case: AES-GCM authenticates the
-      // ciphertext, so a decrypted value that will not parse means the plaintext itself was
-      // written wrong. That is an internal bug, and it is otherwise silent.
-      this.logger.warn(
-        `parsePlainRecoveryCodes: decrypted payload is not valid JSON userId=${logSafe(userId)}`
-      )
-      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so the `!Array.isArray(parsed)` check on the next statement refuses it with the identical MFA_SETUP_REQUIRED.
-      throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
-    }
-    if (!Array.isArray(parsed) || parsed.some((code) => typeof code !== 'string')) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
-    }
-    return parsed as string[]
-  }
-
-  /**
-   * Generates `count` recovery codes in `XXXX-XXXX-XXXX-XXXX-XXXX-XXXX` format
-   * (96 bits of entropy per code, hex-encoded).
-   *
-   * Returns both the plain-text (shown once to the user) and scrypt-hashed
-   * versions (stored in the database).
-   *
-   * @remarks
-   * Each code carries 96 bits of entropy (12 random bytes → 24 hex chars grouped
-   * as 6 × 4). This is well above the NIST SP 800-63B recommendation for
-   * offline-resistant credentials. The previous 12-digit decimal format offered
-   * ~40 bits, which relied entirely on the scrypt hash for offline resistance —
-   * any database leak would have put the raw codes within offline reach.
-   */
-  private hashRecoveryCodes(count: number): { plainCodes: string[]; hashedCodes: string[] } {
-    const plainCodes: string[] = []
-    const hashedCodes: string[] = []
-
-    for (let i = 0; i < count; i++) {
-      // 12 random bytes → 24 hex characters → 96-bit entropy.
-      // Grouped as 6 × 4 for better user readability when typed manually.
-      // Build the groups via a deterministic slice loop rather than RegExp.match,
-      // so the type narrows cleanly without a non-null assertion.
-      const hex = randomBytes(12).toString('hex')
-      const groups: string[] = []
-      for (let offset = 0; offset < hex.length; offset += 4) {
-        groups.push(hex.slice(offset, offset + 4))
-      }
-      const code = groups.join('-').toUpperCase()
-      plainCodes.push(code)
-      hashedCodes.push(this.digestRecoveryCode(code))
-    }
-
-    return { plainCodes, hashedCodes }
-  }
-
-  /**
-   * Derives the stored digest for a recovery code: a keyed HMAC-SHA-256, hex encoded.
-   *
-   * A recovery code is 96 bits of CSPRNG output, not a human-chosen password, so a
-   * memory-hard KDF buys nothing against it — there is no dictionary to walk and brute
-   * forcing 2^96 is out of reach whatever the hash costs. What the KDF did buy was an
-   * attacker-reachable CPU amplifier: a challenge submitting a wrong recovery code scanned
-   * every stored digest, so one request cost as many scrypt derivations as the user had
-   * codes. The keyed MAC is the right primitive here — the secret key is what stops an
-   * offline attacker precomputing digests from a leaked table, and it costs microseconds.
-   */
-  private digestRecoveryCode(code: string): string {
-    return hmacSha256(code, this.options.hmacKey)
-  }
-
-  /**
-   * Compares a submitted recovery code against every stored digest.
-   *
-   * One storage format only: a keyed MAC over the code. Every digest is compared in constant
-   * time and the scan always runs to completion — including the step that picks the winner out
-   * of the recorded results — so neither the position of a match nor the number of codes still
-   * unused is observable in the response time.
-   *
-   * @returns Index of the first matching digest, or `-1` if none match.
-   */
-  private async verifyRecoveryCode(code: string, hashedCodes: string[]): Promise<number> {
-    // One candidate per key in play: the current one, then any retired by a rotation. The
-    // digest is keyed by an HMAC derived from the identifier secret (`identifierKey`, else
-    // `jwt.secret`), so without the retired keys a
-    // rotation would silently invalidate every code a user has printed and filed — they would
-    // discover it at the moment they most need it. Retired keys verify only; a code that
-    // matches one is consumed and the set is regenerated under the current key.
-    const candidates = [
-      this.digestRecoveryCode(code),
-      ...this.options.previousHmacKeys.map((key) => hmacSha256(code, key))
-    ]
-    const macMatches: boolean[] = []
-
-    for (const hashedCode of hashedCodes) {
-      // Every candidate is compared, never short-circuited: stopping at the first hit would
-      // make the scan's duration report how many keys were tried before the match. `reduce`
-      // visits the whole list by construction, and the comparison is the left operand of `||`
-      // so it is evaluated on every step regardless of what has already matched.
-      const hit = candidates.reduce(
-        (found, candidate) => timingSafeCompare(candidate, hashedCode) || found,
-        false
-      )
-      macMatches.push(hit)
-    }
-
-    // Recording every comparison and picking the first hit afterwards, rather than tracking the
-    // winner inside the loop, keeps the scan uniform: the same work happens whether the match
-    // is at the front, at the back, or absent.
-    //
-    // Reduced rather than `indexOf`, which stops at the first hit — the tail of the scan then
-    // runs shorter for an early match than for a late one or none, which is the position signal
-    // the loop above exists to avoid, reintroduced on the last line of it. The reduction visits
-    // every entry, and the first hit wins because a later one cannot overwrite a set index.
-    // `-1` for no match is the contract this method already had.
-    return macMatches.reduce((found, hit, index) => (found === -1 && hit ? index : found), -1)
-  }
-
-  /**
    * Claims a matched recovery code for exactly one challenge.
    *
    * Consuming a code is a read-modify-write against the consumer's repository: the challenge
@@ -736,67 +475,6 @@ export class MfaService {
     // pod is live there is nothing left to reconcile.
     const claimKey = `rcu:${hmacSha256(`${userSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
     return await this.redis.setnx(claimKey, RECOVERY_CODE_CLAIM_TTL_SECONDS)
-  }
-
-  /**
-   * Returns a `SafeAuthUser` projection of a dashboard user, stripping credentials
-   * and MFA secret fields before passing to hooks or email providers.
-   */
-  private toSafeUser(user: AuthUser): SafeAuthUser {
-    const { passwordHash: _ph, mfaSecret: _ms, mfaRecoveryCodes: _mrc, ...safe } = user
-    return safe
-  }
-
-  /**
-   * Returns a `SafeAuthPlatformUser` projection of a platform admin, stripping
-   * credentials and MFA secret fields.
-   */
-  private toSafePlatformUser(admin: AuthPlatformUser): SafeAuthPlatformUser {
-    const { passwordHash: _ph, mfaSecret: _ms, mfaRecoveryCodes: _mrc, ...safe } = admin
-    return safe
-  }
-
-  /**
-   * Constructs a `SafeAuthUser`-compatible object from a `SafeAuthPlatformUser` so
-   * that it can be passed to hooks typed for `SafeAuthUser`.
-   *
-   * Platform admins have no `tenantId` or `emailVerified` fields. These are filled
-   * with sentinel values (`''` and `true` respectively) since platform admins are
-   * provisioned directly and do not participate in the tenant/email-verification flow.
-   */
-  private platformUserAsSafeUser(admin: AuthPlatformUser): SafeAuthUser {
-    const safe = this.toSafePlatformUser(admin)
-    return {
-      ...safe,
-      tenantId: '',
-      emailVerified: true
-    }
-  }
-
-  /**
-   * The account a hook is handed after an MFA transition, projected from the state the transition
-   * wrote.
-   *
-   * The record in hand was read before the transition, so its `mfaEnabled` still describes the
-   * state the transition replaced; the hooks run after the write and must be told what it
-   * produced. Only the flag is overridden. The secret and recovery-code fields are stripped by
-   * the same projections every other hook payload uses, and the repository's own record is not
-   * modified.
-   *
-   * @param context - The identity plane the account belongs to.
-   * @param user - The record read before the transition.
-   * @param mfaEnabled - Whether the transition left the second factor enabled.
-   * @returns The projection for the plane, with `mfaEnabled` as written.
-   */
-  private committedSafeUser(
-    context: 'dashboard' | 'platform',
-    user: AuthUser | AuthPlatformUser,
-    mfaEnabled: boolean
-  ): SafeAuthUser {
-    const committed = { ...user, mfaEnabled }
-    return context === 'platform'
-      ? this.platformUserAsSafeUser(committed as AuthPlatformUser)
-      : this.toSafeUser(committed as AuthUser)
   }
 
   // ---------------------------------------------------------------------------
@@ -870,10 +548,10 @@ export class MfaService {
     // discarded by SET-NX after wasted work; subsequent requests hit the fast path.
     const existingFast = await this.redis.get(setupKey)
     if (existingFast !== null) {
-      const data = this.parseSetupData(existingFast, userId)
-      const existingSecret = this.decryptSecret(data.encryptedSecret)
-      const decryptedCodesJson = this.decryptSecret(data.encryptedPlainCodes)
-      const existingCodes = this.parsePlainRecoveryCodes(decryptedCodesJson, userId)
+      const data = parseSetupData(existingFast, userId, this.logger)
+      const existingSecret = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
+      const decryptedCodesJson = decryptMfaSecret(data.encryptedPlainCodes, this.mfaOptions)
+      const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, userId, this.logger)
       const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
       return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
     }
@@ -883,9 +561,9 @@ export class MfaService {
     // requests both see null in the fast path, both generate, and SET-NX awards the
     // key to one of them. The losing request reads the winner's payload below.
     const { base32: secretBase32 } = generateTotpSecret()
-    const encryptedSecret = this.encryptSecret(secretBase32)
+    const encryptedSecret = encryptMfaSecret(secretBase32, this.mfaOptions)
     const recoveryCount = this.mfaOptions.recoveryCodeCount ?? DEFAULT_RECOVERY_CODE_COUNT
-    const { plainCodes, hashedCodes } = this.hashRecoveryCodes(recoveryCount)
+    const { plainCodes, hashedCodes } = generateRecoveryCodes(recoveryCount, this.options.hmacKey)
     const encryptedPlainCodes = encrypt(JSON.stringify(plainCodes), this.mfaOptions.encryptionKey)
 
     const setupData: MfaSetupData = { encryptedSecret, hashedCodes, encryptedPlainCodes }
@@ -897,10 +575,10 @@ export class MfaService {
       // Another request already started setup — return their data for idempotency.
       const existing = await this.redis.get(setupKey)
       if (existing !== null) {
-        const data = this.parseSetupData(existing, userId)
-        const existingSecret = this.decryptSecret(data.encryptedSecret)
-        const decryptedCodesJson = this.decryptSecret(data.encryptedPlainCodes)
-        const existingCodes = this.parsePlainRecoveryCodes(decryptedCodesJson, userId)
+        const data = parseSetupData(existing, userId, this.logger)
+        const existingSecret = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
+        const decryptedCodesJson = decryptMfaSecret(data.encryptedPlainCodes, this.mfaOptions)
+        const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, userId, this.logger)
         const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
         return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
       }
@@ -962,8 +640,8 @@ export class MfaService {
     const raw = await this.redis.get(setupKey)
     if (raw === null) throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
 
-    const data = this.parseSetupData(raw, userId)
-    const secretBase32 = this.decryptSecret(data.encryptedSecret)
+    const data = parseSetupData(raw, userId, this.logger)
+    const secretBase32 = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
 
     const totpWindow = this.mfaOptions.totpWindow
     // Use anti-replay even on MFA enable to prevent a racing/intercepted code
@@ -1021,7 +699,7 @@ export class MfaService {
 
     // Fire-and-forget hook — errors must not roll back a completed DB operation.
     if (this.hooks.afterMfaEnabled) {
-      const safeUser = this.committedSafeUser(context, user, true)
+      const safeUser = committedSafeUser(context, user, true)
       void Promise.resolve(
         this.hooks.afterMfaEnabled(safeUser, {
           // The plane, because the tenant cannot carry it: a platform admin is rendered with the
@@ -1106,8 +784,9 @@ export class MfaService {
     }
 
     // Step 4: Decrypt TOTP secret and validate the submitted code.
-    const { secret: secretBase32, stale: encryptedUnderRetiredKey } = this.decryptWithRotation(
-      user.mfaSecret
+    const { secret: secretBase32, stale: encryptedUnderRetiredKey } = decryptWithRotation(
+      user.mfaSecret,
+      this.mfaOptions
     )
     const isTotpCode = /^\d{6}$/.test(code)
     const totpWindow = this.mfaOptions.totpWindow
@@ -1129,7 +808,12 @@ export class MfaService {
       // account with no stored codes, and any content it could hold fails the constant-time
       // comparison exactly as the empty array does.
       const recoveryCodes = user.mfaRecoveryCodes ?? []
-      usedRecoveryIndex = await this.verifyRecoveryCode(code, recoveryCodes)
+      usedRecoveryIndex = await verifyRecoveryCode(
+        code,
+        recoveryCodes,
+        this.options.hmacKey,
+        this.options.previousHmacKeys
+      )
       codeValid =
         usedRecoveryIndex >= 0 && (await this.claimRecoveryCode(context, userId, code, tenantId))
     }
@@ -1180,7 +864,7 @@ export class MfaService {
         // The secret this challenge opened was replaced — a re-enrolment — and the code belongs to
         // the list that went with it. Writing the splice would put the old secret back. A record a
         // sibling challenge only re-encrypted still holds the same secret and is spliced.
-        if (!this.holdsSecret(current.mfaSecret, secretBase32)) return null
+        if (!holdsSecret(current.mfaSecret, secretBase32, this.mfaOptions)) return null
         // Stryker disable next-line ArrayDeclaration: the fallback's CONTENTS are unobservable. It
         // stands in for "this account has no recovery codes", and the only thing done with the list
         // is `indexOf(spentDigest)` — a digest that cannot be in a list the account does not have,
@@ -1200,7 +884,7 @@ export class MfaService {
           // Re-encrypted here when the secret opened under a retired key: the write is
           // already happening, so the rotation drains for free.
           mfaSecret: encryptedUnderRetiredKey
-            ? this.encryptSecret(secretBase32)
+            ? encryptMfaSecret(secretBase32, this.mfaOptions)
             : current.mfaSecret,
           mfaRecoveryCodes: updatedCodes
         }
@@ -1216,7 +900,7 @@ export class MfaService {
 
     // Step 6: Issue full tokens with mfaVerified: true.
     if (context === 'dashboard') {
-      const safeUser = this.toSafeUser(user as AuthUser)
+      const safeUser = toSafeUser(user as AuthUser)
       const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, {
         mfaVerified: true
       })
@@ -1263,7 +947,7 @@ export class MfaService {
     // platformUserRepo presence was already validated in fetchUserForContext; this cast is safe.
     const platformUser = user as AuthPlatformUser
     const result = await this.tokenManager.issuePlatformTokens(
-      this.toSafePlatformUser(platformUser),
+      toSafePlatformUser(platformUser),
       ip,
       userAgent,
       { mfaVerified: true }
@@ -1280,7 +964,7 @@ export class MfaService {
       runDetached(
         this.logger,
         () =>
-          afterLogin(this.platformUserAsSafeUser(platformUser), {
+          afterLogin(platformUserAsSafeUser(platformUser), {
             plane: 'platform',
             userId,
             ip,
@@ -1385,7 +1069,7 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    const secretBase32 = this.decryptSecret(user.mfaSecret)
+    const secretBase32 = decryptMfaSecret(user.mfaSecret, this.mfaOptions)
     const totpWindow = this.mfaOptions.totpWindow
 
     const codeValid = await this.verifyTotpWithAntiReplay(
@@ -1425,7 +1109,7 @@ export class MfaService {
       provider.sendMfaDisabledNotification(tenant, email)
     )
 
-    const safeUser = this.committedSafeUser(context, user, false)
+    const safeUser = committedSafeUser(context, user, false)
 
     if (this.hooks.afterMfaDisabled) {
       void Promise.resolve(
@@ -1515,7 +1199,7 @@ export class MfaService {
       provider.sendMfaDisabledNotification(tenant, email)
     )
 
-    const safeUser = this.committedSafeUser(context, user, false)
+    const safeUser = committedSafeUser(context, user, false)
 
     if (this.hooks.afterMfaDisabled) {
       void Promise.resolve(
@@ -1622,7 +1306,7 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    const secretBase32 = this.decryptSecret(user.mfaSecret)
+    const secretBase32 = decryptMfaSecret(user.mfaSecret, this.mfaOptions)
     const totpWindow = this.mfaOptions.totpWindow
 
     const codeValid = await this.verifyTotpWithAntiReplay(
@@ -1646,7 +1330,7 @@ export class MfaService {
     // Generate a fresh code set using the existing helper — same entropy, same
     // formatting, same keyed-MAC digesting as the initial setup() path.
     const recoveryCount = this.mfaOptions.recoveryCodeCount ?? DEFAULT_RECOVERY_CODE_COUNT
-    const { plainCodes, hashedCodes } = this.hashRecoveryCodes(recoveryCount)
+    const { plainCodes, hashedCodes } = generateRecoveryCodes(recoveryCount, this.options.hmacKey)
 
     // Preserve the existing TOTP secret — only the recovery code list changes.
     //
@@ -1677,8 +1361,8 @@ export class MfaService {
     if (this.hooks.afterMfaRecoveryCodesRegenerated) {
       const safeUser =
         context === 'platform'
-          ? this.platformUserAsSafeUser(user as AuthPlatformUser)
-          : this.toSafeUser(user as AuthUser)
+          ? platformUserAsSafeUser(user as AuthPlatformUser)
+          : toSafeUser(user as AuthUser)
       void Promise.resolve(
         this.hooks.afterMfaRecoveryCodesRegenerated(safeUser, {
           plane: context,
