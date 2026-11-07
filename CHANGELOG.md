@@ -31,10 +31,22 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   answer as always successful sees a `5xx` or `502` it did not see before; `AuthClient.logout()`
   rejects on it, as it does for any non-2xx. Cross-site and non-`POST` requests are answered as
   before.
+- **The React `logout()` keeps the authenticated state when the server logout did not
+  complete.** `AuthProvider` clears the session state after a successful logout and after a final
+  answer, an `AuthClientError` with a status below `500`, and rethrows in the second case. After a
+  `5xx` (`502` included) or a failure with no answer at all, such as a network failure, the state
+  stays `authenticated` with the same user and the error is rethrown, because the session may be
+  alive and the UI must not read signed-out. A consumer that relied on the state being cleared
+  whenever `logout()` rejected now finds it still `authenticated` after such a rejection and
+  should offer a retry; repeating the call is safe because the server logout is idempotent. A
+  session probe already in flight is applied after a failed logout, not discarded. The rule is
+  written in the `logout` documentation on `AuthContextValue`. No contract change.
 
 ### Fixed
 
 - **A failed logout through the Next.js proxy no longer looks successful.** See the note above.
+- **A failed logout no longer shows the UI as signed out while the session is alive.** See the
+  note above.
 
 ## [1.4.18] - 2026-11-07
 

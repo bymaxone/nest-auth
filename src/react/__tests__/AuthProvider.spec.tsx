@@ -396,15 +396,10 @@ describe('AuthProvider — imperative methods', () => {
     expect(result.current?.status).toBe('unauthenticated')
   })
 
-  // logout clears the session state regardless of whether the network
-  // call succeeds. The `finally` branch is critical — if we only
-  // cleared on success, a transient outage would leave the UI showing
-  // authenticated state for a user that explicitly signed out. The
-  // underlying rejection then propagates to the caller by design (see
-  // the JSDoc contract on `AuthContextValue.logout`), so a consumer
-  // can surface "signed out locally, server call failed" UX — this
-  // test pins both halves of that contract.
-  it('clears session state even when client.logout rejects', async () => {
+  // A logout that fails with no server answer (a network failure) leaves the session unconfirmed,
+  // so the context keeps the authenticated state and the rejection reaches the caller, who can
+  // offer a retry. The failure cases by status live in `AuthProvider.logout-failure.spec.tsx`.
+  it('keeps the authenticated state when client.logout rejects without an answer', async () => {
     const client = createMockClient()
     client.getMe.mockResolvedValue(MOCK_USER)
     client.logout.mockRejectedValue(new Error('network down'))
@@ -416,8 +411,8 @@ describe('AuthProvider — imperative methods', () => {
     await act(async () => {
       await expect(result.current?.logout()).rejects.toThrow('network down')
     })
-    expect(result.current?.status).toBe('unauthenticated')
-    expect(result.current?.user).toBeNull()
+    expect(result.current?.status).toBe('authenticated')
+    expect(result.current?.user).toEqual(MOCK_USER)
   })
 
   // Happy-path logout also clears state and resolves cleanly.

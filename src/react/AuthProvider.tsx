@@ -30,6 +30,15 @@ import { AuthContext, type AuthContextValue, type AuthStatus } from './context'
 const DEFAULT_REVALIDATE_INTERVAL_MS = 300_000
 
 /**
+ * Whether a rejected `client.logout()` carries a final server answer: an `AuthClientError` with a
+ * status below 500. Anything else (a 5xx, a network failure, an abort) leaves the logout
+ * unconfirmed.
+ */
+function isFinalAnswer(error: unknown): boolean {
+  return error instanceof AuthClientError && error.status < 500
+}
+
+/**
  * Props accepted by {@link AuthProvider}.
  */
 export interface AuthProviderProps {
@@ -359,27 +368,33 @@ export function AuthProvider({
     [syncedDispatch]
   )
 
+  // A deliberate session transition: bumped BEFORE the dispatch so a `getMe()` already in flight
+  // is discarded when it lands, or it re-authenticates a session the user just ended.
+  const clearSession = useCallback((): void => {
+    sessionGenerationRef.current = {}
+    syncedDispatch({ type: 'CLEAR_SESSION' })
+  }, [syncedDispatch])
+
   const logout = useCallback<AuthContextValue['logout']>(async () => {
+    // Rule, by what `client.logout()` did:
+    //   - resolved: the session is revoked, so the local state clears;
+    //   - rejected with an `AuthClientError` whose status is below 500: the server gave a final
+    //     answer (the session is gone or was never valid, and the proxy has cleared the cookies),
+    //     so the local state clears and the rejection propagates;
+    //   - rejected with a 5xx (502 included) or with anything that is not an `AuthClientError`
+    //     (a network failure, an abort): the server never confirmed the logout and the session
+    //     may be alive, so the state stays authenticated and the rejection propagates for
+    //     the caller to offer a retry. Showing signed-out there would be false on a shared
+    //     machine, where the next person finds a live session.
     try {
       await clientRef.current.logout()
-    } finally {
-      // Always clear local state even when the network call fails —
-      // the user has asked to sign out and keeping stale state here
-      // would be worse than losing the server-side revocation signal
-      // (the server-side refresh rotation already invalidates the
-      // refresh token on the next attempt in that scenario).
-      //
-      // Rejections from `client.logout()` intentionally propagate
-      // after this `finally` runs so the caller learns the server
-      // call did not complete. See `AuthContextValue.logout` JSDoc
-      // for the documented throw contract.
-      //
-      // Bumped BEFORE the dispatch: a `getMe()` already in flight must be discarded when it
-      // lands, or it re-authenticates a session the user just ended.
-      sessionGenerationRef.current = {}
-      syncedDispatch({ type: 'CLEAR_SESSION' })
+    } catch (error) {
+      if (!isFinalAnswer(error)) throw error
+      clearSession()
+      throw error
     }
-  }, [syncedDispatch])
+    clearSession()
+  }, [clearSession])
 
   const refresh = useCallback<AuthContextValue['refresh']>(async () => {
     await revalidate(false)
