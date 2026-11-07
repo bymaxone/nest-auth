@@ -19,12 +19,14 @@ import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
+import { RequestEncoding } from '../decorators/request-encoding.decorator'
 import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
 import { PlatformLoginDto } from '../dto/platform-login.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
+import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { MfaChallengeResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
@@ -91,7 +93,7 @@ function isMfaChallenge(
  */
 @UseInterceptors(NoStoreInterceptor)
 @Controller('platform')
-@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UseGuards(RequestEncodingGuard, TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(createAuthValidationPipe())
 export class PlatformAuthController {
   constructor(
@@ -219,6 +221,7 @@ export class PlatformAuthController {
   @Throttle(AUTH_THROTTLE_CONFIGS.logout)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.logout)
   @HttpCode(HttpStatus.NO_CONTENT)
+  @RequestEncoding('unchecked')
   @Post('logout')
   async logout(@Req() req: Request): Promise<void> {
     // Public for the same reason the dashboard route is: an operator who stepped away for
@@ -254,6 +257,7 @@ export class PlatformAuthController {
   @Throttle(AUTH_THROTTLE_CONFIGS.refresh)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.refresh)
   @HttpCode(HttpStatus.OK)
+  @RequestEncoding('unchecked')
   @Post('refresh')
   async refresh(@Req() req: Request): Promise<PlatformBearerAuthResponse> {
     // Always reads from req.body — platform sessions never use cookie delivery.

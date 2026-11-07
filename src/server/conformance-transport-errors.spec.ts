@@ -10,20 +10,30 @@
  * @layer Conformance
  */
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { BadRequestException } from '@nestjs/common'
-import type { ArgumentsHost } from '@nestjs/common'
+import { BadRequestException, RequestMethod, type HttpException } from '@nestjs/common'
+import type { ArgumentsHost, ExecutionContext } from '@nestjs/common'
+import { Reflector } from '@nestjs/core'
 
 import { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from './errors/auth-error-codes'
 import { AuthExceptionFilter } from './filters/auth-exception.filter'
+import { REQUEST_ENCODING_KEY } from './decorators/request-encoding.decorator'
+import type { RequestEncodingPolicy } from './decorators/request-encoding.decorator'
+import { RequestEncodingGuard } from './guards/request-encoding.guard'
 
 interface TransportErrorsContract {
   transportErrors: {
     envelope: { code: string; details: null }
     rows: { condition: string; status: number | string; message: string }[]
     contentTypeMismatch: { status: number; code: string; message: string }
+  }
+  requestEncoding: {
+    methodsNeverChecked: string[]
+    strict: string[]
+    whenBody: string[]
+    unchecked: string[]
   }
 }
 
@@ -96,6 +106,51 @@ describe('cross-implementation conformance: transport errors', () => {
     })
   })
 
+  // Verifies a plain 400 from the body parser, which carries no `type` of its own, is answered as
+  // the row that names that shape.
+  it('answers an untyped parser 400 as the row that names it', () => {
+    const row = rows.find((candidate) => candidate.condition.includes('no type of its own'))
+    const untyped = Object.assign(new Error('incorrect header check'), {
+      status: 400,
+      statusCode: 400,
+      expose: true
+    })
+
+    expect(answer(untyped)).toEqual({
+      status: row?.status,
+      body: { error: { code: envelope.code, message: row?.message, details: envelope.details } }
+    })
+  })
+
+  // Verifies the library's own refusal of a compressed body is the row that names it: the status
+  // and the envelope the guard throws are the ones the contract lists.
+  it('refuses a compressed body as the row that names the Content-Encoding refusal', () => {
+    const row = rows.find((candidate) =>
+      candidate.condition.includes('Content-Encoding other than identity')
+    )
+    class Controller {
+      handler(): void {}
+    }
+    const context = {
+      getHandler: () => Controller.prototype.handler,
+      switchToHttp: () => ({
+        getRequest: () => ({ method: 'POST', headers: { 'content-encoding': 'gzip' } })
+      })
+    } as unknown as ExecutionContext
+
+    let thrown: HttpException | undefined
+    try {
+      new RequestEncodingGuard(new Reflector()).canActivate(context)
+    } catch (err) {
+      thrown = err as HttpException
+    }
+
+    expect({ status: thrown?.getStatus(), body: thrown?.getResponse() }).toEqual({
+      status: row?.status,
+      body: { error: { code: envelope.code, message: row?.message, details: envelope.details } }
+    })
+  })
+
   // Verifies the row that takes its status from the error says so in the contract.
   it('declares that the verify-failure row takes the status from the error itself', () => {
     expect(rows[1]?.status).toBe("the error's own 4xx status")
@@ -105,5 +160,72 @@ describe('cross-implementation conformance: transport errors', () => {
   it('keeps the content-type mismatch on auth.validation at the catalog status', () => {
     expect(contentTypeMismatch.code).toBe(AUTH_ERROR_CODES.VALIDATION)
     expect(contentTypeMismatch.status).toBe(AUTH_ERROR_STATUS[AUTH_ERROR_CODES.VALIDATION])
+  })
+})
+
+describe('cross-implementation conformance: request encoding scope', () => {
+  const { requestEncoding } = contract
+
+  /** Every route a library controller declares, as `METHOD path` relative to the route prefix. */
+  async function libraryRoutes(): Promise<{ label: string; method: string; policy?: string }[]> {
+    const files = [
+      ...readdirSync(join(__dirname, 'controllers'))
+        .filter((file) => file.endsWith('.controller.ts'))
+        .map((file) => join(__dirname, 'controllers', file)),
+      join(__dirname, 'oauth/oauth.controller.ts')
+    ]
+    const routes: { label: string; method: string; policy?: string }[] = []
+    for (const file of files) {
+      const exported = (await import(file)) as Record<string, unknown>
+      for (const controller of Object.values(exported)) {
+        if (typeof controller !== 'function' || !Reflect.hasMetadata('path', controller)) continue
+        const prefix = Reflect.getMetadata('path', controller) as string
+        const proto = controller.prototype as Record<string, unknown>
+        for (const name of Object.getOwnPropertyNames(proto)) {
+          const handler = proto[name]
+          if (typeof handler !== 'function' || !Reflect.hasMetadata('method', handler)) continue
+          const method = RequestMethod[Reflect.getMetadata('method', handler) as number] as string
+          const path = [prefix, Reflect.getMetadata('path', handler) as string]
+            .join('/')
+            .split('/')
+            .filter((part) => part.length > 0 && part !== '/')
+            .join('/')
+          const policy = Reflect.getMetadata(REQUEST_ENCODING_KEY, handler) as
+            RequestEncodingPolicy | undefined
+          routes.push({ label: `${method} ${path}`, method, ...(policy ? { policy } : {}) })
+        }
+      }
+    }
+    return routes
+  }
+
+  // Verifies the scope the shared contract lists is the scope the controllers apply: every route
+  // of a body-carrying method is strict, 'when-body' or 'unchecked' exactly as the contract says,
+  // and the contract names no route that does not exist. A route added without a decision is
+  // strict, and fails here until the contract lists it.
+  it('applies to exactly the routes the contract lists, with the policy it lists', async () => {
+    const routes = (await libraryRoutes()).filter(
+      (route) => !requestEncoding.methodsNeverChecked.includes(route.method)
+    )
+
+    const labelsWith = (policy: string | undefined): string[] =>
+      routes
+        .filter((route) => route.policy === policy)
+        .map((route) => route.label)
+        .sort()
+
+    expect(labelsWith(undefined)).toEqual([...requestEncoding.strict].sort())
+    expect(labelsWith('when-body')).toEqual([...requestEncoding.whenBody].sort())
+    expect(labelsWith('unchecked')).toEqual([...requestEncoding.unchecked].sort())
+  })
+
+  // Verifies the methods the contract never checks are the ones the guard skips.
+  it('never checks the methods the contract lists', () => {
+    expect([...requestEncoding.methodsNeverChecked].sort()).toEqual([
+      'DELETE',
+      'GET',
+      'HEAD',
+      'OPTIONS'
+    ])
   })
 })

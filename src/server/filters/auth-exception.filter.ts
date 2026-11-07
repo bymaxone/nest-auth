@@ -58,6 +58,31 @@ function bodyParserStatus(exception: unknown): number | undefined {
   return typeof status === 'number' && status >= 400 && status < 500 ? status : undefined
 }
 
+/**
+ * Whether `exception` is a plain 400 the body parser raised with no `type` of its own.
+ *
+ * `body-parser` wraps whatever its decompression or request stream fails with — a corrupt `gzip`
+ * body, a socket error mid-body — in `createError(400, error)`, which keeps the original error and
+ * adds only the status. It carries `expose: true` and a matching `statusCode` and none of the
+ * `type` values {@link BODY_PARSER_ERROR_TYPES} lists. The caller must also know the request
+ * matched no route: after routing, an error of this shape is something the application raised.
+ */
+function isUntypedParserRefusal(exception: unknown): boolean {
+  if (!(exception instanceof Error)) return false
+  const { status, statusCode, expose, type } = exception as {
+    status?: unknown
+    statusCode?: unknown
+    expose?: unknown
+    type?: unknown
+  }
+  return (
+    status === HttpStatus.BAD_REQUEST &&
+    statusCode === HttpStatus.BAD_REQUEST &&
+    expose === true &&
+    type === undefined
+  )
+}
+
 /** The fixed message for a body-parser refusal, by status. Never the parser's own text. */
 function bodyParserMessage(status: number): string {
   if (status === HttpStatus.PAYLOAD_TOO_LARGE) return 'Request entity too large'
@@ -187,6 +212,17 @@ export class AuthExceptionFilter implements ExceptionFilter {
         error: {
           code: AUTH_ERROR_CODES.VALIDATION,
           message: bodyParserMessage(refusedStatus),
+          details: null
+        }
+      })
+      return
+    }
+
+    if (isUntypedParserRefusal(exception) && http.getRequest<Request>().route === undefined) {
+      res.status(HttpStatus.BAD_REQUEST).json({
+        error: {
+          code: AUTH_ERROR_CODES.VALIDATION,
+          message: MALFORMED_REQUEST_MESSAGE,
           details: null
         }
       })

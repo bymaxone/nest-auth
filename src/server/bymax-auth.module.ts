@@ -37,6 +37,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { JwtPlatformGuard } from './guards/jwt-platform.guard'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
 import { PlatformRolesGuard } from './guards/platform-roles.guard'
+import { RequestEncodingGuard } from './guards/request-encoding.guard'
 import { RolesGuard } from './guards/roles.guard'
 import { TrustedOriginGuard } from './guards/trusted-origin.guard'
 import { UserStatusGuard } from './guards/user-status.guard'
@@ -569,6 +570,7 @@ export class BymaxAuthModule {
         AuthService,
         // Guards — registered as providers so they can be applied via @UseGuards().
         JwtAuthGuard,
+        RequestEncodingGuard,
         TrustedOriginGuard,
         AuthRateLimitGuard,
         // Response-header interceptor — every library controller applies it, so it must be
@@ -601,6 +603,7 @@ export class BymaxAuthModule {
         AuthService,
         // Export guards so host-app modules can apply them without reimporting.
         JwtAuthGuard,
+        RequestEncodingGuard,
         TrustedOriginGuard,
         AuthRateLimitGuard,
         RolesGuard,

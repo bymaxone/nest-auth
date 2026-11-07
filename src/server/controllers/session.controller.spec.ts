@@ -17,6 +17,7 @@ import { SessionService } from '../services/session.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { SessionController } from './session.controller'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
+import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
@@ -109,7 +110,13 @@ describe('SessionController', () => {
   it('applies the controller guards in the order they are evaluated', () => {
     const guards: unknown[] = Reflect.getMetadata(GUARDS_METADATA, SessionController) as unknown[]
 
-    expect(guards).toEqual([TrustedOriginGuard, AuthRateLimitGuard, JwtAuthGuard, UserStatusGuard])
+    expect(guards).toEqual([
+      RequestEncodingGuard,
+      TrustedOriginGuard,
+      AuthRateLimitGuard,
+      JwtAuthGuard,
+      UserStatusGuard
+    ])
   })
 
   // ---------------------------------------------------------------------------

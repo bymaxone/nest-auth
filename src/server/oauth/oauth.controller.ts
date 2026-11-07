@@ -51,6 +51,7 @@ import { OAuthInitiateQueryDto } from '../dto/oauth-initiate-query.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
+import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
@@ -161,7 +162,7 @@ function logSafe(value: string): string {
 @SkipMfa()
 @UseInterceptors(NoStoreInterceptor)
 @Controller('oauth')
-@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UseGuards(RequestEncodingGuard, TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(createAuthValidationPipe({ forbidUnknownValues: true }))
 export class OAuthController {
   /** Records provider-side refusals; never carries a token, a code, or the state. */

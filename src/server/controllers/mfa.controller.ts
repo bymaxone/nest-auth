@@ -21,6 +21,7 @@ import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
+import { RequestEncoding } from '../decorators/request-encoding.decorator'
 import { SkipMfa } from '../decorators/skip-mfa.decorator'
 import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
 import { MfaDisableDto } from '../dto/mfa-disable.dto'
@@ -31,6 +32,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
@@ -123,7 +125,7 @@ function isTokenInvalidException(err: unknown): boolean {
  */
 @UseInterceptors(NoStoreInterceptor)
 @Controller('mfa')
-@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UseGuards(RequestEncodingGuard, TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(createAuthValidationPipe({ forbidUnknownValues: true }))
 export class MfaController {
   constructor(
@@ -178,6 +180,7 @@ export class MfaController {
   @UseGuards(JwtAuthGuard, UserStatusGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
+  @RequestEncoding('when-body')
   @Post('setup')
   async setup(
     @CurrentUser() user: DashboardJwtPayload,
