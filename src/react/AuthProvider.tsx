@@ -16,7 +16,7 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react'
 
 import type { AuthClient, RegisterInput, ResetPasswordInput } from '@bymax-one/nest-auth/client'
-import { AuthClientError, type AuthUserClient, type LoginResult } from '@bymax-one/nest-auth/shared'
+import type { AuthUserClient, LoginResult } from '@bymax-one/nest-auth/shared'
 
 import { AuthContext, type AuthContextValue, type AuthStatus } from './context'
 
@@ -30,19 +30,28 @@ import { AuthContext, type AuthContextValue, type AuthStatus } from './context'
 const DEFAULT_REVALIDATE_INTERVAL_MS = 300_000
 
 /**
- * Whether a rejected `client.logout()` carries a final server answer: an `AuthClientError` with a
- * numeric status below 500 other than 429. The status 429 is the logout route's throttle, which
- * answers before anything is revoked, so the session is still alive. Anything else (a 5xx, a 429,
- * a network failure, an abort) leaves the logout unconfirmed.
+ * The HTTP status of a client error, or `undefined` when `error` is not one.
  *
- * The error is recognized by its `name` and its numeric `status`, not by `instanceof`: a client and
- * a provider loaded as different module formats of the package hold different copies of the class,
- * and `instanceof` is false across them, which would keep a session the server has already ended.
+ * Recognized by its `name` and its numeric `status`, not by `instanceof`: a client and a provider
+ * loaded as different module formats of the package (the ESM and the CJS build) hold different
+ * copies of the class, and `instanceof` is false across them. Every decision below that reads a
+ * status goes through here, so none of them depends on which copy raised the error.
+ */
+function clientErrorStatus(error: unknown): number | undefined {
+  if (!(error instanceof Error) || error.name !== 'AuthClientError') return undefined
+  const { status } = error as { status?: unknown }
+  return typeof status === 'number' ? status : undefined
+}
+
+/**
+ * Whether a rejected `client.logout()` carries a final server answer: a client error with a
+ * status below 500 other than 429. The status 429 is the logout route's throttle, which answers
+ * before anything is revoked, so the session is still alive. Anything else (a 5xx, a 429, a
+ * network failure, an abort) leaves the logout unconfirmed.
  */
 function isFinalAnswer(error: unknown): boolean {
-  if (!(error instanceof Error) || error.name !== 'AuthClientError') return false
-  const { status } = error as { status?: unknown }
-  return typeof status === 'number' && status < 500 && status !== 429
+  const status = clientErrorStatus(error)
+  return status !== undefined && status < 500 && status !== 429
 }
 
 /**
@@ -142,7 +151,7 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
  * an error state that is not worth triggering `onSessionExpired` for.
  */
 function isSessionExpiredError(error: unknown): boolean {
-  return error instanceof AuthClientError && error.status === 401
+  return clientErrorStatus(error) === 401
 }
 
 /**

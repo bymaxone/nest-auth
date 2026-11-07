@@ -66,8 +66,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   session probe already in flight is applied after a failed logout, not discarded. The rule is
   written in the `logout` documentation on `AuthContextValue`, which also says which statuses the
   hook can see behind the proxy route. The error is recognized by its `name` and numeric `status`,
-  not by `instanceof`, so a second copy of the error class decides the same way. No contract
-  change.
+  not by `instanceof`, so a second copy of the error class decides the same way; the check that
+  fires `onSessionExpired` on a `401` uses the same recognition, so an application that loads the
+  client and the provider through different module formats of the package no longer misses it.
+  No contract change.
 
 ### Fixed
 
