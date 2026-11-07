@@ -81,9 +81,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Documentation
 
-- **A host `updateMfa` that outlasts the MFA transition lock can reorder MFA writes.** The README
-  and the `updateMfa` documentation on both repository interfaces now state it: the lock expires
-  on its own after `MFA_TRANSITION_LOCK_TTL_SECONDS` (10 seconds), a write still running then is
+- **A host `updateMfa` that outlasts the MFA transition lock can reorder MFA writes.** The lock
+  expires on its own after `MFA_TRANSITION_LOCK_TTL_SECONDS` (10 seconds), a write still running then is
   overtaken and lands after the next change, and the interface has no compare-and-set for the
   library to use. Keep `updateMfa` well under the lock's lifetime or make it a compare-and-set.
 

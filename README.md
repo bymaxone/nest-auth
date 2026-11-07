@@ -1059,8 +1059,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > enrolled users have had time to authenticate at least once.
 
 > [!WARNING]
-> **Keep your `updateMfa` fast, or make it a compare-and-set.** Every MFA state change (enrol,
-> disable, recovery-code use and regeneration, the re-encryption of a secret under a retired key)
+> **Keep your `updateMfa` fast, or make it a compare-and-set.** Every MFA state change
 > rewrites the account's MFA record through your repository's `updateMfa`, and the library
 > serializes those writes per account with a lock that expires on its own
 > (`MFA_TRANSITION_LOCK_TTL_SECONDS`, 10 seconds) so a process that dies mid-write cannot strand
