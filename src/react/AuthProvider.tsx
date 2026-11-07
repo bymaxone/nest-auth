@@ -16,7 +16,7 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react'
 
 import type { AuthClient, RegisterInput, ResetPasswordInput } from '@bymax-one/nest-auth/client'
-import { AuthClientError, type AuthUserClient, type LoginResult } from '@bymax-one/nest-auth/shared'
+import type { AuthUserClient, LoginResult } from '@bymax-one/nest-auth/shared'
 
 import { AuthContext, type AuthContextValue, type AuthStatus } from './context'
 
@@ -29,13 +29,39 @@ import { AuthContext, type AuthContextValue, type AuthStatus } from './context'
  */
 const DEFAULT_REVALIDATE_INTERVAL_MS = 300_000
 
+/** The lowest status the provider takes for an HTTP answer. */
+const HTTP_STATUS_MIN = 100
+
 /**
- * Whether a rejected `client.logout()` carries a final server answer: an `AuthClientError` with a
- * status below 500. Anything else (a 5xx, a network failure, an abort) leaves the logout
- * unconfirmed.
+ * The HTTP status of a client error, or `undefined` when `error` is not one.
+ *
+ * A client error is an object named `AuthClientError` whose `status` is an integer of at least 100.
+ * Anything else, such as a missing, fractional, non-finite, below-100 or non-numeric status, is not
+ * a server answer, so no decision below acts on it. There is no upper bound: every decision below
+ * treats a status of 500 or more as unconfirmed, so a bound there could not change one.
+ *
+ * It is recognized by name, not by `instanceof`: a client and a provider loaded as different
+ * module formats of the package (the ESM and the CJS build) hold different copies of the class, and
+ * `instanceof` is false across them. Every decision that reads a status goes through here, so none
+ * of them depends on which copy raised the error.
+ */
+function clientErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined
+  const { name, status } = error as { name?: unknown; status?: unknown }
+  if (name !== 'AuthClientError' || !Number.isInteger(status)) return undefined
+  const code = status as number
+  return code >= HTTP_STATUS_MIN ? code : undefined
+}
+
+/**
+ * Whether a rejected `client.logout()` carries a final server answer: a client error with a
+ * status below 500 other than 429. The status 429 is the logout route's throttle, which answers
+ * before anything is revoked, so the session is still alive. Anything else (a 5xx, a 429, a
+ * network failure, an abort) leaves the logout unconfirmed.
  */
 function isFinalAnswer(error: unknown): boolean {
-  return error instanceof AuthClientError && error.status < 500
+  const status = clientErrorStatus(error)
+  return status !== undefined && status < 500 && status !== 429
 }
 
 /**
@@ -135,7 +161,7 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
  * an error state that is not worth triggering `onSessionExpired` for.
  */
 function isSessionExpiredError(error: unknown): boolean {
-  return error instanceof AuthClientError && error.status === 401
+  return clientErrorStatus(error) === 401
 }
 
 /**
@@ -378,11 +404,12 @@ export function AuthProvider({
   const logout = useCallback<AuthContextValue['logout']>(async () => {
     // Rule, by what `client.logout()` did:
     //   - resolved: the session is revoked, so the local state clears;
-    //   - rejected with an `AuthClientError` whose status is below 500: the server gave a final
-    //     answer (the session is gone or was never valid, and the proxy has cleared the cookies),
-    //     so the local state clears and the rejection propagates;
-    //   - rejected with a 5xx (502 included) or with anything that is not an `AuthClientError`
-    //     (a network failure, an abort): the server never confirmed the logout and the session
+    //   - rejected with an `AuthClientError` whose status is below 500 and not 429: the server
+    //     gave a final answer (the session is gone or was never valid, and the proxy has cleared
+    //     the cookies), so the local state clears and the rejection propagates;
+    //   - rejected with a 5xx (502 included), a 429 (the route's throttle, answered before
+    //     anything is revoked) or with anything that is not an `AuthClientError` (a network
+    //     failure, an abort): the server never confirmed the logout and the session
     //     may be alive, so the state stays authenticated and the rejection propagates for
     //     the caller to offer a retry. Showing signed-out there would be false on a shared
     //     machine, where the next person finds a live session.

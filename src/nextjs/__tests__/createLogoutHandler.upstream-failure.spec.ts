@@ -28,9 +28,13 @@ function handlerFor(mode: Mode) {
     : createLogoutHandler({ ...BASE_CONFIG, mode: 'status' })
 }
 
-/** The minimal upstream answer the handler reads: a status and no body. */
-function upstreamAnswering(status: number): Response {
-  return { ok: status >= 200 && status < 300, status } as unknown as Response
+/** The minimal upstream answer the handler reads: a status, and the headers it carries. */
+function upstreamAnswering(status: number, headers: Record<string, string> = {}): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (name: string) => headers[name.toLowerCase()] ?? null }
+  } as unknown as Response
 }
 
 /** Every `Set-Cookie` the response carries. */
@@ -105,7 +109,7 @@ describe('createLogoutHandler — an upstream logout that did not complete', () 
   // Scenario: the server answers below 500. Expected: the three cookies are cleared. Why: a
   // 2xx completed the logout and a 4xx (an expired or already-revoked session) is a final
   // answer that a retry would only repeat.
-  it.each([200, 204, 302, 400, 401, 403, 404, 429, 499])(
+  it.each([200, 204, 302, 400, 401, 403, 404, 499])(
     'clears the cookies when the upstream answers %i',
     async (code) => {
       fetchSpy.mockResolvedValueOnce(upstreamAnswering(code))
@@ -116,6 +120,47 @@ describe('createLogoutHandler — an upstream logout that did not complete', () 
       expect(setCookies(response).filter((c) => /Max-Age=0/i.test(c))).toHaveLength(3)
     }
   )
+
+  // Scenario: the upstream throttles the logout (429) before it revokes anything. Expected: the
+  // same 429 with the upstream Retry-After, no cookie touched and no redirect. Why: nothing was
+  // revoked, so clearing the cookies would leave a live session with no cookie to end it by.
+  it.each(['status', 'redirect'] as const)(
+    'answers 429 with Retry-After and keeps the cookies in %s mode',
+    async (mode) => {
+      fetchSpy.mockResolvedValueOnce(upstreamAnswering(429, { 'retry-after': '60' }))
+
+      const response = await logout(mode)
+
+      expect(response.status).toBe(429)
+      expect(response.headers.get('retry-after')).toBe('60')
+      expect(setCookies(response)).toEqual([])
+      expect(response.headers.get('location')).toBeNull()
+      expect(response.headers.get('cache-control')).toBe('no-store, no-cache')
+    }
+  )
+
+  // Scenario: a 429 that names no Retry-After. Expected: still 429 with no cookie touched and no
+  // Retry-After invented.
+  it('answers 429 without inventing a Retry-After the upstream did not send', async () => {
+    fetchSpy.mockResolvedValueOnce(upstreamAnswering(429))
+
+    const response = await logout('status')
+
+    expect(response.status).toBe(429)
+    expect(response.headers.get('retry-after')).toBeNull()
+    expect(setCookies(response)).toEqual([])
+  })
+
+  // Scenario: the boundary around 429. Expected: 428 and 430 are final answers and clear the
+  // cookies; only 429 keeps them. Why: the rule names exactly one pre-handler status.
+  it.each([428, 430])('clears the cookies when the upstream answers %i', async (code) => {
+    fetchSpy.mockResolvedValueOnce(upstreamAnswering(code))
+
+    const response = await logout('status')
+
+    expect(response.status).toBe(200)
+    expect(setCookies(response).filter((c) => /Max-Age=0/i.test(c))).toHaveLength(3)
+  })
 
   // Scenario: a final answer below 500 in redirect mode. Expected: a redirect to the configured
   // login path and the three cookies cleared.

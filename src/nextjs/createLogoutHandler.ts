@@ -9,12 +9,17 @@
  *
  * Rule, one line per upstream outcome:
  *
- *   - the upstream answers below 500 (2xx, and a 4xx such as an expired or
- *     already-revoked session): the logout is final, so the three cookies
- *     are cleared and the configured response (200, or the redirect) is sent;
+ *   - the upstream answers below 500 other than 429 (2xx, and a 4xx such as
+ *     an expired or already-revoked session): the logout is final, so the
+ *     three cookies are cleared and the configured response (200, or the
+ *     redirect) is sent;
  *   - the upstream answers 5xx: the logout did not complete and the session
  *     is still alive, so NO cookie is touched and the upstream status is
  *     answered as it is, with no redirect in `'redirect'` mode;
+ *   - the upstream answers 429: the logout route is throttled before it
+ *     revokes anything, so the session is still alive. Same as 5xx: 429 is
+ *     answered with the upstream `Retry-After`, no cookie is touched and
+ *     there is no redirect;
  *   - the upstream is unreachable or the request fails: NO cookie is touched
  *     and 502 is answered, with no redirect in `'redirect'` mode.
  *
@@ -65,6 +70,9 @@ const DEFAULT_LOGOUT_PATH = `/auth/${AUTH_DASHBOARD_ROUTES.logout}`
 
 /** First status the handler treats as a logout the upstream did not complete. */
 const SERVER_ERROR_STATUS = 500
+
+/** The upstream throttle's status: answered before anything is revoked, so it keeps the cookies. */
+const TOO_MANY_REQUESTS_STATUS = 429
 
 /** The answer when the upstream could not be reached at all. */
 const BAD_GATEWAY_STATUS = 502
@@ -185,19 +193,20 @@ export function createLogoutHandler(config: LogoutHandlerConfig): LogoutHandler 
     const incomingAuth = request.headers.get('authorization')
     if (incomingAuth) upstreamHeaders.authorization = incomingAuth
 
-    let upstreamStatus: number
+    let upstream: Response
     try {
-      const upstream = await fetch(logoutUrl, {
+      upstream = await fetch(logoutUrl, {
         method: 'POST',
         headers: upstreamHeaders,
         redirect: 'manual'
       })
-      upstreamStatus = upstream.status
     } catch {
       return failedLogoutResponse(BAD_GATEWAY_STATUS)
     }
 
-    if (upstreamStatus >= SERVER_ERROR_STATUS) return failedLogoutResponse(upstreamStatus)
+    if (upstream.status >= SERVER_ERROR_STATUS || upstream.status === TOO_MANY_REQUESTS_STATUS) {
+      return failedLogoutResponse(upstream.status, upstream.headers.get('retry-after'))
+    }
 
     return buildLogoutResponse(config, refreshCookiePath)
   }
@@ -238,9 +247,12 @@ function validateLogoutConfig(config: LogoutHandlerConfig): string {
 /**
  * The answer for a logout the upstream did not complete: `status`, an empty body and no
  * `Set-Cookie`, so the browser keeps the cookies a retry needs. Never a redirect, in either mode.
+ * The upstream `Retry-After` is passed on when it sent one and never invented when it did not.
  */
-function failedLogoutResponse(status: number): Response {
-  return new Response(null, { status, headers: { 'Cache-Control': 'no-store, no-cache' } })
+function failedLogoutResponse(status: number, retryAfter: string | null = null): Response {
+  const headers = new Headers({ 'Cache-Control': 'no-store, no-cache' })
+  if (retryAfter !== null) headers.set('Retry-After', retryAfter)
+  return new Response(null, { status, headers })
 }
 
 /**
