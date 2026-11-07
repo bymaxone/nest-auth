@@ -81,4 +81,18 @@ describe('AuthProvider — a revalidation that fails with a foreign-copy client 
 
     expect(onSessionExpired).not.toHaveBeenCalled()
   })
+
+  // Scenario: an error carrying the client error's name but no numeric status (a string, or none).
+  // Expected: it is not taken for a client error, so no expiry callback. Why: only a numeric status
+  // can be compared against the statuses the provider acts on.
+  it.each([
+    ['a string status', { status: '401' }],
+    ['no status', {}]
+  ])('does not take a named error with %s for a client error', async (_label, extra) => {
+    const named = Object.assign(new Error('boom'), { name: 'AuthClientError' }, extra)
+
+    const { onSessionExpired } = await refreshFailingWith(named)
+
+    expect(onSessionExpired).not.toHaveBeenCalled()
+  })
 })
