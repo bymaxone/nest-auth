@@ -100,6 +100,30 @@ describe('check-file-length', () => {
     expect(run(repo({ [path]: lines(2000) })).status).toBe(0)
   })
 
+  // Generated output is out of scope for the limit: it is produced by a script and checked byte for
+  // byte against it, so splitting it by hand is not a remedy. The exemption is a path prefix, so a
+  // hand-written file cannot claim it by what its header says.
+  it('ignores a tracked file under the generated-output directory', () => {
+    const result = run(repo({ 'src/server/openapi/generated/schemas.ts': lines(801) }))
+
+    expect(result.status).toBe(0)
+  })
+
+  it('still fails a hand-written file next to the generated-output directory', () => {
+    const result = run(
+      repo({
+        'src/server/openapi/generated/schemas.ts': lines(801),
+        'src/server/openapi/hand.ts': `// GENERATED\n${lines(801)}`,
+        'src/server/openapi/generated-by-hand/big.ts': lines(801)
+      })
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.output).toContain('src/server/openapi/hand.ts has 802 lines')
+    expect(result.output).toContain('src/server/openapi/generated-by-hand/big.ts has 801 lines')
+    expect(result.output).not.toContain('generated/schemas.ts')
+  })
+
   it('ignores an untracked file', () => {
     const root = repo({ 'src/a.ts': lines(3) })
     writeFileSync(join(root, 'src', 'untracked.ts'), lines(2000))

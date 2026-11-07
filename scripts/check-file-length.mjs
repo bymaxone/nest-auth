@@ -19,7 +19,11 @@
  * entry the base did not have, or one above the base's length, fails. A base revision without a
  * baseline file imposes nothing, which is the change that introduces it.
  *
- * Plain Node with no dependencies: copy this file and `file-length-baseline.json` as they are.
+ * Generated output (the directories in `GENERATED_OUTPUT`) is not counted: `AGENTS.md` puts it out of
+ * scope for the limit.
+ *
+ * Plain Node with no dependencies. `GENERATED_OUTPUT` is the one setting that belongs to the
+ * repository running it; the rest is the same wherever the file is copied.
  *
  * Usage: node scripts/check-file-length.mjs [--root <dir>] [--baseline <file>] [--base <ref>]
  *   --root      repository root (default: the current directory)
@@ -37,6 +41,14 @@ const LIMIT = 800
 /** Tracked files with these extensions are source. Markdown, JSON and lockfiles are out of scope. */
 const SOURCE_EXTENSION = /\.(?:[cm]?[jt]s|[jt]sx)$/
 
+/**
+ * Directories of generated output, by path prefix. Generated files are out of scope for the limit:
+ * a script writes them and a test checks them byte for byte, so splitting one by hand is not a
+ * remedy. A prefix and not a marker in the file, so a hand-written file cannot claim the exemption
+ * by what its header says.
+ */
+const GENERATED_OUTPUT = ['src/server/openapi/generated/']
+
 /** Reads `--name value` from the arguments, or returns the fallback. */
 function option(name, fallback) {
   const index = process.argv.indexOf(name)
@@ -53,7 +65,14 @@ function lineCount(text) {
 /** Paths of the tracked source files, relative to the root. */
 function trackedSources(root) {
   const listing = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
-  return listing.split('\0').filter((path) => path !== '' && SOURCE_EXTENSION.test(path))
+  return listing
+    .split('\0')
+    .filter(
+      (path) =>
+        path !== '' &&
+        SOURCE_EXTENSION.test(path) &&
+        !GENERATED_OUTPUT.some((prefix) => path.startsWith(prefix))
+    )
 }
 
 /** Lengths of the tracked source files over the limit, keyed by path. */
