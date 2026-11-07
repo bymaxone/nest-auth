@@ -377,11 +377,80 @@ describe('resolveOptions — secureCookies default', () => {
   // An explicit secureCookies wins over whatever the environment implies, in both directions,
   // so neither fallback constant can satisfy both cases.
   it('lets an explicit secureCookies override the environment default in both directions', () => {
-    expect(resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: false }).secureCookies).toBe(false)
+    expect(
+      resolveOptions({ ...MINIMAL_OPTIONS, environment: 'test', secureCookies: false })
+        .secureCookies
+    ).toBe(false)
     expect(
       resolveOptions({ ...MINIMAL_OPTIONS, environment: 'development', secureCookies: true })
         .secureCookies
     ).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// production + secureCookies: false
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — a production deployment with secureCookies: false', () => {
+  const FIRST_SENTENCE =
+    "secureCookies is false but environment is 'production' (the default when unset)."
+
+  // Scenario: the host says nothing about the environment and turns Secure off. Expected: startup
+  // fails, because an unset environment is production. Why: a session cookie without Secure is
+  // sent over plain HTTP, and a TLS-terminating proxy still serves HTTPS to the browser.
+  it('refuses secureCookies: false when the environment is unset', () => {
+    const resolve = (): unknown => resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: false })
+
+    expect(resolve).toThrow(`[BymaxAuthModule] ${FIRST_SENTENCE}`)
+    expect(resolve).toThrow(
+      'A session cookie without the Secure attribute is sent over plain HTTP.'
+    )
+    expect(resolve).toThrow("environment: 'development' or 'test'")
+  })
+
+  // Scenario: the same configuration with the environment declared production. Expected: refused
+  // identically, so the declared and the defaulted production cannot differ.
+  it('refuses secureCookies: false when the environment is declared production', () => {
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, environment: 'production', secureCookies: false })
+    ).toThrow(FIRST_SENTENCE)
+  })
+
+  // Scenario: the escape hatch the message names. Expected: a declared development or test
+  // environment may turn Secure off, and the resolved option says so.
+  it.each(['development', 'test'] as const)(
+    'accepts secureCookies: false once the host declares %s',
+    (environment) => {
+      expect(
+        resolveOptions({ ...MINIMAL_OPTIONS, environment, secureCookies: false }).secureCookies
+      ).toBe(false)
+    }
+  )
+
+  // Scenario: nothing is false. Expected: production keeps Secure on by default and an explicit
+  // true is accepted in every environment.
+  it('leaves secureCookies true, defaulted or explicit, alone', () => {
+    expect(resolveOptions({ ...MINIMAL_OPTIONS }).secureCookies).toBe(true)
+    expect(resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: true }).secureCookies).toBe(true)
+    expect(
+      resolveOptions({ ...MINIMAL_OPTIONS, environment: 'test', secureCookies: true }).secureCookies
+    ).toBe(true)
+  })
+
+  // Scenario: SameSite=None together with secureCookies: false in production. Expected: the
+  // SameSite error, not this one. Why: the two rules agree on the verdict but only the SameSite
+  // one explains why the browser would drop the cookie, and both libraries check it first.
+  it('reports the SameSite=None rule before this one', () => {
+    const resolve = (): unknown =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        secureCookies: false,
+        cookies: { sameSite: 'none', trustedOrigins: ['https://app.example.com'] }
+      })
+
+    expect(resolve).toThrow("cookies.sameSite is 'none' but secureCookies is false")
+    expect(resolve).not.toThrow(FIRST_SENTENCE)
   })
 })
 

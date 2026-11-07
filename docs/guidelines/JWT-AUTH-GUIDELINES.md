@@ -308,7 +308,7 @@ The `has_session` cookie is intentionally **not** HttpOnly. It contains only the
 
 ### 4.3 Secure Flag
 
-By default (`secureCookies` omitted and `environment` absent or `'production'`), all cookies are emitted with `Secure: true`, so they are transmitted over HTTPS only. For development on `http://localhost`, use `environment: 'development'` or `secureCookies: false`. The library does not read `NODE_ENV`.
+By default (`secureCookies` omitted and `environment` absent or `'production'`), all cookies are emitted with `Secure: true`, so they are transmitted over HTTPS only. For development on `http://localhost`, declare `environment: 'development'` (or `'test'`); `secureCookies: false` is accepted only together with such an environment, and the module refuses to start with it in production. The library does not read `NODE_ENV`.
 
 ### 4.4 SameSite Policy
 

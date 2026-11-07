@@ -229,6 +229,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateOAuthErrorRedirectUrl(userOptions)
   validateRefreshCookiePath(userOptions.routePrefix, userOptions.cookies)
   validateSameSiteNoneRequiresSecure(userOptions)
+  validateProductionCookiesAreSecure(userOptions)
   validateCookiePrefixes(userOptions)
   validateTrustedOrigins(userOptions)
   validateRefreshGraceWindow(userOptions.jwt)
@@ -1452,6 +1453,30 @@ function validateSameSiteNoneRequiresSecure(userOptions: BymaxAuthModuleOptions)
         `use cookies.sameSite: 'lax' / 'strict'.`
     )
   }
+}
+
+/**
+ * Validates that a production deployment does not turn the `Secure` cookie attribute off.
+ *
+ * `secureCookies` defaults to `true` in production, so the only way to reach this is to write
+ * `secureCookies: false` while `environment` is `'production'` or unset. A session cookie without
+ * `Secure` travels over plain HTTP, and a TLS-terminating proxy does not change that: the browser
+ * still talks HTTPS to the proxy, so the attribute costs nothing there. Local HTTP development
+ * declares `environment: 'development'` or `'test'`, which is the statement this check asks for.
+ *
+ * Runs after {@link validateSameSiteNoneRequiresSecure}, so a deployment that breaks both rules
+ * is told about the one that explains why the browser would drop the cookie. The first sentence
+ * of the message is held byte-identical with rust-auth, with the field name in each library's
+ * spelling.
+ */
+function validateProductionCookiesAreSecure(userOptions: BymaxAuthModuleOptions): void {
+  if (userOptions.secureCookies !== false || !isProductionDeployment(userOptions)) return
+  throw new Error(
+    `[BymaxAuthModule] secureCookies is false but environment is 'production' ` +
+      `(the default when unset). A session cookie without the Secure attribute is sent over ` +
+      `plain HTTP. Set secureCookies: true (a TLS-terminating proxy still serves HTTPS to the ` +
+      `browser), or declare environment: 'development' or 'test' for local HTTP.`
+  )
 }
 
 /**

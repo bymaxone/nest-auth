@@ -135,6 +135,8 @@ async function bootstrapWithVerification(): Promise<VerificationFixture> {
           // 429 would mask what the scenario asserts. Declaring the source is only required
           // when limiting is ON — see `validateClientIpSource`.
           rateLimit: { enabled: false },
+          // Plain-HTTP harness: declared, because production refuses `secureCookies: false`.
+          environment: 'test',
           secureCookies: false
         }),
         controllers: { auth: true, mfa: true, passwordReset: true, sessions: true },

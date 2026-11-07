@@ -34,6 +34,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   handler, guard, pipe or service keeps its message and `auth.internal`. The new `transportErrors`
   section of `conformance/wire-contract.json` lists the rows; `errorCatalog.statuses` still holds
   one status per code. No public member is added or changed.
+- **A production deployment can no longer start with `secureCookies: false`.** `environment` is
+  `'production'` when unset, so a configuration that sets `secureCookies: false` without declaring
+  `environment: 'development'` or `'test'` now throws at startup, after the `SameSite=None` check,
+  with a message that contains "secureCookies is false but environment is 'production' (the default
+  when unset)." Remove the option, set it to `true`, or declare the environment. A session cookie
+  without `Secure` travels over plain HTTP, and a TLS-terminating proxy still serves HTTPS to the
+  browser. Omitting `secureCookies` and setting it to `true` are unchanged. No public member is
+  added or changed.
 - **A refresh token that rotated a moment ago now stands for the session that replaced it, on
   `POST /password/change` and `POST /sessions/revoke-all`.** A refresh of the caller's own session
   that landed while the request was being handled turned the token it carried into a rotation
@@ -64,6 +72,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **A password change or revoke-all no longer fails when the caller refreshes the session
   concurrently.** See the note above.
 - **A store fault while ranking sessions no longer evicts a live session.** See the note above.
+- **`secureCookies: false` in a production deployment is refused at startup.** See the note above.
 
 ## [1.4.16] - 2026-11-06
 
