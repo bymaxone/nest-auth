@@ -103,8 +103,9 @@ export class SelfOrAdminGuard implements CanActivate {
 
 /**
  * Whether every tenant capture on the route (`tenantId`, `tenant_id` or `tenant`) equals the
- * token's tenant. A route with none passes. A capture that is not a non-empty string, or that
- * differs from the token's tenant, fails, and a token with no tenant cannot equal any capture.
+ * token's tenant. A route with none passes. A capture that is empty, or that differs from the
+ * token's tenant, fails; an array or any other non-string always differs, and a token with no
+ * tenant cannot equal any capture.
  */
 function capturesOnlyTokenTenant(
   params: Request['params'],
@@ -112,9 +113,7 @@ function capturesOnlyTokenTenant(
 ): boolean {
   const captures: unknown[] = [params.tenantId, params.tenant_id, params.tenant]
   return captures.every(
-    (captured) =>
-      captured === undefined ||
-      (typeof captured === 'string' && captured !== '' && captured === tokenTenant)
+    (captured) => captured === undefined || (captured !== '' && captured === tokenTenant)
   )
 }
 

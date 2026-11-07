@@ -432,6 +432,13 @@ describe('SelfOrAdminGuard', () => {
       ).toEqual(REFUSED)
     })
 
+    // An empty tenant on the token equals an empty capture, and neither names a tenant.
+    it('should refuse an empty capture when the token tenant is empty too', () => {
+      expect(
+        refusal(makeUser({ sub: 'user-1', tenantId: '' }), { tenantId: '', userId: 'user-1' })
+      ).toEqual(REFUSED)
+    })
+
     // Scenario: a cross-tenant request that would also fail another check. Expected: the tenant
     // refusal comes first, so INSUFFICIENT_ROLE and not TOKEN_INVALID. Why: a cross-tenant request
     // must not learn anything from a later check, and must never reach the role decision.
