@@ -8,7 +8,8 @@
  *     `auth.internal`, because it is the same for every address;
  *   - a failure AFTER the account is known (issuing or storing the code) is logged and still
  *     answers 200, because it happens only for a registered address;
- *   - the resend cooldown is released on any failure, so a retry is not locked out for a minute;
+ *   - the resend cooldown is released when the request itself observes a failure, so a retry is not
+ *     locked out for a minute, and a send that fails after the response has left never releases it;
  *   - every path, the cooldown hit included, takes at least the anti-enumeration floor, so
  *     releasing the cooldown for registered accounts opens no timing difference.
  *
