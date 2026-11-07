@@ -318,10 +318,10 @@ node scripts/mutate-const-tables.mjs --only src/server/constants/throttle-config
   not do.
 - **Cost.** The command runs once per mutant, serially. The constants are imported by most of the
   suite, so `--findRelatedTests` selects most of it: measured here at about 45 seconds per mutant,
-  and about 26 with `--bail=1`, which stops a run at its first failing suite. The whole repository
-  has 97 tables, 373 entries and 448 mutants in 11 files, which is about three and a half hours.
-  Run it file by file with `--only`, and start with the tables that carry a security limit
-  (`throttle-configs.ts`).
+  and about 26 with `--bail=1`, which stops a run at its first failing suite (`pnpm mutate:tables`
+  passes it). A run over the whole repository takes hours; the script prints one line per mutant
+  on stderr, so count them on a partial run before committing to the rest. Run it file by file with
+  `--only`, and start with the tables that carry a security limit (`throttle-configs.ts`).
 - A survivor means no test pins that entry. Pin it with a test that reads the entry, or, when it is
   genuinely free, say why in the table's own comment.
 
