@@ -58,12 +58,26 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   consumer whose hook assumed a logout is announced only by the call that found the session now
   also receives it from the completing retry. Private `blacklistWrites` (both services) and
   `revokeSessionMetadata` (`AuthService`) appear in the declarations.
+- **A late MFA re-encryption can no longer overwrite a `disable` or a re-enrolment.** This applies
+  only to a deployment that has configured `mfa.previousEncryptionKeys` and still holds secrets
+  stored under a retired key: the first successful challenge on such an account re-encrypts the
+  secret under the current key, and that write replaces the whole MFA record. If the user disabled
+  MFA, or re-enrolled with a new secret and recovery codes, while that write was in flight, it could
+  restore the removed factor or the replaced secret and recovery digests. The re-encryption is now
+  one of the serialized MFA transitions and writes only when the stored secret still decrypts to
+  the secret the challenge opened, and the recovery-code challenge makes the same check before it
+  writes back the list without the used code. A sibling challenge that only re-encrypted the same secret does not count as a
+  change. Accounts already past the migration, and deployments with no retired key, are not
+  affected; draining the retired keys closes the exposure. When another transition holds the lock
+  the migration is skipped and retried by the next challenge. No contract change.
 
 ### Fixed
 
 - **Compressed request bodies are refused the way rust-auth refuses them, and a corrupt one no
   longer answers `500`.** See the note above.
 - **A logout completed by a retry no longer goes unannounced.** See the note above.
+- **The MFA re-encryption under the current key no longer overwrites a concurrent `disable` or
+  re-enrolment.** See the note above.
 
 ## [1.4.17] - 2026-11-07
 

@@ -300,35 +300,33 @@ export class MfaService {
    * Detached from the challenge it follows: the user is already authenticated and the retired
    * key still opens the secret, so a failure here costs the migration and nothing else.
    *
+   * The write replaces the whole MFA record, so it runs as a serialized transition and lands only
+   * on a record that still holds this secret. One that no longer does was disabled or re-enrolled
+   * since, and writing the re-encrypted old secret over it would restore a factor the user removed
+   * and unspend the recovery codes they replaced. The comparison is on the decrypted secret, not
+   * the ciphertext: a sibling challenge that only re-encrypted the same secret changes the
+   * ciphertext and nothing else, and must not be mistaken for a re-enrolment.
+   *
    * @param userId - The account whose stored secret is being re-encrypted.
    * @param context - Which identity plane the account belongs to.
    * @param secretBase32 - The decrypted secret.
-   * @param recoveryCodes - The stored recovery digests, written back unchanged.
    * @param tenantId - The tenant the account belongs to, so the write is scoped like the read.
    */
   private async reencryptSecret(
     userId: string,
     context: 'dashboard' | 'platform',
     secretBase32: string,
-    recoveryCodes: string[],
     tenantId: string | undefined
   ): Promise<void> {
-    const update = {
-      mfaEnabled: true as const,
-      mfaSecret: this.encryptSecret(secretBase32),
-      mfaRecoveryCodes: recoveryCodes
-    }
     try {
-      if (context === 'platform' && this.platformUserRepo) {
-        await this.platformUserRepo.updateMfa(userId, update)
-      } else {
-        // Narrows the tenant for the dashboard write. Every dashboard entry point already ran
-        // `assertPlaneTenant`, so this re-states a settled fact rather than discovering one —
-        // but it is the only form the type system reads, and `updateMfa` requires a tenant for
-        // the same reason `findById` does.
-        this.assertDashboardTenant(tenantId)
-        await this.userRepo.updateMfa({ id: userId, tenantId, data: update })
-      }
+      await this.transitionMfaRecord(context, userId, tenantId, (current) => {
+        if (!current.mfaEnabled || !this.holdsSecret(current.mfaSecret, secretBase32)) return null
+        return {
+          mfaEnabled: true,
+          mfaSecret: this.encryptSecret(secretBase32),
+          mfaRecoveryCodes: current.mfaRecoveryCodes ?? []
+        }
+      })
     } catch (err: unknown) {
       this.logger.error(
         `re-encryption under the current MFA key failed: ${describeChannelStatus(err)}`
@@ -450,7 +448,8 @@ export class MfaService {
       if (context === 'platform' && this.platformUserRepo) {
         await this.platformUserRepo.updateMfa(userId, write)
       } else {
-        // Narrows the tenant for the dashboard write, as in `reencryptSecret`.
+        // Narrows the tenant for the dashboard write: every dashboard entry point already ran
+        // `assertPlaneTenant`, but only this form is one the type system reads.
         this.assertDashboardTenant(tenantId)
         await this.userRepo.updateMfa({ id: userId, tenantId, data: write })
       }
@@ -462,6 +461,21 @@ export class MfaService {
       if (acquireLegacy) {
         await this.redis.eval(RELEASE_LOCK_LUA, [legacyLockKey], [lockToken])
       }
+    }
+  }
+
+  /**
+   * Whether `stored` decrypts, under the current or a retired key, to `secretBase32`.
+   *
+   * Compares plaintext, so a record that was only re-encrypted still matches and one holding a
+   * different secret does not. A ciphertext no key opens does not match either.
+   */
+  private holdsSecret(stored: string | null | undefined, secretBase32: string): boolean {
+    if (!stored) return false
+    try {
+      return timingSafeCompare(this.decryptWithRotation(stored).secret, secretBase32)
+    } catch {
+      return false
     }
   }
 
@@ -1163,6 +1177,10 @@ export class MfaService {
         // secret, so the code is spent (its `rcu:` claim already stands) and nothing is
         // written back.
         if (!current.mfaEnabled) return null
+        // The secret this challenge opened was replaced — a re-enrolment — and the code belongs to
+        // the list that went with it. Writing the splice would put the old secret back. A record a
+        // sibling challenge only re-encrypted still holds the same secret and is spliced.
+        if (!this.holdsSecret(current.mfaSecret, secretBase32)) return null
         // Stryker disable next-line ArrayDeclaration: the fallback's CONTENTS are unobservable. It
         // stands in for "this account has no recovery codes", and the only thing done with the list
         // is `indexOf(spentDigest)` — a digest that cannot be in a list the account does not have,
@@ -1191,13 +1209,7 @@ export class MfaService {
       // A TOTP challenge writes nothing on its own, so the re-encryption needs its own write.
       // Fire-and-forget: the challenge has already succeeded and the retired key still opens
       // the secret, so a failure costs the migration and nothing else.
-      void this.reencryptSecret(
-        userId,
-        context,
-        secretBase32,
-        user.mfaRecoveryCodes ?? [],
-        tenantId
-      )
+      void this.reencryptSecret(userId, context, secretBase32, tenantId)
     }
 
     this.logger.log(`challenge: MFA challenge passed userId=${logSafe(userId)} context=${context}`)
