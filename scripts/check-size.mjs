@@ -118,6 +118,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     about 6%, inside this entry's historical band. It is a capability the consumer's interim
 //     guard cannot be deleted without, with red-checked tests behind it, which is the
 //     distinction this budget exists to force.
+//     Raised to 144 KiB for the workspace option group: its validation, defaults and startup
+//     cross-check with the repository providers. The build measured 137.65 KiB against a
+//     137 KiB budget it had fit, so the group costs under 1 KiB of brotli; 144 restores about 4.6%
+//     headroom. The phases that put the guard, lifecycle and invitations on top of these options
+//     will measure their own growth and raise this entry then.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
@@ -151,7 +156,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 137 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 144 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.25 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },
