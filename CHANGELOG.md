@@ -18,6 +18,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.21] - 2026-11-08
+
 ### Apply to a derived backend
 
 - **Add `limitExpiry` to your `IApiKeyRepository` (optional, recommended).** Rotating a key with an
@@ -36,6 +38,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **Concurrent rotations of one API key no longer lengthen the old key's life.** With a repository
   that implements the new optional `limitExpiry`, rotation lowers the old key's expiry atomically
   instead of overwriting it with a value computed from an earlier read. See the note above.
+
+### Added
+
+- **`ReauthenticationService` is exported.** It re-proves the account password before a sensitive
+  change, counted against the same `reauth` lockout `MfaService` uses, or for an account with no
+  password requires a recent real sign-in. A host can guard its own destructive routes with it. It
+  is provided by `BymaxAuthModule` whether or not MFA is configured.
+
+### Changed
+
+- **`MfaService` moves its re-authentication, flow lockout, record-transition and plane-tenant
+  code to internal modules.** Behaviour, error codes, Redis keys and log text are unchanged, and
+  none of the moved members was part of the public API.
 
 ## [1.4.20] - 2026-11-07
 
@@ -4619,7 +4634,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.20...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.21...HEAD
+[1.4.21]: https://github.com/bymaxone/nest-auth/compare/v1.4.20...v1.4.21
 [1.4.20]: https://github.com/bymaxone/nest-auth/compare/v1.4.19...v1.4.20
 [1.4.19]: https://github.com/bymaxone/nest-auth/compare/v1.4.18...v1.4.19
 [1.4.18]: https://github.com/bymaxone/nest-auth/compare/v1.4.17...v1.4.18
