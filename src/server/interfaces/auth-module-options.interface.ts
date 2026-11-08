@@ -16,6 +16,7 @@ import type {
 import type { ApiKeyOptions } from './api-key-options.interface'
 import type { OAuthOptions } from './oauth-options.interface'
 import type { AuthUser } from './user-repository.interface'
+import type { RegistrationMode, WorkspaceOptions } from './workspace-options.interface'
 
 /**
  * Main configuration interface for BymaxAuthModule.
@@ -795,6 +796,19 @@ export interface BymaxAuthModuleOptions {
    * Each provider block is optional — only configured providers are registered.
    */
   oauth?: OAuthOptions
+
+  /**
+   * Opt-in workspaces: one identity with a role in each of many workspaces inside a tenant. See
+   * {@link WorkspaceOptions}. Enabling it also needs `BYMAX_AUTH_WORKSPACE_REPOSITORY` and
+   * `BYMAX_AUTH_MEMBERSHIP_REPOSITORY` in `extraProviders`.
+   */
+  workspaces?: WorkspaceOptions
+
+  /**
+   * Who may create an account on their own: `'open'` (default) or `'invitation-only'`. The closed
+   * mode needs `workspaces.enabled` or `invitations.enabled`, or no account could be created.
+   */
+  registration?: RegistrationMode
 
   /**
    * Route prefix applied to all endpoints registered by this module.

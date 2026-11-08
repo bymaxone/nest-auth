@@ -14,12 +14,18 @@ import { resolveApiKeys, validateApiKeys } from './api-key-options'
 import { DEFAULT_OPTIONS } from './default-options'
 import { durationToSeconds } from './duration'
 import { validateSecretStrength } from './secret-strength'
+import {
+  resolveRegistration,
+  resolveWorkspaceOptions,
+  type ResolvedWorkspaceOptions
+} from './workspace-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
 import { MAX_VERIFY_WINDOW } from '../crypto/totp'
 import type {
   BymaxAuthModuleOptions,
   ClientIpSource
 } from '../interfaces/auth-module-options.interface'
+import type { RegistrationMode } from '../interfaces/workspace-options.interface'
 
 /**
  * Domain-separation label for the HMAC key derivation. Changing this value is
@@ -57,6 +63,8 @@ export type ResolvedOptions = Omit<
   | 'platform'
   | 'invitations'
   | 'apiKeys'
+  | 'workspaces'
+  | 'registration'
   | 'controllers'
   | 'blockedStatuses'
   | 'redisNamespace'
@@ -87,6 +95,10 @@ export type ResolvedOptions = Omit<
   platform: Required<NonNullable<BymaxAuthModuleOptions['platform']>>
   invitations: Required<NonNullable<BymaxAuthModuleOptions['invitations']>>
   apiKeys: Required<NonNullable<BymaxAuthModuleOptions['apiKeys']>>
+  /** The workspace group with defaults applied; absent while the feature is off. */
+  workspaces?: ResolvedWorkspaceOptions
+  /** Who may create an account on their own. */
+  registration: RegistrationMode
   emailChange: Required<NonNullable<BymaxAuthModuleOptions['emailChange']>>
   // The shape is stated outright rather than derived from the option union: by this point
   // validation has run, so the discrimination that forces a consumer to name the source has
@@ -200,6 +212,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateClientIpSource(userOptions.rateLimit)
   validateTenantBinding(userOptions)
   validateApiKeys(userOptions)
+  const workspaces = resolveWorkspaceOptions(userOptions)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
 
@@ -217,7 +230,12 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
   // Destructure mfa out so the base spread does not inject the raw optional-field shape.
   // mfa is re-added below with defaults applied.
-  const { mfa: _mfa, identifierKey: _identifierKey, ...userOptionsWithoutMfa } = userOptions
+  const {
+    mfa: _mfa,
+    identifierKey: _identifierKey,
+    workspaces: _workspaces,
+    ...userOptionsWithoutMfa
+  } = userOptions
 
   const resolved: ResolvedOptions = {
     ...userOptionsWithoutMfa,
@@ -281,6 +299,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
     apiKeys: resolveApiKeys(userOptions.apiKeys),
 
+    registration: resolveRegistration(userOptions),
+
     emailChange: {
       ...DEFAULT_OPTIONS.emailChange,
       ...userOptions.emailChange
@@ -320,6 +340,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
     hmacKey: deriveHmacKey(userOptions.identifierKey ?? userOptions.jwt.secret),
     previousHmacKeys: (userOptions.jwt.previousSecrets ?? []).map(deriveHmacKey),
+
+    ...(workspaces !== undefined && { workspaces }),
 
     ...(userOptions.mfa !== undefined && {
       mfa: { ...DEFAULT_OPTIONS.mfa, ...userOptions.mfa } as Required<
