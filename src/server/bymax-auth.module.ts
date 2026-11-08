@@ -65,11 +65,13 @@ import { AuthService } from './services/auth.service'
 import { BruteForceService } from './services/brute-force.service'
 import { EmailChangeService } from './services/email-change.service'
 import { InvitationService } from './services/invitation.service'
+import { MfaFlowLockoutService } from './services/mfa-flow-lockout.service'
 import { MfaService } from './services/mfa.service'
 import { OtpService } from './services/otp.service'
 import { PasswordResetService } from './services/password-reset.service'
 import { PasswordService } from './services/password.service'
 import { PlatformAuthService } from './services/platform-auth.service'
+import { ReauthenticationService } from './services/reauthentication.service'
 import { SessionService } from './services/session.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
 import { TokenManagerService } from './services/token-manager.service'
@@ -561,6 +563,10 @@ export class BymaxAuthModule {
         TokenDeliveryService,
         WsTicketService,
         BruteForceService,
+        // Registered unconditionally: it depends only on services that are always present, and
+        // it is the one place a caller re-proves the password before a sensitive change.
+        MfaFlowLockoutService,
+        ReauthenticationService,
         OtpService,
         // SessionService is always registered (not gated on includeSessions) because
         // AuthService.login() and AuthService.refresh() call session methods. Registering
@@ -614,6 +620,9 @@ export class BymaxAuthModule {
         // Host-app modules that extend the auth flow (e.g. custom logout logic) can
         // inject SessionService without re-registering it.
         SessionService,
+        // Export ReauthenticationService so a host module can guard its own destructive routes
+        // with the same password check and lockout counter the library uses.
+        ReauthenticationService,
         // Export MFA components when enabled — allows host-app modules to inject
         // MfaService and apply MfaRequiredGuard without re-registering them.
         // Spreads mfaProviders directly so providers and exports always stay in sync.
