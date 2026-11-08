@@ -29,19 +29,19 @@ export class MfaFlowLockoutService {
   ) {}
 
   /**
-   * The tenant-scoped brute-force identifier for one MFA flow, and the legacy plane-only one it
-   * replaces — equal on the platform plane, where the subject never carried a tenant, and distinct
-   * on the dashboard plane, where it now does.
+   * The tenant-scoped brute-force identifier for one MFA flow, and the plane-only one that pods on
+   * an older version count under. The two are equal on the platform plane, where the subject
+   * carries no tenant, and distinct on the dashboard plane, where it does.
    *
    * A rolling upgrade runs old and new code against one Redis at once: on the dashboard plane an
    * old pod counts a failure under `{flow}:{plane}:{userId}` while a new pod counts it under
-   * `{flow}:{userSubject}`, and either alone leaves a hole — a lockout an old pod filled would not
-   * stop a new pod, and a success on one would not clear the other. For one release every read
-   * consults both and every write touches both, so the two move as one; a later release drops the
-   * legacy arm. On the platform plane the two ids are identical (no tenant ever entered the
-   * subject), so the legacy arm is skipped — operating it would just be the same key a second time,
-   * double-counting a failure and locking a platform admin out at half the threshold. `{flow}`
-   * (`challenge` / `disable` / `reauth`) keeps the three counters isolated, exactly as before.
+   * `{flow}:{userSubject}`, and either alone leaves a hole: a lockout an old pod filled would not
+   * stop a new pod, and a success on one would not clear the other. So every read consults both
+   * and every write touches both, and the two move as one; the plane-only arm can be dropped once
+   * no pod writes it. On the platform plane the two ids are identical, so the plane-only arm is
+   * skipped: operating it would be the same key a second time, double-counting a failure and
+   * locking a platform admin out at half the threshold. `{flow}` (`challenge` / `disable` /
+   * `reauth`) keeps the three counters isolated from each other.
    */
   private counterIds(
     flow: MfaFlow,

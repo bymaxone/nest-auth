@@ -9,9 +9,7 @@ import {
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
-import { BruteForceService } from './brute-force.service'
 import { MfaFlowLockoutService } from './mfa-flow-lockout.service'
-import { PasswordService } from './password.service'
 import { ReauthenticationService } from './reauthentication.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
@@ -230,10 +228,8 @@ export class MfaService {
     private readonly platformUserRepo: IPlatformUserRepository | null,
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
-    @Inject(BruteForceService) private readonly bruteForce: BruteForceService,
     @Inject(MfaFlowLockoutService) private readonly flowLockout: MfaFlowLockoutService,
     @Inject(ReauthenticationService) private readonly reauthentication: ReauthenticationService,
-    @Inject(PasswordService) private readonly passwordService: PasswordService,
     @Inject(SessionService) private readonly sessionService: SessionService,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
     @Inject(BYMAX_AUTH_HOOKS) private readonly hooks: IAuthHooks
