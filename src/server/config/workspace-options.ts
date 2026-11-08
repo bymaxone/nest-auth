@@ -113,8 +113,8 @@ function validateWorkspacePermissions(
   roles: ReadonlySet<string>
 ): void {
   for (const [action, list] of Object.entries(permissions ?? {})) {
-    const entries: readonly unknown[] = Array.isArray(list) ? list : []
-    for (const role of entries) {
+    if (list === undefined) continue
+    for (const role of list) {
       const known = typeof role === 'string' && roles.has(role)
       if (!known && !(action === 'viewMembers' && role === ANY_WORKSPACE_MEMBER)) {
         throw new Error(
