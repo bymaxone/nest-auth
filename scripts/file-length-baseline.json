@@ -15,7 +15,7 @@
     "src/server/providers/default-auth-email.provider.spec.ts": 1210,
     "src/server/providers/default-auth-email.provider.ts": 809,
     "src/server/redis/auth-redis.service.spec.ts": 1363,
-    "src/server/redis/auth-redis.service.ts": 1266,
+    "src/server/redis/auth-redis.service.ts": 1264,
     "src/server/services/auth.service.spec.ts": 3664,
     "src/server/services/auth.service.ts": 1486,
     "src/server/services/invitation.service.spec.ts": 1554,

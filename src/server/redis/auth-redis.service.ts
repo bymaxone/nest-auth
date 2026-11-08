@@ -47,7 +47,6 @@ const REFRESH_PREFIXES = {
     grace: 'rp',
     consumed: 'cf',
     family: 'fam',
-    index: 'sess',
     detail: 'sd'
   },
   platform: {
@@ -55,7 +54,6 @@ const REFRESH_PREFIXES = {
     grace: 'prp',
     consumed: 'pcf',
     family: 'pfam',
-    index: 'psess',
     detail: 'psd'
   }
 } as const
