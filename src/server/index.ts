@@ -16,10 +16,12 @@ export {
   BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
+  BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_REDIS_CLIENT,
-  BYMAX_AUTH_USER_REPOSITORY
+  BYMAX_AUTH_USER_REPOSITORY,
+  BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from './bymax-auth.constants'
 
 // ---------------------------------------------------------------------------
@@ -166,6 +168,44 @@ export type {
   UpdatePasswordParams,
   UpdateStatusParams
 } from './interfaces/user-repository.interface'
+
+/**
+ * The workspace ports and their parameter shapes.
+ *
+ * Exported because a consumer IMPLEMENTS these ports. Every shape names the full key of what it
+ * addresses (tenant and workspace, plus the member where one is named) so an implementation can
+ * always scope the row it reads or writes.
+ */
+export type {
+  AuthMembership,
+  ChangeMembershipRoleParams,
+  CreateMembershipParams,
+  CreateMembershipResult,
+  GuardedWriteResult,
+  IMembershipRepository,
+  LastActiveWorkspaceRef,
+  ListMembershipsForUserParams,
+  ListMembershipsForWorkspaceParams,
+  MembershipPage,
+  MembershipRef,
+  MembershipStatus,
+  MembershipWithWorkspace,
+  RemoveMembershipParams,
+  SetLastActiveWorkspaceParams,
+  TransferOwnershipParams,
+  TransferOwnershipResult
+} from './interfaces/membership-repository.interface'
+export type { WorkspaceAuditEvent } from './interfaces/workspace-audit.interface'
+export type {
+  AuthWorkspace,
+  CreateWorkspaceWithOwnerParams,
+  IWorkspaceRepository,
+  RenameWorkspaceParams,
+  UpdateWorkspaceStatusParams,
+  UpdateWorkspaceStatusResult,
+  WorkspaceRef,
+  WorkspaceStatus
+} from './interfaces/workspace-repository.interface'
 
 // ---------------------------------------------------------------------------
 // Providers

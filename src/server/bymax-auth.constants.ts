@@ -93,3 +93,19 @@ export const BYMAX_AUTH_API_KEY_REPOSITORY = Symbol('BYMAX_AUTH_API_KEY_REPOSITO
  * that expiry and revocation can be tested at the exact boundary instant.
  */
 export const BYMAX_AUTH_API_KEY_CLOCK = Symbol('BYMAX_AUTH_API_KEY_CLOCK')
+
+/**
+ * Injection token for the host's {@link IWorkspaceRepository} implementation.
+ *
+ * Provide it in `extraProviders` together with {@link BYMAX_AUTH_MEMBERSHIP_REPOSITORY}: the
+ * workspace feature reads and writes workspaces through this port.
+ */
+export const BYMAX_AUTH_WORKSPACE_REPOSITORY = Symbol('BYMAX_AUTH_WORKSPACE_REPOSITORY')
+
+/**
+ * Injection token for the host's {@link IMembershipRepository} implementation.
+ *
+ * Provide it in `extraProviders` together with {@link BYMAX_AUTH_WORKSPACE_REPOSITORY}: the
+ * workspace feature reads and writes memberships through this port.
+ */
+export const BYMAX_AUTH_MEMBERSHIP_REPOSITORY = Symbol('BYMAX_AUTH_MEMBERSHIP_REPOSITORY')
