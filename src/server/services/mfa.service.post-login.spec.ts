@@ -21,11 +21,15 @@ import {
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { BruteForceService } from './brute-force.service'
 import { MfaFlowLockoutService } from './mfa-flow-lockout.service'
+import { MfaRecordService } from './mfa-record.service'
 import { MfaService } from './mfa.service'
 import { ReauthenticationService } from './reauthentication.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
+
+/** The services `MfaService` collaborates with, provided real in every test module. */
+const MFA_COLLABORATORS = [MfaFlowLockoutService, MfaRecordService, ReauthenticationService]
 
 /** TEST FIXTURE ONLY: a structurally valid 32-byte AES-256-GCM key, not a credential. */
 const VALID_ENCRYPTION_KEY = Buffer.from('nest-auth-test-encryption-key-32').toString('base64')
@@ -171,8 +175,7 @@ describe('MfaService — challenge completion side effects', () => {
     const module = await Test.createTestingModule({
       providers: [
         MfaService,
-        MfaFlowLockoutService,
-        ReauthenticationService,
+        ...MFA_COLLABORATORS,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
         { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },

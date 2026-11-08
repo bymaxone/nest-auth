@@ -66,6 +66,7 @@ import { BruteForceService } from './services/brute-force.service'
 import { EmailChangeService } from './services/email-change.service'
 import { InvitationService } from './services/invitation.service'
 import { MfaFlowLockoutService } from './services/mfa-flow-lockout.service'
+import { MfaRecordService } from './services/mfa-record.service'
 import { MfaService } from './services/mfa.service'
 import { OtpService } from './services/otp.service'
 import { PasswordResetService } from './services/password-reset.service'
@@ -566,6 +567,7 @@ export class BymaxAuthModule {
         // Registered unconditionally: it depends only on services that are always present, and
         // it is the one place a caller re-proves the password before a sensitive change.
         MfaFlowLockoutService,
+        MfaRecordService,
         ReauthenticationService,
         OtpService,
         // SessionService is always registered (not gated on includeSessions) because
