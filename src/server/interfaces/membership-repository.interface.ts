@@ -85,7 +85,7 @@ export interface CreateMembershipParams extends MembershipRef {
 }
 
 /** Outcome of {@link IMembershipRepository.create}. */
-export type CreateMembershipResult = 'ok' | 'already_member'
+export type CreateMembershipResult = 'ok' | 'already_member' | 'workspace_not_found'
 
 /** Input to {@link IMembershipRepository.changeRole}. */
 export interface ChangeMembershipRoleParams extends MembershipRef {
@@ -149,7 +149,9 @@ export type TransferOwnershipResult = GuardedWriteResult | 'target_not_member'
  * The membership port a host implements.
  *
  * Every method carries the full key of what it names, and every mutating one receives the audit
- * event for its change and persists it in the same transaction. Reads the library uses to decide
+ * event for its change and persists it in the same transaction. A result other than `'ok'` means
+ * nothing was written: no change and no audit row, so a refused write leaves no trace of an event
+ * that did not happen. Reads the library uses to decide
  * access must come from the primary or be read-your-writes: a replica that lags a removal would
  * cache the removed member as present under the new cache version.
  */
@@ -165,18 +167,26 @@ export interface IMembershipRepository {
   /**
    * Lists a member's memberships with their workspaces, for the workspace picker.
    *
+   * Returns only ACTIVE memberships of ACTIVE workspaces, ordered by membership creation instant
+   * and then workspace id, ascending. The cursor is opaque to the library and valid only for the
+   * same tenant and member; the library bounds `limit` to 1 through 100.
+   *
    * @param params - The tenant, member and page.
-   * @returns One page, ordered stably by a keyset the cursor encodes.
+   * @returns One page.
    */
   listForUser(
     params: ListMembershipsForUserParams
   ): Promise<MembershipPage<MembershipWithWorkspace>>
 
   /**
-   * Lists the members of a workspace.
+   * Lists the members of a workspace, in every membership status so an administrator can see a
+   * suspended member.
+   *
+   * Ordered by membership creation instant and then user id, ascending. The cursor is opaque to
+   * the library and valid only for the same workspace; the library bounds `limit` to 1 through 100.
    *
    * @param params - The workspace key and page.
-   * @returns One page, ordered stably by a keyset the cursor encodes.
+   * @returns One page.
    */
   listForWorkspace(
     params: ListMembershipsForWorkspaceParams
@@ -186,7 +196,8 @@ export interface IMembershipRepository {
    * Adds a member, persisting `audit` in the same transaction.
    *
    * @param params - The membership key, role, inviter and audit event.
-   * @returns `'already_member'` when the user already belongs to the workspace.
+   * @returns `'already_member'` when the user already belongs to the workspace in any status,
+   *   `'workspace_not_found'` when the workspace does not exist.
    */
   create(params: CreateMembershipParams): Promise<CreateMembershipResult>
 
@@ -214,9 +225,13 @@ export interface IMembershipRepository {
   /**
    * Hands ownership from one member to another in one transaction, persisting `audit` with it.
    *
+   * `fromUserId` must be an active member holding `ownerRole`, and `toUserId` an active member; the
+   * target takes `ownerRole`, and the previous owner takes `demoteFromTo` when it is set.
+   *
    * @param params - The workspace key, both members, owner role, the previous owner's new role and
    *   the audit event.
-   * @returns `'target_not_member'` when `toUserId` is not an active member.
+   * @returns `'not_found'` when the workspace or the `fromUserId` membership does not exist or is
+   *   not an active owner, `'target_not_member'` when `toUserId` is not an active member.
    */
   transferOwnership(params: TransferOwnershipParams): Promise<TransferOwnershipResult>
 

@@ -46,16 +46,17 @@ export interface AuthWorkspace {
 }
 
 /** Input to {@link IWorkspaceRepository.createWithOwner}. */
-export interface CreateWorkspaceWithOwnerParams {
-  /** The tenant the workspace is created in. The workspace id does not exist yet. */
-  tenantId: string
+export interface CreateWorkspaceWithOwnerParams extends WorkspaceRef {
   /** Display name. */
   name: string
   /** The creator, who becomes a member holding `ownerRole`. */
   ownerUserId: string
   /** The role that makes the creator the owner. */
   ownerRole: string
-  /** The `workspace.created` event, to persist in the same transaction. */
+  /**
+   * The `workspace.created` event, to persist in the same transaction. Its `tenantId` and
+   * `workspaceId` equal the key in this same object; the library fills the event in completely.
+   */
   audit: WorkspaceAuditEvent
 }
 
@@ -88,15 +89,17 @@ export type UpdateWorkspaceStatusResult = 'ok' | 'not_found' | 'status_conflict'
 /**
  * The workspace port a host implements.
  *
- * Every method that names a workspace carries both halves of its key. Every mutating method
- * receives the audit event for its change and persists it in the same transaction.
+ * Every method carries both halves of the workspace key. Every mutating method receives the audit
+ * event for its change and persists it in the same transaction; a result other than success means
+ * nothing was written, the audit row included.
  */
 export interface IWorkspaceRepository {
   /**
    * Creates the workspace and the creator's owner membership atomically, persisting `audit` in the
-   * same transaction. The repository generates the workspace id.
+   * same transaction. The library generates the workspace id and passes it in the key, so the
+   * audit event is complete before the write; store it as given.
    *
-   * @param params - The tenant, name, creator and audit event.
+   * @param params - The workspace key, name, creator and audit event.
    * @returns The created workspace, `active`.
    */
   createWithOwner(params: CreateWorkspaceWithOwnerParams): Promise<AuthWorkspace>
@@ -113,7 +116,7 @@ export interface IWorkspaceRepository {
    * Renames a workspace, persisting `audit` in the same transaction.
    *
    * @param params - The workspace key, the new name and the audit event.
-   * @returns `false` when no such workspace exists.
+   * @returns `false` when no such workspace exists; nothing is written then.
    */
   rename(params: RenameWorkspaceParams): Promise<boolean>
 
@@ -126,7 +129,7 @@ export interface IWorkspaceRepository {
    * @param params - The workspace key, the target and expected statuses, the deletion instant and
    *   the audit event.
    * @returns `'ok'` when applied, `'not_found'` for no such workspace, `'status_conflict'` when the
-   *   stored status differs from `expectedStatus`.
+   *   stored status differs from `expectedStatus`. Nothing is written for either refusal.
    */
   updateStatus(params: UpdateWorkspaceStatusParams): Promise<UpdateWorkspaceStatusResult>
 }

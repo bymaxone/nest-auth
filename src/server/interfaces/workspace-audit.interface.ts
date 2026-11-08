@@ -29,12 +29,12 @@ interface WorkspaceAuditBase {
  * Every mutating repository method receives the event for its own change in an `audit` field and
  * must persist it in the SAME transaction as the change, so the audit row cannot be missing for a
  * change that happened or present for one that did not. After the write commits, the library fans
- * the event out to `onWorkspaceEvent`; that fan-out is best-effort and can be lost if the process
- * dies between the commit and the call, which is why the persisted row, not the hook, is the
- * record.
+ * the event out to a hook; that fan-out is best-effort and can be lost if the process dies between
+ * the commit and the call, which is why the persisted row is the record.
  *
- * `access.denied` is the exception: it is emitted from the guard on a refused request, has no
- * write to ride on, and goes to the hook only.
+ * `access.denied` and `workspace.switched` are the exceptions: neither rides on a repository write
+ * that takes an `audit` field (a refused request writes nothing, and switching only remembers the
+ * last workspace), so they go to the hook only.
  */
 export type WorkspaceAuditEvent =
   | (WorkspaceAuditBase & {
@@ -47,7 +47,7 @@ export type WorkspaceAuditEvent =
     })
   | (WorkspaceAuditBase & {
       type: 'member.invited' | 'invitation.resent' | 'invitation.revoked' | 'invitation.accepted'
-      /** The invited address, normalized. */
+      /** The invited address, trimmed and lowercased. */
       email: string
       /** The role the invitation carries. */
       role: string
@@ -62,9 +62,16 @@ export type WorkspaceAuditEvent =
       to: string
     })
   | (WorkspaceAuditBase & {
-      type: 'member.removed' | 'member.left' | 'ownership.transferred' | 'workspace.switched'
+      type: 'member.removed' | 'member.left' | 'workspace.switched'
       /** The member the event is about. */
       userId: string
+    })
+  | (WorkspaceAuditBase & {
+      type: 'ownership.transferred'
+      /** The owner who handed ownership over. */
+      fromUserId: string
+      /** The member who took it. */
+      toUserId: string
     })
   | (WorkspaceAuditBase & {
       type: 'access.denied'

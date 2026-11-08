@@ -13,7 +13,7 @@
  * - a workspace method names `tenantId` and `workspaceId`;
  * - a membership method names the member as well;
  * - a listing by member needs the tenant and the member, since it spans workspaces;
- * - creating a workspace has no workspace id yet, only a tenant.
+ * - the last-active methods are keyed by tenant and member, since they span workspaces.
  *
  * It uses the same reader as `tenant-scoped-port.e2e-spec.ts`, and, like it, checks the TYPE of
  * each key and not merely its name, because `tenantId: string | undefined` is a required property
@@ -34,7 +34,7 @@ const MEMBERSHIP_PORT = join(INTERFACES, 'membership-repository.interface.ts')
 type KeyTable = Record<string, readonly string[]>
 
 const WORKSPACE_KEYS: KeyTable = {
-  createWithOwner: ['tenantId'],
+  createWithOwner: ['tenantId', 'workspaceId'],
   findById: ['tenantId', 'workspaceId'],
   rename: ['tenantId', 'workspaceId'],
   updateStatus: ['tenantId', 'workspaceId']
@@ -64,8 +64,8 @@ interface Violation {
  * @param port - The parsed port.
  * @param table - The keys each method's payload has to require.
  * @returns Every method that is unlisted, takes other than one local payload object, or whose
- *   payload does not require a listed key typed exactly `string`; and every table entry with no
- *   method behind it.
+ *   payload does not require a listed key typed exactly `string`; every table entry with no method
+ *   behind it; and anything on the port a method-only reading would miss.
  */
 function judge(port: ReturnType<typeof readPort>, table: KeyTable): Violation[] {
   const violations: Violation[] = []
@@ -86,6 +86,15 @@ function judge(port: ReturnType<typeof readPort>, table: KeyTable): Violation[] 
         violations.push({ method: method.name, problem: `does not require ${key}: string` })
       }
     }
+  }
+  for (const member of port.otherMembers) {
+    violations.push({ method: member, problem: 'is declared as something other than a method' })
+  }
+  for (const parent of port.inherits) {
+    violations.push({
+      method: parent,
+      problem: 'is extended by the port, and its members are not read'
+    })
   }
   const declared = new Set(port.methods.map((method) => method.name))
   for (const name of Object.keys(table)) {
@@ -153,6 +162,26 @@ describe('workspace-scoped ports', () => {
         'positional strings instead of a payload object',
         'interface IPort { rename(tenantId: string, workspaceId: string): Promise<void> }',
         'does not take one named payload object'
+      ],
+      [
+        'a key that is optional',
+        'interface P { tenantId?: string; workspaceId: string }\ninterface IPort { rename(p: P): Promise<void> }',
+        'does not require tenantId: string'
+      ],
+      [
+        'an intersection payload the reader cannot resolve',
+        'interface A { tenantId: string }\ninterface B { workspaceId: string }\ninterface IPort { rename(p: A & B): Promise<void> }',
+        'does not take one named payload object'
+      ],
+      [
+        'a member declared as a function-typed property',
+        'interface P { tenantId: string; workspaceId: string }\ninterface IPort { rename(p: P): Promise<void>; archive: (p: P) => Promise<void> }',
+        'is declared as something other than a method'
+      ],
+      [
+        'a port that inherits members it does not declare',
+        'interface P { tenantId: string; workspaceId: string }\ninterface Base { archive(p: P): Promise<void> }\ninterface IPort extends Base { rename(p: P): Promise<void> }',
+        'is extended by the port, and its members are not read'
       ],
       [
         'a method the table does not list',
