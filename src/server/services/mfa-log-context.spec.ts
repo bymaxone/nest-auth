@@ -4,6 +4,8 @@
  * An operator filters and alerts on the context tag of a log line. The MFA flows are split across
  * several classes, and a line must keep reading `[MfaService]` whichever class writes it, or a
  * filter keyed on it stops matching without any error.
+ *
+ * @layer Test
  */
 
 import { Logger } from '@nestjs/common'
