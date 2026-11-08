@@ -96,9 +96,10 @@ type ParsedHash = {
  * @returns The unpadded standard-base64 rendering.
  */
 function toPhcB64(value: Buffer): string {
-  // Stryker disable next-line Regex: dropping the `$` anchor is equivalent — base64 padding is
-  // only ever trailing, so `/=+/` and `/=+$/` strip the same characters from any encoder output
-  return value.toString('base64').replace(/=+$/, '')
+  // Base64 padding only ever trails, so removing every `=` strips exactly the padding. No regular
+  // expression: a quantified pattern anchored at the end is a polynomial-time scan on input with
+  // many repetitions of the padding character.
+  return value.toString('base64').replaceAll('=', '')
 }
 
 /**
