@@ -63,6 +63,8 @@ export class MemoryApiKeyRepository implements IApiKeyRepository {
   rows = new Map<string, AuthApiKey>()
   calls: string[] = []
   failWith: Error | null = null
+  /** Awaited before each expiry write, so a test can hold one write while another completes. */
+  beforeExpiryWrite: ((name: string) => Promise<void>) | null = null
 
   constructor(rows: AuthApiKey[] = []) {
     for (const row of rows) this.rows.set(row.id, row)
@@ -95,6 +97,7 @@ export class MemoryApiKeyRepository implements IApiKeyRepository {
 
   async setExpiry(id: string, at: Date): Promise<boolean> {
     this.enter('setExpiry')
+    await this.beforeExpiryWrite?.('setExpiry')
     const row = this.rows.get(id)
     if (row === undefined) return false
     row.expiresAt = at
@@ -112,5 +115,17 @@ export class MemoryApiKeyRepository implements IApiKeyRepository {
   async listByLabel(label: string): Promise<AuthApiKey[]> {
     this.enter('listByLabel')
     return [...this.rows.values()].filter((row) => row.label === label)
+  }
+}
+
+/** A repository that also implements the optional atomic `limitExpiry`. */
+export class LimitingApiKeyRepository extends MemoryApiKeyRepository {
+  async limitExpiry(id: string, at: Date): Promise<boolean> {
+    this.calls.push('limitExpiry')
+    await this.beforeExpiryWrite?.('limitExpiry')
+    const row = this.rows.get(id)
+    if (row === undefined) return false
+    if (row.expiresAt === null || row.expiresAt.getTime() > at.getTime()) row.expiresAt = at
+    return true
   }
 }

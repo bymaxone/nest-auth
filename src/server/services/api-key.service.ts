@@ -132,6 +132,11 @@ export class ApiKeyService {
    * The new key is issued first and the old one retired second, so a failure between the two
    * leaves both valid — the safe direction — rather than neither.
    *
+   * With an overlap the old key's deadline is lowered through the repository's optional
+   * `limitExpiry`, an atomic minimum, so concurrent rotations of one key cannot push a shorter
+   * deadline back. A repository without it gets a read followed by `setExpiry`, which two
+   * rotations of the same key can interleave; such a host must serialize rotation per key.
+   *
    * @param id - The active key to replace.
    * @param input - The overlap and an optional expiry for the new key.
    * @returns The new key, plaintext once.
@@ -165,12 +170,18 @@ export class ApiKeyService {
       await this.repository.markRevoked(old.id, now)
     } else {
       const retireAt = new Date(now.getTime() + overlap * 1000)
-      const sooner =
-        // Stryker disable next-line EqualityOperator: at equal instants both arms yield a Date of the same time, so `<` and `<=` store the same expiry
-        old.expiresAt !== null && old.expiresAt.getTime() < retireAt.getTime()
-          ? old.expiresAt
-          : retireAt
-      await this.repository.setExpiry(old.id, sooner)
+      if (this.repository.limitExpiry !== undefined) {
+        // The repository takes the minimum itself, so nothing read earlier can overwrite a
+        // shorter deadline another rotation of this key set in between.
+        await this.repository.limitExpiry(old.id, retireAt)
+      } else {
+        const sooner =
+          // Stryker disable next-line EqualityOperator: at equal instants both arms yield a Date of the same time, so `<` and `<=` store the same expiry
+          old.expiresAt !== null && old.expiresAt.getTime() < retireAt.getTime()
+            ? old.expiresAt
+            : retireAt
+        await this.repository.setExpiry(old.id, sooner)
+      }
     }
     return issued
   }

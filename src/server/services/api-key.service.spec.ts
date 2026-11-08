@@ -8,6 +8,7 @@ import {
 import {
   FakeClock,
   KEY_ID,
+  LimitingApiKeyRepository,
   MemoryApiKeyRepository,
   NOW,
   PEPPER,
@@ -24,6 +25,35 @@ function build(rows = [makeRow()]): {
   const repo = new MemoryApiKeyRepository(rows)
   const clock = new FakeClock()
   return { service: new ApiKeyService(repo, clock, makeOptions()), repo, clock }
+}
+
+/**
+ * Runs two rotations of one key so that the longer one reaches its expiry write first and is held
+ * there, the shorter one completes, and only then is the longer one released.
+ *
+ * @returns The key's stored expiry once both have finished.
+ */
+async function rotateLongThenShort(
+  repo: MemoryApiKeyRepository,
+  service: ApiKeyService
+): Promise<Date | null> {
+  let reached!: () => void
+  const atWrite = new Promise<void>((resolve) => (reached = resolve))
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let first = true
+  repo.beforeExpiryWrite = async (): Promise<void> => {
+    if (!first) return
+    first = false
+    reached()
+    await held
+  }
+  const long = service.rotate(KEY_ID, { overlapSeconds: 3600 })
+  await atWrite
+  await service.rotate(KEY_ID, { overlapSeconds: 60 })
+  release()
+  await long
+  return repo.rows.get(KEY_ID)?.expiresAt ?? null
 }
 
 async function codeOf(promise: Promise<unknown>): Promise<unknown> {
@@ -345,6 +375,42 @@ describe('ApiKeyService', () => {
       const ahead = new Date(NOW.getTime() + 1000)
       const { service } = build([makeRow({ expiresAt: ahead })])
       await expect(service.rotate(KEY_ID, { overlapSeconds: 0 })).resolves.toBeDefined()
+    })
+  })
+  describe('rotate — two rotations of one key', () => {
+    // A delayed rotation with a longer overlap must not push back the deadline a shorter one set.
+    it('keeps the shortest overlap when the repository can limit the expiry atomically', async () => {
+      const repo = new LimitingApiKeyRepository([makeRow()])
+      const service = new ApiKeyService(repo, new FakeClock(), makeOptions())
+
+      const expiresAt = await rotateLongThenShort(repo, service)
+
+      expect(expiresAt).toEqual(new Date(NOW.getTime() + 60_000))
+      expect(repo.calls.filter((call) => call === 'limitExpiry')).toHaveLength(2)
+      expect(repo.calls).not.toContain('setExpiry')
+    })
+
+    // Without the optional method the read-then-write fallback keeps working for a single
+    // rotation, and the interleaving above is the documented gap.
+    it('falls back to setExpiry when the repository has no limitExpiry', async () => {
+      const repo = new MemoryApiKeyRepository([makeRow()])
+      const service = new ApiKeyService(repo, new FakeClock(), makeOptions())
+
+      await service.rotate(KEY_ID, { overlapSeconds: 3600 })
+
+      expect(repo.calls).toContain('setExpiry')
+      expect(repo.rows.get(KEY_ID)?.expiresAt).toEqual(new Date(NOW.getTime() + 3_600_000))
+    })
+
+    // The atomic path leaves a deadline that is already sooner than the overlap untouched.
+    it('never extends an old key that expires sooner than the overlap, with limitExpiry', async () => {
+      const sooner = new Date(NOW.getTime() + 60_000)
+      const repo = new LimitingApiKeyRepository([makeRow({ expiresAt: sooner })])
+      const service = new ApiKeyService(repo, new FakeClock(), makeOptions())
+
+      await service.rotate(KEY_ID, { overlapSeconds: 3600 })
+
+      expect(repo.rows.get(KEY_ID)?.expiresAt).toEqual(sooner)
     })
   })
 })

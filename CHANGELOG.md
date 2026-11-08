@@ -18,6 +18,25 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **Add `limitExpiry` to your `IApiKeyRepository` (optional, recommended).** Rotating a key with an
+  overlap read its expiry and then wrote the earlier of that and the end of the overlap with
+  `setExpiry`. Two rotations of one key could interleave, so that a delayed one with a longer
+  overlap overwrote the shorter deadline another had just set, and the old key kept verifying past
+  the shortest overlap anyone asked for. Implement
+  `limitExpiry(id, at): Promise<boolean>` as one atomic minimum, for example
+  `UPDATE api_keys SET expires_at = LEAST(COALESCE(expires_at, :at), :at) WHERE id = :id`, and
+  return `false` only when the key does not exist. Rotation then calls it and no longer computes the
+  minimum itself. A repository without it keeps the old read-then-write behaviour, which has the gap:
+  serialize rotation per key there.
+
+### Fixed
+
+- **Concurrent rotations of one API key no longer lengthen the old key's life.** With a repository
+  that implements the new optional `limitExpiry`, rotation lowers the old key's expiry atomically
+  instead of overwriting it with a value computed from an earlier read. See the note above.
+
 ## [1.4.20] - 2026-11-07
 
 ### Apply to a derived backend

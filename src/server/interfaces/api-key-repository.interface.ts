@@ -94,6 +94,29 @@ export interface IApiKeyRepository {
   setExpiry(id: string, at: Date): Promise<boolean>
 
   /**
+   * Lowers when a key stops verifying to `at`, never raising it: an atomic minimum.
+   *
+   * OPTIONAL, and the right way for rotation to retire a key. Rotation reads the key, decides a
+   * deadline and writes it, and two rotations of one key interleave: with only {@link setExpiry}
+   * a delayed rotation with a longer overlap overwrites the shorter deadline another one set, and
+   * the old key keeps verifying past the shortest overlap anyone asked for. Implement this as one
+   * statement so the comparison and the write cannot be separated:
+   * `UPDATE ... SET expires_at = LEAST(COALESCE(expires_at, :at), :at) WHERE id = :id`, or an
+   * update guarded by `WHERE expires_at IS NULL OR expires_at > :at`.
+   *
+   * When the repository implements it, rotation calls it with the end of the overlap and does not
+   * compute a minimum itself. Without it, rotation falls back to reading the current expiry and
+   * calling {@link setExpiry}, which is not safe against concurrent rotations of the same key: a
+   * host that cannot implement this method must serialize rotation per key.
+   *
+   * @param id - The key to change.
+   * @param at - The latest instant the key may keep verifying until.
+   * @returns `false` when no such key exists. A key that already expires at or before `at` is left
+   *   unchanged and is not an error.
+   */
+  limitExpiry?(id: string, at: Date): Promise<boolean>
+
+  /**
    * Records when keys were last used, in one batch.
    *
    * MUST be monotonic: never move `lastUsedAt` backwards (`GREATEST(last_used_at, :at)`, or a
