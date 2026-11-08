@@ -16,11 +16,12 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { logSafe } from '../utils/log-safe'
+import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 
 /** Re-authentication for the callers that change a credential or a membership. */
 @Injectable()
 export class ReauthenticationService {
-  private readonly logger = new Logger(ReauthenticationService.name)
+  private readonly logger = new Logger(MFA_LOG_CONTEXT)
 
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,

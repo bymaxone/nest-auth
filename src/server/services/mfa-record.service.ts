@@ -29,6 +29,7 @@ import type { AuthUser, IUserRepository } from '../interfaces/user-repository.in
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
+import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { assertDashboardTenant } from '../utils/mfa-plane-tenant'
 import { encryptMfaSecret, holdsSecret, type MfaSecretKeys } from '../utils/mfa-secret-cipher'
 
@@ -110,7 +111,7 @@ return 0`
 /** Reads and writes the MFA state of one account, serializing every write per account and plane. */
 @Injectable()
 export class MfaRecordService {
-  private readonly logger = new Logger(MfaRecordService.name)
+  private readonly logger = new Logger(MFA_LOG_CONTEXT)
 
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,

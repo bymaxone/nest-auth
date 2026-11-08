@@ -28,6 +28,7 @@ import type {
 } from '../interfaces/platform-user-repository.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
 import { logSafe } from '../utils/log-safe'
+import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { verifyRecoveryCode } from '../utils/mfa-recovery-codes'
 import { platformUserAsSafeUser, toSafePlatformUser, toSafeUser } from '../utils/mfa-safe-user'
 import { decryptWithRotation, encryptMfaSecret, holdsSecret } from '../utils/mfa-secret-cipher'
@@ -97,7 +98,7 @@ function spliceSpentCode(
 /** Completes an MFA challenge: verifies the code, spends the temp token and issues the session. */
 @Injectable()
 export class MfaChallengeService {
-  private readonly logger = new Logger(MfaChallengeService.name)
+  private readonly logger = new Logger(MFA_LOG_CONTEXT)
 
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
