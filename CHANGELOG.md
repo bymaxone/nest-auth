@@ -18,6 +18,34 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.22] - 2026-11-08
+
+### Apply to a derived backend
+
+- **`MfaService` is built from different collaborators.** Its constructor now takes
+  `MfaRecordService`, `MfaChallengeService`, `MfaManagementService`, `MfaFlowLockoutService` and
+  `ReauthenticationService`, and no longer takes `BruteForceService` or `PasswordService`.
+  `BymaxAuthModule` registers the new providers, and a class listed in `extraProviders` is resolved inside that module, so a host that
+  wires `MfaService` through the module changes nothing. Only code that calls `new MfaService(...)`
+  itself, such as a hand-built test double, must pass the new arguments.
+
+### Fixed
+
+- **MFA log lines read `[MfaService]` again.** 1.4.21 moved the re-authentication and record-transition
+  code out of `MfaService`, and the log lines of those services began to carry their
+  own class names as the logger context, so a log filter or alert keyed on the `MfaService`
+  context stopped matching them. They log under `MfaService` again, as they did before 1.4.21. The
+  1.4.21 note that log output was unchanged held for the message text and level only. No message
+  text or level has changed in either release.
+
+### Changed
+
+- **`MfaService` moves its challenge and its enrolment-management code to internal services.**
+  `challenge` and `challengePlatformOnly`, and `disable`, `resetMfa` and
+  `regenerateRecoveryCodes`, now run in internal services that `MfaService` calls. The public
+  methods keep their signatures and defaults, and behaviour, error codes, Redis keys and log text
+  are unchanged. None of the moved code was part of the public API.
+
 ## [1.4.21] - 2026-11-08
 
 ### Apply to a derived backend
@@ -4634,7 +4662,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.21...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.22...HEAD
+[1.4.22]: https://github.com/bymaxone/nest-auth/compare/v1.4.21...v1.4.22
 [1.4.21]: https://github.com/bymaxone/nest-auth/compare/v1.4.20...v1.4.21
 [1.4.20]: https://github.com/bymaxone/nest-auth/compare/v1.4.19...v1.4.20
 [1.4.19]: https://github.com/bymaxone/nest-auth/compare/v1.4.18...v1.4.19
