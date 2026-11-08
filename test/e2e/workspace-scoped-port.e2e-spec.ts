@@ -17,7 +17,8 @@
  *
  * It uses the same reader as `tenant-scoped-port.e2e-spec.ts`, and, like it, checks the TYPE of
  * each key and not merely its name, because `tenantId: string | undefined` is a required property
- * that still permits a call with no tenant. *
+ * that still permits a call with no tenant.
+ *
  * @layer Test
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -49,7 +50,7 @@ const MEMBERSHIP_KEYS: KeyTable = {
   remove: ['tenantId', 'workspaceId', 'userId'],
   transferOwnership: ['tenantId', 'workspaceId'],
   getLastActiveWorkspaceId: ['tenantId', 'userId'],
-  setLastActiveWorkspaceId: ['tenantId', 'userId']
+  setLastActiveWorkspaceId: ['tenantId', 'workspaceId', 'userId']
 }
 
 /** One method that breaks the rule, named with what is wrong. */

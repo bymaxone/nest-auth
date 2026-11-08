@@ -137,7 +137,7 @@ export interface SetLastActiveWorkspaceParams extends LastActiveWorkspaceRef {
  * Outcome of a write that must keep at least one active owner.
  *
  * - `'ok'`: applied.
- * - `'not_found'`: no such membership.
+ * - `'not_found'`: no such membership (`transferOwnership` states what it means there).
  * - `'last_owner'`: the change would leave the workspace with no active member holding `ownerRole`.
  */
 export type GuardedWriteResult = 'ok' | 'not_found' | 'last_owner'
@@ -151,7 +151,8 @@ export type TransferOwnershipResult = GuardedWriteResult | 'target_not_member'
  * Every method carries the full key of what it names, and every mutating one receives the audit
  * event for its change and persists it in the same transaction. A result other than `'ok'` means
  * nothing was written: no change and no audit row, so a refused write leaves no trace of an event
- * that did not happen. Reads the library uses to decide
+ * that did not happen. The audit event a call receives names the same tenant, workspace and member
+ * as the key of that call, and is stored as given. Reads the library uses to decide
  * access must come from the primary or be read-your-writes: a replica that lags a removal would
  * cache the removed member as present under the new cache version.
  */
@@ -169,7 +170,8 @@ export interface IMembershipRepository {
    *
    * Returns only ACTIVE memberships of ACTIVE workspaces, ordered by membership creation instant
    * and then workspace id, ascending. The cursor is opaque to the library and valid only for the
-   * same tenant and member; the library bounds `limit` to 1 through 100.
+   * same tenant and member; a malformed cursor, or one issued for another query, restarts from the
+   * first page and never widens the scope. The library bounds `limit` to 1 through 100.
    *
    * @param params - The tenant, member and page.
    * @returns One page.
@@ -183,7 +185,9 @@ export interface IMembershipRepository {
    * suspended member.
    *
    * Ordered by membership creation instant and then user id, ascending. The cursor is opaque to
-   * the library and valid only for the same workspace; the library bounds `limit` to 1 through 100.
+   * the library and valid only for the same workspace; a malformed cursor, or one issued for
+   * another query, restarts from the first page and never widens the scope. The library bounds
+   * `limit` to 1 through 100.
    *
    * @param params - The workspace key and page.
    * @returns One page.

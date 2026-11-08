@@ -46,11 +46,20 @@ export type WorkspaceAuditEvent =
         | 'workspace.deleted'
     })
   | (WorkspaceAuditBase & {
-      type: 'member.invited' | 'invitation.resent' | 'invitation.revoked' | 'invitation.accepted'
+      type: 'member.invited' | 'invitation.resent' | 'invitation.revoked'
       /** The invited address, trimmed and lowercased. */
       email: string
       /** The role the invitation carries. */
       role: string
+    })
+  | (WorkspaceAuditBase & {
+      type: 'invitation.accepted'
+      /** The invited address, trimmed and lowercased. */
+      email: string
+      /** The role the invitation carries. */
+      role: string
+      /** The user the acceptance added to the workspace. */
+      userId: string
     })
   | (WorkspaceAuditBase & {
       type: 'member.role_changed'

@@ -91,7 +91,8 @@ export type UpdateWorkspaceStatusResult = 'ok' | 'not_found' | 'status_conflict'
  *
  * Every method carries both halves of the workspace key. Every mutating method receives the audit
  * event for its change and persists it in the same transaction; a result other than success means
- * nothing was written, the audit row included.
+ * nothing was written, the audit row included. The audit event a call receives names the same
+ * tenant and workspace as the key of that call, and is stored as given.
  */
 export interface IWorkspaceRepository {
   /**
