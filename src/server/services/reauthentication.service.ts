@@ -33,11 +33,11 @@ export class ReauthenticationService {
    * Requires the caller to re-prove the account password before a factor is changed.
    *
    * Counted like a login, and for the same reason. `login` refuses an account after N wrong
-   * passwords; this door asks for the same secret and used to refuse nothing, so a caller
-   * holding a stolen access token but not the password could guess it here indefinitely. The
-   * only control left was the per-route IP limit, which a distributed caller sidesteps — and
-   * winning the guess buys the whole account: enrol a factor, change the password, move the
-   * address. A door that takes the password has to carry the password's lockout.
+   * passwords, and this door asks for the same secret, so it carries the same lockout: without
+   * one, a caller holding a stolen access token but not the password could guess it here
+   * indefinitely, bounded only by the per-route IP limit, which a distributed caller sidesteps.
+   * Winning the guess buys the whole account: enrol a factor, change the password, move the
+   * address.
    *
    * The identifier is namespaced by flow and by plane. Sharing one counter with `login` would
    * let an authenticated caller lock the owner out of their own sign-in, and sharing it across
@@ -51,7 +51,7 @@ export class ReauthenticationService {
    * @throws {@link AuthException} `ACCOUNT_LOCKED` once the failure budget for this flow is
    *   spent, or `INVALID_CREDENTIALS` when the account has a password and the submitted one is
    *   absent or wrong. The latter is deliberately the same code a failed login returns: an
-   *   attacker holding a stolen token learns nothing from it beyond what they already knew.
+   *   attacker holding a stolen token learns nothing from it that a failed login does not tell them.
    */
   async assertReauthenticated(
     context: MfaFlowPlane,
@@ -66,14 +66,13 @@ export class ReauthenticationService {
       // proof is temporal instead of cryptographic: the caller must have completed a REAL
       // authentication within the last few minutes.
       //
-      // This branch used to return, and that was the single worst thing in the library. An
-      // access token lifted by XSS or from a shared machine was enough to enrol a factor the
-      // ATTACKER holds; the enable then invalidates every session and bumps the epoch, so the
-      // owner — who still signs in with Google perfectly well — is stopped at a challenge they
-      // cannot pass, with the recovery codes having been displayed once, to the attacker. And
-      // there was no way back: `disable` and `regenerateRecoveryCodes` both demand a live TOTP
-      // code, and the reset flow refuses an account with no password. A fifteen-minute token
-      // theft became permanent, unrecoverable loss of the account.
+      // Accepting such a caller without the marker would let an access token lifted by XSS or
+      // from a shared machine enrol a factor the ATTACKER holds. Enabling it invalidates every
+      // session and bumps the epoch, so the owner, who can still sign in with Google, is stopped
+      // at a challenge they cannot pass, with the recovery codes displayed once, to the attacker.
+      // There is no way back from there: `disable` and `regenerateRecoveryCodes` both demand a
+      // live TOTP code, and the reset flow refuses an account with no password. A fifteen-minute
+      // token theft would become permanent, unrecoverable loss of the account.
       //
       // The marker is written by `TokenManagerService.issueTokens` and NOT by `reissueTokens`,
       // which is what makes it proof of anything: an attacker holding a stolen session can
