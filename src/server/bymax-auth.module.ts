@@ -67,6 +67,7 @@ import { EmailChangeService } from './services/email-change.service'
 import { InvitationService } from './services/invitation.service'
 import { MfaChallengeService } from './services/mfa-challenge.service'
 import { MfaFlowLockoutService } from './services/mfa-flow-lockout.service'
+import { MfaManagementService } from './services/mfa-management.service'
 import { MfaRecordService } from './services/mfa-record.service'
 import { MfaService } from './services/mfa.service'
 import { OtpService } from './services/otp.service'
@@ -570,6 +571,7 @@ export class BymaxAuthModule {
         MfaFlowLockoutService,
         MfaRecordService,
         MfaChallengeService,
+        MfaManagementService,
         ReauthenticationService,
         OtpService,
         // SessionService is always registered (not gated on includeSessions) because
