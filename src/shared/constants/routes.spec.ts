@@ -119,3 +119,43 @@ describe('buildAuthRefreshSkipSuffixes', () => {
     expect(Date.now() - started).toBeLessThan(1_000)
   })
 })
+
+/** Every controller path a refresh can never help, in declaration order, as a client sees it. */
+const SKIP_CONTROLLER_PATHS = [
+  'register',
+  'login',
+  'refresh',
+  'logout',
+  'verify-email',
+  'resend-verification',
+  'password/forgot-password',
+  'password/reset-password',
+  'password/verify-otp',
+  'password/resend-otp',
+  'mfa/challenge',
+  'invitations/accept',
+  'email/change/confirm',
+  'platform/login',
+  'platform/refresh',
+  'platform/logout',
+  'platform/me',
+  'platform/sessions',
+  'platform/mfa/challenge',
+  'platform/mfa/setup',
+  'platform/mfa/verify-enable',
+  'platform/mfa/disable',
+  'platform/mfa/recovery-codes'
+]
+
+describe('the refresh skip list', () => {
+  // A path missing from the list launches a refresh that cannot help; an extra one stops a
+  // refresh that could. Either changes 401 handling for every consumer on the default prefix,
+  // so the whole list is pinned and a change to it shows up as a reviewed diff.
+  it('holds exactly the reviewed paths, then the two proxy entry points', () => {
+    expect(buildAuthRefreshSkipSuffixes('auth')).toStrictEqual([
+      ...SKIP_CONTROLLER_PATHS.map((path) => `/auth/${path}`),
+      '/api/auth/client-refresh',
+      '/api/auth/silent-refresh'
+    ])
+  })
+})
