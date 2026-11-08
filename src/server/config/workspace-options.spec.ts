@@ -124,6 +124,16 @@ describe('resolveWorkspaceOptions', () => {
         /ownerRole must be a role of the hierarchy/
       ],
       [
+        'a non-owner role that includes the owner role',
+        { hierarchy: { owner: ['viewer'], viewer: ['owner'] }, ownerRole: 'owner' },
+        /'viewer' must not include the owner role 'owner'/
+      ],
+      [
+        'a non-owner role that includes the owner role among others',
+        { hierarchy: { owner: ['a', 'b'], a: [], b: ['a', 'owner'] }, ownerRole: 'owner' },
+        /'b' must not include the owner role 'owner'/
+      ],
+      [
         'an owner role that does not include every other role',
         { hierarchy: { owner: ['editor'], editor: [], reviewer: [] }, ownerRole: 'owner' },
         /must include every other role, and does not include 'reviewer'/

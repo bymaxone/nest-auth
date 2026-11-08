@@ -65,7 +65,8 @@ function assertIntegerInRange(name: string, value: unknown, min: number, max: nu
 }
 
 /**
- * Requires the workspace role hierarchy to be well formed and the owner role to sit at its top.
+ * Requires the workspace role hierarchy to be well formed and the owner role to sit at its top:
+ * it includes every other role, and no other role includes it.
  *
  * @param roles - The configured `workspaces.roles`.
  * @throws {Error} Naming the first offending role.
@@ -89,6 +90,14 @@ function validateWorkspaceRoles(roles: WorkspaceOptions['roles'] | undefined): v
   const ownerRole = roles?.ownerRole
   if (typeof ownerRole !== 'string' || !names.has(ownerRole)) {
     throw new Error(`[BymaxAuthModule] workspaces.roles.ownerRole must be a role of the hierarchy.`)
+  }
+  for (const [role, included] of Object.entries(hierarchy)) {
+    if (role !== ownerRole && included.includes(ownerRole)) {
+      throw new Error(
+        `[BymaxAuthModule] workspaces.roles.hierarchy: '${role}' must not include the owner ` +
+          `role '${ownerRole}'. A role that includes the owner holds every owner permission.`
+      )
+    }
   }
   const ownerIncludes = new Set(hierarchy[ownerRole])
   for (const role of names) {
