@@ -28,7 +28,7 @@ function shannonEntropy(value: string): number {
 }
 
 /**
- * Requires a secret to be present, at least 32 characters and above 3.5 bits per character of
+ * Requires a secret to be present, at least 32 characters and at least 3.5 bits per character of
  * Shannon entropy.
  *
  * @param secret - The configured value; a runtime-nullish value is refused with the same message
