@@ -5,7 +5,7 @@
  * @layer Constants
  */
 
-import { durationToSeconds } from '../config/resolved-options'
+import { durationToSeconds } from '../config/duration'
 
 /** Which authentication plane a refresh session, and so its marker, belongs to. */
 export type LogoutPlane = 'dashboard' | 'platform'
