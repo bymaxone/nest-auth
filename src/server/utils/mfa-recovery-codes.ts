@@ -9,6 +9,9 @@ import { randomBytes } from 'node:crypto'
 
 import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
 
+/** Number of recovery codes generated when none is configured. */
+export const DEFAULT_RECOVERY_CODE_COUNT = 8
+
 /**
  * Derives the stored digest for a recovery code: a keyed HMAC-SHA-256, hex encoded.
  *

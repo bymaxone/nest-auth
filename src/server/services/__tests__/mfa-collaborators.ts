@@ -5,6 +5,7 @@
 
 import { MfaChallengeService } from '../mfa-challenge.service'
 import { MfaFlowLockoutService } from '../mfa-flow-lockout.service'
+import { MfaManagementService } from '../mfa-management.service'
 import { MfaRecordService } from '../mfa-record.service'
 import { ReauthenticationService } from '../reauthentication.service'
 
@@ -12,6 +13,7 @@ import { ReauthenticationService } from '../reauthentication.service'
 export const MFA_COLLABORATORS = [
   MfaChallengeService,
   MfaFlowLockoutService,
+  MfaManagementService,
   MfaRecordService,
   ReauthenticationService
 ]
