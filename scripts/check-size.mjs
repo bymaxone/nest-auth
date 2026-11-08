@@ -119,10 +119,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     guard cannot be deleted without, with red-checked tests behind it, which is the
 //     distinction this budget exists to force.
 //     Raised to 144 KiB for the workspace option group: its validation, defaults and startup
-//     cross-check with the repository providers. The build measured 137.65 KiB against a
-//     137 KiB budget it had fit, so the group costs under 1 KiB of brotli; 144 restores about 4.6%
-//     headroom. The phases that put the guard, lifecycle and invitations on top of these options
-//     will measure their own growth and raise this entry then.
+//     cross-check with the repository providers. Measured 136.43 -> 137.65 KiB, so +1.22 KiB,
+//     against a 137 KiB budget the build overran by 0.65 KiB; 144 puts headroom back at about 4.6%.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
