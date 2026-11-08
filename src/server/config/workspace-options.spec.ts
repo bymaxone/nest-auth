@@ -111,12 +111,12 @@ describe('resolveWorkspaceOptions', () => {
       [
         'a role that includes an unknown role',
         { hierarchy: { owner: ['ghost'] }, ownerRole: 'owner' },
-        /hierarchy\.owner must list only roles/
+        'workspaces.roles.hierarchy.owner must list only roles that are keys of the hierarchy.'
       ],
       [
         'a role whose inclusions are not a list',
         { hierarchy: { owner: 'editor' }, ownerRole: 'owner' },
-        /hierarchy\.owner must list only roles/
+        'workspaces.roles.hierarchy.owner must list only roles that are keys of the hierarchy.'
       ],
       [
         'an owner role outside the hierarchy',
@@ -144,6 +144,18 @@ describe('resolveWorkspaceOptions', () => {
       ).toThrow(message)
     })
 
+    // Listing itself adds nothing to the owner, so it is not the "role that includes the owner"
+    // case the check refuses.
+    it('accepts an owner role that lists itself', () => {
+      expect(
+        resolveWorkspaceOptions(
+          options({
+            roles: { hierarchy: { owner: ['owner', 'editor'], editor: [] }, ownerRole: 'owner' }
+          })
+        )
+      ).toBeDefined()
+    })
+
     it('accepts a single-role hierarchy whose only role owns', () => {
       expect(
         resolveWorkspaceOptions(
@@ -157,7 +169,17 @@ describe('resolveWorkspaceOptions', () => {
     it('refuses a permission that names an unknown role', () => {
       expect(() =>
         resolveWorkspaceOptions(options({ permissions: { manageMembers: ['ghost'] } }))
-      ).toThrow(/permissions\.manageMembers names 'ghost'/)
+      ).toThrow(
+        "workspaces.permissions.manageMembers names 'ghost', which is not a workspace role."
+      )
+    })
+
+    it('refuses a permission entry that is not a string', () => {
+      expect(() =>
+        resolveWorkspaceOptions(
+          options({ permissions: { manageMembers: [42] as unknown as readonly string[] } })
+        )
+      ).toThrow("workspaces.permissions.manageMembers names '42', which is not a workspace role.")
     })
 
     it('refuses the any-member marker on an action other than viewing members', () => {
@@ -168,6 +190,12 @@ describe('resolveWorkspaceOptions', () => {
           })
         )
       ).toThrow(/permissions\.manageMembers names 'Symbol\(ANY_WORKSPACE_MEMBER\)'/)
+    })
+
+    it('refuses an unknown role for viewing members, marker or not', () => {
+      expect(() =>
+        resolveWorkspaceOptions(options({ permissions: { viewMembers: ['ghost'] } }))
+      ).toThrow("workspaces.permissions.viewMembers names 'ghost', which is not a workspace role.")
     })
 
     it('accepts the any-member marker for viewing members', () => {
@@ -220,6 +248,22 @@ describe('resolveWorkspaceOptions', () => {
       ['deletionGraceDays', 365]
     ])('accepts %s = %p at its bound', (name, value) => {
       expect(resolveWorkspaceOptions(options({ [name]: value }))).toMatchObject({ [name]: value })
+    })
+
+    it('accepts allowCreate as a flag or a function and keeps it as given', () => {
+      const decide = (): boolean => false
+
+      expect(resolveWorkspaceOptions(options({ allowCreate: false }))?.allowCreate).toBe(false)
+      expect(resolveWorkspaceOptions(options({ allowCreate: decide }))?.allowCreate).toBe(decide)
+    })
+
+    it('carries resolveRequestWorkspace only when the host set it', () => {
+      const read = (): undefined => undefined
+      const unset = resolveWorkspaceOptions(options({}))
+      const set = resolveWorkspaceOptions(options({ resolveRequestWorkspace: read }))
+
+      expect(unset).not.toHaveProperty('resolveRequestWorkspace')
+      expect(set?.resolveRequestWorkspace).toBe(read)
     })
 
     it('refuses an allowCreate that is neither a flag nor a function', () => {
@@ -310,7 +354,8 @@ describe('assertWorkspaceProviders', () => {
     [true, true]
   ])('refuses a disabled feature with a repository (workspace %p, membership %p)', (ws, mem) => {
     expect(() => assertWorkspaceProviders(false, ws, mem)).toThrow(
-      /provided but workspaces\.enabled is not true/
+      'A workspace repository is provided but workspaces.enabled is not true. ' +
+        'Enable workspaces in the useFactory return value, or remove the provider.'
     )
   })
 
@@ -324,7 +369,8 @@ describe('assertWorkspaceProviders', () => {
     [false, false, 'BYMAX_AUTH_WORKSPACE_REPOSITORY and BYMAX_AUTH_MEMBERSHIP_REPOSITORY']
   ])('names what an enabled feature lacks (workspace %p, membership %p)', (ws, mem, named) => {
     expect(() => assertWorkspaceProviders(true, ws, mem)).toThrow(
-      `requires ${named} in extraProviders`
+      `requires ${named} in extraProviders. ` +
+        'Provide your IWorkspaceRepository and IMembershipRepository implementations.'
     )
   })
 })

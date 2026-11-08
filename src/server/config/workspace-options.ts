@@ -119,12 +119,12 @@ function validateWorkspaceRoles(roles: WorkspaceOptions['roles'] | undefined): v
  */
 function validateWorkspacePermissions(
   permissions: WorkspaceOptions['permissions'],
-  roles: ReadonlySet<string>
+  roles: ReadonlySet<unknown>
 ): void {
   for (const [action, list] of Object.entries(permissions ?? {})) {
     if (list === undefined) continue
     for (const role of list) {
-      const known = typeof role === 'string' && roles.has(role)
+      const known = roles.has(role)
       if (!known && !(action === 'viewMembers' && role === ANY_WORKSPACE_MEMBER)) {
         throw new Error(
           `[BymaxAuthModule] workspaces.permissions.${action} names '${String(role)}', which is ` +
