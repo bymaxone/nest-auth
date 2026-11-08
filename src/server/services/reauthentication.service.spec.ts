@@ -11,6 +11,8 @@ import { PasswordService } from './password.service'
 import { ReauthenticationService } from './reauthentication.service'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { recentAuthKey } from '../constants/recent-auth'
+import { userSubject } from '../constants/user-subject'
+import { hmacSha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthRedisService } from '../redis/auth-redis.service'
 
@@ -43,6 +45,14 @@ async function build(): Promise<{
   return { service: moduleRef.get(ReauthenticationService), redis, brute, password }
 }
 
+/** The two counter ids the `reauth` flow uses for a dashboard account: tenant-scoped and plane-only. */
+function reauthCounters(userId: string, tenantId: string): { scoped: string; legacy: string } {
+  return {
+    scoped: hmacSha256(`reauth:${userSubject('dashboard', userId, tenantId)}`, HMAC_KEY),
+    legacy: hmacSha256(`reauth:dashboard:${userId}`, HMAC_KEY)
+  }
+}
+
 describe('ReauthenticationService', () => {
   describe('an account with a password', () => {
     it('accepts the right password and clears the failure counters', async () => {
@@ -52,7 +62,8 @@ describe('ReauthenticationService', () => {
         service.assertReauthenticated('dashboard', 'u1', 'hash', 'secret', 't1')
       ).resolves.toBeUndefined()
 
-      expect(brute.resetFailures).toHaveBeenCalledTimes(2)
+      const { scoped, legacy } = reauthCounters('u1', 't1')
+      expect(brute.resetFailures.mock.calls).toEqual([[scoped], [legacy]])
       expect(brute.recordFailure).not.toHaveBeenCalled()
     })
 
@@ -66,7 +77,9 @@ describe('ReauthenticationService', () => {
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
 
-      expect(brute.recordFailure).toHaveBeenCalledTimes(2)
+      const { scoped, legacy } = reauthCounters('u1', 't1')
+      expect(brute.recordFailure.mock.calls).toEqual([[scoped], [legacy]])
+      expect(brute.resetFailures).not.toHaveBeenCalled()
     })
 
     it('compares an absent password too, so the refusal costs the same as a wrong one', async () => {
@@ -91,6 +104,19 @@ describe('ReauthenticationService', () => {
       ).rejects.toMatchObject({ response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } } })
 
       expect(password.compare).not.toHaveBeenCalled()
+      // The platform plane has no tenant, so the two ids coincide and are read once.
+      expect(brute.isLockedOut.mock.calls).toEqual([
+        [hmacSha256(`reauth:${userSubject('platform', 'a1', undefined)}`, HMAC_KEY)]
+      ])
+    })
+
+    it('reads both counters on the dashboard plane before comparing', async () => {
+      const { service, brute } = await build()
+
+      await service.assertReauthenticated('dashboard', 'u1', 'hash', 'secret', 't1')
+
+      const { scoped, legacy } = reauthCounters('u1', 't1')
+      expect(brute.isLockedOut.mock.calls).toEqual([[scoped], [legacy]])
     })
   })
 
