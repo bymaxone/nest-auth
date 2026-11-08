@@ -20,7 +20,9 @@ import {
 } from '../bymax-auth.constants'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { BruteForceService } from './brute-force.service'
+import { MfaFlowLockoutService } from './mfa-flow-lockout.service'
 import { MfaService } from './mfa.service'
+import { ReauthenticationService } from './reauthentication.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
@@ -169,6 +171,8 @@ describe('MfaService — challenge completion side effects', () => {
     const module = await Test.createTestingModule({
       providers: [
         MfaService,
+        MfaFlowLockoutService,
+        ReauthenticationService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
         { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },

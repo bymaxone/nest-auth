@@ -9,6 +9,7 @@
 import { createHash } from 'node:crypto'
 
 import { Logger } from '@nestjs/common'
+import type { Provider } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import {
@@ -23,7 +24,9 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { BruteForceService } from './brute-force.service'
+import { MfaFlowLockoutService } from './mfa-flow-lockout.service'
 import { MfaService } from './mfa.service'
+import { ReauthenticationService } from './reauthentication.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
@@ -189,6 +192,25 @@ function onlyRecentAuth(present: boolean) {
 describe('MfaService', () => {
   let service: MfaService
 
+  /** The test module's providers: the real MFA services over the suite's doubles. */
+  function standardProviders(options: unknown): Provider[] {
+    return [
+      MfaService,
+      MfaFlowLockoutService,
+      ReauthenticationService,
+      { provide: BYMAX_AUTH_OPTIONS, useValue: options },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+      { provide: AuthRedisService, useValue: mockRedis },
+      { provide: TokenManagerService, useValue: mockTokenManager },
+      { provide: BruteForceService, useValue: mockBruteForce },
+      { provide: PasswordService, useValue: mockPasswordService },
+      { provide: SessionService, useValue: mockSessionService },
+      { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+      { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+    ]
+  }
+
   beforeEach(async () => {
     // resetAllMocks clears both call history and mock implementations, preventing state bleed.
     // All default return values are configured below.
@@ -223,19 +245,7 @@ describe('MfaService', () => {
     mockEmailProvider.sendMfaDisabledNotification.mockResolvedValue(undefined)
 
     const module = await Test.createTestingModule({
-      providers: [
-        MfaService,
-        { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-        { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
-        { provide: AuthRedisService, useValue: mockRedis },
-        { provide: TokenManagerService, useValue: mockTokenManager },
-        { provide: BruteForceService, useValue: mockBruteForce },
-        { provide: PasswordService, useValue: mockPasswordService },
-        { provide: SessionService, useValue: mockSessionService },
-        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
-        { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
-      ]
+      providers: standardProviders(mockOptions)
     }).compile()
 
     service = module.get(MfaService)
@@ -249,19 +259,7 @@ describe('MfaService', () => {
    */
   async function buildService(overrides: Record<string, unknown>): Promise<MfaService> {
     const module = await Test.createTestingModule({
-      providers: [
-        MfaService,
-        { provide: BYMAX_AUTH_OPTIONS, useValue: { ...mockOptions, ...overrides } },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-        { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
-        { provide: AuthRedisService, useValue: mockRedis },
-        { provide: TokenManagerService, useValue: mockTokenManager },
-        { provide: BruteForceService, useValue: mockBruteForce },
-        { provide: PasswordService, useValue: mockPasswordService },
-        { provide: SessionService, useValue: mockSessionService },
-        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
-        { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
-      ]
+      providers: standardProviders({ ...mockOptions, ...overrides })
     }).compile()
     return module.get(MfaService)
   }
@@ -630,19 +628,7 @@ describe('MfaService', () => {
         }
       }
       const module = await NestTest.createTestingModule({
-        providers: [
-          MfaService,
-          { provide: BYMAX_AUTH_OPTIONS, useValue: optionsWithoutCount },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-          { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
-          { provide: AuthRedisService, useValue: mockRedis },
-          { provide: TokenManagerService, useValue: mockTokenManager },
-          { provide: BruteForceService, useValue: mockBruteForce },
-          { provide: PasswordService, useValue: mockPasswordService },
-          { provide: SessionService, useValue: mockSessionService },
-          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
-          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
-        ]
+        providers: standardProviders(optionsWithoutCount)
       }).compile()
 
       const svc = module.get(MfaService)
@@ -2508,6 +2494,8 @@ describe('MfaService', () => {
       const moduleWithoutRepo = await NestTest.createTestingModule({
         providers: [
           MfaService,
+          MfaFlowLockoutService,
+          ReauthenticationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
           { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
           // BYMAX_AUTH_PLATFORM_USER_REPOSITORY intentionally omitted
@@ -2595,19 +2583,7 @@ describe('MfaService', () => {
         sessions: { enabled: true, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
       }
       const sessionModule = await Test.createTestingModule({
-        providers: [
-          MfaService,
-          { provide: BYMAX_AUTH_OPTIONS, useValue: sessionOptions },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-          { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
-          { provide: AuthRedisService, useValue: mockRedis },
-          { provide: TokenManagerService, useValue: mockTokenManager },
-          { provide: BruteForceService, useValue: mockBruteForce },
-          { provide: PasswordService, useValue: mockPasswordService },
-          { provide: SessionService, useValue: mockSessionService },
-          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
-          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
-        ]
+        providers: standardProviders(sessionOptions)
       }).compile()
       const sessionEnabledService = sessionModule.get(MfaService)
 
@@ -2649,6 +2625,8 @@ describe('MfaService', () => {
       const moduleWithoutRepo = await NestTest.createTestingModule({
         providers: [
           MfaService,
+          MfaFlowLockoutService,
+          ReauthenticationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
           { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: AuthRedisService, useValue: mockRedis },
@@ -2937,6 +2915,8 @@ describe('MfaService', () => {
       const module = await Test.createTestingModule({
         providers: [
           MfaService,
+          MfaFlowLockoutService,
+          ReauthenticationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
           { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
@@ -3366,6 +3346,8 @@ describe('MfaService', () => {
       const module = await Test.createTestingModule({
         providers: [
           MfaService,
+          MfaFlowLockoutService,
+          ReauthenticationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
           { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
@@ -3426,6 +3408,8 @@ describe('MfaService', () => {
       const moduleWithoutRepo = await NestTest.createTestingModule({
         providers: [
           MfaService,
+          MfaFlowLockoutService,
+          ReauthenticationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
           { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
           // BYMAX_AUTH_PLATFORM_USER_REPOSITORY intentionally omitted
@@ -3542,6 +3526,8 @@ describe('MfaService', () => {
       const moduleWithoutRepo = await NestTest.createTestingModule({
         providers: [
           MfaService,
+          MfaFlowLockoutService,
+          ReauthenticationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
           { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: AuthRedisService, useValue: mockRedis },
@@ -3883,6 +3869,8 @@ describe('MfaService', () => {
       const moduleWithoutRepo = await NestTest.createTestingModule({
         providers: [
           MfaService,
+          MfaFlowLockoutService,
+          ReauthenticationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
           { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: AuthRedisService, useValue: mockRedis },
@@ -3951,6 +3939,8 @@ describe('MfaService', () => {
       const module = await Test.createTestingModule({
         providers: [
           MfaService,
+          MfaFlowLockoutService,
+          ReauthenticationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
           { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
@@ -4010,19 +4000,7 @@ describe('MfaService', () => {
         sessions: { enabled: false, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
       }
       const module = await NestTest.createTestingModule({
-        providers: [
-          MfaService,
-          { provide: BYMAX_AUTH_OPTIONS, useValue: optionsWithoutCount },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-          { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
-          { provide: AuthRedisService, useValue: mockRedis },
-          { provide: TokenManagerService, useValue: mockTokenManager },
-          { provide: BruteForceService, useValue: mockBruteForce },
-          { provide: PasswordService, useValue: mockPasswordService },
-          { provide: SessionService, useValue: mockSessionService },
-          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
-          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
-        ]
+        providers: standardProviders(optionsWithoutCount)
       }).compile()
       const svc = module.get(MfaService)
 
@@ -4060,6 +4038,8 @@ describe('MfaService', () => {
       const module = await Test.createTestingModule({
         providers: [
           MfaService,
+          MfaFlowLockoutService,
+          ReauthenticationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
           { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: null },
