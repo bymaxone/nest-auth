@@ -356,10 +356,10 @@ describe('cross-implementation conformance', () => {
       dashboardTokenEpoch: 'constants/user-keys.ts',
       platformTokenEpoch: 'constants/user-keys.ts',
       accessTokenBlacklist: 'guards/jwt-auth.guard.ts',
-      totpReplayMarker: 'services/mfa.service.ts',
+      totpReplayMarker: 'services/mfa-record.service.ts',
       passwordResetToken: 'services/password-reset.service.ts',
       passwordResetVerifiedToken: 'services/password-reset.service.ts',
-      mfaTransitionLock: 'services/mfa.service.ts',
+      mfaTransitionLock: 'services/mfa-record.service.ts',
       failedLoginCounter: 'services/brute-force.service.ts',
       oneTimePassword: 'services/otp.service.ts',
       otpResendCooldown: 'services/password-reset.service.ts',
@@ -367,7 +367,7 @@ describe('cross-implementation conformance', () => {
       wsTicket: 'redis/auth-redis.service.ts',
       invitation: 'services/invitation.service.ts',
       invitationIndex: 'services/invitation.service.ts',
-      recoveryCodeClaim: 'services/mfa.service.ts',
+      recoveryCodeClaim: 'services/mfa-record.service.ts',
       // Assembled in its own module rather than inline, because both the writer
       // (`TokenManagerService`) and the reader (`MfaService`) have to derive it identically.
       recentAuthMarker: 'constants/recent-auth.ts',
