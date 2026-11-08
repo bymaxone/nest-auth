@@ -586,7 +586,7 @@ export class MfaService {
       // A TOTP challenge writes nothing on its own, so the re-encryption needs its own write.
       // Fire-and-forget: the challenge has already succeeded and the retired key still opens
       // the secret, so a failure costs the migration and nothing else.
-      void this.records.reencryptSecret(userId, context, secretBase32, tenantId)
+      void this.records.reencryptSecret(userId, context, secretBase32, tenantId, this.mfaOptions)
     }
 
     this.logger.log(`challenge: MFA challenge passed userId=${logSafe(userId)} context=${context}`)

@@ -30,7 +30,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
 import { assertDashboardTenant } from '../utils/mfa-plane-tenant'
-import { encryptMfaSecret, holdsSecret } from '../utils/mfa-secret-cipher'
+import { encryptMfaSecret, holdsSecret, type MfaSecretKeys } from '../utils/mfa-secret-cipher'
 
 /**
  * TTL in seconds for the single-use claim on a recovery code (5 minutes).
@@ -122,16 +122,6 @@ export class MfaRecordService {
   ) {}
 
   /**
-   * Returns the resolved MFA configuration. `options.mfa` is always present when the MFA services
-   * are registered — the module only registers them when `mfa` is configured. The single
-   * suppression here eliminates repetitive `!` assertions throughout the class.
-   */
-  private get mfaOptions(): Required<NonNullable<ResolvedOptions['mfa']>> {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    return this.options.mfa!
-  }
-
-  /**
    * Store the TOTP secret re-encrypted under the current key.
    *
    * Detached from the challenge it follows: the user is already authenticated and the retired
@@ -148,20 +138,21 @@ export class MfaRecordService {
    * @param context - Which identity plane the account belongs to.
    * @param secretBase32 - The decrypted secret.
    * @param tenantId - The tenant the account belongs to, so the write is scoped like the read.
+   * @param keys - The secret-cipher keys; the secret is written under the current one.
    */
   async reencryptSecret(
     userId: string,
     context: 'dashboard' | 'platform',
     secretBase32: string,
-    tenantId: string | undefined
+    tenantId: string | undefined,
+    keys: MfaSecretKeys
   ): Promise<void> {
     try {
       await this.transition(context, userId, tenantId, (current) => {
-        if (!current.mfaEnabled || !holdsSecret(current.mfaSecret, secretBase32, this.mfaOptions))
-          return null
+        if (!current.mfaEnabled || !holdsSecret(current.mfaSecret, secretBase32, keys)) return null
         return {
           mfaEnabled: true,
-          mfaSecret: encryptMfaSecret(secretBase32, this.mfaOptions),
+          mfaSecret: encryptMfaSecret(secretBase32, keys),
           mfaRecoveryCodes: current.mfaRecoveryCodes ?? []
         }
       })
