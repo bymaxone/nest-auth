@@ -289,6 +289,10 @@ export { BruteForceService } from './services/brute-force.service'
 // NOT as a route: every route this library exposes is scoped to the caller's own account, and
 // who may reset whom is a decision only the host application can make.
 export { MfaService } from './services/mfa.service'
+// `ReauthenticationService` is always registered and exported by the module. It re-proves the
+// account password (counted against the `reauth` lockout) or, for an account with no password,
+// requires a recent real sign-in.
+export { ReauthenticationService } from './services/reauthentication.service'
 export type { MfaSetupResult } from './services/mfa.service'
 export { OtpService } from './services/otp.service'
 // NOTE: `InvitationService` is only registered when `controllers.invitations` is enabled.

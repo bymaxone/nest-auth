@@ -9,12 +9,11 @@ import {
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
-import { BruteForceService } from './brute-force.service'
-import { PasswordService } from './password.service'
+import { MfaFlowLockoutService } from './mfa-flow-lockout.service'
+import { ReauthenticationService } from './reauthentication.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { recentAuthKey } from '../constants/recent-auth'
 import { userSubject } from '../constants/user-subject'
 import { encrypt } from '../crypto/aes-gcm'
 import { hmacSha256 } from '../crypto/secure-token'
@@ -229,8 +228,8 @@ export class MfaService {
     private readonly platformUserRepo: IPlatformUserRepository | null,
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
-    @Inject(BruteForceService) private readonly bruteForce: BruteForceService,
-    @Inject(PasswordService) private readonly passwordService: PasswordService,
+    @Inject(MfaFlowLockoutService) private readonly flowLockout: MfaFlowLockoutService,
+    @Inject(ReauthenticationService) private readonly reauthentication: ReauthenticationService,
     @Inject(SessionService) private readonly sessionService: SessionService,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
     @Inject(BYMAX_AUTH_HOOKS) private readonly hooks: IAuthHooks
@@ -533,7 +532,13 @@ export class MfaService {
     // An account with no local password — provisioned purely through OAuth — has nothing to
     // re-authenticate against here, and refusing it would make MFA unreachable for those
     // users. Their credential is the provider's, which this library cannot re-verify inline.
-    await this.assertReauthenticated(context, userId, user.passwordHash, password, tenantId)
+    await this.reauthentication.assertReauthenticated(
+      context,
+      userId,
+      user.passwordHash,
+      password,
+      tenantId
+    )
 
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.
     const setupKey = `mfa_setup:${hmacSha256(userSubject(context, userId, tenantId), this.options.hmacKey)}`
@@ -762,7 +767,7 @@ export class MfaService {
     // The context namespaces it away from the OTHER identity plane: the two id spaces come
     // from different consumer repositories and may collide, so a counter keyed on the id
     // alone lets either party exhaust — or clear — the other's lockout budget.
-    if (await this.isMfaFlowLockedOut('challenge', context, userId, tenantId)) {
+    if (await this.flowLockout.isLockedOut('challenge', context, userId, tenantId)) {
       this.logger.warn(`challenge: account locked userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
@@ -819,7 +824,7 @@ export class MfaService {
     }
 
     if (!codeValid) {
-      await this.recordMfaFlowFailure('challenge', context, userId, tenantId)
+      await this.flowLockout.recordFailure('challenge', context, userId, tenantId)
       this.logger.warn(`challenge: invalid MFA code userId=${logSafe(userId)} context=${context}`)
       // Keep the MFA temp token alive — the user can retry with the next
       // TOTP window or a different recovery code under the same token.
@@ -828,7 +833,7 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
-    await this.resetMfaFlowFailures('challenge', context, userId, tenantId)
+    await this.flowLockout.reset('challenge', context, userId, tenantId)
 
     // Step 5a: consume the MFA temp token now that the code is confirmed valid — and the
     // consume must WIN. Two concurrent submissions both observe the marker and both delete
@@ -1059,7 +1064,7 @@ export class MfaService {
     // 'disable:' prefix namespaces this counter away from the 'challenge' counter —
     // preventing a pre-auth attacker from exhausting the lockout threshold via the
     // challenge endpoint and blocking the authenticated user from disabling MFA.
-    if (await this.isMfaFlowLockedOut('disable', context, userId, tenantId)) {
+    if (await this.flowLockout.isLockedOut('disable', context, userId, tenantId)) {
       this.logger.warn(`disable: account locked userId=${logSafe(userId)} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
@@ -1081,12 +1086,12 @@ export class MfaService {
       tenantId
     )
     if (!codeValid) {
-      await this.recordMfaFlowFailure('disable', context, userId, tenantId)
+      await this.flowLockout.recordFailure('disable', context, userId, tenantId)
       this.logger.warn(`disable: invalid MFA code userId=${logSafe(userId)} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
-    await this.resetMfaFlowFailures('disable', context, userId, tenantId)
+    await this.flowLockout.reset('disable', context, userId, tenantId)
 
     // Serialized against every other MFA transition, so a challenge that read the record a
     // moment earlier cannot splice `mfaEnabled: true` and the old secret back on top of this.
@@ -1294,7 +1299,7 @@ export class MfaService {
     // changes from an authenticated user, so they share the same lockout pool.
     // The 'disable:' prefix already isolates this from the public 'challenge:'
     // counter exhaustion vector.
-    if (await this.isMfaFlowLockedOut('disable', context, userId, tenantId)) {
+    if (await this.flowLockout.isLockedOut('disable', context, userId, tenantId)) {
       this.logger.warn(
         `regenerateRecoveryCodes: account locked userId=${logSafe(userId)} context=${context}`
       )
@@ -1318,14 +1323,14 @@ export class MfaService {
       tenantId
     )
     if (!codeValid) {
-      await this.recordMfaFlowFailure('disable', context, userId, tenantId)
+      await this.flowLockout.recordFailure('disable', context, userId, tenantId)
       this.logger.warn(
         `regenerateRecoveryCodes: invalid MFA code userId=${logSafe(userId)} context=${context}`
       )
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
-    await this.resetMfaFlowFailures('disable', context, userId, tenantId)
+    await this.flowLockout.reset('disable', context, userId, tenantId)
 
     // Generate a fresh code set using the existing helper — same entropy, same
     // formatting, same keyed-MAC digesting as the initial setup() path.
@@ -1424,88 +1429,6 @@ export class MfaService {
   }
 
   /**
-   * Requires the caller to re-prove the account password before a factor is changed.
-   *
-   * Counted like a login, and for the same reason. `login` refuses an account after N wrong
-   * passwords; this door asks for the same secret and used to refuse nothing, so a caller
-   * holding a stolen access token but not the password could guess it here indefinitely. The
-   * only control left was the per-route IP limit, which a distributed caller sidesteps — and
-   * winning the guess buys the whole account: enrol a factor, change the password, move the
-   * address. A door that takes the password has to carry the password's lockout.
-   *
-   * The identifier is namespaced by flow and by plane. Sharing one counter with `login` would
-   * let an authenticated caller lock the owner out of their own sign-in, and sharing it across
-   * planes would let a dashboard user and a platform admin holding the same id exhaust each
-   * other's budget — the same two reasons the challenge and disable counters are split.
-   *
-   * @param context - The authentication plane, part of the counter's key.
-   * @param userId - The account being changed, part of the counter's key.
-   * @param passwordHash - The account's stored hash, or `null` for an OAuth-only account.
-   * @param password - The password the caller submitted, if any.
-   * @throws {@link AuthException} `ACCOUNT_LOCKED` once the failure budget for this flow is
-   *   spent, or `INVALID_CREDENTIALS` when the account has a password and the submitted one is
-   *   absent or wrong. The latter is deliberately the same code a failed login returns: an
-   *   attacker holding a stolen token learns nothing from it beyond what they already knew.
-   */
-  private async assertReauthenticated(
-    context: 'dashboard' | 'platform',
-    userId: string,
-    passwordHash: string | null,
-    password: string | undefined,
-    tenantId: string | undefined
-  ): Promise<void> {
-    if (passwordHash === null) {
-      // No local password to re-prove — the account was provisioned through OAuth and its
-      // credential belongs to the provider, which this library cannot verify inline. So the
-      // proof is temporal instead of cryptographic: the caller must have completed a REAL
-      // authentication within the last few minutes.
-      //
-      // This branch used to return, and that was the single worst thing in the library. An
-      // access token lifted by XSS or from a shared machine was enough to enrol a factor the
-      // ATTACKER holds; the enable then invalidates every session and bumps the epoch, so the
-      // owner — who still signs in with Google perfectly well — is stopped at a challenge they
-      // cannot pass, with the recovery codes having been displayed once, to the attacker. And
-      // there was no way back: `disable` and `regenerateRecoveryCodes` both demand a live TOTP
-      // code, and the reset flow refuses an account with no password. A fifteen-minute token
-      // theft became permanent, unrecoverable loss of the account.
-      //
-      // The marker is written by `TokenManagerService.issueTokens` and NOT by `reissueTokens`,
-      // which is what makes it proof of anything: an attacker holding a stolen session can
-      // rotate it indefinitely and never make the mark fresh again. Producing one requires
-      // driving a real sign-in, which requires the provider credentials the theft did not
-      // include.
-      const recent = await this.redis.get(
-        recentAuthKey(context, userId, this.options.hmacKey, tenantId)
-      )
-      if (recent === null) {
-        this.logger.warn(
-          `reauthenticate: no recent authentication userId=${logSafe(userId)} context=${context}`
-        )
-        throw new AuthException(AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED)
-      }
-      return
-    }
-
-    if (await this.isMfaFlowLockedOut('reauth', context, userId, tenantId)) {
-      this.logger.warn(
-        `reauthenticate: account locked userId=${logSafe(userId)} context=${context}`
-      )
-      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
-    }
-
-    // A missing password still pays the KDF, so "no password sent" and "wrong password" take
-    // the same time — otherwise the response separates them for free.
-    const supplied = password ?? ''
-    const matches = await this.passwordService.compare(supplied, passwordHash)
-    if (!matches) {
-      await this.recordMfaFlowFailure('reauth', context, userId, tenantId)
-      throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
-    }
-
-    await this.resetMfaFlowFailures('reauth', context, userId, tenantId)
-  }
-
-  /**
    * Asserts a dashboard-plane call carries a tenant, narrowing it to `string` for the caller.
    *
    * This is the dashboard half of {@link assertPlaneTenant}, split out for one reason: an
@@ -1573,78 +1496,6 @@ export class MfaService {
         }
       ])
     }
-  }
-
-  /**
-   * The tenant-scoped brute-force identifier for one MFA flow, and the legacy plane-only one it
-   * replaces — equal on the platform plane, where the subject never carried a tenant, and distinct
-   * on the dashboard plane, where it now does.
-   *
-   * A rolling upgrade runs old and new code against one Redis at once: on the dashboard plane an
-   * old pod counts a failure under `{flow}:{plane}:{userId}` while a new pod counts it under
-   * `{flow}:{userSubject}`, and either alone leaves a hole — a lockout an old pod filled would not
-   * stop a new pod, and a success on one would not clear the other. For one release every read
-   * consults both and every write touches both, so the two move as one; a later release drops the
-   * legacy arm. On the platform plane the two ids are identical (no tenant ever entered the
-   * subject), so the legacy arm is skipped — operating it would just be the same key a second time,
-   * double-counting a failure and locking a platform admin out at half the threshold. `{flow}`
-   * (`challenge` / `disable` / `reauth`) keeps the three counters isolated, exactly as before.
-   */
-  private mfaFlowCounterIds(
-    flow: 'challenge' | 'disable' | 'reauth',
-    context: 'dashboard' | 'platform',
-    userId: string,
-    tenantId: string | undefined
-  ): { legacy: string; scoped: string } {
-    return {
-      legacy: hmacSha256(`${flow}:${context}:${userId}`, this.options.hmacKey),
-      scoped: hmacSha256(`${flow}:${userSubject(context, userId, tenantId)}`, this.options.hmacKey)
-    }
-  }
-
-  /**
-   * Locked out when EITHER the legacy or the tenant-scoped counter has reached the threshold, so
-   * neither a lockout an old pod recorded nor one a new pod recorded can be bypassed mid-migration.
-   */
-  private async isMfaFlowLockedOut(
-    flow: 'challenge' | 'disable' | 'reauth',
-    context: 'dashboard' | 'platform',
-    userId: string,
-    tenantId: string | undefined
-  ): Promise<boolean> {
-    const { legacy, scoped } = this.mfaFlowCounterIds(flow, context, userId, tenantId)
-    if (await this.bruteForce.isLockedOut(scoped)) return true
-    return legacy !== scoped ? this.bruteForce.isLockedOut(legacy) : false
-  }
-
-  /**
-   * Records the failure under both counters so the budget an attacker spends is seen by old and
-   * new code alike — but under the scoped id ONCE when the two coincide (platform plane).
-   */
-  private async recordMfaFlowFailure(
-    flow: 'challenge' | 'disable' | 'reauth',
-    context: 'dashboard' | 'platform',
-    userId: string,
-    tenantId: string | undefined
-  ): Promise<void> {
-    const { legacy, scoped } = this.mfaFlowCounterIds(flow, context, userId, tenantId)
-    await this.bruteForce.recordFailure(scoped)
-    if (legacy !== scoped) await this.bruteForce.recordFailure(legacy)
-  }
-
-  /**
-   * Clears both counters on success — resetting only one would leave the other to lock a
-   * legitimately authenticated user out on the next attempt — collapsing to one when they coincide.
-   */
-  private async resetMfaFlowFailures(
-    flow: 'challenge' | 'disable' | 'reauth',
-    context: 'dashboard' | 'platform',
-    userId: string,
-    tenantId: string | undefined
-  ): Promise<void> {
-    const { legacy, scoped } = this.mfaFlowCounterIds(flow, context, userId, tenantId)
-    await this.bruteForce.resetFailures(scoped)
-    if (legacy !== scoped) await this.bruteForce.resetFailures(legacy)
   }
 
   /**
