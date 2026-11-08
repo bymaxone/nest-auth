@@ -14,7 +14,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { MfaFlowLockoutService } from './mfa-flow-lockout.service'
-import { MfaRecordService } from './mfa-record.service'
+import { MfaRecordService, type MfaRecordUpdate } from './mfa-record.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
@@ -35,6 +35,64 @@ import { runDetached } from '../utils/run-detached'
 
 /** The resolved MFA configuration group, present whenever the MFA services are registered. */
 export type MfaConfig = Required<NonNullable<ResolvedOptions['mfa']>>
+
+/** The plane, account and tenant an MFA challenge belongs to, as read from the temp token. */
+interface ChallengeScope {
+  userId: string
+  context: 'dashboard' | 'platform'
+  tenantId: string | undefined
+}
+
+/**
+ * The record update that spends one recovery code, computed against the record as it stands
+ * inside the transition lock.
+ *
+ * Returns `null` to abandon the write when the record moved underneath the challenge:
+ * - MFA stopped being enabled — a `disable` that already completed. Writing would re-enable it
+ *   with the pre-disable secret, so the code stays spent (its `rcu:` claim stands) and nothing is
+ *   written back.
+ * - The secret the challenge opened was replaced — a re-enrolment — and the code belongs to the
+ *   list that went with it. A record a sibling challenge only re-encrypted still holds the same
+ *   secret and is spliced.
+ * - The spent digest is no longer in the current list.
+ *
+ * @param current - The record inside the lock.
+ * @param existingCodes - The digests read at the start of the challenge.
+ * @param recoveryIndex - Index of the spent digest in `existingCodes`.
+ * @param opened - The decrypted secret the challenge opened, and whether it opened under a retired
+ *   key, in which case this write also re-encrypts it and drains the rotation for free.
+ * @param mfa - The resolved MFA configuration.
+ * @returns The update to write, or `null` to abandon.
+ */
+function spliceSpentCode(
+  current: AuthUser | AuthPlatformUser,
+  existingCodes: string[],
+  recoveryIndex: number,
+  opened: { secret: string; stale: boolean },
+  mfa: MfaConfig
+): MfaRecordUpdate | null {
+  if (!current.mfaEnabled) return null
+  if (!holdsSecret(current.mfaSecret, opened.secret, mfa)) return null
+  // Stryker disable next-line ArrayDeclaration: the fallback's CONTENTS are unobservable. It
+  // stands in for "this account has no recovery codes", and the only thing done with the list
+  // is `indexOf(spentDigest)` — a digest that cannot be in a list the account does not have,
+  // so any placeholder yields the same -1 and the same early return
+  const currentCodes = current.mfaRecoveryCodes ?? []
+  // Re-locate the code in the CURRENT list: the index computed against the earlier read
+  // may name a different code, or none, after a concurrent write.
+  /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable: `recoveryIndex >= 0` only after `verifyRecoveryCode` matched a code inside this very array */
+  // Stryker disable next-line StringLiteral: unreachable — the index came from a match found by iterating `existingCodes`, so the element always exists and the fallback's value can never be read
+  const spentDigest = existingCodes[recoveryIndex] ?? ''
+  const liveIndex = currentCodes.indexOf(spentDigest)
+  if (liveIndex < 0) return null
+  const updatedCodes = [...currentCodes]
+  updatedCodes.splice(liveIndex, 1)
+  return {
+    mfaEnabled: true,
+    mfaSecret: opened.stale ? encryptMfaSecret(opened.secret, mfa) : current.mfaSecret,
+    mfaRecoveryCodes: updatedCodes
+  }
+}
 
 /** Completes an MFA challenge: verifies the code, spends the temp token and issues the session. */
 @Injectable()
@@ -62,6 +120,11 @@ export class MfaChallengeService {
    * protection per-user. TOTP codes include anti-replay protection via a short-lived
    * Redis key keyed on an HMAC of the code and user ID.
    *
+   * The order is part of the contract: the temp token is verified but NOT consumed until the code
+   * passes, so a mistyped digit is retryable (`MFA_INVALID_CODE`) rather than a dead end
+   * (`MFA_TEMP_TOKEN_INVALID`); the lockout counter caps how many wrong codes one token can try;
+   * and the consume must win before a session is issued.
+   *
    * @param mfaTempToken - Short-lived MFA challenge JWT issued at login.
    * @param code - 6-digit TOTP code or `dddd-dddd-dddd` recovery code.
    * @param ip - Client IP address for session audit.
@@ -79,211 +142,238 @@ export class MfaChallengeService {
     userAgent: string,
     mfa: MfaConfig
   ): Promise<AuthResult | PlatformAuthResult> {
-    // Step 1: Verify the MFA temp token. We DO NOT consume it here — the
-    // token stays alive in Redis until the TOTP / recovery code passes,
-    // so a single mistyped digit surfaces as `MFA_INVALID_CODE` (retryable)
-    // instead of `MFA_TEMP_TOKEN_INVALID` (dead end). The brute-force
-    // counter (Step 2) caps how many wrong codes can be tried under one
-    // token. The token is consumed atomically in Step 5 once the code is
-    // confirmed valid.
+    // Step 1: verify, without consuming, the MFA temp token.
     const {
       userId,
       context,
       tenantId,
       jti: tempTokenJti
     } = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
+    const scope: ChallengeScope = { userId, context, tenantId }
 
-    // Step 2: Brute-force check. HMAC key prevents Redis key reversal.
-    // The 'challenge:' prefix namespaces this counter away from the 'disable' counter —
-    // preventing a pre-auth attacker (who only has a mfaTempToken) from exhausting the
-    // lockout threshold and blocking the authenticated user's ability to call disable().
-    // The context namespaces it away from the OTHER identity plane: the two id spaces come
-    // from different consumer repositories and may collide, so a counter keyed on the id
-    // alone lets either party exhaust — or clear — the other's lockout budget.
-    if (await this.flowLockout.isLockedOut('challenge', context, userId, tenantId)) {
-      this.logger.warn(`challenge: account locked userId=${logSafe(userId)}`)
-      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
-    }
+    // Step 2: brute-force check.
+    await this.assertNotLocked(scope)
 
-    // Step 3: Fetch user from the correct repository, tenant-scoped for a dashboard challenge
-    // (the temp token guarantees the tenant is present) so status / secret / session all resolve
-    // against the account the login authenticated, not a homonym in another tenant.
+    // Step 3: fetch the account, tenant-scoped, and re-check its status: the temp token outlives
+    // the login's own check by its whole TTL, and a blocked account must not spend the KDF below.
     const user = await this.records.loadAccount(context, userId, tenantId)
-
-    // The account status was re-checked by `loadAccount` above. Login gated it before
-    // issuing the temp token, but that token outlives the check by its whole TTL: an account
-    // suspended in between would otherwise complete the challenge and receive a full session.
-    // Revoking access must not depend on how far through the login the holder already was.
-    // Running it before Step 4 also keeps a blocked account from spending the KDF — the
-    // recovery-code path costs one derivation per stored code.
-
     if (!user.mfaEnabled || !user.mfaSecret) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
     }
 
-    // Step 4: Decrypt TOTP secret and validate the submitted code.
-    const { secret: secretBase32, stale: encryptedUnderRetiredKey } = decryptWithRotation(
-      user.mfaSecret,
-      mfa
-    )
-    const isTotpCode = /^\d{6}$/.test(code)
-    const totpWindow = mfa.totpWindow
-    // Stryker disable next-line BooleanLiteral: `codeValid` is unconditionally reassigned in both branches before it is ever read, so its initializer is irrelevant
-    let codeValid = false
-    let usedRecoveryIndex = -1
+    // Step 4: decrypt the TOTP secret and validate the submitted code.
+    const opened = decryptWithRotation(user.mfaSecret, mfa)
+    const { valid, recoveryIndex } = await this.checkCode(user, scope, opened.secret, code, mfa)
+    if (!valid) await this.refuseWrongCode(scope)
+    await this.flowLockout.reset('challenge', context, userId, tenantId)
 
-    if (isTotpCode) {
-      codeValid = await this.records.verifyTotpWithAntiReplay(
+    // Step 5: consume the temp token — and the consume must WIN. Two concurrent submissions both
+    // observe the marker; without gating on which delete removed it, both issue a session. That
+    // is not benign on the recovery-code path, where one code and one token would mint two
+    // sessions. The loser is reported as an invalid temp token.
+    if (!(await this.tokenManager.consumeMfaTempToken(tempTokenJti))) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
+    await this.settleRecovery(user, scope, opened, recoveryIndex, mfa)
+
+    this.logger.log(`challenge: MFA challenge passed userId=${logSafe(userId)} context=${context}`)
+    // Step 6: issue full tokens with mfaVerified: true.
+    return context === 'dashboard'
+      ? this.issueDashboardSession(user as AuthUser, userId, ip, userAgent)
+      : this.issuePlatformSession(user as AuthPlatformUser, userId, ip, userAgent)
+  }
+
+  /**
+   * Refuses a challenge for an account at its failure ceiling.
+   *
+   * The 'challenge' counter is namespaced away from 'disable', so a pre-auth attacker holding only
+   * a temp token cannot lock the user out of `disable()`, and away from the other identity plane,
+   * whose id space may collide.
+   *
+   * @param scope - The plane, account and tenant the challenge belongs to.
+   * @throws {@link AuthException} `ACCOUNT_LOCKED` at the ceiling.
+   */
+  private async assertNotLocked(scope: ChallengeScope): Promise<void> {
+    const { userId, context, tenantId } = scope
+    if (await this.flowLockout.isLockedOut('challenge', context, userId, tenantId)) {
+      this.logger.warn(`challenge: account locked userId=${logSafe(userId)}`)
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
+    }
+  }
+
+  /**
+   * Counts a wrong code and refuses it. The temp token stays alive: the user can retry under it
+   * until the lockout surfaces `ACCOUNT_LOCKED`.
+   *
+   * @param scope - The plane, account and tenant the challenge belongs to.
+   * @throws {@link AuthException} `MFA_INVALID_CODE`, always.
+   */
+  private async refuseWrongCode(scope: ChallengeScope): Promise<never> {
+    const { userId, context, tenantId } = scope
+    await this.flowLockout.recordFailure('challenge', context, userId, tenantId)
+    this.logger.warn(`challenge: invalid MFA code userId=${logSafe(userId)} context=${context}`)
+    throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
+  }
+
+  /**
+   * Validates the submitted code against the account: a six-digit TOTP code with anti-replay, or a
+   * recovery code compared in constant time and then claimed for exactly one challenge.
+   *
+   * @param user - The account, holding the stored recovery-code digests.
+   * @param scope - The plane, account and tenant the challenge belongs to.
+   * @param secretBase32 - The decrypted TOTP secret.
+   * @param code - The submitted code.
+   * @param mfa - The resolved MFA configuration.
+   * @returns Whether the code is valid, and the index of the matched recovery digest (`-1` for
+   *   TOTP and for a recovery code that matched nothing).
+   */
+  private async checkCode(
+    user: AuthUser | AuthPlatformUser,
+    scope: ChallengeScope,
+    secretBase32: string,
+    code: string,
+    mfa: MfaConfig
+  ): Promise<{ valid: boolean; recoveryIndex: number }> {
+    const { userId, context, tenantId } = scope
+    if (/^\d{6}$/.test(code)) {
+      const valid = await this.records.verifyTotpWithAntiReplay(
         context,
         userId,
         secretBase32,
         code,
-        totpWindow,
+        mfa.totpWindow,
         tenantId
       )
-    } else {
-      // Stryker disable next-line ArrayDeclaration: equivalent — the fallback stands in for an
-      // account with no stored codes, and any content it could hold fails the constant-time
-      // comparison exactly as the empty array does.
-      const recoveryCodes = user.mfaRecoveryCodes ?? []
-      usedRecoveryIndex = await verifyRecoveryCode(
-        code,
-        recoveryCodes,
-        this.options.hmacKey,
-        this.options.previousHmacKeys
-      )
-      codeValid =
-        usedRecoveryIndex >= 0 &&
-        (await this.records.claimRecoveryCode(context, userId, code, tenantId))
+      return { valid, recoveryIndex: -1 }
     }
+    // Stryker disable next-line ArrayDeclaration: equivalent — the fallback stands in for an
+    // account with no stored codes, and any content it could hold fails the constant-time
+    // comparison exactly as the empty array does.
+    const recoveryCodes = user.mfaRecoveryCodes ?? []
+    const recoveryIndex = await verifyRecoveryCode(
+      code,
+      recoveryCodes,
+      this.options.hmacKey,
+      this.options.previousHmacKeys
+    )
+    const valid =
+      recoveryIndex >= 0 && (await this.records.claimRecoveryCode(context, userId, code, tenantId))
+    return { valid, recoveryIndex }
+  }
 
-    if (!codeValid) {
-      await this.flowLockout.recordFailure('challenge', context, userId, tenantId)
-      this.logger.warn(`challenge: invalid MFA code userId=${logSafe(userId)} context=${context}`)
-      // Keep the MFA temp token alive — the user can retry with the next
-      // TOTP window or a different recovery code under the same token.
-      // bruteForce.recordFailure will eventually surface `ACCOUNT_LOCKED`
-      // if attempts keep failing.
-      throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
-    }
-
-    await this.flowLockout.reset('challenge', context, userId, tenantId)
-
-    // Step 5a: consume the MFA temp token now that the code is confirmed valid — and the
-    // consume must WIN. Two concurrent submissions both observe the marker and both delete
-    // it; without gating on which delete actually removed it, both issue a full session. That
-    // is not a benign duplicate for the same legitimate user: on the recovery-code path a
-    // code's whole security model is that it is single-use, and this is one code and one token
-    // minting two sessions. The loser is reported as an invalid temp token.
-    if (!(await this.tokenManager.consumeMfaTempToken(tempTokenJti))) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
-    }
-
-    // Step 5b: Consume the used recovery code (branch on context to use the correct repo).
-    if (usedRecoveryIndex >= 0) {
-      // mfaRecoveryCodes is guaranteed non-empty here: verifyRecoveryCode only returns ≥ 0
-      // when it found a match by iterating the array, so the array cannot be empty or undefined.
-      const existingCodes =
-        user.mfaRecoveryCodes ??
-        /* istanbul ignore next -- verifyRecoveryCode returns ≥0 only after iterating a non-null array */
-        // Stryker disable next-line ArrayDeclaration: unreachable — this branch is only taken
-        // when `verifyRecoveryCode` matched a code inside an array it had to iterate first.
-        []
-      // Serialized, and spliced against the record as it stands INSIDE the lock rather than
-      // the copy read at the top of this method. Splicing the stale copy would roll a concurrent
-      // `regenerateRecoveryCodes` back wholesale and undo a completed `disable` — see
-      // `MfaRecordService.transition`.
-      await this.records.transition(context, userId, tenantId, (current) => {
-        // The account stopped having MFA while this challenge was in flight — a `disable`
-        // that has already completed. Writing here would re-enable it with the pre-disable
-        // secret, so the code is spent (its `rcu:` claim already stands) and nothing is
-        // written back.
-        if (!current.mfaEnabled) return null
-        // The secret this challenge opened was replaced — a re-enrolment — and the code belongs to
-        // the list that went with it. Writing the splice would put the old secret back. A record a
-        // sibling challenge only re-encrypted still holds the same secret and is spliced.
-        if (!holdsSecret(current.mfaSecret, secretBase32, mfa)) return null
-        // Stryker disable next-line ArrayDeclaration: the fallback's CONTENTS are unobservable. It
-        // stands in for "this account has no recovery codes", and the only thing done with the list
-        // is `indexOf(spentDigest)` — a digest that cannot be in a list the account does not have,
-        // so any placeholder yields the same -1 and the same early return
-        const currentCodes = current.mfaRecoveryCodes ?? []
-        // Re-locate the code in the CURRENT list: the index computed against the earlier read
-        // may name a different code, or none, after a concurrent write.
-        /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable: `usedRecoveryIndex >= 0` only after `verifyRecoveryCode` matched a code inside this very array */
-        // Stryker disable next-line StringLiteral: unreachable — the index came from a match found by iterating `existingCodes`, so the element always exists and the fallback's value can never be read
-        const spentDigest = existingCodes[usedRecoveryIndex] ?? ''
-        const liveIndex = currentCodes.indexOf(spentDigest)
-        if (liveIndex < 0) return null
-        const updatedCodes = [...currentCodes]
-        updatedCodes.splice(liveIndex, 1)
-        return {
-          mfaEnabled: true,
-          // Re-encrypted here when the secret opened under a retired key: the write is
-          // already happening, so the rotation drains for free.
-          mfaSecret: encryptedUnderRetiredKey
-            ? encryptMfaSecret(secretBase32, mfa)
-            : current.mfaSecret,
-          mfaRecoveryCodes: updatedCodes
-        }
-      })
-    } else if (encryptedUnderRetiredKey) {
-      // A TOTP challenge writes nothing on its own, so the re-encryption needs its own write.
-      // Fire-and-forget: the challenge has already succeeded and the retired key still opens
-      // the secret, so a failure costs the migration and nothing else.
-      void this.records.reencryptSecret(userId, context, secretBase32, tenantId, mfa)
-    }
-
-    this.logger.log(`challenge: MFA challenge passed userId=${logSafe(userId)} context=${context}`)
-
-    // Step 6: Issue full tokens with mfaVerified: true.
-    if (context === 'dashboard') {
-      const safeUser = toSafeUser(user as AuthUser)
-      const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, {
-        mfaVerified: true
-      })
-
-      // Track the session when sessions are enabled (enforces concurrent session limit).
-      if (this.options.sessions.enabled) {
-        await this.sessionService.createSession({
-          userId: safeUser.id,
-          tenantId: safeUser.tenantId,
-          rawRefreshToken: result.rawRefreshToken,
-          ip,
-          userAgent
-        })
+  /**
+   * Spends the recovery code a challenge used, or migrates the secret to the current key.
+   *
+   * A recovery challenge removes the matched digest in a serialized transition, spliced against
+   * the record as it stands INSIDE the lock rather than the copy read earlier: splicing the stale
+   * copy would roll a concurrent `regenerateRecoveryCodes` back wholesale and undo a completed
+   * `disable` — see `MfaRecordService.transition`. A TOTP challenge writes nothing on its own, so
+   * a secret that opened under a retired key is re-encrypted by a detached write: the challenge
+   * has already succeeded and the retired key still opens the secret, so a failure costs the
+   * migration and nothing else.
+   *
+   * @param user - The account as read at the start of the challenge.
+   * @param scope - The plane, account and tenant the challenge belongs to.
+   * @param opened - The decrypted secret, and whether it opened under a retired key.
+   * @param recoveryIndex - Index of the spent recovery digest, or `-1` after a TOTP challenge.
+   * @param mfa - The resolved MFA configuration.
+   */
+  private async settleRecovery(
+    user: AuthUser | AuthPlatformUser,
+    scope: ChallengeScope,
+    opened: { secret: string; stale: boolean },
+    recoveryIndex: number,
+    mfa: MfaConfig
+  ): Promise<void> {
+    const { userId, context, tenantId } = scope
+    if (recoveryIndex < 0) {
+      if (opened.stale) {
+        void this.records.reencryptSecret(userId, context, opened.secret, tenantId, mfa)
       }
+      return
+    }
+    // mfaRecoveryCodes is guaranteed non-empty here: verifyRecoveryCode only returns ≥ 0
+    // when it found a match by iterating the array, so the array cannot be empty or undefined.
+    const existingCodes =
+      user.mfaRecoveryCodes ??
+      /* istanbul ignore next -- verifyRecoveryCode returns ≥0 only after iterating a non-null array */
+      // Stryker disable next-line ArrayDeclaration: unreachable — this branch is only taken
+      // when `verifyRecoveryCode` matched a code inside an array it had to iterate first.
+      []
+    await this.records.transition(context, userId, tenantId, (current) =>
+      spliceSpentCode(current, existingCodes, recoveryIndex, opened, mfa)
+    )
+  }
 
-      // The login the password step (or the OAuth callback) stopped short of: for an MFA account
-      // this is the only place the last-login time can move.
+  /**
+   * Issues the dashboard session for a challenge that passed.
+   *
+   * @param user - The dashboard account.
+   * @param userId - The account id from the temp token, for the hook context.
+   * @param ip - Client IP address for session audit.
+   * @param userAgent - User-Agent header for session description.
+   * @returns The dashboard auth result.
+   */
+  private async issueDashboardSession(
+    user: AuthUser,
+    userId: string,
+    ip: string,
+    userAgent: string
+  ): Promise<AuthResult> {
+    const safeUser = toSafeUser(user)
+    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, {
+      mfaVerified: true
+    })
+
+    // Track the session when sessions are enabled (enforces concurrent session limit).
+    if (this.options.sessions.enabled) {
+      await this.sessionService.createSession({
+        userId: safeUser.id,
+        tenantId: safeUser.tenantId,
+        rawRefreshToken: result.rawRefreshToken,
+        ip,
+        userAgent
+      })
+    }
+
+    // The login the password step (or the OAuth callback) stopped short of: for an MFA account
+    // this is the only place the last-login time can move.
+    runDetached(
+      this.logger,
+      () => this.userRepo.updateLastLogin({ id: safeUser.id, tenantId: safeUser.tenantId }),
+      'challenge: updateLastLogin failed'
+    )
+
+    if (this.hooks.afterLogin) {
+      const afterLogin = this.hooks.afterLogin.bind(this.hooks)
       runDetached(
         this.logger,
-        () => this.userRepo.updateLastLogin({ id: safeUser.id, tenantId: safeUser.tenantId }),
-        'challenge: updateLastLogin failed'
+        () =>
+          afterLogin(safeUser, { plane: 'dashboard', userId, ip, userAgent, sanitizedHeaders: {} }),
+        'challenge: afterLogin hook threw'
       )
-
-      if (this.hooks.afterLogin) {
-        const afterLogin = this.hooks.afterLogin.bind(this.hooks)
-        runDetached(
-          this.logger,
-          () =>
-            afterLogin(safeUser, {
-              plane: 'dashboard',
-              userId,
-              ip,
-              userAgent,
-              sanitizedHeaders: {}
-            }),
-          'challenge: afterLogin hook threw'
-        )
-      }
-
-      return result
     }
 
-    // Platform context — reuse the already-fetched user to avoid a TOCTOU double-read.
-    // platformUserRepo presence was already validated in loadAccount; this cast is safe.
-    const platformUser = user as AuthPlatformUser
+    return result
+  }
+
+  /**
+   * Issues the platform session for a challenge that passed, reusing the account already fetched
+   * to avoid a TOCTOU double-read. The platform repository's presence was validated by
+   * `MfaRecordService.loadAccount`, so the cast below is safe.
+   *
+   * @param platformUser - The platform administrator.
+   * @param userId - The account id from the temp token, for the hook context.
+   * @param ip - Client IP address for session audit.
+   * @param userAgent - User-Agent header for session description.
+   * @returns The platform auth result.
+   */
+  private async issuePlatformSession(
+    platformUser: AuthPlatformUser,
+    userId: string,
+    ip: string,
+    userAgent: string
+  ): Promise<PlatformAuthResult> {
     const result = await this.tokenManager.issuePlatformTokens(
       toSafePlatformUser(platformUser),
       ip,
