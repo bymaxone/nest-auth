@@ -25,16 +25,12 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { BruteForceService } from './brute-force.service'
-import { MfaFlowLockoutService } from './mfa-flow-lockout.service'
-import { MfaRecordService } from './mfa-record.service'
+import { MFA_COLLABORATORS } from './__tests__/mfa-collaborators'
+import { MfaChallengeService } from './mfa-challenge.service'
 import { MfaService } from './mfa.service'
-import { ReauthenticationService } from './reauthentication.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
-
-/** The services `MfaService` collaborates with, provided real in every test module. */
-const MFA_COLLABORATORS = [MfaFlowLockoutService, MfaRecordService, ReauthenticationService]
 
 /** TEST FIXTURE ONLY: a structurally valid 32-byte AES-256-GCM key, not a credential. */
 const VALID_ENCRYPTION_KEY = Buffer.from('nest-auth-test-encryption-key-32').toString('base64')
@@ -149,6 +145,7 @@ const SIDE_EFFECTS: ReadonlyArray<[string, jest.Mock]> = [
 
 describe('MfaService.challengePlatformOnly', () => {
   let service: MfaService
+  let challengeFlow: MfaChallengeService
 
   beforeEach(async () => {
     jest.resetAllMocks()
@@ -182,6 +179,7 @@ describe('MfaService.challengePlatformOnly', () => {
     }).compile()
 
     service = module.get(MfaService)
+    challengeFlow = module.get(MfaChallengeService)
   })
 
   // Scenario: the temp token names the dashboard plane, and the code is a valid one. Expected:
@@ -242,7 +240,7 @@ describe('MfaService.challengePlatformOnly', () => {
   it('should refuse a dashboard-shaped result for a platform-plane token', async () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue(PLATFORM_TOKEN)
     const challenge = jest
-      .spyOn(service, 'challenge')
+      .spyOn(challengeFlow, 'challenge')
       .mockResolvedValue({ user: { id: 'user-1' } } as never)
 
     await expect(

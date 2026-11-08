@@ -23,7 +23,7 @@ const DECISIONS = new Set([
   'auth.service.ts#getAccountLockoutSeconds',
   'platform-auth.service.ts#login',
   'mfa-flow-lockout.service.ts#isLockedOut',
-  'mfa.service.ts#challenge',
+  'mfa-challenge.service.ts#assertNotLocked',
   'mfa.service.ts#disable',
   'mfa.service.ts#regenerateRecoveryCodes',
   'reauthentication.service.ts#assertReauthenticated',
