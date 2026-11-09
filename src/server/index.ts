@@ -463,3 +463,5 @@ export {
 } from './services/api-key.service'
 export type { IssueApiKeyInput, IssuedApiKey, RotateApiKeyInput } from './services/api-key.service'
 export type { ApiKeyClock } from './services/api-key-clock'
+export { WorkspaceAccessService } from './services/workspace-access.service'
+export type { ResolvedWorkspaceMember } from './services/workspace-access.service'
