@@ -152,6 +152,8 @@ describe('WorkspaceAccessService', () => {
       expect(member).toEqual({ ...REF, role: 'editor' })
       expect(workspaces.findById).toHaveBeenCalledWith(WORKSPACE_REF)
       expect(memberships.find).toHaveBeenCalledWith(REF)
+      // The empty reply of a plain miss is not JSON: it reads as no entry, silently.
+      expect(warn).not.toHaveBeenCalled()
     })
 
     // The versions come from BEFORE the repository read, so a change that lands in between moves
