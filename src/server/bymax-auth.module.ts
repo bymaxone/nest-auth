@@ -44,6 +44,7 @@ import { RequestEncodingGuard } from './guards/request-encoding.guard'
 import { RolesGuard } from './guards/roles.guard'
 import { TrustedOriginGuard } from './guards/trusted-origin.guard'
 import { UserStatusGuard } from './guards/user-status.guard'
+import { WorkspaceGuard } from './guards/workspace.guard'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
 import { NoStoreInterceptor } from './interceptors/no-store.interceptor'
 import type { AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface'
@@ -435,7 +436,9 @@ export class BymaxAuthModule {
     // Workspace access — registered with the repositories that back it; `assertWorkspaceProviders`
     // refuses a module whose flag and providers disagree, so the service never starts half-wired.
     const includeWorkspaces = hasProviderToken(extraProviders, BYMAX_AUTH_WORKSPACE_REPOSITORY)
-    const workspaceProviders: Provider[] = includeWorkspaces ? [WorkspaceAccessService] : []
+    const workspaceProviders: Provider[] = includeWorkspaces
+      ? [WorkspaceAccessService, WorkspaceGuard]
+      : []
 
     // Fallback email provider — only registered when the consumer has not supplied one.
     const emailProviders: Provider[] = hasProviderToken(extraProviders, BYMAX_AUTH_EMAIL_PROVIDER)
@@ -721,7 +724,7 @@ export class BymaxAuthModule {
           : []),
         // The workspace access service is public surface: a host that changes memberships outside
         // the library calls its invalidation methods.
-        ...(includeWorkspaces ? [WorkspaceAccessService] : []),
+        ...(includeWorkspaces ? [WorkspaceAccessService, WorkspaceGuard] : []),
         // WsTicketService also stands on its own as public surface: single-use ticket
         // handshakes are the credential a realtime transport is meant to use, and a consumer
         // cannot mint one without injecting this service.

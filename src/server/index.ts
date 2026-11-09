@@ -258,6 +258,7 @@ export { AuthRateLimitGuard } from './guards/auth-rate-limit.guard'
 export { RequestEncodingGuard } from './guards/request-encoding.guard'
 export { TrustedOriginGuard } from './guards/trusted-origin.guard'
 export { UserStatusGuard } from './guards/user-status.guard'
+export { WorkspaceGuard } from './guards/workspace.guard'
 export { WsJwtGuard } from './guards/ws-jwt.guard'
 
 // ---------------------------------------------------------------------------
@@ -463,5 +464,11 @@ export {
 } from './services/api-key.service'
 export type { IssueApiKeyInput, IssuedApiKey, RotateApiKeyInput } from './services/api-key.service'
 export type { ApiKeyClock } from './services/api-key-clock'
+export { WorkspaceRoles, WORKSPACE_ROLES_KEY } from './decorators/workspace-roles.decorator'
+export { CurrentWorkspace } from './decorators/current-workspace.decorator'
+export type {
+  CurrentWorkspaceContext,
+  WorkspaceRequest
+} from './decorators/current-workspace.decorator'
 export { WorkspaceAccessService } from './services/workspace-access.service'
 export type { ResolvedWorkspaceMember } from './services/workspace-access.service'
