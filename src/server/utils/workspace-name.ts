@@ -23,7 +23,8 @@ export const MAX_WORKSPACE_NAME_LENGTH = 120
  */
 export function normalizeWorkspaceName(raw: unknown): string {
   const name = typeof raw === 'string' ? raw.trim() : ''
-  if (name === '' || name.length > MAX_WORKSPACE_NAME_LENGTH || !NO_CONTROL_CHARACTERS.test(name)) {
+  // The pattern needs at least one character, so it also refuses an empty name.
+  if (name.length > MAX_WORKSPACE_NAME_LENGTH || !NO_CONTROL_CHARACTERS.test(name)) {
     throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
       {
         field: 'name',

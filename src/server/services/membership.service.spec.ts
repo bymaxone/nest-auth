@@ -24,6 +24,7 @@ import type { WorkspaceActor } from './membership.service'
 import type { WorkspaceAccessService } from './workspace-access.service'
 import type { WorkspaceEventsService } from './workspace-events.service'
 
+const DEMOTE_MESSAGE = 'demoteSelfTo must be a workspace role other than the owner role'
 const OWNER: WorkspaceActor = { userId: 'owner-1', role: 'owner' }
 const EDITOR: WorkspaceActor = { userId: 'editor-1', role: 'editor' }
 
@@ -80,6 +81,16 @@ async function code(promise: Promise<unknown>): Promise<string> {
     return ((error as AuthException).getResponse() as { error: { code: string } }).error.code
   }
   return 'ok'
+}
+
+/** The `details` an operation's validation error carries, or `undefined` when it does not fail. */
+async function detailsOf(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise
+  } catch (error) {
+    return ((error as AuthException).getResponse() as { error: { details: unknown } }).error.details
+  }
+  return undefined
 }
 
 describe('MembershipService', () => {
@@ -170,6 +181,21 @@ describe('MembershipService', () => {
       ])
     })
 
+    // `cursor: undefined` and no `cursor` are different calls to a port written for
+    // exactOptionalPropertyTypes, and an equality matcher cannot tell them apart.
+    it('leaves the cursor key out of every listing call when none was given', async () => {
+      const { service, memberships } = build()
+
+      await service.listMine('t1', 'u1')
+      await service.listMembers(WORKSPACE_REF)
+      await service.listSoleOwnedWorkspaces('t1', 'u1')
+
+      for (const name of ['listForUser', 'listForWorkspace', 'listSoleOwned']) {
+        const sent = memberships[name]?.mock.calls[0]?.[0] as Record<string, unknown>
+        expect(Object.keys(sent)).not.toContain('cursor')
+      }
+    })
+
     it('lists the workspaces a member alone owns, by the owner role', async () => {
       const { service, memberships } = build()
       const page = { items: [workspaceRow()], nextCursor: null }
@@ -241,6 +267,14 @@ describe('MembershipService', () => {
 
       expect(memberships['changeRole']).not.toHaveBeenCalled()
       expect(events.emit).not.toHaveBeenCalled()
+    })
+
+    it('names the role field when the role is outside the hierarchy', async () => {
+      const { service } = build()
+
+      await expect(
+        detailsOf(service.changeRole(WORKSPACE_REF, 'u2', 'admin', OWNER, CONTEXT))
+      ).resolves.toEqual([{ field: 'role', message: 'role must be one of the workspace roles' }])
     })
 
     it('refuses a role outside the hierarchy, even an inherited property name', async () => {
@@ -507,11 +541,18 @@ describe('MembershipService', () => {
     })
 
     it.each([
-      ['to oneself', 'owner-1', 'owner-1', null, 'userId'],
-      ['to a role outside the hierarchy', 'owner-1', 'u2', 'admin', 'demoteSelfTo'],
-      ['demoting to the owner role', 'owner-1', 'u2', 'owner', 'demoteSelfTo'],
-      ['demoting to an inherited property name', 'owner-1', 'u2', 'constructor', 'demoteSelfTo']
-    ])('refuses a transfer %s', async (_name, from, to, demote, field) => {
+      ['to oneself', 'owner-1', 'owner-1', null, 'userId', 'ownership cannot be handed to oneself'],
+      ['to a role outside the hierarchy', 'owner-1', 'u2', 'admin', 'demoteSelfTo', DEMOTE_MESSAGE],
+      ['demoting to the owner role', 'owner-1', 'u2', 'owner', 'demoteSelfTo', DEMOTE_MESSAGE],
+      [
+        'demoting to an inherited property name',
+        'owner-1',
+        'u2',
+        'constructor',
+        'demoteSelfTo',
+        DEMOTE_MESSAGE
+      ]
+    ])('refuses a transfer %s', async (_name, from, to, demote, field, message) => {
       const { service, memberships } = build()
 
       const result = service.transferOwnership(
@@ -526,7 +567,7 @@ describe('MembershipService', () => {
         response: {
           error: {
             code: AUTH_ERROR_CODES.VALIDATION,
-            details: [expect.objectContaining({ field })]
+            details: [{ field, message }]
           }
         }
       })
