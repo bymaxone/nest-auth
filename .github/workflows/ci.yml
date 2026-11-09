@@ -91,6 +91,19 @@ jobs:
           else
             node scripts/check-file-length.mjs
           fi
+      # An `x as unknown as T` tells the compiler to stop checking, which AGENTS.md lists as a
+      # blocking finding. The repository's existing sites are on a frozen baseline that can only
+      # shrink; a new site fails, and on a pull request the baseline is compared with the base
+      # branch's so a change cannot admit the site it adds by editing the list.
+      - name: No new double assertions through unknown
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            node scripts/check-double-assertions.mjs --base "origin/$BASE_REF"
+          else
+            node scripts/check-double-assertions.mjs
+          fi
 
   # The Lua scripts behind refresh rotation, revocation, claims and rate limits run here against
   # a real Redis 8 started by Testcontainers (the image is pinned by digest in
