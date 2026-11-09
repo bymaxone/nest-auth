@@ -16,7 +16,7 @@ import request from 'supertest'
 
 import { BYMAX_AUTH_HOOKS } from '../../src/server/bymax-auth.constants'
 import type { IAuthHooks } from '../../src/server/interfaces/auth-hooks.interface'
-import { bootstrapTestApp, expectAuthError } from './setup'
+import { bootstrapTestApp, expectAuthError, freezeClock, restoreClock } from './setup'
 
 const PASSWORD = 'SetupSecret123!'
 const EMAIL = 'plane@example.com'
@@ -30,6 +30,8 @@ describe('platform MFA challenge refuses a dashboard token before spending anyth
   const hookCalls: string[] = []
 
   beforeAll(async () => {
+    // The windows below are spent in a fixed order, so the clock must not move between them.
+    freezeClock()
     const hooks: IAuthHooks = {
       afterLogin: () => {
         hookCalls.push('afterLogin')
@@ -67,6 +69,7 @@ describe('platform MFA challenge refuses a dashboard token before spending anyth
 
   afterAll(async () => {
     await app.close()
+    restoreClock()
   })
 
   async function sessionCount(): Promise<number> {
