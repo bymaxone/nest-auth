@@ -41,15 +41,21 @@ end
 return 0`
 
 /**
- * Lists a record as pending, unless the set already holds `ARGV[2]` members (`0` meaning no limit),
- * so two writers cannot both take the last place.
+ * Publishes a record only while the address's index still names it, and lists it as pending unless
+ * the set already holds `ARGV[4]` members (`0` meaning no limit). The ownership test, the cap and
+ * the writes are one step, so a writer that lost the index writes nothing and two writers cannot
+ * both take the last place. Returns 1 published, 0 index moved, 2 workspace full.
  */
-const ADD_PENDING_SCRIPT = `
-if tonumber(ARGV[2]) > 0 and redis.call('SCARD', KEYS[1]) >= tonumber(ARGV[2]) then
+const PUBLISH_SCRIPT = `
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
   return 0
 end
-redis.call('SADD', KEYS[1], ARGV[1])
-redis.call('EXPIRE', KEYS[1], ARGV[3])
+if tonumber(ARGV[4]) > 0 and redis.call('SCARD', KEYS[3]) >= tonumber(ARGV[4]) then
+  return 2
+end
+redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+redis.call('SADD', KEYS[3], ARGV[1])
+redis.call('EXPIRE', KEYS[3], ARGV[3])
 return 1`
 
 /** Deletes the index only while it still names the given record key. */
@@ -123,34 +129,34 @@ export class WorkspaceInvitationStore {
   }
 
   /**
-   * Writes a record and lists it as pending for its workspace, unless the workspace already holds
-   * `limit` pending invitations.
+   * Writes a record and lists it as pending for its workspace, but only while the address's index
+   * still names it and the workspace holds fewer than `limit` pending invitations.
    *
    * @param ref - The workspace.
-   * @param key - The record key, `winv:{hash}`.
+   * @param email - The invitee, normalized.
+   * @param key - The record key, `winv:{hash}`, which the caller has claimed the index for.
    * @param record - What to store.
    * @param ttlSeconds - How long it lives; the set lives as long as its longest member.
    * @param limit - The most pending invitations the workspace may hold, or `0` for no limit.
-   * @returns `false` when the workspace was full; the record is then deleted again.
+   * @returns `published`; `lost` when another writer moved the index first, with nothing written;
+   *   or `full` when the workspace holds `limit`, with nothing written.
    */
-  async write(
+  async publish(
     ref: WorkspaceRef,
+    email: string,
     key: string,
     record: StoredWorkspaceInvitation,
     ttlSeconds: number,
     limit = 0
-  ): Promise<boolean> {
+  ): Promise<'published' | 'lost' | 'full'> {
     // Members whose record expired still count in the set, so they are dropped before it is counted.
     if (limit > 0) await this.pending(ref)
-    await this.redis.set(key, JSON.stringify(record), ttlSeconds)
-    const listed = await this.redis.eval(
-      ADD_PENDING_SCRIPT,
-      [this.setKey(ref)],
-      [key, String(limit), String(ttlSeconds)]
+    const outcome = await this.redis.eval(
+      PUBLISH_SCRIPT,
+      [this.indexKey(ref, email), key, this.setKey(ref)],
+      [key, JSON.stringify(record), String(ttlSeconds), String(limit)]
     )
-    if (listed === 1) return true
-    await this.redis.del(key)
-    return false
+    return outcome === 1 ? 'published' : outcome === 2 ? 'full' : 'lost'
   }
 
   /**

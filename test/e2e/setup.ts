@@ -379,6 +379,18 @@ export interface MockEmailProvider extends IEmailProvider {
 }
 
 /**
+ * The captured message of a workspace invitation. The token is in the body because a workspace
+ * test has to redeem or preview it.
+ */
+function workspaceInvitationMail(email: string, data: WorkspaceInviteData): CapturedEmail {
+  return {
+    to: email,
+    subject: `Invitation to ${data.workspaceName}`,
+    html: `<p>${data.accountExists ? 'signin' : 'signup'} ${data.role} ${data.inviteToken}</p>`
+  }
+}
+
+/**
  * Builds a fresh {@link MockEmailProvider}.
  */
 export function createMockEmailProvider(): MockEmailProvider {
@@ -423,17 +435,8 @@ export function createMockEmailProvider(): MockEmailProvider {
       send({ to: email, subject: 'Invitation', html: '<p>invite</p>' })
     },
 
-    // The token is in the captured body because a workspace test has to redeem or preview it.
-    async sendWorkspaceInvitation(
-      _tenantId: string,
-      email: string,
-      data: WorkspaceInviteData
-    ): Promise<void> {
-      send({
-        to: email,
-        subject: `Invitation to ${data.workspaceName}`,
-        html: `<p>${data.accountExists ? 'signin' : 'signup'} ${data.role} ${data.inviteToken}</p>`
-      })
+    async sendWorkspaceInvitation(_t: string, to: string, d: WorkspaceInviteData): Promise<void> {
+      send(workspaceInvitationMail(to, d))
     }
   }
 

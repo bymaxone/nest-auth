@@ -287,6 +287,34 @@ describe('WorkspaceInvitationService', () => {
       expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(2)
     })
 
+    it('lets only one of two overlapping invitations for one address publish', async () => {
+      const h = build()
+      const realPublish = h.store.publish.bind(h.store)
+      let release: () => void = () => undefined
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let first = true
+      jest.spyOn(h.store, 'publish').mockImplementation(async (...args) => {
+        if (first) {
+          first = false
+          await held
+        }
+        return realPublish(...args)
+      })
+
+      const a = code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
+      await new Promise((resolve) => setImmediate(resolve))
+      const b = code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
+      await new Promise((resolve) => setImmediate(resolve))
+      release()
+      const outcomes = await Promise.all([a, b])
+
+      expect(outcomes.filter((c) => c === AUTH_ERROR_CODES.TOO_MANY_REQUESTS)).toHaveLength(1)
+      expect(await h.store.pending(WORKSPACE_REF)).toHaveLength(1)
+      expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(1)
+    })
+
     it('lets only one of two concurrent invitations take the last place', async () => {
       const h = build({ maxPendingInvitationsPerWorkspace: 1 })
 

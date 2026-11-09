@@ -118,14 +118,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     about 6%, inside this entry's historical band. It is a capability the consumer's interim
 //     guard cannot be deleted without, with red-checked tests behind it, which is the
 //     distinction this budget exists to force.
-//     151 KiB sits about 5% above the measured 143.74 KiB. The size includes the workspace
-//     layer: its option group with validation, the membership access service with its Lua
-//     scripts, the key builders, the guard and the lifecycle services.
-//     Raised to 161 KiB for workspace invitations (the invite, list, resend, revoke and preview
-//     routes): their service and Redis store, the key builders, the controller, three request
-//     DTOs with their schemas, the page helper and the operation rows. Measured 149.63 -> 153.89
-//     KiB, so +4.26 KiB against a 151 KiB budget the build overran by 2.89 KiB; 161 puts headroom
-//     back at about 5%, inside this entry's band. The accept route that follows adds to it.
+//     161 KiB sits about 5% above the measured 154.09 KiB. The size includes the workspace
+//     layer (its option group with validation, the membership access service with its Lua
+//     scripts, the key builders, the guard and the lifecycle services) and workspace invitations
+//     (their service and Redis store, the controller, three request DTOs with their schemas, the
+//     page helper and the operation rows).
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that

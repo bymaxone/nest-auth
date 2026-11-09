@@ -305,8 +305,11 @@ export class WorkspaceInvitationService {
     }
     // A replacement takes the place of the record it retires, so only a first invitation is capped.
     const limit = live === null ? this.group.maxPendingInvitationsPerWorkspace : 0
-    if (!(await this.store.write(ref, key, record, ttl, limit))) {
-      await this.store.remove(ref, email, key)
+    const outcome = await this.store.publish(ref, email, key, record, ttl, limit)
+    if (outcome !== 'published') {
+      // `lost` means another writer owns the index and this one wrote nothing; `full` leaves the
+      // claim this writer made, which is released.
+      if (outcome === 'full') await this.store.remove(ref, email, key)
       throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
     }
     if (live !== null) await this.store.remove(ref, email, live.key)

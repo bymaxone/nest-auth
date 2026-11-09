@@ -1675,6 +1675,7 @@
       "nothing, which reads as no invitation. `winvset:` holds the record keys of a workspace's pending",
       "invitations, for listing and for the pending cap; a member whose record is gone is dropped when",
       "the set is read. `winvrl:` counts the invitations one member issues, one hour from the first.",
+      "The record is then written and added to the pending set in ONE step that first checks the index still names it, so a writer whose claim was taken over writes nothing and two overlapping invitations for one address leave one record.",
       "",
       "Every record, index and set expires `workspaces.invitationTtlSeconds` after it is written",
       "(default 604800, at most 2592000)."
@@ -1768,7 +1769,7 @@
       "resendCooldownSeconds": 60,
       "maxResends": 5,
       "invitationsPerInviterPerHour": 20,
-      "limitsAnswer": "The cooldown, the resend limit, the hourly limit, the pending cap (`workspaces.maxPendingInvitationsPerWorkspace`, default 100, checked in the same step that lists the record, so two writers cannot both take the last place) and a lost compare-and-set on the index are all refused with 429 auth.too_many_requests. The cooldown and the resend limit apply to a second invitation of the same address as to a resend.",
+      "limitsAnswer": "The cooldown, the resend limit, the hourly limit, the pending cap (`workspaces.maxPendingInvitationsPerWorkspace`, default 100, checked in the same step that adds the record to the set, so two writers cannot both take the last place) and a lost compare-and-set on the index are all refused with 429 auth.too_many_requests. The cooldown and the resend limit apply to a second invitation of the same address as to a resend.",
       "answers": "POST invite, resend and revoke answer 204 with no body, whether or not the address has an account. The email provider is told `accountExists`.",
       "preview": "POST workspaces/invitations/preview takes `{token}` of exactly 64 characters, needs no credential, and answers `{workspaceName, inviterName, role, maskedEmail, accountExists}`. A token that never existed, expired, was withdrawn or consumed, or whose workspace is not active or whose inviter is gone, is answered with the SAME 400 auth.invalid_invitation_token, and the library performs the same repository reads in each case.",
       "tokenInEmail": "A delivery failure is re-thrown without the failing text, which may quote the token."
