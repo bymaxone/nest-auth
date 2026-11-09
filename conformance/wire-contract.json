@@ -13,7 +13,7 @@
     "Changing a value here is a breaking change to the shared keyspace. Do it in both repos in",
     "the same change, and only with a migration story for data already written in the old form."
   ],
-  "version": 1,
+  "version": 2,
   "hmacKeyDerivation": {
     "$comment": [
       "The identifier-hashing key both sides derive from the identifier secret, and one",
@@ -96,7 +96,10 @@
     "otpResendCooldown": "resend",
     "invitationIndex": "invidx",
     "userStatus": "us",
-    "userEmailVerified": "uev"
+    "userEmailVerified": "uev",
+    "workspaceVersion": "wsv",
+    "membershipVersion": "wmv",
+    "membershipCache": "wm"
   },
   "userStatusCache": {
     "$comment": [
@@ -172,6 +175,101 @@
         "userId": "u%1+x",
         "userSubject": "dashboard:6:t/1 \u00e9:u%1+x",
         "digestHex": "169d23f4def0019c0fcbebb0630aca4635b89f592909ef51a364f8ac330c232a"
+      }
+    ]
+  },
+  "workspaceMembershipCache": {
+    "$comment": [
+      "The workspace-membership cache both libraries read and write on one Redis. A deployment that",
+      "runs both behind one store shares it, so the subjects, the keys, the value and the order of",
+      "the version reads are part of the contract: a version bump issued by one side that names a",
+      "different key than the other reads raises nothing and serves a removed member's role until",
+      "the entry expires.",
+      "",
+      "Access to a workspace needs an ACTIVE membership of an ACTIVE workspace. Any other state reads",
+      "as 'not a member', so a caller cannot tell a workspace it may not enter from one that does",
+      "not exist (`auth.workspace_not_found`).",
+      "",
+      "Two subjects, both length-prefixed in UTF-8 BYTES for the reason `userSubjectPreimages` gives:",
+      "a bare `:` between free-form identifiers is not injective, and a UTF-16 length would derive",
+      "different keys from a UTF-8 one for the first accented identifier. The user id is last and",
+      "unprefixed because nothing follows it. Every key HMACs its subject with the identifier key of",
+      "`hmacKeyDerivation`, so no identifier is written into the keyspace in the clear.",
+      "",
+      "Three keys. `wsv` and `wmv` are version counters; `wm` holds the cached answer under BOTH",
+      "versions. A reader fetches the two versions and the entry in one atomic step, and on a miss",
+      "reads the repositories and writes the entry under the versions it fetched BEFORE that read. A",
+      "change that lands in between moves a counter, so the refill sits under a key nobody reads and",
+      "is never served. This is what closes the invalidate-races-a-reader gap that a plain delete",
+      "leaves open.",
+      "",
+      "A writer changes the repository FIRST and bumps the counter after, and a failed bump is an",
+      "error: a change is never reported as invalidated when it was not. A bump is INCR followed by",
+      "EXPIRE in one atomic step, on every bump, so a counter always carries its retention.",
+      "",
+      "The cache is advisory. When Redis is unreachable a reader answers from the repositories and",
+      "writes nothing. The repository reads the cache is filled from must come from the primary or",
+      "be read-your-writes: a lagging replica would cache a removed member as present under the new",
+      "version."
+    ],
+    "workspaceSubject": "wsp:{utf8ByteLength(tenantId)}:{tenantId}:{utf8ByteLength(workspaceId)}:{workspaceId}",
+    "membershipSubject": "wms:{utf8ByteLength(tenantId)}:{tenantId}:{utf8ByteLength(workspaceId)}:{workspaceId}:{userId}",
+    "keys": {
+      "workspaceVersion": "{namespace}:wsv:{hmac_sha256(hmacKey, workspaceSubject)}",
+      "membershipVersion": "{namespace}:wmv:{hmac_sha256(hmacKey, membershipSubject)}",
+      "membershipCache": "{namespace}:wm:{hmac_sha256(hmacKey, membershipSubject)}:{workspaceVersion}:{membershipVersion}"
+    },
+    "hmacKey": "the identifier-HMAC key of hmacKeyDerivation, and the vectors below use its pinned derivedKeyHex",
+    "absentVersion": "a counter that does not exist reads as the text '0'",
+    "entryValue": "{\"role\": \"<role>\", \"status\": \"active\"}",
+    "entryRule": "only an active membership of an active workspace is cached; a missing, suspended or inactive answer is never cached, and an entry whose status is not 'active' is read as a miss",
+    "ttl": {
+      "option": "workspaces.membershipCacheTtlSeconds",
+      "default": 60,
+      "max": 3600,
+      "zero": "disables the cache: every request reads the repositories",
+      "appliesTo": "the cache entry only"
+    },
+    "versionRetentionSeconds": 2592000,
+    "versionRetentionWhy": "a counter must outlive every entry written under it, or it restarts at 0 and revives a stale entry; the value is TOKEN_EPOCH_RETENTION_SECONDS",
+    "bump": "INCR the counter, then EXPIRE it to versionRetentionSeconds, atomically and on every bump",
+    "workspaceWideEvents": "deleting, scheduling the deletion of, restoring or suspending a workspace bumps the workspace version; a change to one membership bumps that membership's version only",
+    "vectors": [
+      {
+        "tenantId": "tenant-1",
+        "workspaceId": "ws-1",
+        "userId": "user-1",
+        "workspaceSubject": "wsp:8:tenant-1:4:ws-1",
+        "workspaceDigestHex": "89a04c5f97b071aa56b591f7e37dceb01b52ee8c2a71271cb267b33d24cfde2e",
+        "membershipSubject": "wms:8:tenant-1:4:ws-1:user-1",
+        "membershipDigestHex": "2f327d73d12a8bec883620d297049993dd76ae8bb67bab530df39b1320f86a85"
+      },
+      {
+        "tenantId": "a:b",
+        "workspaceId": "c",
+        "userId": "d",
+        "workspaceSubject": "wsp:3:a:b:1:c",
+        "workspaceDigestHex": "011f691bbd27fe0938ba31ea7252013a00d652015bdbe09013f8f4894b1d1d32",
+        "membershipSubject": "wms:3:a:b:1:c:d",
+        "membershipDigestHex": "f6021fd1a75bce2006ea3ef15ca0e9b76f8b0f8933cb9c730256468b578cdf26"
+      },
+      {
+        "tenantId": "a",
+        "workspaceId": "b:c",
+        "userId": "d",
+        "workspaceSubject": "wsp:1:a:3:b:c",
+        "workspaceDigestHex": "85266538b8a0a5662a11c7438a1d992b811272b887538a4b144910b74130ad26",
+        "membershipSubject": "wms:1:a:3:b:c:d",
+        "membershipDigestHex": "a35441f9cf129077c814a12954483e02f8d4cfee47b0c0a84a2b228a4db6ef40"
+      },
+      {
+        "tenantId": "a\u00e7a\u00ed",
+        "workspaceId": "w\u00e9",
+        "userId": "u%1+x",
+        "workspaceSubject": "wsp:6:a\u00e7a\u00ed:3:w\u00e9",
+        "workspaceDigestHex": "1dd6af63723cd64b9cca358d7e438f67921fae276609f0923914dacd40d2cb0c",
+        "membershipSubject": "wms:6:a\u00e7a\u00ed:3:w\u00e9:u%1+x",
+        "membershipDigestHex": "4d4f6b2caf02eb381c25aab5c6185082cd268d2288b120bd7cb0e84d6142e3b1"
       }
     ]
   },
@@ -889,6 +987,15 @@
       "auth.api_key_not_found",
       "auth.validation",
       "auth.too_many_requests",
+      "auth.workspace_required",
+      "auth.workspace_not_found",
+      "auth.insufficient_workspace_role",
+      "auth.last_owner",
+      "auth.already_member",
+      "auth.invitation_email_mismatch",
+      "auth.registration_closed",
+      "auth.workspace_limit_reached",
+      "auth.workspace_pending_deletion",
       "auth.internal"
     ],
     "internalOnly": [
@@ -967,6 +1074,15 @@
       "auth.api_key_invalid": 401,
       "auth.api_key_scope_insufficient": 403,
       "auth.api_key_not_found": 404,
+      "auth.workspace_required": 400,
+      "auth.workspace_not_found": 404,
+      "auth.insufficient_workspace_role": 403,
+      "auth.last_owner": 409,
+      "auth.already_member": 409,
+      "auth.invitation_email_mismatch": 403,
+      "auth.registration_closed": 403,
+      "auth.workspace_limit_reached": 403,
+      "auth.workspace_pending_deletion": 409,
       "auth.internal": 500
     }
   },
