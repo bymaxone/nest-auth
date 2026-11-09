@@ -265,9 +265,10 @@ export interface IMembershipRepository {
    *  ORDER BY user_id
    *  FOR UPDATE;
    * -- 2. the actor row missing, inactive or not holding $actorRole: ROLLBACK, answer 'actor_changed'
-   * --    the member row missing or not holding $expectedRole:       ROLLBACK, answer 'not_found'
+   * --    the member row missing, inactive or not holding $expectedRole: ROLLBACK, answer 'not_found'
    * UPDATE memberships SET role = $role, updated_at = now()
-   *  WHERE tenant_id = $tenant AND workspace_id = $workspace AND user_id = $member;
+   *  WHERE tenant_id = $tenant AND workspace_id = $workspace AND user_id = $member
+   *    AND role = $expectedRole AND status = 'active';
    * -- 3. the last-owner check, the audit insert, then COMMIT
    * ```
    *
