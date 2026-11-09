@@ -230,7 +230,7 @@ export class TokenDeliveryService {
     const cookieName = this.options.cookies.refreshTokenName
 
     if (mode === 'cookie') {
-      return this.readCookie(req, cookieName)
+      return this.readRefreshCookie(req, cookieName)
     }
 
     if (mode === 'bearer') {
@@ -238,7 +238,7 @@ export class TokenDeliveryService {
     }
 
     // both — cookie first, then body
-    return this.readCookie(req, cookieName) ?? this.readBodyRefresh(req)
+    return this.readRefreshCookie(req, cookieName) ?? this.readBodyRefresh(req)
   }
 
   // ---------------------------------------------------------------------------
@@ -422,13 +422,31 @@ export class TokenDeliveryService {
       value.length === 0 ||
       value.length > REFRESH_TOKEN_MAX_LENGTH
     ) {
-      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
-        {
-          field: 'refreshToken',
-          message: `refreshToken must be a string of 1 to ${REFRESH_TOKEN_MAX_LENGTH} characters`
-        }
-      ])
+      throw malformedRefreshToken()
     }
     return value
   }
+
+  /**
+   * Reads the refresh cookie. A value over the bound is refused like a body value over it: no
+   * token this library mints is longer, so it can only be junk, and it must not reach the store.
+   * An empty cookie is no token, as it always was.
+   */
+  private readRefreshCookie(req: Request, name: string): string | undefined {
+    const value = this.readCookie(req, name)
+    if (value !== undefined && value.length > REFRESH_TOKEN_MAX_LENGTH) {
+      throw malformedRefreshToken()
+    }
+    return value
+  }
+}
+
+/** The 400 for a refresh token that is present but cannot be one. */
+function malformedRefreshToken(): AuthException {
+  return new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+    {
+      field: 'refreshToken',
+      message: `refreshToken must be a string of 1 to ${REFRESH_TOKEN_MAX_LENGTH} characters`
+    }
+  ])
 }
