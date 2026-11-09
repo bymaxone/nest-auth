@@ -226,11 +226,28 @@ export class TokenDeliveryService {
    * @returns The raw refresh token string, or `undefined` if not found.
    */
   extractRefreshToken(req: Request): string | undefined {
+    return this.readRefreshToken(req, false)
+  }
+
+  /**
+   * Extracts the refresh token for a logout. It reads as {@link extractRefreshToken} does, except
+   * that a cookie over the bound is no token: logout is the way out of a browser holding such a
+   * cookie, so it must answer as it does for any unusable token and clear the auth cookies, not
+   * refuse. A body value over the bound is still refused.
+   *
+   * @param req - Incoming Express request.
+   * @returns The raw refresh token string, or `undefined` if not found.
+   */
+  extractLogoutRefreshToken(req: Request): string | undefined {
+    return this.readRefreshToken(req, true)
+  }
+
+  private readRefreshToken(req: Request, discardOversizeCookie: boolean): string | undefined {
     const mode = this.options.tokenDelivery
     const cookieName = this.options.cookies.refreshTokenName
 
     if (mode === 'cookie') {
-      return this.readRefreshCookie(req, cookieName)
+      return this.readRefreshCookie(req, cookieName, discardOversizeCookie)
     }
 
     if (mode === 'bearer') {
@@ -238,7 +255,9 @@ export class TokenDeliveryService {
     }
 
     // both — cookie first, then body
-    return this.readRefreshCookie(req, cookieName) ?? this.readBodyRefresh(req)
+    return (
+      this.readRefreshCookie(req, cookieName, discardOversizeCookie) ?? this.readBodyRefresh(req)
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -430,14 +449,18 @@ export class TokenDeliveryService {
   /**
    * Reads the refresh cookie. A value over the bound is refused like a body value over it: no
    * token this library mints is longer, so it can only be junk, and it must not reach the store.
-   * An empty cookie is returned unchanged; callers treat it as no token.
+   * `discardOversize` reads it as absent instead. An empty cookie is returned unchanged; callers
+   * treat it as no token.
    */
-  private readRefreshCookie(req: Request, name: string): string | undefined {
+  private readRefreshCookie(
+    req: Request,
+    name: string,
+    discardOversize: boolean
+  ): string | undefined {
     const value = this.readCookie(req, name)
-    if (value !== undefined && value.length > REFRESH_TOKEN_MAX_LENGTH) {
-      throw malformedRefreshToken()
-    }
-    return value
+    if (value === undefined || value.length <= REFRESH_TOKEN_MAX_LENGTH) return value
+    if (discardOversize) return undefined
+    throw malformedRefreshToken()
   }
 }
 

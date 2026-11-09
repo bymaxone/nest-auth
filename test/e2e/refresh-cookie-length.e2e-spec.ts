@@ -63,21 +63,26 @@ describe.each(['cookie', 'both'] as const)('a refresh cookie, in %s delivery (E2
     expect(session.header).not.toBe('')
   })
 
-  // Scenario: logout of a real session whose refresh cookie is over the bound. Expected: 400 and
-  // nothing changed: the access cookie still works and the session is in place. Why: a 204 would
-  // tell the client it is signed out while its refresh session stayed alive.
-  it('answers logout with 400 and changes nothing for a cookie over the bound', async () => {
-    const session = await signUp(`cookie-logout-${delivery}@example.com`)
+  // Scenario: logout from a browser whose refresh cookie is over the bound, while a real session
+  // exists elsewhere. Expected: 204 and both auth cookies cleared, as for any unusable token, and
+  // the real session is untouched. Why: the junk cookie shadows the real one, and logout is the
+  // way out of that state, so it must neither refuse nor revoke a session it cannot name.
+  it('answers logout with 204 and clears the cookies for a cookie over the bound', async () => {
+    await signUp(`cookie-logout-${delivery}@example.com`)
     const before = await liveSessions()
 
     const res = await request(app.getHttpServer())
       .post('/logout')
-      .set('Cookie', `${session.accessCookie}; refresh_token=${'a'.repeat(MAX_LENGTH + 1)}`)
+      .set('Cookie', `refresh_token=${'a'.repeat(MAX_LENGTH + 1)}`)
 
-    expectAuthError(res, 'auth.validation')
+    expect(res.status).toBe(204)
+    const cleared = (res.headers['set-cookie'] as unknown as string[]).filter(
+      (line) => /max-age=0/i.test(line) || /expires=thu, 01 jan 1970/i.test(line)
+    )
+    expect(cleared.map((line) => line.split('=')[0]).sort()).toEqual(
+      expect.arrayContaining(['access_token', 'refresh_token'])
+    )
     expect(await liveSessions()).toBe(before)
-    const me = await request(app.getHttpServer()).get('/me').set('Cookie', session.accessCookie)
-    expect(me.status).toBe(200)
   })
 
   // Scenario: a cookie of exactly the bound. Expected: it is a well-formed but unknown token, so

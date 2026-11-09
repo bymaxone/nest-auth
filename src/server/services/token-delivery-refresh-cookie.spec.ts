@@ -81,3 +81,38 @@ describe.each(['cookie', 'both'] as const)('the refresh cookie in %s delivery', 
     expect(() => service.extractRefreshToken(oversize)).toThrow(AuthException)
   })
 })
+
+describe.each(['cookie', 'both'] as const)('the logout token in %s delivery', (delivery) => {
+  it('reads a cookie over the bound as no token', async () => {
+    const service = await build(delivery)
+
+    expect(
+      service.extractLogoutRefreshToken(requestWith('a'.repeat(MAX_LENGTH + 1)))
+    ).toBeUndefined()
+  })
+
+  it('returns a cookie of exactly the bound, and an empty one unchanged', async () => {
+    const service = await build(delivery)
+    const token = 'a'.repeat(MAX_LENGTH)
+
+    expect(service.extractLogoutRefreshToken(requestWith(token))).toBe(token)
+    expect(service.extractLogoutRefreshToken(requestWith(''))).toBe('')
+  })
+})
+
+describe('the logout token in both delivery, with the cookie discarded', () => {
+  it('falls back to the body, and still refuses a body value over the bound', async () => {
+    const service = await build('both')
+
+    expect(
+      service.extractLogoutRefreshToken(
+        requestWith('a'.repeat(MAX_LENGTH + 1), { refreshToken: 'valid-token' })
+      )
+    ).toBe('valid-token')
+    expect(() =>
+      service.extractLogoutRefreshToken(
+        requestWith('a'.repeat(MAX_LENGTH + 1), { refreshToken: 'b'.repeat(MAX_LENGTH + 1) })
+      )
+    ).toThrow(AuthException)
+  })
+})
