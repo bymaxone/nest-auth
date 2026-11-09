@@ -74,6 +74,8 @@ describe('resolveRequestWorkspace', () => {
 
   it.each([
     ['an empty id', ''],
+    ['a whitespace-only id', '   '],
+    ['a tab-only id', '\t'],
     ['a non-string id', 42],
     ['an id with a control character', 'w\u0000x'],
     ['an id over the length bound', 'w'.repeat(129)]
@@ -86,7 +88,7 @@ describe('resolveRequestWorkspace', () => {
     expect(result.details).toEqual([
       {
         field: 'workspaceId',
-        message: 'workspaceId must be 1 to 128 characters with no control characters'
+        message: 'workspaceId must be 1 to 128 characters, not blank, with no control characters'
       }
     ])
   })

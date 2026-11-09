@@ -267,6 +267,14 @@ describe('WorkspaceGuard (E2E)', () => {
       expectAuthError(res, AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     })
 
+    // A blank id passes the character check, so it has to be refused as an id: reaching the
+    // access service with it would be a 500, and the caller supplied it.
+    it('answers 400, not 500, for a whitespace-only id', async () => {
+      const res = await get('/host/w/%20%20%20/read')
+
+      expectAuthError(res, AUTH_ERROR_CODES.VALIDATION)
+    })
+
     it('refuses an id that is not a usable workspace id', async () => {
       const res = await get(`/host/w/${'x'.repeat(200)}/read`)
 

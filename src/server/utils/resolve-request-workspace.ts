@@ -35,14 +35,16 @@ function invalidWorkspaceId(message: string): never {
  * @throws {AuthException} `auth.validation` when it is not.
  */
 function assertWorkspaceId(value: unknown): string {
-  // The pattern needs at least one character, so it also refuses an empty id.
+  // A blank id is refused here, as `WorkspaceAccessService` refuses one with an error that would
+  // reach the caller as a 500. The pattern needs a character, so it also refuses an empty id.
   if (
     typeof value !== 'string' ||
+    value.trim() === '' ||
     value.length > MAX_WORKSPACE_ID_LENGTH ||
     !NO_CONTROL_CHARACTERS.test(value)
   ) {
     return invalidWorkspaceId(
-      `workspaceId must be 1 to ${MAX_WORKSPACE_ID_LENGTH} characters with no control characters`
+      `workspaceId must be 1 to ${MAX_WORKSPACE_ID_LENGTH} characters, not blank, with no control characters`
     )
   }
   return value
