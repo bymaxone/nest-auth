@@ -111,6 +111,17 @@ export const AUTH_ERROR_CODES = {
   API_KEY_SCOPE_INSUFFICIENT: 'auth.api_key_scope_insufficient',
   API_KEY_NOT_FOUND: 'auth.api_key_not_found',
 
+  // Workspaces
+  WORKSPACE_REQUIRED: 'auth.workspace_required',
+  WORKSPACE_NOT_FOUND: 'auth.workspace_not_found',
+  INSUFFICIENT_WORKSPACE_ROLE: 'auth.insufficient_workspace_role',
+  LAST_OWNER: 'auth.last_owner',
+  ALREADY_MEMBER: 'auth.already_member',
+  INVITATION_EMAIL_MISMATCH: 'auth.invitation_email_mismatch',
+  REGISTRATION_CLOSED: 'auth.registration_closed',
+  WORKSPACE_LIMIT_REACHED: 'auth.workspace_limit_reached',
+  WORKSPACE_PENDING_DELETION: 'auth.workspace_pending_deletion',
+
   /**
    * An unexpected internal failure. Raised only by the server's optional `AuthExceptionFilter`,
    * which gives unhandled failures the same envelope everything else answers with.
@@ -183,5 +194,14 @@ export const AUTH_ERROR_STATUS: Readonly<Record<AuthErrorCode, number>> = {
   'auth.api_key_invalid': 401,
   'auth.api_key_scope_insufficient': 403,
   'auth.api_key_not_found': 404,
+  'auth.workspace_required': 400,
+  'auth.workspace_not_found': 404,
+  'auth.insufficient_workspace_role': 403,
+  'auth.last_owner': 409,
+  'auth.already_member': 409,
+  'auth.invitation_email_mismatch': 403,
+  'auth.registration_closed': 403,
+  'auth.workspace_limit_reached': 403,
+  'auth.workspace_pending_deletion': 409,
   'auth.internal': 500
 }

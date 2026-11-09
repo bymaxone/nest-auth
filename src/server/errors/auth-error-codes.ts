@@ -272,6 +272,37 @@ export const AUTH_ERROR_CODES = {
   /** A key operation named an id that does not exist. Raised by revoke and rotate only. */
   API_KEY_NOT_FOUND: 'auth.api_key_not_found',
 
+  // ---------------------------------------------------------------------------
+  // Workspaces
+  // ---------------------------------------------------------------------------
+
+  /** The request named no target workspace. */
+  WORKSPACE_REQUIRED: 'auth.workspace_required',
+
+  /** The workspace does not exist, is not active, or the caller is not an active member. The three cases are indistinguishable on purpose, so the answer reveals nothing about which workspaces exist. */
+  WORKSPACE_NOT_FOUND: 'auth.workspace_not_found',
+
+  /** The caller is a member, but the role is below what the route requires. */
+  INSUFFICIENT_WORKSPACE_ROLE: 'auth.insufficient_workspace_role',
+
+  /** The change would leave the workspace with no active owner. */
+  LAST_OWNER: 'auth.last_owner',
+
+  /** An invitation or add named someone who already belongs to the workspace. */
+  ALREADY_MEMBER: 'auth.already_member',
+
+  /** The signed-in account does not match the invited address. */
+  INVITATION_EMAIL_MISMATCH: 'auth.invitation_email_mismatch',
+
+  /** The registration mode refused a sign-up that carried no valid invitation. */
+  REGISTRATION_CLOSED: 'auth.registration_closed',
+
+  /** The account already owns the most workspaces `workspaces.maxWorkspacesPerUser` allows. */
+  WORKSPACE_LIMIT_REACHED: 'auth.workspace_limit_reached',
+
+  /** Answered to an owner only; every other caller gets `auth.workspace_not_found`. */
+  WORKSPACE_PENDING_DELETION: 'auth.workspace_pending_deletion',
+
   /**
    * An unexpected internal failure. The cause is logged and never serialized.
    *
@@ -356,6 +387,15 @@ export const AUTH_ERROR_STATUS: Readonly<Record<AuthErrorCode, number>> = {
   'auth.api_key_invalid': 401,
   'auth.api_key_scope_insufficient': 403,
   'auth.api_key_not_found': 404,
+  'auth.workspace_required': 400,
+  'auth.workspace_not_found': 404,
+  'auth.insufficient_workspace_role': 403,
+  'auth.last_owner': 409,
+  'auth.already_member': 409,
+  'auth.invitation_email_mismatch': 403,
+  'auth.registration_closed': 403,
+  'auth.workspace_limit_reached': 403,
+  'auth.workspace_pending_deletion': 409,
   'auth.internal': 500
 }
 
@@ -411,5 +451,14 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.api_key_invalid': 'Invalid API key',
   'auth.api_key_scope_insufficient': 'API key lacks the required scope',
   'auth.api_key_not_found': 'API key not found',
+  'auth.workspace_required': 'A workspace is required',
+  'auth.workspace_not_found': 'Workspace not found',
+  'auth.insufficient_workspace_role': 'Insufficient workspace role',
+  'auth.last_owner': 'A workspace needs at least one owner',
+  'auth.already_member': 'Already a member of this workspace',
+  'auth.invitation_email_mismatch': 'This invitation was sent to a different email address',
+  'auth.registration_closed': 'Registration is closed',
+  'auth.workspace_limit_reached': 'Workspace limit reached',
+  'auth.workspace_pending_deletion': 'Workspace is scheduled for deletion',
   'auth.internal': 'Internal server error'
 }
