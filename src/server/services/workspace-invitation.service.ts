@@ -313,7 +313,12 @@ export class WorkspaceInvitationService {
     if (!(await this.store.claimIndex(ref, email, plan.expected, key, ttl))) {
       throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
     }
-    await this.store.write(ref, key, record, ttl)
+    // A replacement takes the place of the record it retires, so only a first invitation is capped.
+    const limit = live === null ? this.group.maxPendingInvitationsPerWorkspace : 0
+    if (!(await this.store.write(ref, key, record, ttl, limit))) {
+      await this.store.remove(ref, email, key)
+      throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
+    }
     if (live !== null) await this.store.remove(ref, email, live.key)
 
     await this.deliver(ref, email, workspace, inviter, record, token, plan.account !== null, ttl)

@@ -60,6 +60,30 @@ describe('WorkspaceInvitationStore', () => {
     expect(await redis.ttl(invitationSetKey('t1', 'w1', hmacKey))).toBe(300)
   })
 
+  describe('write with a limit', () => {
+    it('lists a record while the workspace is under the limit and refuses it at the limit, leaving nothing', async () => {
+      const { store, redis } = build()
+
+      expect(await store.write(WORKSPACE_REF, 'winv:a', record(), 300, 2)).toBe(true)
+      expect(await store.write(WORKSPACE_REF, 'winv:b', record(), 300, 2)).toBe(true)
+      expect(await store.write(WORKSPACE_REF, 'winv:c', record(), 300, 2)).toBe(false)
+
+      expect(await redis.get('winv:c')).toBeNull()
+      expect((await store.pending(WORKSPACE_REF)).map((p) => p.key).sort()).toEqual([
+        'winv:a',
+        'winv:b'
+      ])
+    })
+
+    it('has no limit when none is given', async () => {
+      const { store } = build()
+
+      for (const key of ['winv:a', 'winv:b', 'winv:c']) {
+        expect(await store.write(WORKSPACE_REF, key, record(), 300)).toBe(true)
+      }
+    })
+  })
+
   it.each([
     ['absent', null],
     ['not JSON', 'not json'],

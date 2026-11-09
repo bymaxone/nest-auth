@@ -40,6 +40,18 @@ if (current == false and ARGV[1] == '') or current == ARGV[1] then
 end
 return 0`
 
+/**
+ * Lists a record as pending, unless the set already holds `ARGV[2]` members (`0` meaning no limit),
+ * so two writers cannot both take the last place.
+ */
+const ADD_PENDING_SCRIPT = `
+if tonumber(ARGV[2]) > 0 and redis.call('SCARD', KEYS[1]) >= tonumber(ARGV[2]) then
+  return 0
+end
+redis.call('SADD', KEYS[1], ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 1`
+
 /** Deletes the index only while it still names the given record key. */
 const RELEASE_INDEX_SCRIPT = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -111,23 +123,32 @@ export class WorkspaceInvitationStore {
   }
 
   /**
-   * Writes a record and lists it as pending for its workspace.
+   * Writes a record and lists it as pending for its workspace, unless the workspace already holds
+   * `limit` pending invitations.
    *
    * @param ref - The workspace.
    * @param key - The record key, `winv:{hash}`.
    * @param record - What to store.
    * @param ttlSeconds - How long it lives; the set lives as long as its longest member.
+   * @param limit - The most pending invitations the workspace may hold, or `0` for no limit.
+   * @returns `false` when the workspace was full; the record is then deleted again.
    */
   async write(
     ref: WorkspaceRef,
     key: string,
     record: StoredWorkspaceInvitation,
-    ttlSeconds: number
-  ): Promise<void> {
+    ttlSeconds: number,
+    limit = 0
+  ): Promise<boolean> {
     await this.redis.set(key, JSON.stringify(record), ttlSeconds)
-    const set = this.setKey(ref)
-    await this.redis.sadd(set, key)
-    await this.redis.expire(set, ttlSeconds)
+    const listed = await this.redis.eval(
+      ADD_PENDING_SCRIPT,
+      [this.setKey(ref)],
+      [key, String(limit), String(ttlSeconds)]
+    )
+    if (listed === 1) return true
+    await this.redis.del(key)
+    return false
   }
 
   /**

@@ -834,7 +834,6 @@
       "The invitee index takes the canonicalized address alone — the tenant is already a literal",
       "segment of that key. It is an HMAC and not a bare digest for the reason all of these are:",
       "an address carries too little entropy for a plain SHA-256 to hide it.",
-      "an address carries too little entropy for a plain SHA-256 to hide it.",
       "",
       "The two workspace-invitation preimages use the same length prefix, in UTF-8 bytes, for the",
       "reason `userSubjectPreimages` gives, and leave the last component unprefixed because nothing",
@@ -1666,8 +1665,8 @@
     "$comment": [
       "Workspace invitations, shared by both libraries on one Redis. An invitation is a record keyed by",
       "the SHA-256 of a token only the invitee's mailbox holds; the token is 32 CSPRNG bytes, 64",
-      "lowercase hex characters, and is never stored. Only the member who invited, and the owner, can",
-      "see that an invitation exists, and only through the routes below.",
+      "lowercase hex characters, and is never stored. Whoever the workspace permission `manageMembers` admits can list",
+      "every pending invitation, the inviter's id included.",
       "",
       "Three structures and one counter. `winv:{sha256(token)}` holds the record. `winvidx:` names the",
       "ONE live invitation of an address in a workspace by the record key it points at; it is set by",
@@ -1769,7 +1768,7 @@
       "resendCooldownSeconds": 60,
       "maxResends": 5,
       "invitationsPerInviterPerHour": 20,
-      "limitsAnswer": "The cooldown, the resend limit, the hourly limit, the pending cap (`workspaces.maxPendingInvitationsPerWorkspace`, default 100) and a lost compare-and-set on the index are all refused with 429 auth.too_many_requests. The cooldown and the resend limit apply to a second invitation of the same address as to a resend.",
+      "limitsAnswer": "The cooldown, the resend limit, the hourly limit, the pending cap (`workspaces.maxPendingInvitationsPerWorkspace`, default 100, checked in the same step that lists the record, so two writers cannot both take the last place) and a lost compare-and-set on the index are all refused with 429 auth.too_many_requests. The cooldown and the resend limit apply to a second invitation of the same address as to a resend.",
       "answers": "POST invite, resend and revoke answer 204 with no body, whether or not the address has an account. The email provider is told `accountExists`.",
       "preview": "POST workspaces/invitations/preview takes `{token}` of exactly 64 characters, needs no credential, and answers `{workspaceName, inviterName, role, maskedEmail, accountExists}`. A token that never existed, expired, was withdrawn or consumed, or whose workspace is not active or whose inviter is gone, is answered with the SAME 400 auth.invalid_invitation_token, and the library performs the same repository reads in each case.",
       "tokenInEmail": "A delivery failure is re-thrown without the failing text, which may quote the token."

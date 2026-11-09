@@ -287,6 +287,22 @@ describe('WorkspaceInvitationService', () => {
       expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(2)
     })
 
+    it('lets only one of two concurrent invitations take the last place', async () => {
+      const h = build({ maxPendingInvitationsPerWorkspace: 1 })
+
+      const outcomes = await Promise.all(
+        ['a@example.com', 'b@example.com'].map((email) =>
+          code(h.service.invite(WORKSPACE_REF, OWNER, email, 'viewer', CONTEXT))
+        )
+      )
+
+      expect(outcomes.filter((c) => c === AUTH_ERROR_CODES.TOO_MANY_REQUESTS)).toHaveLength(1)
+      expect(await h.store.pending(WORKSPACE_REF)).toHaveLength(1)
+      expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(1)
+      const loser = outcomes.indexOf(AUTH_ERROR_CODES.TOO_MANY_REQUESTS) === 0 ? 'a' : 'b'
+      expect(await h.store.readByEmail(WORKSPACE_REF, `${loser}@example.com`)).toBeNull()
+    })
+
     it('does not count a replacement against the cap', async () => {
       const h = build({ maxPendingInvitationsPerWorkspace: 1 })
       await h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT)
