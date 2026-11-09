@@ -181,5 +181,20 @@ export const AUTH_THROTTLE_CONFIGS = {
   workspaceScheduleDeletion: { default: { limit: 5, ttl: 300_000 } },
 
   /** POST /workspaces/:workspaceId/restore — 5 requests per 5 minutes per IP. */
-  workspaceRestore: { default: { limit: 5, ttl: 300_000 } }
+  workspaceRestore: { default: { limit: 5, ttl: 300_000 } },
+
+  /** PATCH /workspaces/:workspaceId/members/:userId — 20 requests per minute per IP. */
+  workspaceChangeRole: { default: { limit: 20, ttl: 60_000 } },
+
+  /** DELETE /workspaces/:workspaceId/members/:userId — 20 requests per minute per IP. */
+  workspaceRemoveMember: { default: { limit: 20, ttl: 60_000 } },
+
+  /** POST /workspaces/:workspaceId/leave — 10 requests per minute per IP. */
+  workspaceLeave: { default: { limit: 10, ttl: 60_000 } },
+
+  /**
+   * POST /workspaces/:workspaceId/transfer-ownership — 3 requests per 5 minutes per IP. The route
+   * checks a password, and a hand-over is rare.
+   */
+  workspaceTransferOwnership: { default: { limit: 3, ttl: 300_000 } }
 } as const

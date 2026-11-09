@@ -544,6 +544,65 @@ describe('MembershipService', () => {
     })
   })
 
+  describe('assertMayTransfer', () => {
+    // The local check the transfer route runs before it spends a password check: it must refuse
+    // the same requests transferOwnership refuses, and touch nothing.
+    it.each([
+      [
+        'an editor',
+        { userId: 'actor-1', role: 'editor' },
+        'u2',
+        null,
+        AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE
+      ],
+      ['an owner handing it to themselves', OWNER, 'owner-1', null, AUTH_ERROR_CODES.VALIDATION],
+      ['an owner keeping the owner role', OWNER, 'u2', 'owner', AUTH_ERROR_CODES.VALIDATION],
+      [
+        'an owner keeping a role outside the hierarchy',
+        OWNER,
+        'u2',
+        'ghost',
+        AUTH_ERROR_CODES.VALIDATION
+      ]
+    ])('refuses %s', async (_name, actor, to, keeps, expected) => {
+      const { service, memberships } = build()
+
+      expect(
+        await code(Promise.resolve().then(() => service.assertMayTransfer(actor, to, keeps)))
+      ).toBe(expected)
+      expect(memberships['transferOwnership']).not.toHaveBeenCalled()
+    })
+
+    it.each([null, 'editor'])(
+      'accepts an owner handing it to another member, keeping %p',
+      (keeps) => {
+        const { service } = build()
+
+        expect(() => service.assertMayTransfer(OWNER, 'u2', keeps)).not.toThrow()
+      }
+    )
+  })
+
+  describe('getMember', () => {
+    it('reads the member by the full key and answers the membership as it stands', async () => {
+      const { service, memberships } = build()
+      const found = member('u2', 'editor')
+      memberships['find']?.mockResolvedValue(found)
+
+      await expect(service.getMember(WORKSPACE_REF, 'u2')).resolves.toBe(found)
+      expect(memberships['find']).toHaveBeenCalledWith({ ...WORKSPACE_REF, userId: 'u2' })
+    })
+
+    it('answers workspace-not-found for a member that does not exist', async () => {
+      const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(null)
+
+      await expect(code(service.getMember(WORKSPACE_REF, 'u2'))).resolves.toBe(
+        AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND
+      )
+    })
+  })
+
   describe('transferOwnership', () => {
     it.each(['editor', 'viewer'])('refuses a transfer by a %s, before any write', async (role) => {
       const { service, memberships, access, events } = build()

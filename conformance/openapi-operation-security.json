@@ -28,6 +28,7 @@
   "operations": {
     "DELETE /platform/sessions": "platform",
     "DELETE /sessions/:id": "access",
+    "DELETE /workspaces/:workspaceId/members/:userId": "access",
     "GET /me": "access",
     "GET /oauth/:provider": "none",
     "GET /oauth/:provider/callback": "none",
@@ -37,6 +38,7 @@
     "GET /workspaces/:workspaceId/access": "access",
     "GET /workspaces/:workspaceId/members": "access",
     "PATCH /workspaces/:workspaceId": "access",
+    "PATCH /workspaces/:workspaceId/members/:userId": "access",
     "POST /email/change": "access",
     "POST /email/change/confirm": "none",
     "POST /invitations": "access",
@@ -68,9 +70,11 @@
     "POST /sessions/revoke-all": "accessAndRefreshRequired",
     "POST /verify-email": "none",
     "POST /workspaces": "access",
+    "POST /workspaces/:workspaceId/leave": "access",
     "POST /workspaces/:workspaceId/restore": "access",
     "POST /workspaces/:workspaceId/schedule-deletion": "access",
     "POST /workspaces/:workspaceId/switch": "access",
+    "POST /workspaces/:workspaceId/transfer-ownership": "access",
     "POST /ws-ticket": "access"
   }
 }

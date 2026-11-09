@@ -58,6 +58,20 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
       "newEmail"
     ]
   },
+  "ChangeMemberRoleDto": {
+    "type": "object",
+    "properties": {
+      "role": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "maxLength": 64,
+        "minLength": 1
+      }
+    },
+    "required": [
+      "role"
+    ]
+  },
   "ChangePasswordDto": {
     "type": "object",
     "properties": {
@@ -176,6 +190,27 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
     "required": [
       "email",
       "password"
+    ]
+  },
+  "MemberRouteParamsDto": {
+    "type": "object",
+    "properties": {
+      "workspaceId": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "userId": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "maxLength": 128,
+        "minLength": 1
+      }
+    },
+    "required": [
+      "userId",
+      "workspaceId"
     ]
   },
   "MfaChallengeDto": {
@@ -487,6 +522,31 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
         "minLength": 1
       }
     }
+  },
+  "TransferOwnershipDto": {
+    "type": "object",
+    "properties": {
+      "userId": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "demoteSelfTo": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "maxLength": 64,
+        "minLength": 1
+      },
+      "password": {
+        "type": "string",
+        "maxLength": 128,
+        "minLength": 1
+      }
+    },
+    "required": [
+      "userId"
+    ]
   },
   "VerifyEmailDto": {
     "type": "object",

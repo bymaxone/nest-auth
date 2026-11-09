@@ -13,12 +13,14 @@
 import type { DtoClass } from './derive-request-schemas'
 import { AcceptInvitationDto } from '../dto/accept-invitation.dto'
 import { ChangeEmailDto } from '../dto/change-email.dto'
+import { ChangeMemberRoleDto } from '../dto/change-member-role.dto'
 import { ChangePasswordDto } from '../dto/change-password.dto'
 import { ConfirmEmailChangeDto } from '../dto/confirm-email-change.dto'
 import { CreateInvitationDto } from '../dto/create-invitation.dto'
 import { CreateWorkspaceDto } from '../dto/create-workspace.dto'
 import { ForgotPasswordDto } from '../dto/forgot-password.dto'
 import { LoginDto } from '../dto/login.dto'
+import { MemberRouteParamsDto } from '../dto/member-route-params.dto'
 import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
 import { MfaDisableDto } from '../dto/mfa-disable.dto'
 import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-codes.dto'
@@ -35,6 +37,7 @@ import { ResendVerificationDto } from '../dto/resend-verification.dto'
 import { ResetPasswordDto } from '../dto/reset-password.dto'
 import { RevokeInvitationDto } from '../dto/revoke-invitation.dto'
 import { ScheduleWorkspaceDeletionDto } from '../dto/schedule-workspace-deletion.dto'
+import { TransferOwnershipDto } from '../dto/transfer-ownership.dto'
 import { VerifyEmailDto } from '../dto/verify-email.dto'
 import { VerifyOtpDto } from '../dto/verify-otp.dto'
 import { WorkspacePageQueryDto } from '../dto/workspace-page-query.dto'
@@ -43,12 +46,14 @@ import { WorkspacePageQueryDto } from '../dto/workspace-page-query.dto'
 export const REQUEST_SCHEMA_DTOS: readonly DtoClass[] = [
   AcceptInvitationDto,
   ChangeEmailDto,
+  ChangeMemberRoleDto,
   ChangePasswordDto,
   ConfirmEmailChangeDto,
   CreateInvitationDto,
   CreateWorkspaceDto,
   ForgotPasswordDto,
   LoginDto,
+  MemberRouteParamsDto,
   MfaChallengeDto,
   MfaDisableDto,
   MfaRegenerateRecoveryCodesDto,
@@ -65,6 +70,7 @@ export const REQUEST_SCHEMA_DTOS: readonly DtoClass[] = [
   ResetPasswordDto,
   RevokeInvitationDto,
   ScheduleWorkspaceDeletionDto,
+  TransferOwnershipDto,
   VerifyEmailDto,
   VerifyOtpDto,
   WorkspacePageQueryDto

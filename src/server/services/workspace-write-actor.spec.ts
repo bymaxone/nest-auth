@@ -164,6 +164,11 @@ const MEMBERSHIP_METHODS: Record<string, Entry> = {
   listMine: { kind: 'read' },
   listMembers: { kind: 'read' },
   listSoleOwnedWorkspaces: { kind: 'read' },
+  getMember: { kind: 'read' },
+  assertMayTransfer: {
+    kind: 'exempt',
+    reason: 'a local check that writes nothing; transferOwnership repeats it before the write'
+  },
   changeRole: {
     kind: 'judged',
     write: 'memberships',
@@ -248,7 +253,7 @@ describe('the acting member on every write the workspace services make', () => {
       (entry) => entry.kind === 'exempt'
     )
 
-    expect(exempt.length).toBe(4)
+    expect(exempt.length).toBe(5)
     for (const entry of exempt) {
       expect(entry.kind === 'exempt' && entry.reason.length > 20).toBe(true)
     }

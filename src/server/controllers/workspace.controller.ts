@@ -7,10 +7,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Inject,
+  Param,
   Patch,
   Post,
   Query,
@@ -32,9 +34,12 @@ import type { CurrentWorkspaceContext } from '../decorators/current-workspace.de
 import { RequestEncoding } from '../decorators/request-encoding.decorator'
 import { WorkspacePermission } from '../decorators/workspace-permission.decorator'
 import { WorkspaceRoles } from '../decorators/workspace-roles.decorator'
+import { ChangeMemberRoleDto } from '../dto/change-member-role.dto'
 import { CreateWorkspaceDto } from '../dto/create-workspace.dto'
+import { MemberRouteParamsDto } from '../dto/member-route-params.dto'
 import { RenameWorkspaceDto } from '../dto/rename-workspace.dto'
 import { ScheduleWorkspaceDeletionDto } from '../dto/schedule-workspace-deletion.dto'
+import { TransferOwnershipDto } from '../dto/transfer-ownership.dto'
 import { WorkspacePageQueryDto } from '../dto/workspace-page-query.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
@@ -52,11 +57,13 @@ import { WorkspaceService } from '../services/workspace.service'
 import { dashboardHookContext } from '../utils/request-hook-context'
 import {
   toAccessResponse,
+  toMemberView,
   toMembersResponse,
   toMyWorkspacesResponse,
   toWorkspaceView
 } from '../utils/workspace-views'
 import type {
+  MemberView,
   MembersResponse,
   MyWorkspacesResponse,
   WorkspaceAccessResponse,
@@ -337,6 +344,146 @@ export class WorkspaceController {
     await this.workspaces.restore(
       refOf(workspace),
       actorOf(workspace),
+      dashboardHookContext(req, user)
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // PATCH /workspaces/:workspaceId/members/:userId
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Changes a member's role.
+   *
+   * The service applies the role ceiling and the last-owner rule; this route only names who, and
+   * to what. The answer is the membership as it now stands.
+   *
+   * @param workspace - The access the guard resolved.
+   * @param user - Verified JWT payload from the access token.
+   * @param params - The workspace and the member.
+   * @param dto - The role to give.
+   * @param req - Incoming request, for the hook context.
+   * @returns The updated membership.
+   */
+  @UseGuards(WorkspaceGuard)
+  @WorkspacePermission('manageMembers')
+  @Throttle(AUTH_THROTTLE_CONFIGS.workspaceChangeRole)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceChangeRole)
+  @Patch(':workspaceId/members/:userId')
+  async changeRole(
+    @CurrentWorkspace() workspace: CurrentWorkspaceContext,
+    @CurrentUser() user: DashboardJwtPayload,
+    @Param() params: MemberRouteParamsDto,
+    @Body() dto: ChangeMemberRoleDto,
+    @Req() req: Request
+  ): Promise<MemberView> {
+    return toMemberView(
+      await this.actions.changeRole(
+        refOf(workspace),
+        params.userId,
+        dto.role,
+        actorOf(workspace),
+        dashboardHookContext(req, user)
+      )
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE /workspaces/:workspaceId/members/:userId
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Removes a member from the workspace. Nothing but the path is read.
+   *
+   * @param workspace - The access the guard resolved.
+   * @param user - Verified JWT payload from the access token.
+   * @param params - The workspace and the member.
+   * @param req - Incoming request, for the hook context.
+   */
+  @UseGuards(WorkspaceGuard)
+  @WorkspacePermission('manageMembers')
+  @Throttle(AUTH_THROTTLE_CONFIGS.workspaceRemoveMember)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceRemoveMember)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Delete(':workspaceId/members/:userId')
+  async removeMember(
+    @CurrentWorkspace() workspace: CurrentWorkspaceContext,
+    @CurrentUser() user: DashboardJwtPayload,
+    @Param() params: MemberRouteParamsDto,
+    @Req() req: Request
+  ): Promise<void> {
+    await this.memberships.remove(
+      refOf(workspace),
+      params.userId,
+      actorOf(workspace),
+      dashboardHookContext(req, user)
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /workspaces/:workspaceId/leave
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Lets the caller leave the workspace.
+   *
+   * @param workspace - The access the guard resolved.
+   * @param user - Verified JWT payload from the access token.
+   * @param req - Incoming request, for the hook context.
+   */
+  @UseGuards(WorkspaceGuard)
+  @WorkspaceRoles(ANY_WORKSPACE_MEMBER)
+  @Throttle(AUTH_THROTTLE_CONFIGS.workspaceLeave)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceLeave)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequestEncoding('when-body')
+  @Post(':workspaceId/leave')
+  async leave(
+    @CurrentWorkspace() workspace: CurrentWorkspaceContext,
+    @CurrentUser() user: DashboardJwtPayload,
+    @Req() req: Request
+  ): Promise<void> {
+    await this.memberships.leave(
+      refOf(workspace),
+      workspace.userId,
+      dashboardHookContext(req, user)
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /workspaces/:workspaceId/transfer-ownership
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Hands ownership to another member.
+   *
+   * The checks run from cheapest to costliest. The guard admits any member; then everything the
+   * request alone decides (only an owner may hand ownership over, not to oneself, and the role the
+   * giver keeps must exist) is checked before the password, so a caller who may not transfer cannot
+   * spend a key derivation or a lockout attempt. Then the caller is re-proved, then the write.
+   *
+   * @param workspace - The access the guard resolved.
+   * @param user - Verified JWT payload from the access token.
+   * @param dto - The receiver, the role the giver keeps and the giver's proof.
+   * @param req - Incoming request, for the hook context.
+   */
+  @UseGuards(WorkspaceGuard)
+  @WorkspaceRoles(ANY_WORKSPACE_MEMBER)
+  @Throttle(AUTH_THROTTLE_CONFIGS.workspaceTransferOwnership)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceTransferOwnership)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Post(':workspaceId/transfer-ownership')
+  async transferOwnership(
+    @CurrentWorkspace() workspace: CurrentWorkspaceContext,
+    @CurrentUser() user: DashboardJwtPayload,
+    @Body() dto: TransferOwnershipDto,
+    @Req() req: Request
+  ): Promise<void> {
+    await this.actions.transferOwnership(
+      refOf(workspace),
+      actorOf(workspace),
+      user,
+      { toUserId: dto.userId, keeps: dto.demoteSelfTo ?? null, password: dto.password },
       dashboardHookContext(req, user)
     )
   }
