@@ -130,7 +130,8 @@ request rather than as a finding.
 ### Suppressions are refusals, not exceptions
 
 `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, `eslint-disable` in any form,
-`as unknown as` laundering a real type error, `istanbul ignore`, and in Rust `#[allow(...)]` over a
+`as unknown as` laundering a real type error (`scripts/check-double-assertions.mjs` fails a new site
+and a baselined file that gains one), `istanbul ignore`, and in Rust `#[allow(...)]` over a
 lint gate or `unsafe` without a `// SAFETY:` comment are blocking findings.
 
 Anything a configured gate already reports belongs to the gate, not to a review: where a repository
