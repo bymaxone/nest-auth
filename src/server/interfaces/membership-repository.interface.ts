@@ -119,6 +119,24 @@ export interface TransferOwnershipParams extends WorkspaceRef {
   audit: WorkspaceAuditEvent
 }
 
+/** Input to {@link IMembershipRepository.countOwned}. */
+export interface CountOwnedParams {
+  /** The tenant the member belongs to. */
+  tenantId: string
+  /** The member. */
+  userId: string
+  /** The role that owns a workspace. */
+  ownerRole: string
+}
+
+/** Input to {@link IMembershipRepository.listSoleOwned}. */
+export interface ListSoleOwnedParams extends CountOwnedParams {
+  /** The `nextCursor` of the previous page, or absent for the first. */
+  cursor?: string
+  /** Page size. */
+  limit: number
+}
+
 /** Input to {@link IMembershipRepository.getLastActiveWorkspaceId}. */
 export interface LastActiveWorkspaceRef {
   /** The tenant the member belongs to. */
@@ -238,6 +256,32 @@ export interface IMembershipRepository {
    *   not an active owner, `'target_not_member'` when `toUserId` is not an active member.
    */
   transferOwnership(params: TransferOwnershipParams): Promise<TransferOwnershipResult>
+
+  /**
+   * Counts the workspaces a member owns, for the per-user cap.
+   *
+   * Counts the workspaces in which the member is an ACTIVE `ownerRole` holder and that are not
+   * `deleted`, so one pending deletion still counts. Read from the primary, like every read the
+   * library decides on.
+   *
+   * @param params - The tenant, member and owner role.
+   * @returns How many.
+   */
+  countOwned(params: CountOwnedParams): Promise<number>
+
+  /**
+   * Lists the workspaces whose ONLY active `ownerRole` holder is this member, so a host can block or
+   * route an account deletion that would orphan them.
+   *
+   * Excludes `deleted` workspaces. Ordered by workspace creation instant and then workspace id,
+   * ascending. The cursor is opaque to the library and valid only for the same tenant and member; a
+   * malformed cursor, or one issued for another query, restarts from the first page and never widens
+   * the scope. The library bounds `limit` to 1 through 100.
+   *
+   * @param params - The tenant, member, owner role and page.
+   * @returns One page of workspaces.
+   */
+  listSoleOwned(params: ListSoleOwnedParams): Promise<MembershipPage<AuthWorkspace>>
 
   /**
    * Optional: the workspace this member last switched to, for the post-sign-in landing.

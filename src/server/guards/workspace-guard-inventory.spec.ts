@@ -14,6 +14,10 @@ import { join } from 'node:path'
 import { Controller, Get, UseGuards } from '@nestjs/common'
 import { GUARDS_METADATA } from '@nestjs/common/constants'
 
+import {
+  ALLOW_PENDING_WORKSPACE_KEY,
+  AllowPendingWorkspace
+} from '../decorators/allow-pending-workspace.decorator'
 import { WORKSPACE_ROLES_KEY, WorkspaceRoles } from '../decorators/workspace-roles.decorator'
 import { WorkspaceGuard } from './workspace.guard'
 
@@ -46,6 +50,30 @@ function routesWithoutRoles(controller: Constructor): string[] {
     })
     .map((name) => `${controller.name}.${name}`)
 }
+
+/**
+ * Names every route of a controller that admits the owner of a workspace pending deletion, whether
+ * the marker sits on the handler or on the class.
+ *
+ * @param controller - The controller class.
+ * @returns The `Class.method` of each such route.
+ */
+function routesAdmittingPending(controller: Constructor): string[] {
+  const classMarked = Reflect.getMetadata(ALLOW_PENDING_WORKSPACE_KEY, controller) === true
+  const prototype = controller.prototype as Record<string, unknown>
+
+  return Object.getOwnPropertyNames(prototype)
+    .filter((name) => name !== 'constructor' && typeof prototype[name] === 'function')
+    .filter(
+      (name) =>
+        classMarked ||
+        Reflect.getMetadata(ALLOW_PENDING_WORKSPACE_KEY, prototype[name] as object) === true
+    )
+    .map((name) => `${controller.name}.${name}`)
+}
+
+/** The only shipped routes allowed to admit a workspace pending deletion. */
+const ROUTES_ADMITTING_PENDING: string[] = []
 
 describe('WorkspaceGuard route inventory', () => {
   // The check has to be able to fail, or the sweep over the shipped controllers proves nothing.
@@ -134,5 +162,50 @@ describe('WorkspaceGuard route inventory', () => {
 
     expect(files.length).toBeGreaterThan(0)
     expect(offenders).toEqual([])
+  })
+
+  describe('routes that admit a workspace pending deletion', () => {
+    // The check has to be able to find the marker, or the sweep below proves nothing.
+    it('finds the marker on a handler and on a whole class', () => {
+      @Controller()
+      class OnHandler {
+        @AllowPendingWorkspace()
+        @Get()
+        a(): void {}
+
+        @Get()
+        b(): void {}
+      }
+
+      @AllowPendingWorkspace()
+      @Controller()
+      class OnClass {
+        @Get()
+        c(): void {}
+      }
+
+      expect([...routesAdmittingPending(OnHandler), ...routesAdmittingPending(OnClass)]).toEqual([
+        'OnHandler.a',
+        'OnClass.c'
+      ])
+    })
+
+    // Adding the marker to a route is a decision about data that is about to be deleted, so it
+    // is listed here by name; a route that gains it without this list changing fails the test.
+    it('lists exactly the shipped routes that carry it', async () => {
+      const directory = join(__dirname, '../controllers')
+      const files = readdirSync(directory).filter((name) => /\.controller\.ts$/.test(name))
+      const found: string[] = []
+
+      for (const file of files) {
+        const loaded = (await import(join(directory, file))) as Record<string, unknown>
+        for (const exported of Object.values(loaded)) {
+          if (typeof exported === 'function')
+            found.push(...routesAdmittingPending(exported as Constructor))
+        }
+      }
+
+      expect(found.sort()).toEqual([...ROUTES_ADMITTING_PENDING].sort())
+    })
   })
 })

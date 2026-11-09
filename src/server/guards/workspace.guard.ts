@@ -14,6 +14,7 @@ import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
 import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
+import { ALLOW_PENDING_WORKSPACE_KEY } from '../decorators/allow-pending-workspace.decorator'
 import type { WorkspaceRequest } from '../decorators/current-workspace.decorator'
 import { WORKSPACE_ROLES_KEY } from '../decorators/workspace-roles.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -43,7 +44,9 @@ type AcceptedRole = string | typeof ANY_WORKSPACE_MEMBER
  *    remembered default);
  * 4. resolves the caller's membership with the tenant taken from the token. A workspace that does
  *    not exist, one that is not active and one the caller does not belong to all answer
- *    `404 auth.workspace_not_found`, so the answer reveals nothing about which workspaces exist;
+ *    `404 auth.workspace_not_found`, so the answer reveals nothing about which workspaces exist.
+ *    The one exception is the OWNER of a workspace pending deletion, who gets
+ *    `409 auth.workspace_pending_deletion` unless the route carries `@AllowPendingWorkspace()`;
  * 5. checks the role through `workspaces.roles.hierarchy`, answering `403
  *    auth.insufficient_workspace_role` when it is below what the route declares;
  * 6. attaches the access to `request.workspace` for `@CurrentWorkspace()`.
@@ -77,18 +80,31 @@ export class WorkspaceGuard implements CanActivate {
     }
 
     const workspaceId = resolveRequestWorkspace(request, this.group.resolveRequestWorkspace)
-    const member = await this.access.resolveMembership({
+    const access = await this.access.resolveAccess({
       tenantId: user.tenantId,
       workspaceId,
       userId: user.sub
     })
-    if (member === null) throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
+    if (access.kind === 'denied') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
+    if (access.kind === 'pending_deletion' && !this.admitsPending(context)) {
+      throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION)
+    }
+    const { member } = access
     if (!this.accepts(accepted, member.role)) {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     }
 
     request.workspace = { ...member }
     return true
+  }
+
+  private admitsPending(context: ExecutionContext): boolean {
+    return (
+      this.reflector.getAllAndOverride<boolean | undefined>(ALLOW_PENDING_WORKSPACE_KEY, [
+        context.getHandler(),
+        context.getClass()
+      ]) === true
+    )
   }
 
   private declaredRoles(context: ExecutionContext): AcceptedRole[] {

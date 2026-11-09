@@ -45,6 +45,8 @@ const MEMBERSHIP_KEYS: KeyTable = {
   find: ['tenantId', 'workspaceId', 'userId'],
   listForUser: ['tenantId', 'userId'],
   listForWorkspace: ['tenantId', 'workspaceId'],
+  countOwned: ['tenantId', 'userId'],
+  listSoleOwned: ['tenantId', 'userId'],
   create: ['tenantId', 'workspaceId', 'userId'],
   changeRole: ['tenantId', 'workspaceId', 'userId'],
   remove: ['tenantId', 'workspaceId', 'userId'],

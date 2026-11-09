@@ -193,6 +193,7 @@ export type {
 export type {
   AuthMembership,
   ChangeMembershipRoleParams,
+  CountOwnedParams,
   CreateMembershipParams,
   CreateMembershipResult,
   GuardedWriteResult,
@@ -200,6 +201,7 @@ export type {
   LastActiveWorkspaceRef,
   ListMembershipsForUserParams,
   ListMembershipsForWorkspaceParams,
+  ListSoleOwnedParams,
   MembershipPage,
   MembershipRef,
   MembershipStatus,
@@ -212,6 +214,7 @@ export type {
 export type { WorkspaceAuditEvent } from './interfaces/workspace-audit.interface'
 export type {
   AuthWorkspace,
+  CreateWorkspaceResult,
   CreateWorkspaceWithOwnerParams,
   IWorkspaceRepository,
   RenameWorkspaceParams,
@@ -465,10 +468,14 @@ export {
 export type { IssueApiKeyInput, IssuedApiKey, RotateApiKeyInput } from './services/api-key.service'
 export type { ApiKeyClock } from './services/api-key-clock'
 export { WorkspaceRoles, WORKSPACE_ROLES_KEY } from './decorators/workspace-roles.decorator'
+export {
+  ALLOW_PENDING_WORKSPACE_KEY,
+  AllowPendingWorkspace
+} from './decorators/allow-pending-workspace.decorator'
 export { CurrentWorkspace } from './decorators/current-workspace.decorator'
 export type {
   CurrentWorkspaceContext,
   WorkspaceRequest
 } from './decorators/current-workspace.decorator'
 export { WorkspaceAccessService } from './services/workspace-access.service'
-export type { ResolvedWorkspaceMember } from './services/workspace-access.service'
+export type { ResolvedWorkspaceMember, WorkspaceAccess } from './services/workspace-access.service'

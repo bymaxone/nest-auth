@@ -41,6 +41,19 @@ export interface ResolvedWorkspaceMember extends MembershipRef {
   role: string
 }
 
+/**
+ * What the rows say about a caller's access to a workspace.
+ *
+ * - `member`: an active member of an active workspace.
+ * - `pending_deletion`: an active OWNER of a workspace pending deletion. Only an owner is told, so
+ *   the answer lets a client offer to restore it; every other caller reads as `denied`.
+ * - `denied`: anything else, a missing workspace, an inactive one and a non-member alike.
+ */
+export type WorkspaceAccess =
+  | { kind: 'member'; member: ResolvedWorkspaceMember }
+  | { kind: 'pending_deletion'; member: ResolvedWorkspaceMember }
+  | { kind: 'denied' }
+
 /** The version counters and the cached entry one Redis round trip returns. */
 interface MembershipRead {
   workspaceVersion: string
@@ -91,16 +104,34 @@ export class WorkspaceAccessService {
    * @throws {TypeError} When any part of the key is blank.
    */
   async resolveMembership(ref: MembershipRef): Promise<ResolvedWorkspaceMember | null> {
+    const access = await this.resolveAccess(ref)
+    return access.kind === 'member' ? access.member : null
+  }
+
+  /**
+   * Resolves what the rows say about a caller's access to a workspace, without reading anything the
+   * refusal needs beyond the two rows every refusal already reads.
+   *
+   * @param ref - The tenant, workspace and user.
+   * @returns The access: `member`, `pending_deletion` for the owner of a workspace pending
+   *   deletion, or `denied`.
+   * @throws {TypeError} When any part of the key is blank.
+   */
+  async resolveAccess(ref: MembershipRef): Promise<WorkspaceAccess> {
     assertKey(ref)
     const ttl = this.group.membershipCacheTtlSeconds
     if (ttl === 0) return this.readRepositories(ref)
 
     const cached = await this.readCache(ref)
-    if (cached !== null && cached.role !== null) return { ...ref, role: cached.role }
+    if (cached !== null && cached.role !== null) {
+      return { kind: 'member', member: { ...ref, role: cached.role } }
+    }
 
-    const member = await this.readRepositories(ref)
-    if (cached !== null && member !== null) await this.fillCache(ref, cached, member.role, ttl)
-    return member
+    const access = await this.readRepositories(ref)
+    if (cached !== null && access.kind === 'member') {
+      await this.fillCache(ref, cached, access.member.role, ttl)
+    }
+    return access
   }
 
   /**
@@ -188,15 +219,21 @@ export class WorkspaceAccessService {
    * Reads the workspace and the membership together, whatever the first one says.
    *
    * A missing workspace, an inactive one and a non-member then cost the same repository work, so
-   * the time an answer takes does not tell a caller which of the three it was.
+   * the time an answer takes does not tell a caller which of the three it was. The pending-deletion
+   * answer for an owner is decided from these same two rows.
    */
-  private async readRepositories(ref: MembershipRef): Promise<ResolvedWorkspaceMember | null> {
+  private async readRepositories(ref: MembershipRef): Promise<WorkspaceAccess> {
     const [workspace, membership] = await Promise.all([
       this.workspaceRepo.findById({ tenantId: ref.tenantId, workspaceId: ref.workspaceId }),
       this.membershipRepo.find(ref)
     ])
-    if (workspace?.status !== 'active' || membership?.status !== 'active') return null
-    return { ...ref, role: membership.role }
+    if (membership?.status !== 'active' || workspace === null) return { kind: 'denied' }
+    const member = { ...ref, role: membership.role }
+    if (workspace.status === 'active') return { kind: 'member', member }
+    const ownsIt = membership.role === this.group.roles.ownerRole
+    return workspace.status === 'pending_deletion' && ownsIt
+      ? { kind: 'pending_deletion', member }
+      : { kind: 'denied' }
   }
 }
 

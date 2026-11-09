@@ -65,7 +65,14 @@ export interface WorkspaceOptions {
    */
   allowCreate?: boolean | ((user: SafeAuthUser) => boolean | Promise<boolean>)
 
-  /** Most workspaces one identity may own at a time; `0` is unlimited. Default: `0`. */
+  /**
+   * Most workspaces one identity may own at a time; `0` is unlimited. Default: `0`.
+   *
+   * A workspace pending deletion still counts until it is finalized or restored, so an identity at
+   * the limit cannot create another while one of its workspaces waits out the grace period. The
+   * library checks the count before creating, which is advisory under concurrency; a host that
+   * needs an exact cap enforces it inside the repository's create call, which receives this value.
+   */
   maxWorkspacesPerUser?: number
 
   /** How long a workspace invitation stays valid, in seconds. Default: 604800 (7 days). Max: 2592000. */
