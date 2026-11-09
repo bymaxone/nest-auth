@@ -14,7 +14,8 @@ import type { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
  *
  * - `'open'`: anyone may register, by password or through an OAuth provider.
  * - `'invitation-only'`: sign-up is closed except through a valid invitation for that exact
- *   address. Existing accounts keep signing in.
+ *   address. Existing accounts keep signing in. Startup refuses this mode because no enforcement
+ *   exists for it: a mode accepted without a gate would leave sign-up open.
  */
 export type RegistrationMode = 'open' | 'invitation-only'
 

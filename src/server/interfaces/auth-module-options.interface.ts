@@ -805,8 +805,8 @@ export interface BymaxAuthModuleOptions {
   workspaces?: WorkspaceOptions
 
   /**
-   * Who may create an account on their own: `'open'` (default) or `'invitation-only'`. The closed
-   * mode needs `workspaces.enabled` or `invitations.enabled`, or no account could be created.
+   * Who may create an account on their own: `'open'` (default) or `'invitation-only'`. Startup
+   * refuses `'invitation-only'` because no enforcement exists for it.
    */
   registration?: RegistrationMode
 

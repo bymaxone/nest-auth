@@ -176,25 +176,25 @@ function validateWorkspaceTuning(group: WorkspaceOptions): void {
 }
 
 /**
- * Resolves the `registration` mode and refuses a closed mode no account could ever be created in.
+ * Resolves the `registration` mode.
+ *
+ * `'invitation-only'` is refused at startup because no enforcement exists for it: neither the
+ * password sign-up route nor the OAuth create path reads the mode, so accepting it would leave
+ * sign-up open while the host believes it closed.
  *
  * @param userOptions - The options as supplied.
- * @returns The mode, `'open'` when none was set.
- * @throws {Error} For an unknown mode, or `'invitation-only'` with no invitation path enabled.
+ * @returns `'open'`, the only mode that is enforced.
+ * @throws {Error} For an unknown mode, or for `'invitation-only'`.
  */
 export function resolveRegistration(userOptions: BymaxAuthModuleOptions): RegistrationMode {
   const mode = userOptions.registration ?? 'open'
   if (mode !== 'open' && mode !== 'invitation-only') {
     throw new Error(`[BymaxAuthModule] registration must be 'open' or 'invitation-only'.`)
   }
-  if (
-    mode === 'invitation-only' &&
-    userOptions.workspaces?.enabled !== true &&
-    userOptions.invitations?.enabled !== true
-  ) {
+  if (mode === 'invitation-only') {
     throw new Error(
-      `[BymaxAuthModule] registration: 'invitation-only' needs workspaces.enabled or ` +
-        `invitations.enabled: with neither, no account could ever be created.`
+      `[BymaxAuthModule] registration: 'invitation-only' is not enforced by this version: ` +
+        `remove it or set 'open'. Accepting it would leave sign-up open while it is configured closed.`
     )
   }
   return mode

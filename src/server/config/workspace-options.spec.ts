@@ -293,46 +293,36 @@ describe('resolveRegistration', () => {
     ).toThrow("registration must be 'open' or 'invitation-only'.")
   })
 
-  it('refuses invitation-only when no invitation path is enabled', () => {
+  it.each([
+    ['no other option', undefined, {}],
+    ['workspaces enabled', {}, {}],
+    ['tenant invitations enabled', undefined, { invitations: { enabled: true } }]
+  ])('refuses invitation-only with %s, naming the missing enforcement', (_name, group, extra) => {
     expect(() =>
-      resolveRegistration(options(undefined, { registration: 'invitation-only' }))
-    ).toThrow(/needs workspaces\.enabled or invitations\.enabled/)
-  })
-
-  it('refuses invitation-only with a disabled workspace group and no tenant invitations', () => {
-    expect(() =>
-      resolveRegistration(
-        options(
-          { enabled: false },
-          { registration: 'invitation-only', invitations: { enabled: false } }
-        )
-      )
-    ).toThrow(/needs workspaces\.enabled or invitations\.enabled/)
-  })
-
-  it('accepts invitation-only with workspaces enabled', () => {
-    expect(resolveRegistration(options({}, { registration: 'invitation-only' }))).toBe(
-      'invitation-only'
+      resolveRegistration(options(group, { registration: 'invitation-only', ...extra }))
+    ).toThrow(
+      "[BymaxAuthModule] registration: 'invitation-only' is not enforced by this version: " +
+        "remove it or set 'open'. Accepting it would leave sign-up open while it is configured closed."
     )
   })
 
-  it('accepts invitation-only with tenant invitations enabled', () => {
-    expect(
-      resolveRegistration(
-        options(undefined, { registration: 'invitation-only', invitations: { enabled: true } })
-      )
-    ).toBe('invitation-only')
+  it('accepts an explicit open mode', () => {
+    expect(resolveRegistration(options(undefined, { registration: 'open' }))).toBe('open')
   })
 })
 
 describe('resolveOptions with workspaces', () => {
   it('carries the resolved group and the registration mode', () => {
-    const resolved = resolveOptions(
-      options({ deletionGraceDays: 7 }, { registration: 'invitation-only' })
-    )
+    const resolved = resolveOptions(options({ deletionGraceDays: 7 }, { registration: 'open' }))
 
     expect(resolved.workspaces).toMatchObject({ enabled: true, deletionGraceDays: 7 })
-    expect(resolved.registration).toBe('invitation-only')
+    expect(resolved.registration).toBe('open')
+  })
+
+  it('refuses invitation-only while resolving the module options', () => {
+    expect(() =>
+      resolveOptions(options({ deletionGraceDays: 7 }, { registration: 'invitation-only' }))
+    ).toThrow(/registration: 'invitation-only' is not enforced by this version/)
   })
 
   it('has no workspace group when the feature is off, and registration open', () => {
