@@ -900,6 +900,19 @@
       "$comment": "The `limit` query parameter of a paginated list, a whole number written in decimal digits without a leading zero (`5`, not `05`). A value outside 1 to 100, or not written that way, is refused with 400 auth.validation naming the field limit, a present but empty `limit=` included; it is never clamped. The cursor is opaque, 1 to 512 characters (an empty `cursor=` is refused) with no control character, and says only where the next page starts: the tenant and the workspace of a list always come from the credential and the route."
     }
   },
+  "passwordResetOrder": {
+    "$comment": [
+      "The order of the checks on the reset-password route, which decides the answer for a request",
+      "that fails more than one of them. It is the same in both libraries, so a client sees one",
+      "behaviour whichever one serves it."
+    ],
+    "steps": [
+      "1. classify the proof without spending it: more than one proof, none, or one the configured passwordReset.method does not accept answers auth.password_reset_token_invalid, whatever the new password is",
+      "2. judge the new password (the policy floor, then the breach screen): auth.validation for a password under the floor, auth.password_compromised for a known one",
+      "3. spend the proof: auth.password_reset_token_invalid or auth.otp_invalid for a proof that is not valid"
+    ],
+    "reason": "A request with no usable proof never reaches the password policy, so an unproven caller cannot drive the breach screen (an outbound query when a host wires one), and a refused password never consumes a single-use proof."
+  },
   "refreshTokenInput": {
     "$comment": [
       "Where a refresh token may arrive and what each place accepts. The bound is the",
