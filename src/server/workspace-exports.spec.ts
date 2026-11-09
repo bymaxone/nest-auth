@@ -14,9 +14,11 @@ import {
   type WorkspaceOptions,
   type WorkspacePermissionOptions,
   type WorkspaceRoleList,
+  MembershipService,
   WorkspaceAccessService,
   WorkspaceGuard,
-  WorkspaceRoles
+  WorkspaceRoles,
+  WorkspaceService
 } from './index'
 
 describe('workspace exports', () => {
@@ -52,6 +54,10 @@ describe('workspace exports', () => {
 
   it('exports the guard, the decorators and the access service a host mounts', () => {
     expect([WorkspaceGuard, WorkspaceAccessService].map((value) => typeof value)).toEqual([
+      'function',
+      'function'
+    ])
+    expect([WorkspaceService, MembershipService].map((value) => typeof value)).toEqual([
       'function',
       'function'
     ])

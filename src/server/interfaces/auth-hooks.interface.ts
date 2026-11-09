@@ -21,6 +21,7 @@
 import type { SessionAlertInfo } from './email-provider.interface'
 import type { OAuthProfile } from './oauth-provider.interface'
 import type { SafeAuthUser } from './user-repository.interface'
+import type { WorkspaceAuditEvent } from './workspace-audit.interface'
 
 /**
  * Request context passed to every hook invocation.
@@ -471,6 +472,45 @@ export interface IAuthHooks {
    * @param context - Request metadata (IP, user agent, sanitized headers).
    */
   onApiKeyRequest?(event: ApiKeyAccessEvent, context: HookContext): Promise<void> | void
+
+  /**
+   * Called before a workspace is created, and able to refuse it (a plan, a quota, an approval).
+   *
+   * Runs after `workspaces.allowCreate` and the per-user limit have passed, and before anything is
+   * written. A refusal answers `403 auth.forbidden`; `reason` is returned to the caller, so keep
+   * it free of anything sensitive. A hook that throws refuses the creation too.
+   *
+   * @param user - The identity creating the workspace.
+   * @param data - What it asked for: the trimmed name.
+   * @param context - Request metadata (IP, user agent, sanitized headers).
+   * @returns Whether to proceed.
+   */
+  beforeWorkspaceCreate?(
+    user: SafeAuthUser,
+    data: { name: string },
+    context: HookContext
+  ): Promise<BeforeWorkspaceCreateResult> | BeforeWorkspaceCreateResult
+
+  /**
+   * Called after a workspace or membership change has committed, with the event that was handed to
+   * the repository for persistence.
+   *
+   * Informational and best-effort: it never delays or fails the operation, and it can be lost if
+   * the process dies between the commit and the call, which is why the repository's persisted audit
+   * row is the record. `access.denied` and `workspace.switched` reach only this hook.
+   *
+   * @param event - What changed, and who did it.
+   * @param context - Request metadata (IP, user agent, sanitized headers).
+   */
+  onWorkspaceEvent?(event: WorkspaceAuditEvent, context: HookContext): Promise<void> | void
+}
+
+/** Return value of the {@link IAuthHooks.beforeWorkspaceCreate} hook. */
+export interface BeforeWorkspaceCreateResult {
+  /** When `false`, the workspace is not created and `reason` is returned to the caller. */
+  allowed: boolean
+  /** Human-readable explanation surfaced when `allowed` is `false`; keep it non-sensitive. */
+  reason?: string
 }
 
 /** Why a service-key request was refused. Absent on an admitted request. */

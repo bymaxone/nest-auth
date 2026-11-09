@@ -104,6 +104,7 @@ export type {
 } from './interfaces/authenticated-request.interface'
 export type {
   BeforeRegisterResult,
+  BeforeWorkspaceCreateResult,
   ApiKeyAccessEvent,
   ApiKeyDenyReason,
   HookContext,
@@ -478,4 +479,12 @@ export type {
   WorkspaceRequest
 } from './decorators/current-workspace.decorator'
 export { WorkspaceAccessService } from './services/workspace-access.service'
+export { MembershipService } from './services/membership.service'
+export type { MyWorkspaces, WorkspaceActor } from './services/membership.service'
+export { WorkspaceService } from './services/workspace.service'
+export type {
+  FinalizeResult,
+  ScheduledDeletion,
+  WorkspaceAccessView
+} from './services/workspace.service'
 export type { ResolvedWorkspaceMember, WorkspaceAccess } from './services/workspace-access.service'
