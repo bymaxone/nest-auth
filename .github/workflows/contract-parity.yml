@@ -103,10 +103,10 @@ jobs:
           # matches" would close a real tracking issue on an outage, and
           # treating it as "it differs" would open one on the same outage.
           #
-          # The copy is read from the base64 `content` field and decoded here. Read
-          # through `gh api` with the raw media type, a file holding the text of a JSON
-          # escape for a control character (a backslash, `u0000`) came back with it
-          # in caret notation, so a byte-identical file hashed differently.
+          # Never read the copy through the raw media type: `gh api` returns the text
+          # of a JSON escape for a control character (a backslash, `u0000`) in caret
+          # notation, which changes the bytes compared. The base64 `content` field is
+          # decoded here and is exact.
           gh api "repos/$SIBLING/contents/$CONTRACT_PATH" --jq .content \
             | base64 --decode > "$RUNNER_TEMP/sibling.json"
           test -s "$RUNNER_TEMP/sibling.json"
