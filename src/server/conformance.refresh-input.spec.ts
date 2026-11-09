@@ -14,12 +14,16 @@ import { AuthException } from './errors/auth-exception'
 import { REQUEST_SCHEMAS } from './openapi/generated/request-schemas'
 import { REQUEST_SCHEMA_DTOS } from './openapi/request-schema-dtos'
 import { createAuthValidationPipe } from './pipes/auth-validation.pipe'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from './services/membership.service'
 import { REFRESH_TOKEN_MAX_LENGTH } from './services/token-delivery.service'
 
 const contract = JSON.parse(
   readFileSync(join(__dirname, '../../conformance/wire-contract.json'), 'utf8')
 ) as {
-  requestFieldBounds: { opaqueToken: { min: number; max: number } }
+  requestFieldBounds: {
+    opaqueToken: { min: number; max: number }
+    pageLimit: { min: number; max: number; default: number }
+  }
   refreshTokenInput: { body: string; cookie: string }
 }
 
@@ -80,4 +84,27 @@ describe('the field a validation error names', () => {
       expect(fields.filter((field) => !properties.includes(field))).toEqual([])
     }
   )
+})
+
+describe('the page limit the contract states', () => {
+  // Scenario: the contract's bound, the service's constants and the published pattern for the
+  // `limit` query. Expected: one range, and the pattern accepts exactly it. Why: a list that
+  // clamps where the contract refuses, or the reverse, is a request two clients read differently.
+  it('holds the service, the contract and the published pattern to one range', () => {
+    const pattern = new RegExp(
+      (REQUEST_SCHEMAS['WorkspacePageQueryDto']?.properties?.['limit'] as { pattern: string })
+        .pattern
+    )
+    const accepted = Array.from({ length: 200 }, (_, index) => String(index)).filter((value) =>
+      pattern.test(value)
+    )
+
+    expect(contract.requestFieldBounds.pageLimit).toMatchObject({
+      min: 1,
+      max: MAX_PAGE_SIZE,
+      default: DEFAULT_PAGE_SIZE
+    })
+    expect(accepted).toEqual(Array.from({ length: MAX_PAGE_SIZE }, (_, index) => String(index + 1)))
+    expect(pattern.test('1.5')).toBe(false)
+  })
 })

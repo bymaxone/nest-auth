@@ -151,13 +151,13 @@ describe('MembershipService', () => {
     })
 
     it.each([
-      [undefined, 20],
+      [undefined, 50],
       [0, 1],
       [-5, 1],
       [50, 50],
       [100, 100],
       [101, 100],
-      [2.5, 20]
+      [2.5, 50]
     ])('turns a requested size of %p into %p', async (asked, used) => {
       const { service, memberships } = build()
 
@@ -176,8 +176,8 @@ describe('MembershipService', () => {
       await service.listMembers(WORKSPACE_REF)
 
       expect(memberships['listForWorkspace']?.mock.calls).toEqual([
-        [{ ...WORKSPACE_REF, cursor: 'next', limit: 20 }],
-        [{ ...WORKSPACE_REF, limit: 20 }]
+        [{ ...WORKSPACE_REF, cursor: 'next', limit: 50 }],
+        [{ ...WORKSPACE_REF, limit: 50 }]
       ])
     })
 
@@ -223,7 +223,7 @@ describe('MembershipService', () => {
         tenantId: 't1',
         userId: 'u1',
         ownerRole: 'owner',
-        limit: 20
+        limit: 50
       })
     })
   })
