@@ -3522,9 +3522,9 @@ refresh in the deployment fails at once. "Log out everywhere" is worse: it error
 where nobody is looking, so a password reset reports success while the sessions it
 promised to end are still alive.
 
-The workspace membership cache is in the same position: its read and bump scripts build
+The workspace membership cache is in the same position: its read script builds
 the entry key inside the script from two version counters that live in different slots, so
-they also need a standalone Redis or Sentinel. The wire contract requires only the ORDER of
+it also needs a standalone Redis or Sentinel. The wire contract requires only the ORDER of
 those reads, not one atomic script, so a port to a sharded store can issue them as separate
 single-key commands.
 
