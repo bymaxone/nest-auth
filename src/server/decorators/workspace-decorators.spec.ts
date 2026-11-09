@@ -7,6 +7,10 @@
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants'
 
 import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
+import {
+  ALLOW_PENDING_WORKSPACE_KEY,
+  AllowPendingWorkspace
+} from './allow-pending-workspace.decorator'
 import { CurrentWorkspace } from './current-workspace.decorator'
 import type { CurrentWorkspaceContext } from './current-workspace.decorator'
 import { WORKSPACE_ROLES_KEY, WorkspaceRoles } from './workspace-roles.decorator'
@@ -58,5 +62,24 @@ describe('CurrentWorkspace', () => {
 
   it('throws when the route ran without the guard', () => {
     expect(() => resolve({})).toThrow('@CurrentWorkspace() needs WorkspaceGuard on the route.')
+  })
+})
+
+describe('AllowPendingWorkspace', () => {
+  it('marks a handler under a key of its own', () => {
+    class Host {
+      @AllowPendingWorkspace()
+      restore(): void {}
+    }
+
+    expect(ALLOW_PENDING_WORKSPACE_KEY).toBe('allowPendingWorkspace')
+    expect(Reflect.getMetadata(ALLOW_PENDING_WORKSPACE_KEY, Host.prototype.restore)).toBe(true)
+  })
+
+  it('marks a class when applied there', () => {
+    @AllowPendingWorkspace()
+    class Whole {}
+
+    expect(Reflect.getMetadata(ALLOW_PENDING_WORKSPACE_KEY, Whole)).toBe(true)
   })
 })
