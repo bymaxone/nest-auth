@@ -215,6 +215,13 @@
       "request that finished a moment earlier would be; separate reads do not make a read that",
       "straddles a bump fresh, and the contract does not ask them to.",
       "",
+      "A counter must outlive every entry that bears its value. A counter that expires restarts at 1 on",
+      "its next bump, and an entry still alive under 1 would be current again. A retention longer than",
+      "the entry lifetime is not enough on its own, since an entry can be written in the last moment",
+      "of a counter's retention. So the writer of an entry refreshes the retention of BOTH counters, if",
+      "they exist, in the same step that writes the entry. A counter that does not exist is left absent:",
+      "it reads as 0, and a read never creates a counter.",
+      "",
       "A writer changes the repository FIRST and bumps the counter after, and a failed bump is an",
       "error: a change is never reported as invalidated when it was not. A bump is INCR followed by",
       "EXPIRE, on every bump, so a counter always carries its retention; nest-auth issues both in one",
@@ -242,7 +249,7 @@
     },
     "hmacKey": "the identifier-HMAC key of hmacKeyDerivation, and the vectors below use its pinned derivedKeyHex",
     "absentVersion": "a counter that does not exist reads as the text '0'",
-    "entryValue": "{\"role\": \"<role>\", \"status\": \"active\"}",
+    "entryValue": "{\"role\":\"<role>\",\"status\":\"active\"}",
     "entryRule": "only an active membership of an active workspace is cached; a missing, suspended or inactive answer is never cached, and an entry whose status is not 'active' is read as a miss",
     "ttl": {
       "option": "workspaces.membershipCacheTtlSeconds",
@@ -384,7 +391,7 @@
     ],
     "scenarios": {
       "$comment": [
-        "Run by both implementations against a store and two repositories. `repository` is the state the repositories hold at that step; `expect.answer` is the role returned or null; `expect.source` is where the answer came from; `expect.cachedUnder` is the versions of the entry that exists afterwards for this member, or null when none was written. Versions start at 0:0."
+        "Run by both implementations against a store and two repositories. `repository` is the state the repositories hold at that step; `expect.answer` is the role returned or null; `expect.source` is where the answer came from; `expect.cachedUnder` is the versions of the entry that exists afterwards for this member, or null when there is no entry under the CURRENT versions. Versions start at 0:0."
       ],
       "steps": [
         {
@@ -490,7 +497,8 @@
           }
         }
       ]
-    }
+    },
+    "entryRefreshesCounters": "writing an entry refreshes the retention of both version counters that exist, in the same step"
   },
   "graceRecoveryWrite": {
     "$comment": [

@@ -8,7 +8,11 @@
 import { Logger } from '@nestjs/common'
 
 import { resolveOptions } from '../config/resolved-options'
-import { BUMP_VERSION_SCRIPT, READ_MEMBERSHIP_SCRIPT } from '../constants/workspace-access-scripts'
+import {
+  BUMP_VERSION_SCRIPT,
+  FILL_MEMBERSHIP_SCRIPT,
+  READ_MEMBERSHIP_SCRIPT
+} from '../constants/workspace-access-scripts'
 import {
   WORKSPACE_VERSION_RETENTION_SECONDS,
   membershipCacheKeyBase,
@@ -69,7 +73,7 @@ const MEMBERSHIP: AuthMembership = {
 
 interface Harness {
   service: WorkspaceAccessService
-  redis: { eval: jest.Mock; set: jest.Mock }
+  redis: { eval: jest.Mock }
   workspaces: { findById: jest.Mock }
   memberships: { find: jest.Mock }
   hmacKey: string
@@ -78,7 +82,7 @@ interface Harness {
 /** Builds the service over mocks; the cache misses at versions 0/0 unless a case says otherwise. */
 function build(cacheTtl: number | null = 60): Harness {
   const options = resolveOptions(moduleOptions(cacheTtl))
-  const redis = { eval: jest.fn().mockResolvedValue(['0', '0', '']), set: jest.fn() }
+  const redis = { eval: jest.fn().mockResolvedValue(['0', '0', '']) }
   const workspaces = { findById: jest.fn().mockResolvedValue(WORKSPACE) }
   const memberships = { find: jest.fn().mockResolvedValue(MEMBERSHIP) }
   const service = new WorkspaceAccessService(
@@ -88,6 +92,13 @@ function build(cacheTtl: number | null = 60): Harness {
     options
   )
   return { service, redis, workspaces, memberships, hmacKey: options.hmacKey }
+}
+
+/** The arguments of every cache fill the service sent: keys, then values. */
+function fills(redis: { eval: jest.Mock }): unknown[][] {
+  return redis.eval.mock.calls
+    .filter(([script]) => script === FILL_MEMBERSHIP_SCRIPT)
+    .map(([, keys, args]) => [keys, args])
 }
 
 describe('WorkspaceAccessService', () => {
@@ -141,7 +152,7 @@ describe('WorkspaceAccessService', () => {
       expect(member).toEqual({ ...REF, role: 'owner' })
       expect(workspaces.findById).not.toHaveBeenCalled()
       expect(memberships.find).not.toHaveBeenCalled()
-      expect(redis.set).not.toHaveBeenCalled()
+      expect(fills(redis)).toEqual([])
     })
 
     it('reads the workspace and the membership by their full keys on a miss', async () => {
@@ -164,11 +175,20 @@ describe('WorkspaceAccessService', () => {
 
       await service.resolveMembership(REF)
 
-      expect(redis.set).toHaveBeenCalledWith(
-        `${membershipCacheKeyBase('t1', 'w1', 'u1', hmacKey)}:3:7`,
-        JSON.stringify({ role: 'editor', status: 'active' }),
-        60
-      )
+      expect(fills(redis)).toEqual([
+        [
+          [
+            workspaceVersionKey('t1', 'w1', hmacKey),
+            membershipVersionKey('t1', 'w1', 'u1', hmacKey),
+            `${membershipCacheKeyBase('t1', 'w1', 'u1', hmacKey)}:3:7`
+          ],
+          [
+            JSON.stringify({ role: 'editor', status: 'active' }),
+            '60',
+            String(WORKSPACE_VERSION_RETENTION_SECONDS)
+          ]
+        ]
+      ])
     })
 
     it('writes the refill with the configured cache lifetime', async () => {
@@ -176,7 +196,9 @@ describe('WorkspaceAccessService', () => {
 
       await service.resolveMembership(REF)
 
-      expect(redis.set).toHaveBeenCalledWith(expect.any(String), expect.any(String), 15)
+      expect(fills(redis).map(([, args]) => args)).toEqual([
+        [expect.any(String), '15', String(WORKSPACE_VERSION_RETENTION_SECONDS)]
+      ])
     })
 
     it('answers null for a workspace that does not exist, and caches nothing', async () => {
@@ -185,7 +207,7 @@ describe('WorkspaceAccessService', () => {
 
       await expect(service.resolveMembership(REF)).resolves.toBeNull()
       expect(memberships.find).not.toHaveBeenCalled()
-      expect(redis.set).not.toHaveBeenCalled()
+      expect(fills(redis)).toEqual([])
     })
 
     it.each(['pending_deletion', 'suspended', 'deleted'] as const)(
@@ -196,7 +218,7 @@ describe('WorkspaceAccessService', () => {
 
         await expect(service.resolveMembership(REF)).resolves.toBeNull()
         expect(memberships.find).not.toHaveBeenCalled()
-        expect(redis.set).not.toHaveBeenCalled()
+        expect(fills(redis)).toEqual([])
       }
     )
 
@@ -205,7 +227,7 @@ describe('WorkspaceAccessService', () => {
       memberships.find.mockResolvedValue(null)
 
       await expect(service.resolveMembership(REF)).resolves.toBeNull()
-      expect(redis.set).not.toHaveBeenCalled()
+      expect(fills(redis)).toEqual([])
     })
 
     it('answers null for a suspended membership, and caches nothing', async () => {
@@ -213,7 +235,7 @@ describe('WorkspaceAccessService', () => {
       memberships.find.mockResolvedValue({ ...MEMBERSHIP, status: 'suspended' })
 
       await expect(service.resolveMembership(REF)).resolves.toBeNull()
-      expect(redis.set).not.toHaveBeenCalled()
+      expect(fills(redis)).toEqual([])
     })
 
     it('skips the cache entirely when its lifetime is zero', async () => {
@@ -221,7 +243,7 @@ describe('WorkspaceAccessService', () => {
 
       await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
       expect(redis.eval).not.toHaveBeenCalled()
-      expect(redis.set).not.toHaveBeenCalled()
+      expect(fills(redis)).toEqual([])
     })
 
     it('answers from the repositories, writing nothing, when Redis is unreachable', async () => {
@@ -229,7 +251,7 @@ describe('WorkspaceAccessService', () => {
       redis.eval.mockRejectedValue(new Error('ECONNREFUSED'))
 
       await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
-      expect(redis.set).not.toHaveBeenCalled()
+      expect(fills(redis)).toEqual([])
       expect(warn).toHaveBeenCalledWith(
         'Workspace membership cache unavailable; reading the repositories.'
       )
@@ -237,7 +259,11 @@ describe('WorkspaceAccessService', () => {
 
     it('still answers when the refill cannot be written', async () => {
       const { service, redis } = build()
-      redis.set.mockRejectedValue(new Error('READONLY'))
+      redis.eval.mockImplementation((script: string) =>
+        script === FILL_MEMBERSHIP_SCRIPT
+          ? Promise.reject(new Error('READONLY'))
+          : Promise.resolve(['0', '0', ''])
+      )
 
       await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
       expect(warn).toHaveBeenCalledWith(
@@ -258,7 +284,7 @@ describe('WorkspaceAccessService', () => {
 
       await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
       expect(memberships.find).toHaveBeenCalledWith(REF)
-      expect(redis.set).not.toHaveBeenCalled()
+      expect(fills(redis)).toEqual([])
     })
 
     // The versions are valid, so the repository answer is refilled under them.
@@ -273,11 +299,9 @@ describe('WorkspaceAccessService', () => {
 
       await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
       expect(memberships.find).toHaveBeenCalledWith(REF)
-      expect(redis.set).toHaveBeenCalledWith(
-        expect.stringMatching(/:0:0$/),
-        JSON.stringify({ role: 'editor', status: 'active' }),
-        60
-      )
+      expect(fills(redis).map(([keys]) => (keys as string[])[2])).toEqual([
+        expect.stringMatching(/:0:0$/)
+      ])
     })
 
     it.each(['tenantId', 'workspaceId', 'userId'] as const)(

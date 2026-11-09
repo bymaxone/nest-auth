@@ -202,6 +202,22 @@ describe('workspace membership cache against Redis', () => {
     )
   })
 
+  // A counter that expires while an entry bearing its value is alive restarts at 1 on the next
+  // bump and makes that entry current again. The fill therefore carries the counters' retention.
+  it('keeps a counter alive at least as long as an entry written under it', async () => {
+    const store = freshStore()
+    const { service, redis, hmacKey } = build(store)
+    await service.invalidateMembership(REF)
+    const counter = membershipVersionKey('t1', 'w1', 'u1', hmacKey)
+    await redis.expire(counter, 5)
+
+    await service.resolveMembership(REF)
+
+    const entry = `${membershipCacheKeyBase('t1', 'w1', 'u1', hmacKey)}:0:1`
+    expect(await redis.ttl(entry)).toBeGreaterThan(0)
+    expect(await redis.ttl(counter)).toBeGreaterThan(await redis.ttl(entry))
+  })
+
   it('keeps each version counter for the retention window', async () => {
     const store = freshStore()
     const { service, redis, hmacKey } = build(store)

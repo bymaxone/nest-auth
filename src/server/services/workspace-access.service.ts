@@ -14,7 +14,11 @@ import {
 } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
-import { BUMP_VERSION_SCRIPT, READ_MEMBERSHIP_SCRIPT } from '../constants/workspace-access-scripts'
+import {
+  BUMP_VERSION_SCRIPT,
+  FILL_MEMBERSHIP_SCRIPT,
+  READ_MEMBERSHIP_SCRIPT
+} from '../constants/workspace-access-scripts'
 import {
   WORKSPACE_VERSION_RETENTION_SECONDS,
   membershipCacheKeyBase,
@@ -157,17 +161,21 @@ export class WorkspaceAccessService {
     role: string,
     ttl: number
   ): Promise<void> {
-    const base = membershipCacheKeyBase(
-      ref.tenantId,
-      ref.workspaceId,
-      ref.userId,
-      this.options.hmacKey
-    )
+    const { hmacKey } = this.options
+    const base = membershipCacheKeyBase(ref.tenantId, ref.workspaceId, ref.userId, hmacKey)
     try {
-      await this.redis.set(
-        `${base}:${read.workspaceVersion}:${read.membershipVersion}`,
-        JSON.stringify({ role, status: 'active' }),
-        ttl
+      await this.redis.eval(
+        FILL_MEMBERSHIP_SCRIPT,
+        [
+          workspaceVersionKey(ref.tenantId, ref.workspaceId, hmacKey),
+          membershipVersionKey(ref.tenantId, ref.workspaceId, ref.userId, hmacKey),
+          `${base}:${read.workspaceVersion}:${read.membershipVersion}`
+        ],
+        [
+          JSON.stringify({ role, status: 'active' }),
+          String(ttl),
+          String(WORKSPACE_VERSION_RETENTION_SECONDS)
+        ]
       )
     } catch {
       this.logger.warn('Workspace membership cache unavailable; the answer was not cached.')

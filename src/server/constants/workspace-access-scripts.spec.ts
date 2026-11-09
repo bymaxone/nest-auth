@@ -9,7 +9,11 @@
 
 import RedisMock from 'ioredis-mock'
 
-import { BUMP_VERSION_SCRIPT, READ_MEMBERSHIP_SCRIPT } from './workspace-access-scripts'
+import {
+  BUMP_VERSION_SCRIPT,
+  FILL_MEMBERSHIP_SCRIPT,
+  READ_MEMBERSHIP_SCRIPT
+} from './workspace-access-scripts'
 
 /** One isolated in-memory keyspace per case. */
 let port = 41_000
@@ -73,5 +77,56 @@ describe('BUMP_VERSION_SCRIPT', () => {
     await redis.eval(BUMP_VERSION_SCRIPT, 1, 'wmv:b', '1000')
 
     expect(await redis.ttl('wmv:b')).toBeGreaterThan(990)
+  })
+})
+
+describe('FILL_MEMBERSHIP_SCRIPT', () => {
+  const fill = (redis: InstanceType<typeof RedisMock>): Promise<unknown> =>
+    redis.eval(
+      FILL_MEMBERSHIP_SCRIPT,
+      3,
+      ...KEYS,
+      '{"role":"owner","status":"active"}',
+      '60',
+      '1000'
+    )
+
+  it('writes the entry with the given lifetime', async () => {
+    const redis = client()
+
+    await fill(redis)
+
+    expect(await redis.get('wm:c')).toBe('{"role":"owner","status":"active"}')
+    expect(await redis.ttl('wm:c')).toBeGreaterThan(55)
+    expect(await redis.ttl('wm:c')).toBeLessThanOrEqual(60)
+  })
+
+  it('refreshes the retention of both counters that exist', async () => {
+    const redis = client()
+    await redis.set('wsv:a', '4', 'EX', 5)
+    await redis.set('wmv:b', '9', 'EX', 5)
+
+    await fill(redis)
+
+    expect(await redis.ttl('wsv:a')).toBeGreaterThan(990)
+    expect(await redis.ttl('wmv:b')).toBeGreaterThan(990)
+  })
+
+  it('does not create a counter that does not exist', async () => {
+    const redis = client()
+
+    await fill(redis)
+
+    expect(await redis.exists('wsv:a', 'wmv:b')).toBe(0)
+  })
+
+  it("leaves the counters' values alone", async () => {
+    const redis = client()
+    await redis.set('wsv:a', '4')
+    await redis.set('wmv:b', '9')
+
+    await fill(redis)
+
+    expect([await redis.get('wsv:a'), await redis.get('wmv:b')]).toEqual(['4', '9'])
   })
 })

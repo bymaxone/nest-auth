@@ -42,3 +42,21 @@ local version = redis.call('INCR', KEYS[1])
 redis.call('EXPIRE', KEYS[1], ARGV[1])
 return version
 `
+
+/**
+ * Writes a cache entry and extends the retention of both version counters, in a single step.
+ *
+ * `KEYS[1]` is the workspace version, `KEYS[2]` the membership version and `KEYS[3]` the entry's
+ * full key; `ARGV[1]` is the entry, `ARGV[2]` its lifetime and `ARGV[3]` the counters' retention,
+ * in seconds.
+ *
+ * A counter must outlive every entry that bears its value: a counter that expires restarts at 1
+ * on its next bump, and an entry still alive under 1 would be current again. A counter that does
+ * not exist is left absent, since it reads as 0 and an absent counter is never created by a read.
+ */
+export const FILL_MEMBERSHIP_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 1 then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
+if redis.call('EXISTS', KEYS[2]) == 1 then redis.call('EXPIRE', KEYS[2], ARGV[3]) end
+redis.call('SET', KEYS[3], ARGV[1], 'EX', ARGV[2])
+return 1
+`
