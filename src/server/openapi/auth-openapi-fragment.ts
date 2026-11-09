@@ -130,7 +130,7 @@ export interface AuthOpenApiFragment {
  * needs in order to NOT attach a credential. Leaving it out would let the document's own default
  * apply, and the consumer's default is "authenticated".
  */
-type Credential =
+export type Credential =
   | 'none'
   | 'access'
   /** The refresh credential is REQUIRED: with none of its forms present the operation 401s. */
@@ -197,7 +197,7 @@ type TwoCredentialKind = Extract<
  * deployment registered before it is contributed. That is why this is a table rather than a
  * literal: the fragment is a function of the module's own registration decisions.
  */
-const OPERATIONS: Readonly<
+export const OPERATIONS: Readonly<
   Record<keyof RegisteredControllers, Readonly<Record<string, Credential>>>
 > = {
   auth: {
