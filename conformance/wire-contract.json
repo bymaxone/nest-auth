@@ -900,7 +900,7 @@
     "workspaceName": {
       "min": 1,
       "max": 120,
-      "$comment": "The display name of a workspace, trimmed before it is counted, with no control character. A name that is blank after trimming, over the bound or carrying a control character is refused with 400 auth.validation naming the field name."
+      "$comment": "The display name of a workspace. The bound and the control-character rule apply to the value as submitted, before any trimming: a name over 120 characters as submitted, or carrying a control character anywhere, is refused with 400 auth.validation naming the field name. The name is then stored trimmed, and one that is blank after trimming is refused the same way."
     },
     "pageLimit": {
       "min": 1,

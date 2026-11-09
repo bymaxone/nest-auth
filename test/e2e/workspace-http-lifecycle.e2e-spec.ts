@@ -115,6 +115,19 @@ describe('workspace lifecycle routes (E2E)', () => {
       expect((await access(id, alice)).body).toMatchObject({ role: 'owner' })
     })
 
+    // Scenario: the bound is read on the name as submitted. Expected: a name that fits only after
+    // trimming is refused, and one that fits as submitted is stored trimmed.
+    it('counts the length bound on the submitted name and stores the trimmed one', async () => {
+      const alice = await signUp()
+
+      const over = await post('/workspaces', alice, { name: ` ${'a'.repeat(120)}` })
+      const fits = await post('/workspaces', alice, { name: ` ${'a'.repeat(119)}` })
+
+      expectAuthError(over, 'auth.validation')
+      expect(fits.status).toBe(201)
+      expect((fits.body as { name: string }).name).toBe('a'.repeat(119))
+    })
+
     it.each([
       ['a blank name', { name: '   ' }],
       ['an empty name', { name: '' }],
