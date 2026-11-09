@@ -135,11 +135,6 @@ const contract = JSON.parse(contractSource) as WireContract
  * constant leave theirs green too. Both green, bytes divergent. Two independent local hashes
  * cannot enforce agreement between two repositories — nothing here reads the other side.
  *
- * That limitation is written down because the first version of this comment claimed the opposite
- * and named a *lesser* limitation ("would not catch both being advanced to the same wrong
- * value"), which read as thorough while missing the one that mattered. A limitations note that
- * gives false comfort is worse than none.
- *
  * Closing it for real needs a cross-repository comparison — one side fetching the other's
  * committed blob in CI, or both consuming one immutable versioned artifact. That is proposed and
  * unbuilt; until it exists, the contract's identity between repositories still rests on both
@@ -149,7 +144,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = 'ff2773b0553dc624c8e81e036d6b74896bbf526f6e02f2a11086bc972f559f47'
+const CONTRACT_SHA256 = '7c308735cd6d5e83528d3733bd9343f6687132dd5ab30b38038954d762177d2d'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -375,7 +370,10 @@ describe('cross-implementation conformance', () => {
       pendingMfaSetup: 'services/mfa.service.ts',
       mfaTempTokenMarker: 'services/token-manager.service.ts',
       userStatus: 'services/account-status.service.ts',
-      userEmailVerified: 'services/account-status.service.ts'
+      userEmailVerified: 'services/account-status.service.ts',
+      workspaceVersion: 'constants/workspace-keys.ts',
+      membershipVersion: 'constants/workspace-keys.ts',
+      membershipCache: 'constants/workspace-keys.ts'
     }
 
     // Verifies each contract prefix is the one the code actually writes. A rename that lands on
