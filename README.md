@@ -2069,7 +2069,7 @@ which of the three proofs is eligible depends on `passwordReset.method`, and an 
 is refused with the same code a structural violation gets. That narrowing is declared with its
 own probes and is deliberately not something a client can generate against.
 
-A fourth file,
+Another file,
 [`openapi-operation-security.json`](./conformance/openapi-operation-security.json), maps every
 operation this library mounts (`METHOD /path`, relative to your route prefix) to the **kind** of
 credential it requires, with the meaning of each kind alongside. It is generated from the table the
@@ -2077,7 +2077,7 @@ OpenAPI fragment is built from and the controllers' route metadata, regenerated 
 `pnpm gen:openapi-security`, and a spec fails when it differs. How a kind becomes a security
 requirement depends on your `tokenDelivery` and is not in the file.
 
-All four are development artifacts — they are not in the published tarball, and nothing reads
+These are development artifacts — they are not in the published tarball, and nothing reads
 them at runtime yet. They exist so the schemas are a function of the decorators rather than a
 second description maintained by hand, and so the same file can be asserted from `rust-auth`.
 
