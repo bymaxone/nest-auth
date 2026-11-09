@@ -85,6 +85,7 @@ import { SessionService } from './services/session.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
 import { TokenManagerService } from './services/token-manager.service'
 import { WorkspaceAccessService } from './services/workspace-access.service'
+import { WorkspaceActionsService } from './services/workspace-actions.service'
 import { WorkspaceCallerService } from './services/workspace-caller.service'
 import { WorkspaceEventsService } from './services/workspace-events.service'
 import { WorkspaceService } from './services/workspace.service'
@@ -175,6 +176,7 @@ const WORKSPACE_PROVIDERS: Provider[] = [
   WorkspaceService,
   MembershipService,
   WorkspaceCallerService,
+  WorkspaceActionsService,
   WorkspaceGuard
 ]
 

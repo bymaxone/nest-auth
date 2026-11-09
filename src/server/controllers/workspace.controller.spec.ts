@@ -11,7 +11,7 @@ import type { Request } from 'express'
 import type { CurrentWorkspaceContext } from '../decorators/current-workspace.decorator'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { MembershipService } from '../services/membership.service'
-import type { WorkspaceCallerService } from '../services/workspace-caller.service'
+import type { WorkspaceActionsService } from '../services/workspace-actions.service'
 import type { WorkspaceService } from '../services/workspace.service'
 import { WorkspaceController } from './workspace.controller'
 
@@ -48,7 +48,7 @@ function build(): {
     restore: jest.Mock
   }
   memberships: { listMine: jest.Mock; listMembers: jest.Mock }
-  callers: { load: jest.Mock; reauthenticate: jest.Mock }
+  actions: { create: jest.Mock; rename: jest.Mock; scheduleDeletion: jest.Mock }
 } {
   const workspaces = {
     getAccess: jest.fn(),
@@ -59,16 +59,16 @@ function build(): {
     restore: jest.fn()
   }
   const memberships = { listMine: jest.fn(), listMembers: jest.fn() }
-  const callers = { load: jest.fn(), reauthenticate: jest.fn() }
+  const actions = { create: jest.fn(), rename: jest.fn(), scheduleDeletion: jest.fn() }
   return {
     controller: new WorkspaceController(
       workspaces as Partial<WorkspaceService> as WorkspaceService,
       memberships as Partial<MembershipService> as MembershipService,
-      callers as Partial<WorkspaceCallerService> as WorkspaceCallerService
+      actions as Partial<WorkspaceActionsService> as WorkspaceActionsService
     ),
     workspaces,
     memberships,
-    callers
+    actions
   }
 }
 
@@ -162,18 +162,15 @@ describe('WorkspaceController', () => {
   })
 
   describe('create', () => {
-    it('creates the workspace for the account the token names, with the name and a dashboard context', async () => {
-      const { controller, workspaces, callers } = build()
-      const account = { id: 'u1', tenantId: 't1', email: 'a@b.c' }
-      callers.load.mockResolvedValue(account)
-      workspaces.create.mockResolvedValue(WORKSPACE)
+    it('delegates the creation for the token, with the name and a dashboard context, and shapes the workspace', async () => {
+      const { controller, actions } = build()
+      actions.create.mockResolvedValue(WORKSPACE)
 
       const result = await controller.create(USER, { name: 'Acme' }, REQUEST)
 
-      expect(callers.load).toHaveBeenCalledWith(USER)
-      expect(workspaces.create).toHaveBeenCalledWith(
-        account,
-        { name: 'Acme' },
+      expect(actions.create).toHaveBeenCalledWith(
+        USER,
+        'Acme',
         expect.objectContaining({ plane: 'dashboard', userId: 'u1', tenantId: 't1' })
       )
       expect(result).toMatchObject({ id: 'w1', name: 'Acme', status: 'active' })
@@ -181,52 +178,35 @@ describe('WorkspaceController', () => {
   })
 
   describe('rename', () => {
-    it('renames by the workspace key and the judged actor, then answers the workspace as it reads', async () => {
-      const { controller, workspaces } = build()
-      workspaces.getAccess.mockResolvedValue({
-        workspace: { ...WORKSPACE, name: 'New' },
-        role: 'editor'
-      })
+    it('delegates by the workspace key and the judged actor, and shapes the workspace it returns', async () => {
+      const { controller, actions } = build()
+      actions.rename.mockResolvedValue({ ...WORKSPACE, name: 'New' })
 
       const result = await controller.rename(ACCESS, USER, { name: 'New' }, REQUEST)
 
-      expect(workspaces.rename).toHaveBeenCalledWith(
+      expect(actions.rename).toHaveBeenCalledWith(
         REF,
-        'New',
         { userId: 'u1', role: 'editor' },
+        'New',
         expect.objectContaining({ plane: 'dashboard' })
       )
-      expect(workspaces.getAccess).toHaveBeenCalledWith(REF, 'u1')
       expect(result).toMatchObject({ id: 'w1', name: 'New' })
     })
   })
 
   describe('scheduleDeletion', () => {
-    it('re-proves the caller first, then schedules by the key and the judged actor', async () => {
-      const { controller, workspaces, callers } = build()
-      const order: string[] = []
-      callers.reauthenticate.mockImplementation(async () => void order.push('reauthenticate'))
-      workspaces.scheduleDeletion.mockImplementation(async () => void order.push('schedule'))
+    it('delegates by the workspace key, the judged actor, the token and the submitted password', async () => {
+      const { controller, actions } = build()
 
       await controller.scheduleDeletion(ACCESS, USER, { password: 'pw' }, REQUEST)
 
-      expect(callers.reauthenticate).toHaveBeenCalledWith(USER, 'pw')
-      expect(workspaces.scheduleDeletion).toHaveBeenCalledWith(
+      expect(actions.scheduleDeletion).toHaveBeenCalledWith(
         REF,
         { userId: 'u1', role: 'editor' },
+        USER,
+        'pw',
         expect.objectContaining({ plane: 'dashboard' })
       )
-      expect(order).toEqual(['reauthenticate', 'schedule'])
-    })
-
-    it('schedules nothing when the re-proof fails', async () => {
-      const { controller, workspaces, callers } = build()
-      callers.reauthenticate.mockRejectedValue(new Error('invalid'))
-
-      await expect(
-        controller.scheduleDeletion(ACCESS, USER, { password: 'bad' }, REQUEST)
-      ).rejects.toThrow('invalid')
-      expect(workspaces.scheduleDeletion).not.toHaveBeenCalled()
     })
   })
 

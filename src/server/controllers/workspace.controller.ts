@@ -47,7 +47,7 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { MembershipService } from '../services/membership.service'
-import { WorkspaceCallerService } from '../services/workspace-caller.service'
+import { WorkspaceActionsService } from '../services/workspace-actions.service'
 import { WorkspaceService } from '../services/workspace.service'
 import { dashboardHookContext } from '../utils/request-hook-context'
 import {
@@ -100,7 +100,7 @@ export class WorkspaceController {
   constructor(
     @Inject(WorkspaceService) private readonly workspaces: WorkspaceService,
     @Inject(MembershipService) private readonly memberships: MembershipService,
-    @Inject(WorkspaceCallerService) private readonly callers: WorkspaceCallerService
+    @Inject(WorkspaceActionsService) private readonly actions: WorkspaceActionsService
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -232,12 +232,9 @@ export class WorkspaceController {
     @Body() dto: CreateWorkspaceDto,
     @Req() req: Request
   ): Promise<WorkspaceView> {
-    const created = await this.workspaces.create(
-      await this.callers.load(user),
-      { name: dto.name },
-      dashboardHookContext(req, user)
+    return toWorkspaceView(
+      await this.actions.create(user, dto.name, dashboardHookContext(req, user))
     )
-    return toWorkspaceView(created)
   }
 
   // ---------------------------------------------------------------------------
@@ -264,9 +261,14 @@ export class WorkspaceController {
     @Body() dto: RenameWorkspaceDto,
     @Req() req: Request
   ): Promise<WorkspaceView> {
-    const ref = refOf(workspace)
-    await this.workspaces.rename(ref, dto.name, actorOf(workspace), dashboardHookContext(req, user))
-    return toWorkspaceView((await this.workspaces.getAccess(ref, workspace.userId)).workspace)
+    return toWorkspaceView(
+      await this.actions.rename(
+        refOf(workspace),
+        actorOf(workspace),
+        dto.name,
+        dashboardHookContext(req, user)
+      )
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -296,10 +298,11 @@ export class WorkspaceController {
     @Body() dto: ScheduleWorkspaceDeletionDto,
     @Req() req: Request
   ): Promise<void> {
-    await this.callers.reauthenticate(user, dto.password)
-    await this.workspaces.scheduleDeletion(
+    await this.actions.scheduleDeletion(
       refOf(workspace),
       actorOf(workspace),
+      user,
+      dto.password,
       dashboardHookContext(req, user)
     )
   }
