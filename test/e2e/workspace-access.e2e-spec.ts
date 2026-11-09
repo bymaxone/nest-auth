@@ -28,7 +28,7 @@ import type {
 } from '../../src/server/interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../../src/server/redis/auth-redis.service'
 import { WorkspaceAccessService } from '../../src/server/services/workspace-access.service'
-import { JWT_SECRET, createMockRedis, realRedisNamespace } from './setup'
+import { JWT_SECRET, createRedis, realRedisNamespace } from './setup'
 
 const REF = { tenantId: 't1', workspaceId: 'w1', userId: 'u1' }
 const WORKSPACE_REF = { tenantId: 't1', workspaceId: 'w1' }
@@ -99,7 +99,7 @@ function build(store: Store): {
     }
   })
   const outage = { active: false }
-  const client = failingWhile(outage, createMockRedis())
+  const client = failingWhile(outage, createRedis())
   const redis = new AuthRedisService(client, options)
   const workspaces: Partial<IWorkspaceRepository> = { findById: async () => store.workspace }
   const memberships: Partial<IMembershipRepository> = {
