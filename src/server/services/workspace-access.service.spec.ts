@@ -225,6 +225,98 @@ describe('WorkspaceAccessService', () => {
       }
     )
 
+    describe('resolveAccess', () => {
+      const OWNER = { ...MEMBERSHIP, role: 'owner' }
+      const PENDING = { ...WORKSPACE, status: 'pending_deletion' as const }
+
+      it.each([
+        ['an active member of an active workspace', WORKSPACE, MEMBERSHIP, 'member'],
+        ['the owner of a workspace pending deletion', PENDING, OWNER, 'pending_deletion'],
+        ['a non-owner member of a workspace pending deletion', PENDING, MEMBERSHIP, 'denied'],
+        [
+          'an owner whose membership is suspended, pending deletion',
+          PENDING,
+          { ...OWNER, status: 'suspended' },
+          'denied'
+        ],
+        [
+          'the owner of a suspended workspace',
+          { ...WORKSPACE, status: 'suspended' },
+          OWNER,
+          'denied'
+        ],
+        ['the owner of a deleted workspace', { ...WORKSPACE, status: 'deleted' }, OWNER, 'denied'],
+        ['a member of a missing workspace', null, MEMBERSHIP, 'denied'],
+        ['a caller with no membership', WORKSPACE, null, 'denied']
+      ])('answers %s with %s', async (_name, workspace, row, kind) => {
+        const { service, workspaces, memberships } = build()
+        workspaces.findById.mockResolvedValue(workspace)
+        memberships.find.mockResolvedValue(row)
+
+        const access = await service.resolveAccess(REF)
+
+        expect(access.kind).toBe(kind)
+      })
+
+      it('carries the owner as the member of a pending deletion', async () => {
+        const { service, workspaces, memberships } = build()
+        workspaces.findById.mockResolvedValue(PENDING)
+        memberships.find.mockResolvedValue(OWNER)
+
+        await expect(service.resolveAccess(REF)).resolves.toEqual({
+          kind: 'pending_deletion',
+          member: { ...REF, role: 'owner' }
+        })
+      })
+
+      it('does not cache the pending-deletion answer, and resolveMembership reads it as null', async () => {
+        const { service, redis, workspaces, memberships } = build()
+        workspaces.findById.mockResolvedValue(PENDING)
+        memberships.find.mockResolvedValue(OWNER)
+
+        await expect(service.resolveMembership(REF)).resolves.toBeNull()
+        expect(fills(redis)).toEqual([])
+      })
+
+      // The 409 for an owner must not be a side channel: every refusal does the same work.
+      it('makes the same repository calls with the same arguments for every refusal', async () => {
+        const cases = [
+          { workspace: WORKSPACE, row: null },
+          { workspace: PENDING, row: MEMBERSHIP },
+          { workspace: null, row: MEMBERSHIP },
+          { workspace: { ...WORKSPACE, status: 'suspended' }, row: MEMBERSHIP },
+          { workspace: PENDING, row: OWNER }
+        ]
+        const seen = []
+
+        for (const { workspace, row } of cases) {
+          const { service, redis, workspaces, memberships } = build()
+          workspaces.findById.mockResolvedValue(workspace)
+          memberships.find.mockResolvedValue(row)
+          const access = await service.resolveAccess(REF)
+          seen.push({
+            kind: access.kind,
+            workspaceCalls: workspaces.findById.mock.calls,
+            membershipCalls: memberships.find.mock.calls,
+            fills: fills(redis)
+          })
+        }
+
+        expect(seen.map((entry) => entry.kind)).toEqual([
+          'denied',
+          'denied',
+          'denied',
+          'denied',
+          'pending_deletion'
+        ])
+        for (const entry of seen) {
+          expect(entry.workspaceCalls).toEqual([[WORKSPACE_REF]])
+          expect(entry.membershipCalls).toEqual([[REF]])
+          expect(entry.fills).toEqual([])
+        }
+      })
+    })
+
     it('answers null for a missing membership, and caches nothing', async () => {
       const { service, redis, memberships } = build()
       memberships.find.mockResolvedValue(null)

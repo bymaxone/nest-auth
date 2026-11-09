@@ -20,6 +20,7 @@ import {
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../../src/server/bymax-auth.constants'
 import { ANY_WORKSPACE_MEMBER } from '../../src/server/constants/workspace-roles'
+import { AllowPendingWorkspace } from '../../src/server/decorators/allow-pending-workspace.decorator'
 import { CurrentWorkspace } from '../../src/server/decorators/current-workspace.decorator'
 import type { CurrentWorkspaceContext } from '../../src/server/decorators/current-workspace.decorator'
 import { WorkspaceRoles } from '../../src/server/decorators/workspace-roles.decorator'
@@ -104,6 +105,14 @@ class HostWorkspaceController {
   @UseGuards(JwtAuthGuard, UserStatusGuard, WorkspaceGuard)
   undeclared(): { reached: true } {
     return { reached: true }
+  }
+
+  @Post('w/:workspaceId/restore')
+  @UseGuards(JwtAuthGuard, UserStatusGuard, WorkspaceGuard)
+  @WorkspaceRoles('owner')
+  @AllowPendingWorkspace()
+  restore(@CurrentWorkspace() workspace: CurrentWorkspaceContext): CurrentWorkspaceContext {
+    return workspace
   }
 
   @Get('w/:workspaceId/no-auth')
@@ -221,16 +230,47 @@ describe('WorkspaceGuard (E2E)', () => {
   })
 
   // The three cases a caller must not be able to tell apart.
-  it('answers a missing workspace, a foreign tenant and a pending deletion identically', async () => {
+  it('answers a missing workspace and a foreign tenant identically', async () => {
     const missing = await get('/host/w/nope/read')
     const foreign = await get('/host/w/w-other/read')
-    const pending = await get('/host/w/w-pending/read')
 
-    for (const res of [missing, foreign, pending]) {
+    for (const res of [missing, foreign]) {
       expectAuthError(res, AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     }
     expect(foreign.body).toEqual(missing.body)
-    expect(pending.body).toEqual(missing.body)
+  })
+
+  describe('a workspace pending deletion', () => {
+    it('tells its owner with 409, and only on routes that do not admit it', async () => {
+      const res = await get('/host/w/w-pending/read')
+
+      expectAuthError(res, AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION)
+    })
+
+    it('admits its owner on the restore route', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/host/w/w-pending/restore')
+        .set('Authorization', `Bearer ${alice.accessToken}`)
+
+      expect(res.status).toBe(201)
+      expect(res.body).toEqual({
+        tenantId: 'tenant-1',
+        workspaceId: 'w-pending',
+        userId: alice.userId,
+        role: 'owner'
+      })
+    })
+
+    it('gives a non-owner member the same answer as a missing workspace', async () => {
+      const dave = await register(app, 'dave@example.com', 'tenant-1')
+      seedMembership('tenant-1', 'w-pending', dave.userId, 'editor')
+
+      const pending = await get('/host/w/w-pending/read', dave.accessToken)
+      const missing = await get('/host/w/nope/read', dave.accessToken)
+
+      expectAuthError(pending, AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
+      expect(pending.body).toEqual(missing.body)
+    })
   })
 
   it('refuses a route that declares no roles, even for an owner', async () => {

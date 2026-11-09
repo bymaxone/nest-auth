@@ -54,11 +54,24 @@ export interface CreateWorkspaceWithOwnerParams extends WorkspaceRef {
   /** The role that makes the creator the owner. */
   ownerRole: string
   /**
+   * The most workspaces the creator may own, `0` for no limit.
+   *
+   * The library checks it before calling, which is advisory under concurrency: two creates can pass
+   * the check together. A host that needs an exact cap counts the creator's owned workspaces under
+   * a lock inside this call's transaction and answers `limit_reached`; a host that ignores the
+   * value keeps the advisory behaviour.
+   */
+  maxWorkspacesPerUser: number
+  /**
    * The `workspace.created` event, to persist in the same transaction. Its `tenantId` and
    * `workspaceId` equal the key in this same object; the library fills the event in completely.
    */
   audit: WorkspaceAuditEvent
 }
+
+/** Outcome of {@link IWorkspaceRepository.createWithOwner}. */
+export type CreateWorkspaceResult =
+  { status: 'created'; workspace: AuthWorkspace } | { status: 'limit_reached' }
 
 /** Input to {@link IWorkspaceRepository.rename}. */
 export interface RenameWorkspaceParams extends WorkspaceRef {
@@ -100,10 +113,12 @@ export interface IWorkspaceRepository {
    * same transaction. The library generates the workspace id and passes it in the key, so the
    * audit event is complete before the write; store it as given.
    *
-   * @param params - The workspace key, name, creator and audit event.
-   * @returns The created workspace, `active`.
+   * @param params - The workspace key, name, creator, cap and audit event.
+   * @returns `created` with the workspace, `active`; or `limit_reached` when the creator already
+   *   owns `maxWorkspacesPerUser` workspaces and the host enforces the cap here. Nothing is written
+   *   for `limit_reached`, the audit row included.
    */
-  createWithOwner(params: CreateWorkspaceWithOwnerParams): Promise<AuthWorkspace>
+  createWithOwner(params: CreateWorkspaceWithOwnerParams): Promise<CreateWorkspaceResult>
 
   /**
    * Reads one workspace. Return a workspace in any status: the library decides access.

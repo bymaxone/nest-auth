@@ -11,11 +11,16 @@ import { Reflector } from '@nestjs/core'
 
 import { resolveOptions } from '../config/resolved-options'
 import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
+import { AllowPendingWorkspace } from '../decorators/allow-pending-workspace.decorator'
 import { WorkspaceRoles } from '../decorators/workspace-roles.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
-import type { WorkspaceAccessService } from '../services/workspace-access.service'
+import type {
+  ResolvedWorkspaceMember,
+  WorkspaceAccess,
+  WorkspaceAccessService
+} from '../services/workspace-access.service'
 import { WorkspaceGuard } from './workspace.guard'
 
 const SECRET = 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B'
@@ -56,6 +61,15 @@ class Declared {
   empty(): void {}
 }
 
+class Pending {
+  @WorkspaceRoles('owner')
+  @AllowPendingWorkspace()
+  restore(): void {}
+
+  @WorkspaceRoles('owner')
+  other(): void {}
+}
+
 @WorkspaceRoles('viewer')
 class ClassDeclared {
   inherit(): void {}
@@ -66,18 +80,25 @@ class ClassDeclared {
 
 interface Harness {
   guard: WorkspaceGuard
+  /** What the existing cases drive: a member, or `null` for a refusal. */
   resolveMembership: jest.Mock
+  /** The call the guard makes; it answers from `resolveMembership` unless a case overrides it. */
+  resolveAccess: jest.Mock
 }
 
 function build(options: BymaxAuthModuleOptions = moduleOptions()): Harness {
   const resolveMembership = jest.fn()
-  const access: Partial<WorkspaceAccessService> = { resolveMembership }
+  const resolveAccess = jest.fn(async (ref: unknown): Promise<WorkspaceAccess> => {
+    const member = (await resolveMembership(ref)) as ResolvedWorkspaceMember | null
+    return member === null ? { kind: 'denied' } : { kind: 'member', member }
+  })
+  const access: Partial<WorkspaceAccessService> = { resolveAccess }
   const guard = new WorkspaceGuard(
     new Reflector(),
     access as WorkspaceAccessService,
     resolveOptions(options)
   )
-  return { guard, resolveMembership }
+  return { guard, resolveMembership, resolveAccess }
 }
 
 /** A request with a verified dashboard user and the given route parameters. */
@@ -256,6 +277,40 @@ describe('WorkspaceGuard', () => {
       await expect(
         refusal(guard, contextOf(Declared, 'read', requestFor({ workspaceId: 'w1' })))
       ).resolves.toBe(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
+    })
+  })
+
+  describe('a workspace pending deletion', () => {
+    const owner = { tenantId: 't1', workspaceId: 'w1', userId: 'u1', role: 'owner' }
+
+    it('tells its owner with 409 on a route that does not admit it', async () => {
+      const { guard, resolveAccess } = build()
+      resolveAccess.mockResolvedValue({ kind: 'pending_deletion', member: owner })
+
+      await expect(
+        refusal(guard, contextOf(Pending, 'other', requestFor({ workspaceId: 'w1' })))
+      ).resolves.toBe(AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION)
+    })
+
+    it('admits its owner on the route that carries @AllowPendingWorkspace', async () => {
+      const { guard, resolveAccess } = build()
+      resolveAccess.mockResolvedValue({ kind: 'pending_deletion', member: owner })
+      const request = requestFor({ workspaceId: 'w1' })
+
+      await expect(refusal(guard, contextOf(Pending, 'restore', request))).resolves.toBe('allowed')
+      expect(request['workspace']).toEqual(owner)
+    })
+
+    it('still checks the role on the admitting route', async () => {
+      const { guard, resolveAccess } = build()
+      resolveAccess.mockResolvedValue({
+        kind: 'pending_deletion',
+        member: { ...owner, role: 'viewer' }
+      })
+
+      await expect(
+        refusal(guard, contextOf(Pending, 'restore', requestFor({ workspaceId: 'w1' })))
+      ).resolves.toBe(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     })
   })
 
