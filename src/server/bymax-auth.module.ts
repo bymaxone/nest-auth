@@ -69,6 +69,7 @@ import { AuthService } from './services/auth.service'
 import { BruteForceService } from './services/brute-force.service'
 import { EmailChangeService } from './services/email-change.service'
 import { InvitationService } from './services/invitation.service'
+import { MembershipService } from './services/membership.service'
 import { MfaChallengeService } from './services/mfa-challenge.service'
 import { MfaFlowLockoutService } from './services/mfa-flow-lockout.service'
 import { MfaManagementService } from './services/mfa-management.service'
@@ -83,6 +84,8 @@ import { SessionService } from './services/session.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
 import { TokenManagerService } from './services/token-manager.service'
 import { WorkspaceAccessService } from './services/workspace-access.service'
+import { WorkspaceEventsService } from './services/workspace-events.service'
+import { WorkspaceService } from './services/workspace.service'
 import { WsTicketService } from './services/ws-ticket.service'
 
 // ---------------------------------------------------------------------------
@@ -157,6 +160,18 @@ export const AUTH_CONTROLLERS: readonly Type<object>[] = [
   OAuthController,
   InvitationController,
   EmailChangeController
+]
+
+/**
+ * What `workspaces.enabled` registers and exports. A host mounts the guard and calls the services
+ * from its own modules, so each of them is public surface.
+ */
+const WORKSPACE_PROVIDERS: Provider[] = [
+  WorkspaceAccessService,
+  WorkspaceEventsService,
+  WorkspaceService,
+  MembershipService,
+  WorkspaceGuard
 ]
 
 /**
@@ -436,9 +451,7 @@ export class BymaxAuthModule {
     // Workspace access — registered with the repositories that back it; `assertWorkspaceProviders`
     // refuses a module whose flag and providers disagree, so the service never starts half-wired.
     const includeWorkspaces = hasProviderToken(extraProviders, BYMAX_AUTH_WORKSPACE_REPOSITORY)
-    const workspaceProviders: Provider[] = includeWorkspaces
-      ? [WorkspaceAccessService, WorkspaceGuard]
-      : []
+    const workspaceProviders: Provider[] = includeWorkspaces ? WORKSPACE_PROVIDERS : []
 
     // Fallback email provider — only registered when the consumer has not supplied one.
     const emailProviders: Provider[] = hasProviderToken(extraProviders, BYMAX_AUTH_EMAIL_PROVIDER)
@@ -724,7 +737,7 @@ export class BymaxAuthModule {
           : []),
         // The workspace access service is public surface: a host that changes memberships outside
         // the library calls its invalidation methods.
-        ...(includeWorkspaces ? [WorkspaceAccessService, WorkspaceGuard] : []),
+        ...(includeWorkspaces ? WORKSPACE_PROVIDERS : []),
         // WsTicketService also stands on its own as public surface: single-use ticket
         // handshakes are the credential a realtime transport is meant to use, and a consumer
         // cannot mint one without injecting this service.

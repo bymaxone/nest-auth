@@ -104,6 +104,7 @@ export type {
 } from './interfaces/authenticated-request.interface'
 export type {
   BeforeRegisterResult,
+  BeforeWorkspaceCreateResult,
   ApiKeyAccessEvent,
   ApiKeyDenyReason,
   HookContext,
@@ -202,6 +203,7 @@ export type {
   ListMembershipsForUserParams,
   ListMembershipsForWorkspaceParams,
   ListSoleOwnedParams,
+  MemberChangeResult,
   MembershipPage,
   MembershipRef,
   MembershipStatus,
@@ -211,6 +213,7 @@ export type {
   TransferOwnershipParams,
   TransferOwnershipResult
 } from './interfaces/membership-repository.interface'
+export type { ActingMember, WorkspaceActor } from './interfaces/acting-member.interface'
 export type { WorkspaceAuditEvent } from './interfaces/workspace-audit.interface'
 export type {
   AuthWorkspace,
@@ -218,6 +221,7 @@ export type {
   CreateWorkspaceWithOwnerParams,
   IWorkspaceRepository,
   RenameWorkspaceParams,
+  RenameWorkspaceResult,
   UpdateWorkspaceStatusParams,
   UpdateWorkspaceStatusResult,
   WorkspaceRef,
@@ -478,4 +482,12 @@ export type {
   WorkspaceRequest
 } from './decorators/current-workspace.decorator'
 export { WorkspaceAccessService } from './services/workspace-access.service'
+export { MembershipService } from './services/membership.service'
+export type { MyWorkspaces } from './services/membership.service'
+export { WorkspaceService } from './services/workspace.service'
+export type {
+  FinalizeResult,
+  ScheduledDeletion,
+  WorkspaceAccessView
+} from './services/workspace.service'
 export type { ResolvedWorkspaceMember, WorkspaceAccess } from './services/workspace-access.service'

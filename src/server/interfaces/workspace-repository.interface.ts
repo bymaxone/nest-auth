@@ -5,6 +5,7 @@
  * @layer Interface
  */
 
+import type { ActingMember } from './acting-member.interface'
 import type { WorkspaceAuditEvent } from './workspace-audit.interface'
 
 /**
@@ -77,12 +78,22 @@ export type CreateWorkspaceResult =
 export interface RenameWorkspaceParams extends WorkspaceRef {
   /** The new display name. */
   name: string
+  /** The member whose role authorized the rename; see {@link IWorkspaceRepository.rename}. */
+  actor: ActingMember
   /** The `workspace.renamed` event, to persist in the same transaction. */
   audit: WorkspaceAuditEvent
 }
 
+/** Outcome of {@link IWorkspaceRepository.rename}. */
+export type RenameWorkspaceResult = 'ok' | 'not_found' | 'actor_changed'
+
 /** Input to {@link IWorkspaceRepository.updateStatus}. */
 export interface UpdateWorkspaceStatusParams extends WorkspaceRef {
+  /**
+   * The member whose role authorized the change; see {@link IWorkspaceRepository.updateStatus}.
+   * Absent for a change no member made, such as the host job that finalizes a deletion.
+   */
+  actor?: ActingMember
   /** The state to move to. */
   status: WorkspaceStatus
   /**
@@ -90,6 +101,13 @@ export interface UpdateWorkspaceStatusParams extends WorkspaceRef {
    * restore cannot overwrite a finalize that landed first.
    */
   expectedStatus: WorkspaceStatus
+  /**
+   * The scheduled-deletion instant the caller read, `null` for none. When present, the write also
+   * applies only while the stored instant equals it, so a finalizer that read one schedule cannot
+   * delete a workspace whose deletion was restored and scheduled again. Absent means the instant is
+   * not compared.
+   */
+  expectedDeletionScheduledAt?: Date | null
   /** The scheduled-deletion instant to store, or `null` to clear it. */
   deletionScheduledAt: Date | null
   /** The event for this transition, to persist in the same transaction. */
@@ -97,7 +115,7 @@ export interface UpdateWorkspaceStatusParams extends WorkspaceRef {
 }
 
 /** Outcome of {@link IWorkspaceRepository.updateStatus}. */
-export type UpdateWorkspaceStatusResult = 'ok' | 'not_found' | 'status_conflict'
+export type UpdateWorkspaceStatusResult = 'ok' | 'not_found' | 'status_conflict' | 'actor_changed'
 
 /**
  * The workspace port a host implements.
@@ -131,21 +149,45 @@ export interface IWorkspaceRepository {
   /**
    * Renames a workspace, persisting `audit` in the same transaction.
    *
-   * @param params - The workspace key, the new name and the audit event.
-   * @returns `false` when no such workspace exists; nothing is written then.
+   * The same transaction MUST check that the actor still holds `actor.expectedRole` as an active
+   * member of this workspace, because the library judged the rename from a role it read before the
+   * write; answer `'actor_changed'` otherwise and write nothing.
+   *
+   * ```sql
+   * BEGIN;
+   * SELECT 1 FROM memberships
+   *  WHERE tenant_id = $tenant AND workspace_id = $workspace AND user_id = $actor
+   *    AND role = $actorRole AND status = 'active'
+   *  FOR UPDATE;          -- no row: ROLLBACK and answer 'actor_changed'
+   * UPDATE workspaces SET name = $name
+   *  WHERE tenant_id = $tenant AND id = $workspace;   -- 0 rows: ROLLBACK, answer 'not_found'
+   * -- the audit insert, then COMMIT
+   * ```
+   *
+   * A host that ignores the actor keeps the check-then-write window.
+   *
+   * @param params - The workspace key, the new name, the actor and the audit event.
+   * @returns `'not_found'` when no such workspace exists, `'actor_changed'` as above; nothing is
+   *   written then.
    */
-  rename(params: RenameWorkspaceParams): Promise<boolean>
+  rename(params: RenameWorkspaceParams): Promise<RenameWorkspaceResult>
 
   /**
    * Moves a workspace to another status, persisting `audit` in the same transaction.
    *
-   * Compare-and-set: it applies only while the stored status equals `expectedStatus`, decided in
-   * the same statement as the write.
+   * Compare-and-set: it applies only while the stored status equals `expectedStatus`, and, when
+   * `expectedDeletionScheduledAt` is given, while the stored instant equals it too (two dates are
+   * equal when they are the same instant), decided in the same statement as the write.
+   *
+   * When `actor` is given, the same transaction MUST also check that the actor still holds
+   * `actor.expectedRole` as an active member of this workspace and answer `'actor_changed'`
+   * otherwise, with the same lock as {@link rename}. A change no member made carries no actor.
    *
    * @param params - The workspace key, the target and expected statuses, the deletion instant and
    *   the audit event.
    * @returns `'ok'` when applied, `'not_found'` for no such workspace, `'status_conflict'` when the
-   *   stored status differs from `expectedStatus`. Nothing is written for either refusal.
+   *   stored status or, when compared, the stored instant differs, `'actor_changed'` as above. Nothing is written
+   *   for any refusal.
    */
   updateStatus(params: UpdateWorkspaceStatusParams): Promise<UpdateWorkspaceStatusResult>
 }

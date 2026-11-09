@@ -16,7 +16,10 @@ import {
 import { BymaxAuthModule } from './bymax-auth.module'
 import type { BymaxAuthModuleOptions } from './interfaces/auth-module-options.interface'
 import { WorkspaceGuard } from './guards/workspace.guard'
+import { MembershipService } from './services/membership.service'
 import { WorkspaceAccessService } from './services/workspace-access.service'
+import { WorkspaceEventsService } from './services/workspace-events.service'
+import { WorkspaceService } from './services/workspace.service'
 
 const OPTIONS: BymaxAuthModuleOptions = {
   jwt: { secret: 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B' },
@@ -69,6 +72,14 @@ describe('BymaxAuthModule — workspace providers', () => {
     )
   })
 
+  it('registers the lifecycle services when the feature is on', async () => {
+    const module = await compile(WORKSPACES, [WORKSPACE_REPOSITORY, MEMBERSHIP_REPOSITORY])
+
+    for (const service of [WorkspaceService, MembershipService, WorkspaceEventsService]) {
+      expect(module.get(service, { strict: false })).toBeInstanceOf(service)
+    }
+  })
+
   it('registers the guard when the feature is on', async () => {
     const module = await compile(WORKSPACES, [WORKSPACE_REPOSITORY, MEMBERSHIP_REPOSITORY])
 
@@ -80,6 +91,8 @@ describe('BymaxAuthModule — workspace providers', () => {
 
     expect(() => module.get(WorkspaceAccessService, { strict: false })).toThrow()
     expect(() => module.get(WorkspaceGuard, { strict: false })).toThrow()
+    expect(() => module.get(WorkspaceService, { strict: false })).toThrow()
+    expect(() => module.get(MembershipService, { strict: false })).toThrow()
   })
 
   it('compiles with the feature off and no repository', async () => {
