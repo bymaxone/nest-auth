@@ -297,7 +297,7 @@
     },
     "PasswordResetController.resetPassword#passwordFloor": {
       "kind": "policyFloor",
-      "description": "The `minLength: 8` in the generated schema is STRUCTURAL — the lowest NIST SP 800-63B-4 §3.1.1.1 permits under any circumstance, and what a decorator can express, since decorators are evaluated when the class is defined and no configuration exists yet. The deployment's floor is `password.minLength`, default 15, enforced in PasswordService and answering the same `auth.validation` code with the same `{field, message}` details the pipe produces. A client generated from the schema alone will therefore build requests the server refuses, and the refusal names the field.",
+      "description": "The `minLength: 8` in the generated schema is STRUCTURAL — the lowest NIST SP 800-63B-4 §3.1.1.1 permits under any circumstance, and what a decorator can express, since decorators are evaluated when the class is defined and no configuration exists yet. The deployment's floor is `password.minLength`, default 15, enforced in PasswordService and answering the same `auth.validation` code with the same `{field, message}` details the pipe produces. A client generated from the schema alone will therefore build requests the server refuses, and the refusal names the field. The order of the checks on this route is part of the declaration: the proof is classified first without being spent (more than one proof, none, or one the configured method does not accept answers `auth.password_reset_token_invalid` whatever the password is), then the password is judged, then the proof is consumed. A caller with no usable proof therefore never reaches the password policy or its breach screen.",
       "handler": "PasswordResetController.resetPassword",
       "method": "post",
       "path": "/password/reset-password",
@@ -339,6 +339,80 @@
           "deployment": {
             "passwordReset": {
               "method": "otp"
+            }
+          }
+        },
+        {
+          "note": "Ten characters and NO proof, under the otp method. The proof is classified before the password is judged, so the answer is the invalid token and not the length refusal: the answer does not depend on the password, and a caller holding no proof never reaches the breach screen.",
+          "body": {
+            "email": "probe@example.com",
+            "newPassword": "Passw0rd12",
+            "tenantId": "probe-tenant"
+          },
+          "dto": "ResetPasswordDto",
+          "acceptedByPipe": true,
+          "expect": {
+            "code": "auth.password_reset_token_invalid"
+          },
+          "deployment": {
+            "passwordReset": {
+              "method": "otp"
+            }
+          }
+        },
+        {
+          "note": "Ten characters and a TOKEN proof under the otp method, which does not accept it. A proof the method does not accept is classified out before the password is judged, so this answers the invalid token, identically to the missing proof above.",
+          "body": {
+            "email": "probe@example.com",
+            "newPassword": "Passw0rd12",
+            "tenantId": "probe-tenant",
+            "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dto": "ResetPasswordDto",
+          "acceptedByPipe": true,
+          "expect": {
+            "code": "auth.password_reset_token_invalid"
+          },
+          "deployment": {
+            "passwordReset": {
+              "method": "otp"
+            }
+          }
+        },
+        {
+          "note": "Ten characters and NO proof, under the token method: the same order under the other method.",
+          "body": {
+            "email": "probe@example.com",
+            "newPassword": "Passw0rd12",
+            "tenantId": "probe-tenant"
+          },
+          "dto": "ResetPasswordDto",
+          "acceptedByPipe": true,
+          "expect": {
+            "code": "auth.password_reset_token_invalid"
+          },
+          "deployment": {
+            "passwordReset": {
+              "method": "token"
+            }
+          }
+        },
+        {
+          "note": "Ten characters and an OTP proof under the token method, which does not accept it: classified out first, as under the otp method.",
+          "body": {
+            "email": "probe@example.com",
+            "newPassword": "Passw0rd12",
+            "otp": "123456",
+            "tenantId": "probe-tenant"
+          },
+          "dto": "ResetPasswordDto",
+          "acceptedByPipe": true,
+          "expect": {
+            "code": "auth.password_reset_token_invalid"
+          },
+          "deployment": {
+            "passwordReset": {
+              "method": "token"
             }
           }
         },
