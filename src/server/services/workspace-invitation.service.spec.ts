@@ -313,6 +313,7 @@ describe('WorkspaceInvitationService', () => {
       expect(outcomes.filter((c) => c === AUTH_ERROR_CODES.TOO_MANY_REQUESTS)).toHaveLength(1)
       expect(await h.store.pending(WORKSPACE_REF)).toHaveLength(1)
       expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(1)
+      expect((await h.store.readByEmail(WORKSPACE_REF, 'a@example.com'))?.record).not.toBeNull()
     })
 
     it('lets only one of two concurrent invitations take the last place', async () => {
