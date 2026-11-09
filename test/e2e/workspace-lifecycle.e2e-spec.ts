@@ -42,14 +42,21 @@ function memoryRepositories(): {
   workspaces: IWorkspaceRepository
   memberships: IMembershipRepository
   seedMember: (workspaceId: string, userId: string, role: string) => void
+  /** Runs once, right after the next membership read returns: a change that lands before the write. */
+  afterNextFind: (change: () => void) => void
 } {
   const rows = new Map<string, AuthWorkspace>()
   const members = new Map<string, AuthMembership>()
+  let afterFind: (() => void) | undefined
   const key = (w: string, u: string): string => `${w}/${u}`
   const owners = (w: string, ownerRole: string): AuthMembership[] =>
     [...members.values()].filter(
       (m) => m.workspaceId === w && m.status === 'active' && m.role === ownerRole
     )
+  const actorChanged = (w: string, actor: { userId: string; expectedRole: string }): boolean => {
+    const row = members.get(key(w, actor.userId))
+    return row?.status !== 'active' || row.role !== actor.expectedRole
+  }
   const member = (w: string, u: string, role: string): AuthMembership => ({
     tenantId: 't1',
     workspaceId: w,
@@ -94,11 +101,18 @@ function memoryRepositories(): {
     }
   }
   const memberships: Partial<IMembershipRepository> = {
-    find: async ({ workspaceId, userId }) => members.get(key(workspaceId, userId)) ?? null,
+    find: async ({ workspaceId, userId }) => {
+      const row = members.get(key(workspaceId, userId)) ?? null
+      const change = afterFind
+      afterFind = undefined
+      change?.()
+      return row
+    },
     countOwned: async () => 0,
-    changeRole: async ({ workspaceId, userId, role, ownerRole }) => {
+    changeRole: async ({ workspaceId, userId, role, ownerRole, expectedRole, actor }) => {
       const row = members.get(key(workspaceId, userId))
-      if (row === undefined) return 'not_found'
+      if (actorChanged(workspaceId, actor)) return 'actor_changed'
+      if (row === undefined || row.role !== expectedRole) return 'not_found'
       if (
         row.role === ownerRole &&
         role !== ownerRole &&
@@ -109,9 +123,12 @@ function memoryRepositories(): {
       members.set(key(workspaceId, userId), { ...row, role })
       return 'ok'
     },
-    remove: async ({ workspaceId, userId, ownerRole }) => {
+    remove: async ({ workspaceId, userId, ownerRole, expectedRole, actor }) => {
       const row = members.get(key(workspaceId, userId))
-      if (row === undefined) return 'not_found'
+      if (actor !== undefined && actorChanged(workspaceId, actor)) return 'actor_changed'
+      if (row === undefined || (expectedRole !== undefined && row.role !== expectedRole)) {
+        return 'not_found'
+      }
       if (row.role === ownerRole && owners(workspaceId, ownerRole).length === 1) return 'last_owner'
       members.delete(key(workspaceId, userId))
       return 'ok'
@@ -132,6 +149,9 @@ function memoryRepositories(): {
     memberships: memberships as IMembershipRepository,
     seedMember: (workspaceId, userId, role) => {
       members.set(key(workspaceId, userId), member(workspaceId, userId, role))
+    },
+    afterNextFind: (change) => {
+      afterFind = change
     }
   }
 }
@@ -143,6 +163,8 @@ interface Harness {
   events: Array<{ type: string }>
   /** Adds a member the way a host's own flow would: a row, then the documented invalidation. */
   addMember: (workspaceId: string, userId: string, role: string) => Promise<void>
+  /** Changes a member's role in the repository right after the service next reads a member. */
+  changeAfterNextRead: (workspaceId: string, userId: string, role: string) => void
 }
 
 function build(): Harness {
@@ -160,7 +182,7 @@ function build(): Harness {
       }
     }
   })
-  const { workspaces, memberships, seedMember } = memoryRepositories()
+  const { workspaces, memberships, seedMember, afterNextFind } = memoryRepositories()
   const redis = new AuthRedisService(createRedis(), options)
   const access = new WorkspaceAccessService(redis, workspaces, memberships, options)
   const events: Array<{ type: string }> = []
@@ -174,6 +196,9 @@ function build(): Harness {
     addMember: async (workspaceId, userId, role) => {
       seedMember(workspaceId, userId, role)
       await access.invalidateMembership({ tenantId: 't1', workspaceId, userId })
+    },
+    changeAfterNextRead: (workspaceId, userId, role) => {
+      afterNextFind(() => seedMember(workspaceId, userId, role))
     }
   }
 }
@@ -306,6 +331,68 @@ describe('workspace lifecycle over a real access cache', () => {
     })
     await expect(access.resolveMembership({ ...ref, userId: 'alice' })).resolves.toMatchObject({
       role: 'viewer'
+    })
+  })
+
+  // The ceiling is judged from roles read before the write. These show the write refusing when
+  // one of them changed in between, which a mock of the port cannot show.
+  describe('a role that changes between the read and the write', () => {
+    const CAROL = { userId: 'carol', role: 'editor' }
+
+    async function withTeam(): Promise<
+      Harness & { ref: { tenantId: string; workspaceId: string } }
+    > {
+      const harness = build()
+      const { id } = await harness.workspaceService.create(user('alice'), { name: 'Acme' }, CONTEXT)
+      await harness.addMember(id, 'carol', 'editor')
+      await harness.addMember(id, 'bob', 'viewer')
+      return { ...harness, ref: { tenantId: 't1', workspaceId: id } }
+    }
+
+    it('keeps a member who was promoted after the actor judged them a viewer', async () => {
+      const { membershipService, access, changeAfterNextRead, ref } = await withTeam()
+      changeAfterNextRead(ref.workspaceId, 'bob', 'owner')
+
+      await expect(membershipService.remove(ref, 'bob', CAROL, CONTEXT)).rejects.toMatchObject({
+        response: { error: { code: 'auth.workspace_not_found' } }
+      })
+
+      await expect(access.resolveMembership({ ...ref, userId: 'bob' })).resolves.toMatchObject({
+        role: 'owner'
+      })
+    })
+
+    it('refuses an actor who was demoted after the action was judged', async () => {
+      const { membershipService, access, changeAfterNextRead, ref } = await withTeam()
+      changeAfterNextRead(ref.workspaceId, 'carol', 'viewer')
+
+      await expect(membershipService.remove(ref, 'bob', CAROL, CONTEXT)).rejects.toMatchObject({
+        response: { error: { code: 'auth.insufficient_workspace_role' } }
+      })
+
+      await expect(access.resolveMembership({ ...ref, userId: 'bob' })).resolves.toMatchObject({
+        role: 'viewer'
+      })
+    })
+
+    it('refuses a role change when the actor was demoted after it was judged', async () => {
+      const { membershipService, access, addMember, changeAfterNextRead, ref } = await withTeam()
+      await addMember(ref.workspaceId, 'olive', 'owner')
+      changeAfterNextRead(ref.workspaceId, 'olive', 'editor')
+
+      await expect(
+        membershipService.changeRole(
+          ref,
+          'bob',
+          'editor',
+          { userId: 'olive', role: 'owner' },
+          CONTEXT
+        )
+      ).rejects.toMatchObject({ response: { error: { code: 'auth.insufficient_workspace_role' } } })
+
+      await expect(access.resolveMembership({ ...ref, userId: 'bob' })).resolves.toMatchObject({
+        role: 'viewer'
+      })
     })
   })
 

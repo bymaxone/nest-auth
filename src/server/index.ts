@@ -192,6 +192,7 @@ export type {
  * always scope the row it reads or writes.
  */
 export type {
+  ActingMember,
   AuthMembership,
   ChangeMembershipRoleParams,
   CountOwnedParams,
@@ -203,6 +204,7 @@ export type {
   ListMembershipsForUserParams,
   ListMembershipsForWorkspaceParams,
   ListSoleOwnedParams,
+  MemberChangeResult,
   MembershipPage,
   MembershipRef,
   MembershipStatus,

@@ -16,9 +16,10 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { HookContext } from '../interfaces/auth-hooks.interface'
 import type {
+  ActingMember,
   AuthMembership,
-  GuardedWriteResult,
   IMembershipRepository,
+  MemberChangeResult,
   MembershipPage,
   MembershipWithWorkspace
 } from '../interfaces/membership-repository.interface'
@@ -71,6 +72,11 @@ function pageSize(limit: number | undefined): number {
  * member whose role it includes, never a peer holding the same role and never anyone above. A member
  * therefore cannot change their own role (leaving is its own action), and an editor cannot make
  * another editor or remove one.
+ *
+ * The ceiling is judged from roles read before the write, so the write carries them: the member's
+ * `expectedRole` and the actor's role, which the repository checks in the write's own transaction. A
+ * member promoted, or an actor demoted, between the read and the write is answered `not_found` or
+ * `actor_changed` and nothing changes. A repository that ignores both keeps that window open.
  */
 @Injectable()
 export class MembershipService {
@@ -199,6 +205,8 @@ export class MembershipService {
       ...ref,
       userId,
       role,
+      expectedRole: target.role,
+      actor: { userId: actor.userId, expectedRole: actor.role },
       ownerRole,
       audit: event
     })
@@ -223,7 +231,7 @@ export class MembershipService {
     actor: WorkspaceActor,
     context: HookContext
   ): Promise<void> {
-    await this.activeMember(ref, userId, actor)
+    const target = await this.activeMember(ref, userId, actor)
     const event = {
       type: 'member.removed' as const,
       ...ref,
@@ -231,7 +239,10 @@ export class MembershipService {
       userId,
       at: now()
     }
-    await this.removeWith(ref, userId, event, context)
+    await this.removeWith(ref, userId, event, context, {
+      expectedRole: target.role,
+      actor: { userId: actor.userId, expectedRole: actor.role }
+    })
   }
 
   /**
@@ -339,11 +350,13 @@ export class MembershipService {
     ref: WorkspaceRef,
     userId: string,
     event: MemberRemovalEvent,
-    context: HookContext
+    context: HookContext,
+    judged?: { expectedRole: string; actor: ActingMember }
   ): Promise<void> {
     const result = await this.memberships.remove({
       ...ref,
       userId,
+      ...(judged ?? {}),
       ownerRole: this.group.roles.ownerRole,
       audit: event
     })
@@ -356,12 +369,15 @@ export class MembershipService {
    * A bump that fails throws, so the change is never reported as done.
    */
   private async settle(
-    result: GuardedWriteResult,
+    result: MemberChangeResult,
     ref: WorkspaceRef,
     userIds: string[]
   ): Promise<void> {
     if (result === 'not_found') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     if (result === 'last_owner') throw new AuthException(AUTH_ERROR_CODES.LAST_OWNER)
+    if (result === 'actor_changed') {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
+    }
     for (const userId of userIds) {
       await this.access.invalidateMembership({ ...ref, userId })
     }

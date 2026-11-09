@@ -87,10 +87,27 @@ export interface CreateMembershipParams extends MembershipRef {
 /** Outcome of {@link IMembershipRepository.create}. */
 export type CreateMembershipResult = 'ok' | 'already_member' | 'workspace_not_found'
 
+/**
+ * The member whose role authorized a write, and the role the library read for them.
+ *
+ * The library decides what an actor may do from a role it read BEFORE the write. Handing it back lets
+ * the repository check, in the write's own transaction, that the actor still holds it.
+ */
+export interface ActingMember {
+  /** The actor, a member of the same workspace and tenant as the write. */
+  userId: string
+  /** The role the library read for the actor and judged the action against. */
+  expectedRole: string
+}
+
 /** Input to {@link IMembershipRepository.changeRole}. */
 export interface ChangeMembershipRoleParams extends MembershipRef {
   /** The role to set. */
   role: string
+  /** The role the member held when the library judged the change; the write applies only while it still does. */
+  expectedRole: string
+  /** The actor whose role authorized the change; see {@link IMembershipRepository.changeRole}. */
+  actor: ActingMember
   /** The role that owns a workspace, so the last-owner rule can be decided with the write. */
   ownerRole: string
   /** The `member.role_changed` event, to persist in the same transaction. */
@@ -99,6 +116,13 @@ export interface ChangeMembershipRoleParams extends MembershipRef {
 
 /** Input to {@link IMembershipRepository.remove}. */
 export interface RemoveMembershipParams extends MembershipRef {
+  /**
+   * The role the member held when the library judged the removal; the write applies only while it
+   * still does. Absent when a member leaves, since nobody's role authorized it.
+   */
+  expectedRole?: string
+  /** The actor whose role authorized the removal; absent when a member leaves. */
+  actor?: ActingMember
   /** The role that owns a workspace, so the last-owner rule can be decided with the write. */
   ownerRole: string
   /** The `member.removed` or `member.left` event, to persist in the same transaction. */
@@ -159,6 +183,12 @@ export interface SetLastActiveWorkspaceParams extends LastActiveWorkspaceRef {
  * - `'last_owner'`: the change would leave the workspace with no active member holding `ownerRole`.
  */
 export type GuardedWriteResult = 'ok' | 'not_found' | 'last_owner'
+
+/**
+ * Outcome of a write that an actor's role authorized: {@link GuardedWriteResult} plus
+ * `'actor_changed'`, answered when the actor no longer holds the role the call was judged against.
+ */
+export type MemberChangeResult = GuardedWriteResult | 'actor_changed'
 
 /** Outcome of {@link IMembershipRepository.transferOwnership}. */
 export type TransferOwnershipResult = GuardedWriteResult | 'target_not_member'
@@ -232,17 +262,43 @@ export interface IMembershipRepository {
    * same moment is the race this rule exists for, and the library cannot hold a database
    * transaction. The library pre-checks only to return a friendlier error; this result decides.
    *
-   * @param params - The membership key, new role, owner role and audit event.
+   * The same transaction MUST also hold the two roles the library judged the change against, because
+   * it read them before the write and either may have changed since:
+   *
+   * - the actor still holds `actor.expectedRole` as an active member, else answer `'actor_changed'`;
+   * - the member still holds `expectedRole`, else answer `'not_found'`.
+   *
+   * ```sql
+   * BEGIN;
+   * -- 1. the actor must still hold the role that authorized this call
+   * SELECT 1 FROM memberships
+   *  WHERE tenant_id = $tenant AND workspace_id = $workspace AND user_id = $actor
+   *    AND role = $actorRole AND status = 'active'
+   *  FOR SHARE;            -- no row: ROLLBACK and answer 'actor_changed'
+   * -- 2. the member must still hold the role the library judged
+   * UPDATE memberships SET role = $role, updated_at = now()
+   *  WHERE tenant_id = $tenant AND workspace_id = $workspace AND user_id = $member
+   *    AND role = $expectedRole AND status = 'active';   -- 0 rows: ROLLBACK, answer 'not_found'
+   * -- 3. the last-owner check, the audit insert, then COMMIT
+   * ```
+   *
+   * A host that ignores both keeps the check-then-write window: a role changed between the library's
+   * read and this call goes unseen. Nothing is written for any result other than `'ok'`.
+   *
+   * @param params - The membership key, new role, the roles judged, owner role and audit event.
    */
-  changeRole(params: ChangeMembershipRoleParams): Promise<GuardedWriteResult>
+  changeRole(params: ChangeMembershipRoleParams): Promise<MemberChangeResult>
 
   /**
    * Removes a member, persisting `audit` in the same transaction. The same atomic last-owner rule
-   * as {@link changeRole} applies.
+   * as {@link changeRole} applies, and so does its pair of role conditions when `expectedRole` and
+   * `actor` are given: the actor must still hold `actor.expectedRole` (`'actor_changed'` otherwise)
+   * and the member must still hold `expectedRole` (`'not_found'` otherwise), both in this
+   * transaction. A member leaving passes neither, since no role authorized it.
    *
-   * @param params - The membership key, owner role and audit event.
+   * @param params - The membership key, the roles judged, owner role and audit event.
    */
-  remove(params: RemoveMembershipParams): Promise<GuardedWriteResult>
+  remove(params: RemoveMembershipParams): Promise<MemberChangeResult>
 
   /**
    * Hands ownership from one member to another in one transaction, persisting `audit` with it.

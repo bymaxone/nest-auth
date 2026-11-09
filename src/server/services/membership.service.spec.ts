@@ -249,6 +249,8 @@ describe('MembershipService', () => {
         ...WORKSPACE_REF,
         userId: 'u2',
         role: 'editor',
+        expectedRole: 'viewer',
+        actor: { userId: 'owner-1', expectedRole: 'owner' },
         ownerRole: 'owner',
         audit
       })
@@ -364,6 +366,8 @@ describe('MembershipService', () => {
       expect(memberships['remove']).toHaveBeenCalledWith({
         ...WORKSPACE_REF,
         userId: 'u2',
+        expectedRole: 'viewer',
+        actor: { userId: 'editor-1', expectedRole: 'editor' },
         ownerRole: 'owner',
         audit
       })
@@ -416,6 +420,9 @@ describe('MembershipService', () => {
         audit
       })
       expect(memberships['find']).not.toHaveBeenCalled()
+      const sent = memberships['remove']?.mock.calls[0]?.[0] as Record<string, unknown>
+      expect(Object.keys(sent)).not.toContain('expectedRole')
+      expect(Object.keys(sent)).not.toContain('actor')
       expect(access.invalidateMembership).toHaveBeenCalledWith({ ...WORKSPACE_REF, userId: 'u2' })
       expect(events.emit).toHaveBeenCalledWith(audit, CONTEXT)
     })
@@ -428,6 +435,33 @@ describe('MembershipService', () => {
         AUTH_ERROR_CODES.LAST_OWNER
       )
     })
+  })
+
+  // The roles were read before the write; the repository checks them again in the write's own
+  // transaction and these are its answers when either changed in between.
+  describe('a role that changed between the read and the write', () => {
+    it.each([
+      ['changeRole', 'actor_changed', AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE],
+      ['changeRole', 'not_found', AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND],
+      ['remove', 'actor_changed', AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE],
+      ['remove', 'not_found', AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND]
+    ])(
+      'answers %s with %s as %s and changes and reports nothing',
+      async (call, result, expected) => {
+        const { service, memberships, access, events } = build()
+        memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
+        memberships[call]?.mockResolvedValue(result)
+
+        const attempt =
+          call === 'changeRole'
+            ? service.changeRole(WORKSPACE_REF, 'u2', 'editor', OWNER, CONTEXT)
+            : service.remove(WORKSPACE_REF, 'u2', OWNER, CONTEXT)
+
+        await expect(code(attempt)).resolves.toBe(expected)
+        expect(access.invalidateMembership).not.toHaveBeenCalled()
+        expect(events.emit).not.toHaveBeenCalled()
+      }
+    )
   })
 
   // The rule: the owner role acts on any role; every other role acts only STRICTLY below itself.
