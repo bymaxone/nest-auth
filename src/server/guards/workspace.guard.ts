@@ -47,6 +47,11 @@ type AcceptedRole = string | typeof ANY_WORKSPACE_MEMBER
  * 5. checks the role through `workspaces.roles.hierarchy`, answering `403
  *    auth.insufficient_workspace_role` when it is below what the route declares;
  * 6. attaches the access to `request.workspace` for `@CurrentWorkspace()`.
+ *
+ * Two limits on step 4. The repositories are read together for every refusal, so a missing
+ * workspace, an inactive one and a non-member cost the same work, but the time a host's database
+ * takes for each row is outside this library. And a missing workspace costs two repository reads,
+ * so the host's rate limiting on guarded routes is what bounds a caller probing ids.
  */
 @Injectable()
 export class WorkspaceGuard implements CanActivate {
@@ -99,12 +104,10 @@ export class WorkspaceGuard implements CanActivate {
 
   private accepts(accepted: AcceptedRole[], role: string): boolean {
     const { hierarchy } = this.group.roles
-    // `hasRole` compares roles by identity, so the any-member marker, handled first, would match
-    // no role even if it reached it.
-    return accepted.some(
-      (required) =>
-        required === ANY_WORKSPACE_MEMBER || hasRole(role, required as string, hierarchy)
-    )
+    return accepted.some((required) => {
+      if (required === ANY_WORKSPACE_MEMBER) return true
+      return hasRole(role, required, hierarchy)
+    })
   }
 }
 
