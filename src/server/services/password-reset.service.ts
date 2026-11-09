@@ -30,6 +30,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { answerResetRequest } from '../utils/answer-reset-request'
+import { classifyResetProof } from '../utils/classify-reset-proof'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -205,6 +206,11 @@ export class PasswordResetService {
    * - `otp` — verified by {@link OtpService} and consumed on success.
    * - `verifiedToken` — consumed atomically from Redis (`pw_vtok:{sha256(verifiedToken)}`).
    *
+   * The proof is classified before anything else is judged, so a request with none, with more than
+   * one, or with one the configured method does not accept is an invalid token whatever password it
+   * carries and never reaches the password policy. Then the password is judged, then the proof is
+   * spent.
+   *
    * On success the user's password is updated and all sessions are invalidated.
    * The method throws an {@link AuthException} on any failure — no timing
    * normalization is applied here since the error reveals only that the proof
@@ -224,59 +230,29 @@ export class PasswordResetService {
     // the stored context and this step would disagree about which tenant it belonged to.
     const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
     dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
-    const { method } = this.options.passwordReset
+    // The proof is classified first, without being looked up or spent: more than one, none, or one
+    // the configured method does not accept is refused as an invalid token whatever password the
+    // request carries, so a caller holding no usable proof never reaches the password policy. Its
+    // breach screen may be an outbound query (the bundled HIBP provider), and such a caller must
+    // not be able to drive it.
+    const proof = classifyResetProof(this.options.passwordReset.method, dto)
 
-    // Mutual exclusivity: exactly one proof field must be present.
-    // Count the number of defined proof fields to reject ambiguous requests.
-    const proofCount = [dto.token, dto.otp, dto.verifiedToken].filter(
-      (v): v is string => typeof v === 'string'
-    ).length
-
-    if (proofCount > 1) {
-      throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
-    }
-
-    // The new password is judged BEFORE any proof is spent.
+    // The new password is judged BEFORE the proof is spent.
     //
-    // Every proof on this path is single-use and consumed atomically — `GETDEL` for the two
-    // token shapes, the Lua script for the OTP — so a breach-list rejection that arrived after
-    // the consumption burned the token: the caller was told their password was unacceptable
-    // and, in the same breath, that the only credential they had to fix it was gone. The whole
-    // mail round trip had to be repeated for a mistake the request itself contained.
-    //
-    // Judging first means an unproven caller can drive the breach checker, which for the
-    // bundled HIBP provider is an outbound range query. That is the same exposure `register`
-    // already carries on the same checker, and this route allows three requests per five
-    // minutes — the burned token was the larger of the two costs by a wide margin.
+    // Every proof on this path is single-use and consumed atomically (`GETDEL` for the two token
+    // shapes, the Lua script for the OTP), so a rejection that arrived after the consumption
+    // would burn the caller's only credential for a mistake in the request itself, and the whole
+    // mail round trip would have to be repeated. Only a caller who presented a well-formed proof
+    // of the right kind reaches this check, at the route's three requests per five minutes.
     await this.passwordService.assertAcceptable(dto.newPassword, 'newPassword')
 
-    if (method === 'token') {
-      if (!dto.token) {
-        throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
-      }
-      await this.resetWithToken(dto.email, tenantId, dto.token, dto.newPassword)
-      return
+    if (proof.kind === 'token') {
+      await this.resetWithToken(dto.email, tenantId, proof.value, dto.newPassword)
+    } else if (proof.kind === 'verifiedToken') {
+      await this.resetWithVerifiedToken(dto.email, tenantId, proof.value, dto.newPassword)
+    } else {
+      await this.resetWithOtp(dto.email, tenantId, proof.value, dto.newPassword)
     }
-
-    // method === 'otp'
-    // Stryker disable next-line ConditionalExpression,BlockStatement: the only input that reaches here (token present, proofCount <= 1) falls through to the identical throw at the end of the function
-    if (dto.token) {
-      // Token-based proof submitted for an OTP-configured module — explicit method mismatch.
-      // Stryker disable next-line CallExpression: equivalent — same reason the ConditionalExpression disable above gives; the only input reaching here falls through to the identical throw at the end of this function, so deleting this one changes the frame, not the answer.
-      throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
-    }
-
-    if (dto.verifiedToken) {
-      await this.resetWithVerifiedToken(dto.email, tenantId, dto.verifiedToken, dto.newPassword)
-      return
-    }
-
-    if (dto.otp) {
-      await this.resetWithOtp(dto.email, tenantId, dto.otp, dto.newPassword)
-      return
-    }
-
-    throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
   }
 
   /**

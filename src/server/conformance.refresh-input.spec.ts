@@ -12,6 +12,7 @@ import type { ArgumentMetadata } from '@nestjs/common'
 import { Type } from 'class-transformer'
 import { IsString, ValidateNested } from 'class-validator'
 
+import { AUTH_ERROR_CODES } from './errors/auth-error-codes'
 import { AuthException } from './errors/auth-exception'
 import { REQUEST_SCHEMAS } from './openapi/generated/request-schemas'
 import { REQUEST_SCHEMA_DTOS } from './openapi/request-schema-dtos'
@@ -27,6 +28,7 @@ const contract = JSON.parse(
     pageLimit: { min: number; max: number; default: number }
   }
   refreshTokenInput: { body: string; cookie: string }
+  passwordResetOrder: { steps: string[]; reason: string }
 }
 
 describe('the refresh token input the contract states', () => {
@@ -149,5 +151,20 @@ describe('the field path a nested validation error names', () => {
     }
 
     expect(fields.sort()).toEqual(['billing.name', 'items.1.name'])
+  })
+})
+
+describe('the password reset order the contract states', () => {
+  // Scenario: the three steps. Expected: they run classify, judge, spend, and every code they name
+  // is one this library answers. Why: the order is the contract; the declared-structures probes and
+  // the e2e run it, and this ties the wording to the real codes.
+  it('names the three steps in order with real codes', () => {
+    const { steps } = contract.passwordResetOrder
+
+    expect(steps.map((step) => step.slice(0, 2))).toEqual(['1.', '2.', '3.'])
+    expect(steps[0]).toContain(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
+    expect(steps[1]).toContain(AUTH_ERROR_CODES.VALIDATION)
+    expect(steps[1]).toContain(AUTH_ERROR_CODES.PASSWORD_COMPROMISED)
+    expect(steps[2]).toContain(AUTH_ERROR_CODES.OTP_INVALID)
   })
 })
