@@ -12,13 +12,20 @@ import { createHash } from 'node:crypto'
 
 import { resolveApiKeys, validateApiKeys } from './api-key-options'
 import { DEFAULT_OPTIONS } from './default-options'
+import { durationToSeconds } from './duration'
 import { validateSecretStrength } from './secret-strength'
+import {
+  resolveRegistration,
+  resolveWorkspaceOptions,
+  type ResolvedWorkspaceOptions
+} from './workspace-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
 import { MAX_VERIFY_WINDOW } from '../crypto/totp'
 import type {
   BymaxAuthModuleOptions,
   ClientIpSource
 } from '../interfaces/auth-module-options.interface'
+import type { RegistrationMode } from '../interfaces/workspace-options.interface'
 
 /**
  * Domain-separation label for the HMAC key derivation. Changing this value is
@@ -56,6 +63,8 @@ export type ResolvedOptions = Omit<
   | 'platform'
   | 'invitations'
   | 'apiKeys'
+  | 'workspaces'
+  | 'registration'
   | 'controllers'
   | 'blockedStatuses'
   | 'redisNamespace'
@@ -86,6 +95,10 @@ export type ResolvedOptions = Omit<
   platform: Required<NonNullable<BymaxAuthModuleOptions['platform']>>
   invitations: Required<NonNullable<BymaxAuthModuleOptions['invitations']>>
   apiKeys: Required<NonNullable<BymaxAuthModuleOptions['apiKeys']>>
+  /** The workspace group with defaults applied; absent while the feature is off. */
+  workspaces?: ResolvedWorkspaceOptions
+  /** Who may create an account on their own. */
+  registration: RegistrationMode
   emailChange: Required<NonNullable<BymaxAuthModuleOptions['emailChange']>>
   // The shape is stated outright rather than derived from the option union: by this point
   // validation has run, so the discrimination that forces a consumer to name the source has
@@ -199,6 +212,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateClientIpSource(userOptions.rateLimit)
   validateTenantBinding(userOptions)
   validateApiKeys(userOptions)
+  const workspaces = resolveWorkspaceOptions(userOptions)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
 
@@ -216,7 +230,12 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
   // Destructure mfa out so the base spread does not inject the raw optional-field shape.
   // mfa is re-added below with defaults applied.
-  const { mfa: _mfa, identifierKey: _identifierKey, ...userOptionsWithoutMfa } = userOptions
+  const {
+    mfa: _mfa,
+    identifierKey: _identifierKey,
+    workspaces: _workspaces,
+    ...userOptionsWithoutMfa
+  } = userOptions
 
   const resolved: ResolvedOptions = {
     ...userOptionsWithoutMfa,
@@ -280,6 +299,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
     apiKeys: resolveApiKeys(userOptions.apiKeys),
 
+    registration: resolveRegistration(userOptions),
+
     emailChange: {
       ...DEFAULT_OPTIONS.emailChange,
       ...userOptions.emailChange
@@ -319,6 +340,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
     hmacKey: deriveHmacKey(userOptions.identifierKey ?? userOptions.jwt.secret),
     previousHmacKeys: (userOptions.jwt.previousSecrets ?? []).map(deriveHmacKey),
+
+    ...(workspaces !== undefined && { workspaces }),
 
     ...(userOptions.mfa !== undefined && {
       mfa: { ...DEFAULT_OPTIONS.mfa, ...userOptions.mfa } as Required<
@@ -1356,87 +1379,6 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
         `the response — a retry, not a policy. 0 disables grace recovery entirely.`
     )
   }
-}
-
-/**
- * Seconds per unit accepted in a `jwt.accessExpiresIn` time string.
- *
- * The vocabulary is `ms`'s, because `@nestjs/jwt` hands the value straight to that parser. It is
- * reproduced rather than depended on: the library ships zero direct dependencies, and the epoch
- * bound below needs the value as a number before any token is ever signed.
- */
-const DURATION_UNIT_SECONDS: Record<string, number> = {
-  ms: 0.001,
-  msec: 0.001,
-  msecs: 0.001,
-  millisecond: 0.001,
-  milliseconds: 0.001,
-  s: 1,
-  sec: 1,
-  secs: 1,
-  second: 1,
-  seconds: 1,
-  m: 60,
-  min: 60,
-  mins: 60,
-  minute: 60,
-  minutes: 60,
-  h: 3_600,
-  hr: 3_600,
-  hrs: 3_600,
-  hour: 3_600,
-  hours: 3_600,
-  d: 86_400,
-  day: 86_400,
-  days: 86_400,
-  w: 604_800,
-  week: 604_800,
-  weeks: 604_800,
-  y: 31_557_600,
-  yr: 31_557_600,
-  yrs: 31_557_600,
-  year: 31_557_600,
-  years: 31_557_600
-}
-
-/** Strips the leading amount — digits, decimal point, and any space before the unit. */
-// Stryker disable Regex: the `^` is equivalent under the `amount > 0` guard below. A string
-// that reaches the unit lookup with a usable amount has its numeric run at index 0, so an
-// unanchored search finds the same match; one whose numeric run starts later makes
-// `Number.parseFloat` return NaN and is rejected on the amount, never on the unit. Verified
-// against 211k generated inputs — anchored and unanchored agree on every one. The anchor stays
-// because it states what this pattern is for, and would become load-bearing again the moment
-// someone relaxes that guard.
-const DURATION_AMOUNT_PREFIX = /^[\d.\s]+/
-// Stryker restore Regex
-
-/**
- * Convert a `jwt.accessExpiresIn` time string to seconds.
- *
- * A bare number is deliberately not accepted. `ms` reads it as milliseconds while a reader almost
- * always means seconds, and the two differ by a factor of a thousand on a value that decides how
- * long a stolen access token stays usable — so the ambiguity is rejected rather than guessed at.
- * A number with no unit leaves nothing for the unit table to match, which is what rejects it.
- *
- * Parsed as amount-then-unit rather than through one anchored pattern so that every branch here
- * is reachable from a real configuration value: a capture group the pattern already guarantees
- * would still need an unreachable "absent" arm to satisfy `noUncheckedIndexedAccess`.
- *
- * @param value - The configured time span, e.g. `'15m'`, `'1 hour'`, `'900s'`.
- * @returns The span in seconds, or `undefined` when the string is not a positive time span
- *   `ms` accepts.
- */
-export function durationToSeconds(value: string): number | undefined {
-  const trimmed = value.trim()
-  const unit = trimmed.replace(DURATION_AMOUNT_PREFIX, '').toLowerCase()
-  const seconds = DURATION_UNIT_SECONDS[unit]
-  const amount = Number.parseFloat(trimmed)
-
-  // A non-positive lifetime is rejected here rather than compared against the bound below: it is
-  // not a value that "fits", it is a token that expires at or before it is issued.
-  if (seconds === undefined || !(amount > 0)) return undefined
-
-  return amount * seconds
 }
 
 /**

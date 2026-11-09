@@ -17,12 +17,15 @@ import {
   BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
+  BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_REDIS_CLIENT,
-  BYMAX_AUTH_USER_REPOSITORY
+  BYMAX_AUTH_USER_REPOSITORY,
+  BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from './bymax-auth.constants'
 import { resolveOptions, type ResolvedOptions } from './config/resolved-options'
+import { assertWorkspaceProviders } from './config/workspace-options'
 import { AuthController } from './controllers/auth.controller'
 import { EmailChangeController } from './controllers/email-change.controller'
 import { InvitationController } from './controllers/invitation.controller'
@@ -389,6 +392,14 @@ export class BymaxAuthModule {
                   'extraProviders. Provide your IApiKeyRepository implementation.'
           )
         }
+
+        // Cross-validate: workspaces are registered by their two repository providers and
+        // configured by `workspaces.enabled`; the flag and the providers must agree.
+        assertWorkspaceProviders(
+          resolved.workspaces !== undefined,
+          hasProviderToken(extraProviders, BYMAX_AUTH_WORKSPACE_REPOSITORY),
+          hasProviderToken(extraProviders, BYMAX_AUTH_MEMBERSHIP_REPOSITORY)
+        )
 
         // Auditing every request was demanded: refuse a module that is plainly unable to write it.
         // The guard denies at runtime too, which also covers what is not inspectable here.

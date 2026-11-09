@@ -170,6 +170,20 @@ export type {
 } from './interfaces/user-repository.interface'
 
 /**
+ * The workspace option types and the marker a permission list uses for "every active member".
+ *
+ * Exported because a host writes these in its module options: `ANY_WORKSPACE_MEMBER` is a value,
+ * and the types name the `workspaces` group and the `registration` mode.
+ */
+export { ANY_WORKSPACE_MEMBER } from './constants/workspace-roles'
+export type {
+  RegistrationMode,
+  WorkspaceOptions,
+  WorkspacePermissionOptions,
+  WorkspaceRoleList
+} from './interfaces/workspace-options.interface'
+
+/**
  * The workspace ports and their parameter shapes.
  *
  * Exported because a consumer IMPLEMENTS these ports. Every shape names the full key of what it
