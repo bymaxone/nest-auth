@@ -8,7 +8,7 @@ import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator'
 
 import { NO_CONTROL_CHARACTERS } from './no-control-characters'
 
-/** Longest workspace name accepted, in characters; the service trims before it counts. */
+/** Longest workspace name accepted, counted on the value as submitted, before the service trims it. */
 const NAME_MAX = 120
 
 /**
