@@ -42,6 +42,16 @@ overrides:
   # resolved minimatch brings 5.0.12 itself.
   'brace-expansion@5': '^5.0.12'
   'esbuild@>=0.27.3 <0.28.1': '>=0.28.1'
+  # GHSA-g3hv-75wg-m249 (medium) `minimatch` denial of service through globparts amplification, fixed
+  # in 11.0.1. Dev tooling only. The callers written for minimatch 10 (Stryker, typescript-estree,
+  # glob 13) take 11. `glob` 10 does NOT: on minimatch 11 it returns no matches and says nothing,
+  # measured on a fresh directory (3 files with minimatch 9, 0 with 11). So the two parents that
+  # still pull glob 10 move off it instead: test-exclude 7 (jest coverage, through
+  # babel-plugin-istanbul) to the 8 line, which uses glob 13, and archiver 7 (testcontainers) to
+  # the 8 line, which no longer depends on glob. Remove each once its parent releases that itself.
+  'minimatch@>=10.0.0 <11.0.1': '>=11.0.1'
+  'test-exclude@^7': '^8'
+  'archiver@^7': '^8'
   'postcss@<8.5.10': '>=8.5.10'
   # Floor the PACKAGE, never a window of it. A selector like `qs@>=6.11.1 <=6.15.1` protects only
   # against the advisory it was written for: once the resolved version leaves that window the
