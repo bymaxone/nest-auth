@@ -83,6 +83,17 @@ describe('WorkspaceInvitationStore', () => {
       expect(await store.write(WORKSPACE_REF, 'winv:live', record(), 300, 1)).toBe(true)
     })
 
+    it('reads the set only when there is a limit to count against', async () => {
+      const { store } = build()
+      const read = jest.spyOn(store, 'pending')
+
+      await store.write(WORKSPACE_REF, 'winv:a', record(), 300)
+      expect(read).not.toHaveBeenCalled()
+
+      await store.write(WORKSPACE_REF, 'winv:b', record(), 300, 5)
+      expect(read).toHaveBeenCalledTimes(1)
+    })
+
     it('has no limit when none is given', async () => {
       const { store } = build()
 
