@@ -86,14 +86,16 @@ function memoryRepositories(): {
       return { status: 'created', workspace }
     },
     findById: async ({ workspaceId }) => rows.get(workspaceId) ?? null,
-    rename: async ({ workspaceId, name }) => {
+    rename: async ({ workspaceId, name, actor }) => {
       const row = rows.get(workspaceId)
-      if (row === undefined) return false
+      if (actorChanged(workspaceId, actor)) return 'actor_changed'
+      if (row === undefined) return 'not_found'
       rows.set(workspaceId, { ...row, name })
-      return true
+      return 'ok'
     },
-    updateStatus: async ({ workspaceId, status, expectedStatus, deletionScheduledAt }) => {
+    updateStatus: async ({ workspaceId, status, expectedStatus, deletionScheduledAt, actor }) => {
       const row = rows.get(workspaceId)
+      if (actor !== undefined && actorChanged(workspaceId, actor)) return 'actor_changed'
       if (row === undefined) return 'not_found'
       if (row.status !== expectedStatus) return 'status_conflict'
       rows.set(workspaceId, { ...row, status, deletionScheduledAt })
@@ -253,7 +255,7 @@ describe('workspace lifecycle over a real access cache', () => {
     await access.resolveMembership({ ...ref, userId: 'alice' })
     await access.resolveMembership({ ...ref, userId: 'bob' })
 
-    await workspaceService.scheduleDeletion(ref, 'alice', CONTEXT)
+    await workspaceService.scheduleDeletion(ref, ALICE, CONTEXT)
 
     await expect(access.resolveAccess({ ...ref, userId: 'bob' })).resolves.toEqual({
       kind: 'denied'
@@ -261,7 +263,7 @@ describe('workspace lifecycle over a real access cache', () => {
     await expect(access.resolveAccess({ ...ref, userId: 'alice' })).resolves.toMatchObject({
       kind: 'pending_deletion'
     })
-    await workspaceService.restore(ref, 'alice', CONTEXT)
+    await workspaceService.restore(ref, ALICE, CONTEXT)
     await expect(access.resolveMembership({ ...ref, userId: 'bob' })).resolves.toMatchObject({
       role: 'viewer'
     })
@@ -396,11 +398,43 @@ describe('workspace lifecycle over a real access cache', () => {
     })
   })
 
+  describe('a workspace write by an actor whose role changed after the guard judged it', () => {
+    it('refuses a rename and leaves the name alone', async () => {
+      const { workspaceService, addMember } = build()
+      const { id } = await workspaceService.create(user('alice'), { name: 'Acme' }, CONTEXT)
+      const ref = { tenantId: 't1', workspaceId: id }
+      await addMember(id, 'carol', 'viewer')
+
+      await expect(
+        workspaceService.rename(ref, 'Hijacked', { userId: 'carol', role: 'owner' }, CONTEXT)
+      ).rejects.toMatchObject({ response: { error: { code: 'auth.insufficient_workspace_role' } } })
+
+      await expect(workspaceService.getAccess(ref, 'alice')).resolves.toMatchObject({
+        workspace: { name: 'Acme' }
+      })
+    })
+
+    it('refuses to schedule a deletion, and every member keeps access', async () => {
+      const { workspaceService, access, addMember } = build()
+      const { id } = await workspaceService.create(user('alice'), { name: 'Acme' }, CONTEXT)
+      const ref = { tenantId: 't1', workspaceId: id }
+      await addMember(id, 'carol', 'editor')
+
+      await expect(
+        workspaceService.scheduleDeletion(ref, { userId: 'carol', role: 'owner' }, CONTEXT)
+      ).rejects.toMatchObject({ response: { error: { code: 'auth.insufficient_workspace_role' } } })
+
+      await expect(access.resolveMembership({ ...ref, userId: 'alice' })).resolves.toMatchObject({
+        role: 'owner'
+      })
+    })
+  })
+
   it('does not finalize a deletion before its grace period is over', async () => {
     const { workspaceService, access } = build()
     const { id } = await workspaceService.create(user('alice'), { name: 'Acme' }, CONTEXT)
     const ref = { tenantId: 't1', workspaceId: id }
-    await workspaceService.scheduleDeletion(ref, 'alice', CONTEXT)
+    await workspaceService.scheduleDeletion(ref, ALICE, CONTEXT)
 
     await expect(workspaceService.finalizeDeletion(ref)).resolves.toBe('not_due')
 

@@ -22,6 +22,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import type { ActingMember, WorkspaceActor } from '../interfaces/acting-member.interface'
 import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { IMembershipRepository } from '../interfaces/membership-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
@@ -59,6 +60,14 @@ export interface WorkspaceAccessView {
  * service then ends the access the change affects by bumping the cache version, and only after that
  * hands the event to the host's hook, so a failed bump surfaces as an error and a change is never
  * reported as done while stale access could still be served.
+ *
+ * The writes a member's role authorized (rename, scheduling a deletion, restore) hand the repository
+ * the role the guard resolved for the actor, and the repository checks it in the write's own
+ * transaction; an actor demoted between the guard and the write is answered
+ * `auth.insufficient_workspace_role` and nothing changes. The writes no role authorized are creation
+ * (any identity may create its own workspace), finalizing a deletion (a host job) and switching (it
+ * records a preference, and a stale pointer is harmless because the guard re-checks membership on
+ * every request).
  */
 @Injectable()
 export class WorkspaceService {
@@ -122,21 +131,34 @@ export class WorkspaceService {
    *
    * @param ref - The workspace.
    * @param rawName - The new name.
-   * @param actorUserId - Who renames it.
+   * @param actor - Who renames it, with the role the guard resolved for them; the repository checks
+   *   in the write's own transaction that they still hold it.
    * @param context - Request metadata for the hook.
    * @throws {AuthException} `auth.validation` for a bad name, `auth.workspace_not_found` when the
-   *   workspace does not exist.
+   *   workspace does not exist, `auth.insufficient_workspace_role` when the actor's role changed.
    */
   async rename(
     ref: WorkspaceRef,
     rawName: unknown,
-    actorUserId: string,
+    actor: WorkspaceActor,
     context: HookContext
   ): Promise<void> {
     const name = normalizeWorkspaceName(rawName)
-    const event = { type: 'workspace.renamed' as const, ...ref, actorUserId, at: now() }
-    if (!(await this.workspaces.rename({ ...ref, name, audit: event }))) {
-      throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
+    const event = {
+      type: 'workspace.renamed' as const,
+      ...ref,
+      actorUserId: actor.userId,
+      at: now()
+    }
+    const result = await this.workspaces.rename({
+      ...ref,
+      name,
+      actor: judged(actor),
+      audit: event
+    })
+    if (result === 'not_found') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
+    if (result === 'actor_changed') {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     }
     this.events.emit(event, context)
   }
@@ -147,7 +169,7 @@ export class WorkspaceService {
    * With `workspaces.deletionGraceDays` of `0` the workspace is deleted immediately instead.
    *
    * @param ref - The workspace.
-   * @param actorUserId - Who deletes it.
+   * @param actor - Who deletes it, with the role the guard resolved for them.
    * @param context - Request metadata for the hook.
    * @returns The resulting status and when the deletion becomes final.
    * @throws {AuthException} `auth.workspace_not_found`, or `auth.workspace_pending_deletion` when
@@ -155,7 +177,7 @@ export class WorkspaceService {
    */
   async scheduleDeletion(
     ref: WorkspaceRef,
-    actorUserId: string,
+    actor: WorkspaceActor,
     context: HookContext
   ): Promise<ScheduledDeletion> {
     const days = this.group.deletionGraceDays
@@ -163,14 +185,15 @@ export class WorkspaceService {
     const immediate = days === 0
     const scheduledAt = immediate ? null : new Date(Date.parse(at) + days * DAY_MS)
     const event = immediate
-      ? ({ type: 'workspace.deleted', ...ref, actorUserId, at } as const)
-      : ({ type: 'workspace.deletion_scheduled', ...ref, actorUserId, at } as const)
+      ? ({ type: 'workspace.deleted', ...ref, actorUserId: actor.userId, at } as const)
+      : ({ type: 'workspace.deletion_scheduled', ...ref, actorUserId: actor.userId, at } as const)
 
     const result = await this.workspaces.updateStatus({
       ...ref,
       status: immediate ? 'deleted' : 'pending_deletion',
       expectedStatus: 'active',
       deletionScheduledAt: scheduledAt,
+      actor: judged(actor),
       audit: event
     })
     await this.settle(result, ref)
@@ -182,23 +205,29 @@ export class WorkspaceService {
    * Undoes a scheduled deletion while the grace period has not elapsed.
    *
    * @param ref - The workspace.
-   * @param actorUserId - Who restores it.
+   * @param actor - Who restores it, with the role the guard resolved for them.
    * @param context - Request metadata for the hook.
    * @throws {AuthException} `auth.workspace_not_found` when the workspace is not pending deletion
    *   or its grace period is over.
    */
-  async restore(ref: WorkspaceRef, actorUserId: string, context: HookContext): Promise<void> {
+  async restore(ref: WorkspaceRef, actor: WorkspaceActor, context: HookContext): Promise<void> {
     const workspace = await this.workspaces.findById(ref)
     const due = workspace?.deletionScheduledAt
     if (workspace?.status !== 'pending_deletion' || (due != null && due.getTime() <= Date.now())) {
       throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     }
-    const event = { type: 'workspace.restored' as const, ...ref, actorUserId, at: now() }
+    const event = {
+      type: 'workspace.restored' as const,
+      ...ref,
+      actorUserId: actor.userId,
+      at: now()
+    }
     const result = await this.workspaces.updateStatus({
       ...ref,
       status: 'active',
       expectedStatus: 'pending_deletion',
       deletionScheduledAt: null,
+      actor: judged(actor),
       audit: event
     })
     await this.settle(result, ref)
@@ -319,6 +348,9 @@ export class WorkspaceService {
    */
   private async settle(result: UpdateWorkspaceStatusResult, ref: WorkspaceRef): Promise<void> {
     if (result === 'not_found') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
+    if (result === 'actor_changed') {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
+    }
     if (result === 'status_conflict') {
       const current = await this.workspaces.findById(ref)
       throw new AuthException(
@@ -329,6 +361,17 @@ export class WorkspaceService {
     }
     await this.access.invalidateWorkspace(ref)
   }
+}
+
+/**
+ * The acting member as the repository checks it: the role the guard resolved is the role the write
+ * was judged against.
+ *
+ * @param actor - The actor and the role they held when the action was judged.
+ * @returns The same pair in the form the ports take.
+ */
+function judged(actor: WorkspaceActor): ActingMember {
+  return { userId: actor.userId, expectedRole: actor.role }
 }
 
 /** The current instant as an ISO-8601 string, the form audit events carry. */

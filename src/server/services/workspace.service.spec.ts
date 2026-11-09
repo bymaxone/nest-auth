@@ -23,6 +23,8 @@ import type { WorkspaceAccessService } from './workspace-access.service'
 import type { WorkspaceEventsService } from './workspace-events.service'
 import { WorkspaceService } from './workspace.service'
 
+const ACTOR = { userId: 'u1', role: 'owner' }
+const JUDGED = { userId: 'u1', expectedRole: 'owner' }
 const USER = { id: 'u1', tenantId: 't1', email: 'a@b.c' } as SafeAuthUser
 const DAY = 86_400_000
 
@@ -43,7 +45,7 @@ function build(
   const workspaces = {
     createWithOwner: jest.fn(),
     findById: jest.fn(),
-    rename: jest.fn().mockResolvedValue(true),
+    rename: jest.fn().mockResolvedValue('ok'),
     updateStatus: jest.fn().mockResolvedValue('ok')
   }
   const memberships: Harness['memberships'] = {
@@ -278,7 +280,7 @@ describe('WorkspaceService', () => {
     it('writes the new name with its audit event and reports the same event', async () => {
       const { service, workspaces, events } = build()
 
-      await service.rename(WORKSPACE_REF, '  New  ', 'u1', CONTEXT)
+      await service.rename(WORKSPACE_REF, '  New  ', ACTOR, CONTEXT)
 
       const audit = {
         type: 'workspace.renamed',
@@ -286,15 +288,20 @@ describe('WorkspaceService', () => {
         actorUserId: 'u1',
         at: NOW.toISOString()
       }
-      expect(workspaces.rename).toHaveBeenCalledWith({ ...WORKSPACE_REF, name: 'New', audit })
+      expect(workspaces.rename).toHaveBeenCalledWith({
+        ...WORKSPACE_REF,
+        name: 'New',
+        actor: JUDGED,
+        audit
+      })
       expect(events.emit).toHaveBeenCalledWith(audit, CONTEXT)
     })
 
     it('answers workspace-not-found when nothing was renamed, and reports nothing', async () => {
       const { service, workspaces, events } = build()
-      workspaces.rename.mockResolvedValue(false)
+      workspaces.rename.mockResolvedValue('not_found')
 
-      await expect(code(service.rename(WORKSPACE_REF, 'New', 'u1', CONTEXT))).resolves.toBe(
+      await expect(code(service.rename(WORKSPACE_REF, 'New', ACTOR, CONTEXT))).resolves.toBe(
         AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND
       )
       expect(events.emit).not.toHaveBeenCalled()
@@ -303,10 +310,47 @@ describe('WorkspaceService', () => {
     it('refuses a bad name before writing', async () => {
       const { service, workspaces } = build()
 
-      await expect(code(service.rename(WORKSPACE_REF, '', 'u1', CONTEXT))).resolves.toBe(
+      await expect(code(service.rename(WORKSPACE_REF, '', ACTOR, CONTEXT))).resolves.toBe(
         AUTH_ERROR_CODES.VALIDATION
       )
       expect(workspaces.rename).not.toHaveBeenCalled()
+    })
+  })
+
+  // The role the guard resolved was read before the write; the repository checks it again and
+  // answers actor_changed when the actor was demoted in between.
+  describe('an actor whose role changed before the write', () => {
+    const pending = workspaceRow({ status: 'pending_deletion', deletionScheduledAt: null })
+
+    it.each([
+      ['rename', (h: Harness) => h.service.rename(WORKSPACE_REF, 'New', ACTOR, CONTEXT), 'rename'],
+      [
+        'scheduleDeletion',
+        (h: Harness) => h.service.scheduleDeletion(WORKSPACE_REF, ACTOR, CONTEXT),
+        'updateStatus'
+      ],
+      ['restore', (h: Harness) => h.service.restore(WORKSPACE_REF, ACTOR, CONTEXT), 'updateStatus']
+    ])(
+      'refuses %s with insufficient-role and changes and reports nothing',
+      async (_name, run, write) => {
+        const harness = build()
+        harness.workspaces.findById.mockResolvedValue(pending)
+        harness.workspaces[write as 'rename' | 'updateStatus'].mockResolvedValue('actor_changed')
+
+        await expect(code(run(harness))).resolves.toBe(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
+        expect(harness.access.invalidateWorkspace).not.toHaveBeenCalled()
+        expect(harness.events.emit).not.toHaveBeenCalled()
+      }
+    )
+
+    it('does not send an actor with the write of a finalized deletion, which no member made', async () => {
+      const { service, workspaces } = build()
+      workspaces.findById.mockResolvedValue(pending)
+
+      await service.finalizeDeletion(WORKSPACE_REF)
+
+      const sent = workspaces.updateStatus.mock.calls[0]?.[0] as Record<string, unknown>
+      expect(Object.keys(sent)).not.toContain('actor')
     })
   })
 
@@ -315,7 +359,7 @@ describe('WorkspaceService', () => {
       const { service, workspaces } = build()
       const due = new Date(NOW.getTime() + 14 * DAY)
 
-      const scheduled = await service.scheduleDeletion(WORKSPACE_REF, 'u1', CONTEXT)
+      const scheduled = await service.scheduleDeletion(WORKSPACE_REF, ACTOR, CONTEXT)
 
       expect(scheduled).toEqual({ status: 'pending_deletion', deletionScheduledAt: due })
       expect(workspaces.updateStatus).toHaveBeenCalledWith({
@@ -323,6 +367,7 @@ describe('WorkspaceService', () => {
         status: 'pending_deletion',
         expectedStatus: 'active',
         deletionScheduledAt: due,
+        actor: JUDGED,
         audit: {
           type: 'workspace.deletion_scheduled',
           ...WORKSPACE_REF,
@@ -335,7 +380,7 @@ describe('WorkspaceService', () => {
     it("ends every member's access before it reports the event", async () => {
       const { service, access, events } = build()
 
-      await service.scheduleDeletion(WORKSPACE_REF, 'u1', CONTEXT)
+      await service.scheduleDeletion(WORKSPACE_REF, ACTOR, CONTEXT)
 
       expect(access.invalidateWorkspace).toHaveBeenCalledWith(WORKSPACE_REF)
       expect(access.invalidateWorkspace.mock.invocationCallOrder[0]).toBeLessThan(
@@ -346,7 +391,7 @@ describe('WorkspaceService', () => {
     it('deletes at once when the grace period is zero', async () => {
       const { service, workspaces, events } = build({ deletionGraceDays: 0 })
 
-      const scheduled = await service.scheduleDeletion(WORKSPACE_REF, 'u1', CONTEXT)
+      const scheduled = await service.scheduleDeletion(WORKSPACE_REF, ACTOR, CONTEXT)
 
       expect(scheduled).toEqual({ status: 'deleted', deletionScheduledAt: null })
       expect(workspaces.updateStatus).toHaveBeenCalledWith(
@@ -366,7 +411,7 @@ describe('WorkspaceService', () => {
       const { service, workspaces, access, events } = build()
       workspaces.updateStatus.mockResolvedValue('not_found')
 
-      await expect(code(service.scheduleDeletion(WORKSPACE_REF, 'u1', CONTEXT))).resolves.toBe(
+      await expect(code(service.scheduleDeletion(WORKSPACE_REF, ACTOR, CONTEXT))).resolves.toBe(
         AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND
       )
       expect(access.invalidateWorkspace).not.toHaveBeenCalled()
@@ -381,7 +426,7 @@ describe('WorkspaceService', () => {
       workspaces.updateStatus.mockResolvedValue('status_conflict')
       workspaces.findById.mockResolvedValue(workspaceRow({ status }))
 
-      await expect(code(service.scheduleDeletion(WORKSPACE_REF, 'u1', CONTEXT))).resolves.toBe(
+      await expect(code(service.scheduleDeletion(WORKSPACE_REF, ACTOR, CONTEXT))).resolves.toBe(
         expected
       )
       expect(workspaces.findById).toHaveBeenCalledWith(WORKSPACE_REF)
@@ -393,7 +438,7 @@ describe('WorkspaceService', () => {
       workspaces.updateStatus.mockResolvedValue('status_conflict')
       workspaces.findById.mockResolvedValue(null)
 
-      await expect(code(service.scheduleDeletion(WORKSPACE_REF, 'u1', CONTEXT))).resolves.toBe(
+      await expect(code(service.scheduleDeletion(WORKSPACE_REF, ACTOR, CONTEXT))).resolves.toBe(
         AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND
       )
     })
@@ -402,7 +447,7 @@ describe('WorkspaceService', () => {
       const { service, access, events } = build()
       access.invalidateWorkspace.mockRejectedValue(new Error('redis down'))
 
-      await expect(service.scheduleDeletion(WORKSPACE_REF, 'u1', CONTEXT)).rejects.toThrow(
+      await expect(service.scheduleDeletion(WORKSPACE_REF, ACTOR, CONTEXT)).rejects.toThrow(
         'redis down'
       )
       expect(events.emit).not.toHaveBeenCalled()
@@ -417,7 +462,7 @@ describe('WorkspaceService', () => {
       const { service, workspaces, access, events } = build()
       workspaces.findById.mockResolvedValue(pending(new Date(NOW.getTime() + DAY)))
 
-      await service.restore(WORKSPACE_REF, 'u1', CONTEXT)
+      await service.restore(WORKSPACE_REF, ACTOR, CONTEXT)
 
       const audit = {
         type: 'workspace.restored',
@@ -430,6 +475,7 @@ describe('WorkspaceService', () => {
         status: 'active',
         expectedStatus: 'pending_deletion',
         deletionScheduledAt: null,
+        actor: JUDGED,
         audit
       })
       expect(access.invalidateWorkspace).toHaveBeenCalledWith(WORKSPACE_REF)
@@ -440,7 +486,7 @@ describe('WorkspaceService', () => {
       const { service, workspaces } = build()
       workspaces.findById.mockResolvedValue(pending(null))
 
-      await expect(code(service.restore(WORKSPACE_REF, 'u1', CONTEXT))).resolves.toBe('ok')
+      await expect(code(service.restore(WORKSPACE_REF, ACTOR, CONTEXT))).resolves.toBe('ok')
     })
 
     it.each([
@@ -452,7 +498,7 @@ describe('WorkspaceService', () => {
       const { service, workspaces } = build()
       workspaces.findById.mockResolvedValue(row)
 
-      await expect(code(service.restore(WORKSPACE_REF, 'u1', CONTEXT))).resolves.toBe(
+      await expect(code(service.restore(WORKSPACE_REF, ACTOR, CONTEXT))).resolves.toBe(
         AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND
       )
       expect(workspaces.updateStatus).not.toHaveBeenCalled()
@@ -463,7 +509,7 @@ describe('WorkspaceService', () => {
       workspaces.findById.mockResolvedValue(pending(null))
       workspaces.updateStatus.mockResolvedValue('not_found')
 
-      await expect(code(service.restore(WORKSPACE_REF, 'u1', CONTEXT))).resolves.toBe(
+      await expect(code(service.restore(WORKSPACE_REF, ACTOR, CONTEXT))).resolves.toBe(
         AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND
       )
       expect(events.emit).not.toHaveBeenCalled()

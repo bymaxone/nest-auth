@@ -5,6 +5,7 @@
  * @layer Interface
  */
 
+import type { ActingMember } from './acting-member.interface'
 import type { WorkspaceAuditEvent } from './workspace-audit.interface'
 import type { AuthWorkspace, WorkspaceRef } from './workspace-repository.interface'
 
@@ -86,19 +87,6 @@ export interface CreateMembershipParams extends MembershipRef {
 
 /** Outcome of {@link IMembershipRepository.create}. */
 export type CreateMembershipResult = 'ok' | 'already_member' | 'workspace_not_found'
-
-/**
- * The member whose role authorized a write, and the role the library read for them.
- *
- * The library decides what an actor may do from a role it read BEFORE the write. Handing it back lets
- * the repository check, in the write's own transaction, that the actor still holds it.
- */
-export interface ActingMember {
-  /** The actor, a member of the same workspace and tenant as the write. */
-  userId: string
-  /** The role the library read for the actor and judged the action against. */
-  expectedRole: string
-}
 
 /** Input to {@link IMembershipRepository.changeRole}. */
 export interface ChangeMembershipRoleParams extends MembershipRef {
@@ -270,15 +258,16 @@ export interface IMembershipRepository {
    *
    * ```sql
    * BEGIN;
-   * -- 1. the actor must still hold the role that authorized this call
-   * SELECT 1 FROM memberships
-   *  WHERE tenant_id = $tenant AND workspace_id = $workspace AND user_id = $actor
-   *    AND role = $actorRole AND status = 'active'
-   *  FOR SHARE;            -- no row: ROLLBACK and answer 'actor_changed'
-   * -- 2. the member must still hold the role the library judged
+   * -- 1. lock the actor's row and the member's row together, in one fixed order, so two members
+   * --    acting on each other cannot deadlock and neither role can change before the commit
+   * SELECT user_id, role, status FROM memberships
+   *  WHERE tenant_id = $tenant AND workspace_id = $workspace AND user_id IN ($actor, $member)
+   *  ORDER BY user_id
+   *  FOR UPDATE;
+   * -- 2. the actor row missing, inactive or not holding $actorRole: ROLLBACK, answer 'actor_changed'
+   * --    the member row missing or not holding $expectedRole:       ROLLBACK, answer 'not_found'
    * UPDATE memberships SET role = $role, updated_at = now()
-   *  WHERE tenant_id = $tenant AND workspace_id = $workspace AND user_id = $member
-   *    AND role = $expectedRole AND status = 'active';   -- 0 rows: ROLLBACK, answer 'not_found'
+   *  WHERE tenant_id = $tenant AND workspace_id = $workspace AND user_id = $member;
    * -- 3. the last-owner check, the audit insert, then COMMIT
    * ```
    *

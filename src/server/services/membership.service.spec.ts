@@ -19,8 +19,8 @@ import {
   workspaceOptions,
   workspaceRow
 } from './__tests__/workspace-service-harness'
+import type { WorkspaceActor } from '../interfaces/acting-member.interface'
 import { MembershipService } from './membership.service'
-import type { WorkspaceActor } from './membership.service'
 import type { WorkspaceAccessService } from './workspace-access.service'
 import type { WorkspaceEventsService } from './workspace-events.service'
 

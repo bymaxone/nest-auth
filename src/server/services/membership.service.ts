@@ -14,9 +14,9 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import type { ActingMember, WorkspaceActor } from '../interfaces/acting-member.interface'
 import type { HookContext } from '../interfaces/auth-hooks.interface'
 import type {
-  ActingMember,
   AuthMembership,
   IMembershipRepository,
   MemberChangeResult,
@@ -35,12 +35,6 @@ const DEFAULT_PAGE_SIZE = 20
 
 /** The audit events a removal produces: an administrator removing a member, or a member leaving. */
 type MemberRemovalEvent = WorkspaceAuditEvent & { type: 'member.removed' | 'member.left' }
-
-/** Who is making a change: their id, and the role they hold in the workspace. */
-export interface WorkspaceActor {
-  userId: string
-  role: string
-}
 
 /** A member's workspaces, and the one they last switched to. */
 export interface MyWorkspaces extends MembershipPage<MembershipWithWorkspace> {
