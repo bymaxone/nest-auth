@@ -74,6 +74,7 @@ const mockTokenDelivery = {
   deliverRefreshResponse: jest.fn(),
   extractAccessToken: jest.fn(),
   extractRefreshToken: jest.fn(),
+  extractLogoutRefreshToken: jest.fn(),
   clearAuthSession: jest.fn()
 }
 
@@ -226,14 +227,14 @@ describe('AuthController', () => {
     // Verifies that logout extracts both tokens, calls authService.logout, and clears cookies.
     it('should extract tokens, call logout, and clear session', async () => {
       mockTokenDelivery.extractAccessToken.mockReturnValue('access.jwt')
-      mockTokenDelivery.extractRefreshToken.mockReturnValue('raw-refresh-token')
+      mockTokenDelivery.extractLogoutRefreshToken.mockReturnValue('raw-refresh-token')
       mockAuthService.logout.mockResolvedValue(undefined)
       mockTokenDelivery.clearAuthSession.mockReturnValue(undefined)
 
       await controller.logout(mockReq, mockRes)
 
       expect(mockTokenDelivery.extractAccessToken).toHaveBeenCalledWith(mockReq)
-      expect(mockTokenDelivery.extractRefreshToken).toHaveBeenCalledWith(mockReq)
+      expect(mockTokenDelivery.extractLogoutRefreshToken).toHaveBeenCalledWith(mockReq)
       // No user id: the service reads the session's owner from the stored record, because
       // this route no longer requires a valid access token to carry one.
       expect(mockAuthService.logout).toHaveBeenCalledWith('access.jwt', 'raw-refresh-token')
@@ -243,7 +244,7 @@ describe('AuthController', () => {
     // Verifies that logout uses empty strings when tokens are not found, avoiding undefined arguments.
     it('should use empty strings when tokens are not found (graceful fallback)', async () => {
       mockTokenDelivery.extractAccessToken.mockReturnValue(undefined)
-      mockTokenDelivery.extractRefreshToken.mockReturnValue(undefined)
+      mockTokenDelivery.extractLogoutRefreshToken.mockReturnValue(undefined)
       mockAuthService.logout.mockResolvedValue(undefined)
       mockTokenDelivery.clearAuthSession.mockReturnValue(undefined)
 

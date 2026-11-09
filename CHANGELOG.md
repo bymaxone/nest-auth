@@ -18,6 +18,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Changed
+
+- **A refresh cookie over 2048 characters is refused with `400 auth.validation`.** The body value
+  already was; the cookie is now held to the same bound on the routes that read the refresh token,
+  in `cookie` and `both` delivery. The error names the field `refreshToken` and nothing is looked
+  up. Logout is the exception: it reads such a cookie as no token, answers 204 and clears the auth
+  cookies, so a browser holding one can sign out of it. No token this library mints is longer than
+  the bound, so only a forged or corrupted cookie is affected. An empty cookie is still treated as
+  no token.
+
 ## [1.4.22] - 2026-11-08
 
 ### Apply to a derived backend

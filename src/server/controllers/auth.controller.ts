@@ -158,7 +158,7 @@ export class AuthController {
   @Post('logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
     const accessToken = this.tokenDelivery.extractAccessToken(req) ?? ''
-    const rawRefreshToken = this.tokenDelivery.extractRefreshToken(req) ?? ''
+    const rawRefreshToken = this.tokenDelivery.extractLogoutRefreshToken(req) ?? ''
     await this.authService.logout(accessToken, rawRefreshToken)
     this.tokenDelivery.clearAuthSession(res, req)
   }
