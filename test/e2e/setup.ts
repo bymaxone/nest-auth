@@ -726,3 +726,50 @@ export function expectAuthError(res: { status: number; body: unknown }, code: Au
   expect(body.error?.code).toBe(code)
   expect(res.status).toBe(AUTH_ERROR_STATUS[code])
 }
+
+/**
+ * The instant the frozen clock reads: the last millisecond of a 30-second TOTP window.
+ *
+ * Chosen for being the worst case for any spec that spends codes from adjacent windows: a real
+ * clock reaches this instant once in thirty seconds and crosses into the next window a
+ * millisecond later, which is exactly the boundary a time-dependent spec fails on.
+ */
+export const FROZEN_CLOCK_MS = Date.UTC(2026, 5, 1, 12, 0, 29, 999)
+
+/** Everything a fake-timers install may replace except `Date`. */
+const TIMERS_LEFT_REAL = [
+  'hrtime',
+  'nextTick',
+  'performance',
+  'queueMicrotask',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'requestIdleCallback',
+  'cancelIdleCallback',
+  'setImmediate',
+  'clearImmediate',
+  'setInterval',
+  'clearInterval',
+  'setTimeout',
+  'clearTimeout'
+] as const
+
+/**
+ * Freezes `Date` for the in-process server and the spec alike, and nothing else.
+ *
+ * A spec that derives a TOTP code from one clock reading and has the server verify it against a
+ * later one is exposed to the 30-second window boundary between the two: the window it reached
+ * for may be the one an earlier step already spent. With `Date` frozen both readings are the same
+ * instant, so no window can move under the spec. Timers stay real, so the HTTP stack and the
+ * store behave as they do outside the suite. Pair it with {@link restoreClock}.
+ *
+ * @param at - The instant to freeze at; the last millisecond of a TOTP window by default.
+ */
+export function freezeClock(at: number = FROZEN_CLOCK_MS): void {
+  jest.useFakeTimers({ now: at, doNotFake: [...TIMERS_LEFT_REAL] })
+}
+
+/** Gives the suite its real clock back. */
+export function restoreClock(): void {
+  jest.useRealTimers()
+}
