@@ -243,12 +243,24 @@ describe('WorkspaceAccessService', () => {
       )
     })
 
-    // None of these is a usable entry, so each one falls through to the repositories.
+    // A reply of the wrong shape carries no versions, so there is nothing to write a refill under.
     it.each([
       ['a reply that is not a list', 'oops'],
       ['a list of the wrong length', ['0', '0']],
+      ['a list that is too long', ['0', '0', '', '']],
       ['a workspace version that is not text', [0, '0', '']],
-      ['a membership version that is not text', ['0', 0, '']],
+      ['a membership version that is not text', ['0', 0, '']]
+    ])('answers from the repositories and caches nothing for %s', async (_name, reply) => {
+      const { service, redis, memberships } = build()
+      redis.eval.mockResolvedValue(reply)
+
+      await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
+      expect(memberships.find).toHaveBeenCalledWith(REF)
+      expect(redis.set).not.toHaveBeenCalled()
+    })
+
+    // The versions are valid, so the repository answer is refilled under them.
+    it.each([
       ['an entry that is not JSON', ['0', '0', '{not json']],
       ['an entry that is not text', ['0', '0', 5]],
       ['an entry with a role that is not text', ['0', '0', '{"role":1,"status":"active"}']],
@@ -259,6 +271,11 @@ describe('WorkspaceAccessService', () => {
 
       await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
       expect(memberships.find).toHaveBeenCalledWith(REF)
+      expect(redis.set).toHaveBeenCalledWith(
+        expect.stringMatching(/:0:0$/),
+        JSON.stringify({ role: 'editor', status: 'active' }),
+        60
+      )
     })
 
     it.each(['tenantId', 'workspaceId', 'userId'] as const)(
@@ -306,6 +323,16 @@ describe('WorkspaceAccessService', () => {
 
       await expect(service.invalidateMembership(REF)).rejects.toThrow('ECONNREFUSED')
       await expect(service.invalidateWorkspace(WORKSPACE_REF)).rejects.toThrow('ECONNREFUSED')
+    })
+
+    it.each([[undefined], [42], [null]])('rejects a key part that is %p', async (value) => {
+      const { service, redis } = build()
+      const bad = Object.assign({}, REF, { userId: value })
+
+      await expect(service.resolveMembership(bad)).rejects.toThrow(
+        'userId must be a non-empty string'
+      )
+      expect(redis.eval).not.toHaveBeenCalled()
     })
 
     it('rejects a blank key part', async () => {

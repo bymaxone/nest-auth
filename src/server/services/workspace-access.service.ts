@@ -210,11 +210,12 @@ function parseRead(reply: unknown): MembershipRead | null {
 /**
  * Reads a cache entry's role.
  *
- * @param entry - The stored value, or the empty string on a miss.
+ * @param entry - The stored value, or the empty string on a miss, which is not JSON and so reads
+ *   as no entry.
  * @returns The role of an entry that is an active membership, else `null`.
  */
 function parseEntry(entry: unknown): string | null {
-  if (typeof entry !== 'string' || entry === '') return null
+  if (typeof entry !== 'string') return null
   try {
     const parsed = JSON.parse(entry) as { role?: unknown; status?: unknown }
     return typeof parsed.role === 'string' && parsed.status === 'active' ? parsed.role : null
