@@ -396,11 +396,82 @@ describe('MembershipService', () => {
     })
   })
 
+  // The rule: the owner role acts on any role; every other role acts only STRICTLY below itself.
+  // Every pair of roles is listed as a literal, so a change to the rule is a change to this table.
+  describe('the role ceiling across every pair of roles', () => {
+    const ROLES = ['owner', 'editor', 'viewer'] as const
+    const MAY: Record<(typeof ROLES)[number], Record<(typeof ROLES)[number], boolean>> = {
+      owner: { owner: true, editor: true, viewer: true },
+      editor: { owner: false, editor: false, viewer: true },
+      viewer: { owner: false, editor: false, viewer: false }
+    }
+    const refusal = AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE
+
+    it.each(ROLES.flatMap((actor) => ROLES.map((target) => [actor, target] as const)))(
+      'as %s, removing a %s is allowed: %s',
+      async (actorRole, targetRole) => {
+        const { service, memberships } = build()
+        memberships['find']?.mockResolvedValue(member('u2', targetRole))
+
+        const outcome = await code(
+          service.remove(WORKSPACE_REF, 'u2', { userId: 'actor-1', role: actorRole }, CONTEXT)
+        )
+
+        expect(outcome).toBe(MAY[actorRole][targetRole] ? 'ok' : refusal)
+      }
+    )
+
+    it.each(
+      ROLES.flatMap((actor) =>
+        ROLES.flatMap((current) => ROLES.map((next) => [actor, current, next] as const))
+      )
+    )('as %s, changing a %s to %s', async (actorRole, currentRole, nextRole) => {
+      const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('u2', currentRole))
+
+      const outcome = await code(
+        service.changeRole(
+          WORKSPACE_REF,
+          'u2',
+          nextRole,
+          { userId: 'actor-1', role: actorRole },
+          CONTEXT
+        )
+      )
+
+      const allowed = MAY[actorRole][currentRole] && MAY[actorRole][nextRole]
+      expect(outcome).toBe(allowed ? 'ok' : refusal)
+    })
+
+    it('does not let a non-owner change their own role', async () => {
+      const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('editor-1', 'editor'))
+
+      await expect(
+        code(service.changeRole(WORKSPACE_REF, 'editor-1', 'viewer', EDITOR, CONTEXT))
+      ).resolves.toBe(refusal)
+      expect(memberships['changeRole']).not.toHaveBeenCalled()
+    })
+  })
+
   describe('transferOwnership', () => {
+    it.each(['editor', 'viewer'])('refuses a transfer by a %s, before any write', async (role) => {
+      const { service, memberships, access, events } = build()
+
+      await expect(
+        code(
+          service.transferOwnership(WORKSPACE_REF, { userId: 'actor-1', role }, 'u2', null, CONTEXT)
+        )
+      ).resolves.toBe(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
+      expect(memberships['transferOwnership']).not.toHaveBeenCalled()
+      expect(access.invalidateMembership).not.toHaveBeenCalled()
+      expect(events.emit).not.toHaveBeenCalled()
+    })
+
     it("hands ownership over atomically, ends both members' access, then reports it", async () => {
       const { service, memberships, access, events } = build()
 
-      await service.transferOwnership(WORKSPACE_REF, 'owner-1', 'u2', 'editor', CONTEXT)
+      await service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', 'editor', CONTEXT)
 
       const audit = {
         type: 'ownership.transferred',
@@ -428,7 +499,7 @@ describe('MembershipService', () => {
     it('keeps both as owners when no demotion is asked', async () => {
       const { service, memberships } = build()
 
-      await service.transferOwnership(WORKSPACE_REF, 'owner-1', 'u2', null, CONTEXT)
+      await service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', null, CONTEXT)
 
       expect(memberships['transferOwnership']).toHaveBeenCalledWith(
         expect.objectContaining({ demoteFromTo: null })
@@ -443,7 +514,13 @@ describe('MembershipService', () => {
     ])('refuses a transfer %s', async (_name, from, to, demote, field) => {
       const { service, memberships } = build()
 
-      const result = service.transferOwnership(WORKSPACE_REF, from, to, demote, CONTEXT)
+      const result = service.transferOwnership(
+        WORKSPACE_REF,
+        { userId: from, role: 'owner' },
+        to,
+        demote,
+        CONTEXT
+      )
 
       await expect(result).rejects.toMatchObject({
         response: {
@@ -460,7 +537,7 @@ describe('MembershipService', () => {
       const { service, memberships, access, events } = build()
       memberships['transferOwnership']?.mockResolvedValue('target_not_member')
 
-      const result = service.transferOwnership(WORKSPACE_REF, 'owner-1', 'u2', null, CONTEXT)
+      const result = service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', null, CONTEXT)
 
       await expect(result).rejects.toMatchObject({
         response: {
@@ -482,7 +559,7 @@ describe('MembershipService', () => {
       memberships['transferOwnership']?.mockResolvedValue(result)
 
       await expect(
-        code(service.transferOwnership(WORKSPACE_REF, 'owner-1', 'u2', null, CONTEXT))
+        code(service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', null, CONTEXT))
       ).resolves.toBe(expected)
     })
   })

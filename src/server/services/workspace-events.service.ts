@@ -16,7 +16,9 @@ import { runDetached } from '../utils/run-detached'
  * Delivers workspace events to the host.
  *
  * Delivery is best-effort and detached: a hook that is slow, throws or rejects never delays or
- * fails the operation that produced the event. The persisted audit row, written by the repository
+ * fails the operation that produced the event. A failure is logged through the module logger with
+ * the hook name and the event type only: the event itself can carry an email address, so it is never
+ * written to the log. The persisted audit row, written by the repository
  * in the same transaction as the change, is the record; this is a notification.
  */
 @Injectable()
@@ -35,7 +37,7 @@ export class WorkspaceEventsService {
     runDetached(
       this.logger,
       () => this.hooks.onWorkspaceEvent?.(event, context),
-      'onWorkspaceEvent hook failed'
+      `onWorkspaceEvent hook failed for ${event.type}`
     )
   }
 }

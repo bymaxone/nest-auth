@@ -251,8 +251,62 @@ describe('workspace lifecycle over a real access cache', () => {
     await expect(membershipService.leave(ref, 'alice', CONTEXT)).rejects.toMatchObject({
       response: { error: { code: 'auth.last_owner' } }
     })
-    await membershipService.transferOwnership(ref, 'alice', 'bob', 'editor', CONTEXT)
+    await membershipService.transferOwnership(ref, ALICE, 'bob', 'editor', CONTEXT)
     await expect(membershipService.leave(ref, 'alice', CONTEXT)).resolves.toBeUndefined()
+  })
+
+  it('refuses to hand ownership to someone who belongs to another workspace only', async () => {
+    const { workspaceService, membershipService } = build()
+    const { id } = await workspaceService.create(user('alice'), { name: 'Acme' }, CONTEXT)
+    await workspaceService.create(user('bob'), { name: 'Other' }, CONTEXT)
+
+    await expect(
+      membershipService.transferOwnership(
+        { tenantId: 't1', workspaceId: id },
+        ALICE,
+        'bob',
+        null,
+        CONTEXT
+      )
+    ).rejects.toMatchObject({ response: { error: { code: 'auth.validation' } } })
+  })
+
+  it('refuses a transfer by anyone who is not an owner, and a transfer to oneself', async () => {
+    const { workspaceService, membershipService, addMember } = build()
+    const { id } = await workspaceService.create(user('alice'), { name: 'Acme' }, CONTEXT)
+    const ref = { tenantId: 't1', workspaceId: id }
+    await addMember(id, 'bob', 'editor')
+
+    await expect(
+      membershipService.transferOwnership(
+        ref,
+        { userId: 'bob', role: 'editor' },
+        'bob',
+        null,
+        CONTEXT
+      )
+    ).rejects.toMatchObject({ response: { error: { code: 'auth.insufficient_workspace_role' } } })
+    await expect(
+      membershipService.transferOwnership(ref, ALICE, 'alice', null, CONTEXT)
+    ).rejects.toMatchObject({ response: { error: { code: 'auth.validation' } } })
+  })
+
+  it('moves both roles together: the new owner and the demoted one are visible at once', async () => {
+    const { workspaceService, membershipService, access, addMember } = build()
+    const { id } = await workspaceService.create(user('alice'), { name: 'Acme' }, CONTEXT)
+    const ref = { tenantId: 't1', workspaceId: id }
+    await addMember(id, 'bob', 'editor')
+    await access.resolveMembership({ ...ref, userId: 'alice' })
+    await access.resolveMembership({ ...ref, userId: 'bob' })
+
+    await membershipService.transferOwnership(ref, ALICE, 'bob', 'viewer', CONTEXT)
+
+    await expect(access.resolveMembership({ ...ref, userId: 'bob' })).resolves.toMatchObject({
+      role: 'owner'
+    })
+    await expect(access.resolveMembership({ ...ref, userId: 'alice' })).resolves.toMatchObject({
+      role: 'viewer'
+    })
   })
 
   it('does not finalize a deletion before its grace period is over', async () => {

@@ -52,7 +52,9 @@ describe('WorkspaceEventsService', () => {
       new WorkspaceEventsService({ onWorkspaceEvent } as IAuthHooks).emit(EVENT, CONTEXT)
     ).not.toThrow()
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('onWorkspaceEvent hook failed'))
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('onWorkspaceEvent hook failed for workspace.renamed')
+    )
   })
 
   it('does not fail the operation when the hook rejects, and logs it', async () => {
@@ -61,8 +63,44 @@ describe('WorkspaceEventsService', () => {
     new WorkspaceEventsService({ onWorkspaceEvent } as IAuthHooks).emit(EVENT, CONTEXT)
     await new Promise((resolve) => setImmediate(resolve))
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('onWorkspaceEvent hook failed'))
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('onWorkspaceEvent hook failed for workspace.renamed')
+    )
   })
+
+  // The event can carry an address; the log line names the hook and the event type and nothing
+  // from the payload, whether the hook throws or rejects.
+  it.each([
+    [
+      'throws',
+      () => {
+        throw new Error('boom')
+      }
+    ],
+    ['rejects', () => Promise.reject(new Error('boom'))]
+  ])(
+    'never writes the event payload to the log when the hook %s',
+    async (_how, onWorkspaceEvent) => {
+      const invited: WorkspaceAuditEvent = {
+        type: 'member.invited',
+        ...WORKSPACE_REF,
+        actorUserId: 'inviter-7',
+        email: 'jane.doe@example.com',
+        role: 'editor',
+        at: NOW.toISOString()
+      }
+
+      new WorkspaceEventsService({ onWorkspaceEvent } as IAuthHooks).emit(invited, CONTEXT)
+      await new Promise((resolve) => setImmediate(resolve))
+
+      const logged = error.mock.calls.map((call) => String(call[0]))
+      expect(logged).toHaveLength(1)
+      expect(logged[0]).toContain('onWorkspaceEvent hook failed for member.invited')
+      for (const secret of ['jane.doe@example.com', 'inviter-7', 'editor', NOW.toISOString()]) {
+        expect(logged[0]).not.toContain(secret)
+      }
+    }
+  )
 
   it('returns before a slow hook finishes', () => {
     let finished = false

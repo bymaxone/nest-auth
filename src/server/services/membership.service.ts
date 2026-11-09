@@ -65,8 +65,12 @@ function pageSize(limit: number | undefined): number {
  * members' cache versions, so a change takes effect on their next request, and a bump that fails
  * surfaces as an error. The hook is told afterwards.
  *
- * A caller can only act on roles at or below their own: the role they grant must be one they hold
- * or include, and the member they change or remove must hold a role they hold or include.
+ * The role ceiling. The owner role may grant, change and remove any role, other owners included
+ * (the repository still refuses to leave a workspace with none). Every other role acts only
+ * STRICTLY below itself: it may grant a role it includes, never its own, and may change or remove a
+ * member whose role it includes, never a peer holding the same role and never anyone above. A member
+ * therefore cannot change their own role (leaving is its own action), and an editor cannot make
+ * another editor or remove one.
  */
 @Injectable()
 export class MembershipService {
@@ -176,7 +180,7 @@ export class MembershipService {
         { field: 'role', message: 'role must be one of the workspace roles' }
       ])
     }
-    if (!hasRole(actor.role, role, hierarchy)) {
+    if (!this.outranks(actor.role, role)) {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     }
     const target = await this.activeMember(ref, userId, actor)
@@ -247,23 +251,33 @@ export class MembershipService {
   /**
    * Hands ownership to another active member in one atomic step.
    *
+   * Only an owner can hand it over. The repository decides the rest in one transaction: the giver
+   * must still be an active owner, the receiver must be an active member of THIS workspace in this
+   * tenant, and the giver's demotion is part of the same write, so there is never a moment with no
+   * owner or with the giver demoted and the receiver not yet promoted.
+   *
    * @param ref - The workspace.
-   * @param fromUserId - The owner handing it over.
+   * @param actor - The owner handing it over, with the role they hold.
    * @param toUserId - The active member who becomes an owner.
    * @param demoteFromTo - The role the previous owner takes, or `null` to keep both as owners.
    * @param context - Request metadata for the hook.
-   * @throws {AuthException} `auth.validation` for a role outside the hierarchy, the owner role or
-   *   a transfer to oneself or to a member who is not active, `auth.workspace_not_found` when the
-   *   giver is not an active owner.
+   * @throws {AuthException} `auth.insufficient_workspace_role` when the actor is not an owner,
+   *   `auth.validation` for a role outside the hierarchy, the owner role, a transfer to oneself or
+   *   to a member who is not active in this workspace, `auth.workspace_not_found` when the giver is
+   *   no longer an active owner.
    */
   async transferOwnership(
     ref: WorkspaceRef,
-    fromUserId: string,
+    actor: WorkspaceActor,
     toUserId: string,
     demoteFromTo: string | null,
     context: HookContext
   ): Promise<void> {
     const { hierarchy, ownerRole } = this.group.roles
+    const fromUserId = actor.userId
+    if (actor.role !== ownerRole) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
+    }
     if (fromUserId === toUserId) throw invalid('userId', 'ownership cannot be handed to oneself')
     if (
       demoteFromTo !== null &&
@@ -303,10 +317,22 @@ export class MembershipService {
   ): Promise<AuthMembership> {
     const member = await this.memberships.find({ ...ref, userId })
     if (member?.status !== 'active') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
-    if (!hasRole(actor.role, member.role, this.group.roles.hierarchy)) {
+    if (!this.outranks(actor.role, member.role)) {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     }
     return member
+  }
+
+  /**
+   * Whether an actor's role may act on another role: the owner role on any role, every other role
+   * only on a role it includes and does not itself hold.
+   */
+  private outranks(actorRole: string, otherRole: string): boolean {
+    const { hierarchy, ownerRole } = this.group.roles
+    return (
+      actorRole === ownerRole ||
+      (actorRole !== otherRole && hasRole(actorRole, otherRole, hierarchy))
+    )
   }
 
   private async removeWith(
