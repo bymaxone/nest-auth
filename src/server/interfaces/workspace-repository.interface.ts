@@ -101,6 +101,13 @@ export interface UpdateWorkspaceStatusParams extends WorkspaceRef {
    * restore cannot overwrite a finalize that landed first.
    */
   expectedStatus: WorkspaceStatus
+  /**
+   * The scheduled-deletion instant the caller read, `null` for none. When present, the write also
+   * applies only while the stored instant equals it, so a finalizer that read one schedule cannot
+   * delete a workspace whose deletion was restored and scheduled again. Absent means the instant is
+   * not compared.
+   */
+  expectedDeletionScheduledAt?: Date | null
   /** The scheduled-deletion instant to store, or `null` to clear it. */
   deletionScheduledAt: Date | null
   /** The event for this transition, to persist in the same transaction. */
@@ -168,8 +175,9 @@ export interface IWorkspaceRepository {
   /**
    * Moves a workspace to another status, persisting `audit` in the same transaction.
    *
-   * Compare-and-set: it applies only while the stored status equals `expectedStatus`, decided in
-   * the same statement as the write.
+   * Compare-and-set: it applies only while the stored status equals `expectedStatus`, and, when
+   * `expectedDeletionScheduledAt` is given, while the stored instant equals it too (two dates are
+   * equal when they are the same instant), decided in the same statement as the write.
    *
    * When `actor` is given, the same transaction MUST also check that the actor still holds
    * `actor.expectedRole` as an active member of this workspace and answer `'actor_changed'`
@@ -178,7 +186,7 @@ export interface IWorkspaceRepository {
    * @param params - The workspace key, the target and expected statuses, the deletion instant and
    *   the audit event.
    * @returns `'ok'` when applied, `'not_found'` for no such workspace, `'status_conflict'` when the
-   *   stored status differs from `expectedStatus`, `'actor_changed'` as above. Nothing is written
+   *   stored status or, when compared, the stored instant differs, `'actor_changed'` as above. Nothing is written
    *   for any refusal.
    */
   updateStatus(params: UpdateWorkspaceStatusParams): Promise<UpdateWorkspaceStatusResult>

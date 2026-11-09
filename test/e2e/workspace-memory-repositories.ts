@@ -66,6 +66,12 @@ function actorChanged(store: Store, workspaceId: string, actor: ActingMember): b
   return row?.status !== 'active' || row.role !== actor.expectedRole
 }
 
+/** Whether the stored deadline is the one expected; an expectation of `undefined` compares nothing. */
+function sameInstant(stored: Date | null, expected: Date | null | undefined): boolean {
+  if (expected === undefined) return true
+  return (stored?.getTime() ?? null) === (expected?.getTime() ?? null)
+}
+
 /** The workspace port: creation with its owner, reads, rename and the status compare-and-set. */
 function workspaceRepository(store: Store): IWorkspaceRepository {
   const repository: Partial<IWorkspaceRepository> = {
@@ -93,11 +99,21 @@ function workspaceRepository(store: Store): IWorkspaceRepository {
       store.rows.set(workspaceId, { ...row, name })
       return 'ok'
     },
-    updateStatus: async ({ workspaceId, status, expectedStatus, deletionScheduledAt, actor }) => {
+    updateStatus: async ({
+      workspaceId,
+      status,
+      expectedStatus,
+      expectedDeletionScheduledAt,
+      deletionScheduledAt,
+      actor
+    }) => {
       const row = store.rows.get(workspaceId)
       if (actor !== undefined && actorChanged(store, workspaceId, actor)) return 'actor_changed'
       if (row === undefined) return 'not_found'
       if (row.status !== expectedStatus) return 'status_conflict'
+      if (!sameInstant(row.deletionScheduledAt, expectedDeletionScheduledAt)) {
+        return 'status_conflict'
+      }
       store.rows.set(workspaceId, { ...row, status, deletionScheduledAt })
       return 'ok'
     }

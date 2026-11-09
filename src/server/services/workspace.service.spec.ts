@@ -545,6 +545,7 @@ describe('WorkspaceService', () => {
         ...WORKSPACE_REF,
         status: 'deleted',
         expectedStatus: 'pending_deletion',
+        expectedDeletionScheduledAt: row.deletionScheduledAt,
         deletionScheduledAt: null,
         audit: {
           type: 'workspace.deleted',
@@ -555,6 +556,25 @@ describe('WorkspaceService', () => {
       })
       expect(access.invalidateWorkspace).toHaveBeenCalledWith(WORKSPACE_REF)
     })
+
+    it.each([
+      ['no longer exists', null, 'not_found'],
+      ['was restored', workspaceRow(), 'not_pending'],
+      ['was scheduled again', pending(new Date(NOW.getTime() + 86_400_000)), 'not_due'],
+      ['is due again under another schedule', pending(NOW), 'not_due']
+    ] as const)(
+      'writes and reports nothing when the workspace %s after it was read',
+      async (_name, current, expected) => {
+        const { service, workspaces, access, events } = build()
+        workspaces.findById.mockResolvedValueOnce(pending(NOW)).mockResolvedValueOnce(current)
+        workspaces.updateStatus.mockResolvedValue('status_conflict')
+
+        await expect(service.finalizeDeletion(WORKSPACE_REF)).resolves.toBe(expected)
+        expect(workspaces.findById).toHaveBeenCalledTimes(2)
+        expect(access.invalidateWorkspace).not.toHaveBeenCalled()
+        expect(events.emit).not.toHaveBeenCalled()
+      }
+    )
 
     it('reports with the context it was given, or a minimal one for a job', async () => {
       const first = build()

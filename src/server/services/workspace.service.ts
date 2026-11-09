@@ -245,21 +245,23 @@ export class WorkspaceService {
   async finalizeDeletion(ref: WorkspaceRef, context?: HookContext): Promise<FinalizeResult> {
     const workspace = await this.workspaces.findById(ref)
     if (workspace === null) return 'not_found'
-    if (workspace.status !== 'pending_deletion') return 'not_pending'
-    if (
-      workspace.deletionScheduledAt !== null &&
-      workspace.deletionScheduledAt.getTime() > Date.now()
-    ) {
-      return 'not_due'
-    }
+    const refusal = finalizeRefusal(workspace)
+    if (refusal !== null) return refusal
     const event = { type: 'workspace.deleted' as const, ...ref, actorUserId: null, at: now() }
     const result = await this.workspaces.updateStatus({
       ...ref,
       status: 'deleted',
       expectedStatus: 'pending_deletion',
+      expectedDeletionScheduledAt: workspace.deletionScheduledAt,
       deletionScheduledAt: null,
       audit: event
     })
+    if (result === 'status_conflict') {
+      // The workspace changed after this job read it, so nothing was written. Answer from what it
+      // is now; one that is still due is left for the next run.
+      const current = await this.workspaces.findById(ref)
+      return current === null ? 'not_found' : (finalizeRefusal(current) ?? 'not_due')
+    }
     await this.settle(result, ref)
     this.events.emit(event, context ?? systemContext(ref.tenantId))
     return 'deleted'
@@ -387,4 +389,16 @@ function now(): string {
  */
 function systemContext(tenantId: string): HookContext {
   return { plane: 'dashboard', tenantId, ip: '', userAgent: '', sanitizedHeaders: {} }
+}
+
+/**
+ * Why a workspace cannot be finalized now.
+ *
+ * @param workspace - The workspace as read.
+ * @returns The refusal, or `null` when its grace period is over and it may be finalized.
+ */
+function finalizeRefusal(workspace: AuthWorkspace): FinalizeResult | null {
+  if (workspace.status !== 'pending_deletion') return 'not_pending'
+  const due = workspace.deletionScheduledAt
+  return due !== null && due.getTime() > Date.now() ? 'not_due' : null
 }
