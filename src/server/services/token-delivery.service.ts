@@ -430,7 +430,7 @@ export class TokenDeliveryService {
   /**
    * Reads the refresh cookie. A value over the bound is refused like a body value over it: no
    * token this library mints is longer, so it can only be junk, and it must not reach the store.
-   * An empty cookie is no token, as it always was.
+   * An empty cookie is returned unchanged; callers treat it as no token.
    */
   private readRefreshCookie(req: Request, name: string): string | undefined {
     const value = this.readCookie(req, name)
