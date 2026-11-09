@@ -907,7 +907,7 @@
       "A value refused here is refused before any store lookup."
     ],
     "body": "a string of 1 to 2048 characters; anything else present (not a string, empty, longer) is refused with 400 auth.validation naming the field refreshToken",
-    "cookie": "a value over 2048 characters is refused with 400 auth.validation naming the field refreshToken, except on logout, which reads it as no token (204, the auth cookies cleared, no refresh session touched); an empty cookie is no token"
+    "cookie": "a value over 2048 characters is refused with 400 auth.validation naming the field refreshToken, except on logout, which reads it as no token (204, the auth cookies cleared, no refresh session touched); an empty cookie is no token; under tokenDelivery both, a cookie over 2048 on logout is read as absent, so a valid refreshToken in the body is the token that applies and its session is revoked"
   },
   "sessionIndexMembers": {
     "$comment": [

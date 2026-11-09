@@ -46,7 +46,7 @@ describe('the refresh token input the contract states', () => {
   it('states the body and the cookie rule', () => {
     expect(contract.refreshTokenInput.body).toMatch(/1 to 2048 characters.*400 auth\.validation/)
     expect(contract.refreshTokenInput.cookie).toMatch(
-      /over 2048 characters.*400 auth\.validation.*except on logout.*no token/
+      /over 2048 characters.*400 auth\.validation.*except on logout.*no token.*both.*body is the token that applies/
     )
   })
 })

@@ -18,6 +18,8 @@ const MAX_LENGTH = 2048
 describe.each(['cookie', 'both'] as const)('a refresh cookie, in %s delivery (E2E)', (delivery) => {
   let boot: BootstrappedTestApp
   let app: INestApplication
+  // The body is only read under `both`; under `cookie` there is nothing to measure.
+  const bothOnly = delivery === 'both' ? it : it.skip
 
   beforeAll(async () => {
     boot = await bootstrapTestApp({ tokenDelivery: delivery })
@@ -93,5 +95,25 @@ describe.each(['cookie', 'both'] as const)('a refresh cookie, in %s delivery (E2
       .set('Cookie', `refresh_token=${'a'.repeat(MAX_LENGTH)}`)
 
     expect(res.status).toBe(401)
+  })
+
+  // Scenario: under both delivery, logout with an oversize cookie and a valid body token. Expected:
+  // the cookie is read as absent, so the body token applies: 204 and its session is revoked. Why:
+  // this is the rule rust-auth mirrors, and a refused logout would leave that session alive.
+  bothOnly('revokes the session named by the body when the cookie is over the bound', async () => {
+    const session = await signUp(`cookie-both-${delivery}@example.com`)
+    const token = session.header
+      .split('; ')
+      .find((pair) => pair.startsWith('refresh_token='))
+      ?.split('=')[1] as string
+    const before = await liveSessions()
+
+    const res = await request(app.getHttpServer())
+      .post('/logout')
+      .set('Cookie', `refresh_token=${'a'.repeat(MAX_LENGTH + 1)}`)
+      .send({ refreshToken: token })
+
+    expect(res.status).toBe(204)
+    expect(await liveSessions()).toBe(before - 1)
   })
 })
