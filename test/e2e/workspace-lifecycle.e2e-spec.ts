@@ -25,6 +25,7 @@ import { WorkspaceAccessService } from '../../src/server/services/workspace-acce
 import { WorkspaceEventsService } from '../../src/server/services/workspace-events.service'
 import { WorkspaceService } from '../../src/server/services/workspace.service'
 import { JWT_SECRET, createRedis, realRedisNamespace } from './setup'
+import { memoryRepositories } from './workspace-memory-repositories'
 
 const CONTEXT: HookContext = {
   plane: 'dashboard',
@@ -36,127 +37,6 @@ const CONTEXT: HookContext = {
 
 const user = (id: string): SafeAuthUser =>
   ({ id, tenantId: 't1', email: `${id}@x.test` }) as SafeAuthUser
-
-/** Repositories that keep rows in maps and decide the last-owner rule inside the call. */
-function memoryRepositories(): {
-  workspaces: IWorkspaceRepository
-  memberships: IMembershipRepository
-  seedMember: (workspaceId: string, userId: string, role: string) => void
-  /** Runs once, right after the next membership read returns: a change that lands before the write. */
-  afterNextFind: (change: () => void) => void
-} {
-  const rows = new Map<string, AuthWorkspace>()
-  const members = new Map<string, AuthMembership>()
-  let afterFind: (() => void) | undefined
-  const key = (w: string, u: string): string => `${w}/${u}`
-  const owners = (w: string, ownerRole: string): AuthMembership[] =>
-    [...members.values()].filter(
-      (m) => m.workspaceId === w && m.status === 'active' && m.role === ownerRole
-    )
-  const actorChanged = (w: string, actor: { userId: string; expectedRole: string }): boolean => {
-    const row = members.get(key(w, actor.userId))
-    return row?.status !== 'active' || row.role !== actor.expectedRole
-  }
-  const member = (w: string, u: string, role: string): AuthMembership => ({
-    tenantId: 't1',
-    workspaceId: w,
-    userId: u,
-    role,
-    status: 'active',
-    invitedByUserId: null,
-    createdAt: new Date(0),
-    updatedAt: new Date(0)
-  })
-
-  const workspaces: Partial<IWorkspaceRepository> = {
-    createWithOwner: async (p) => {
-      const workspace: AuthWorkspace = {
-        id: p.workspaceId,
-        tenantId: p.tenantId,
-        name: p.name,
-        status: 'active',
-        createdAt: new Date(0),
-        deletionScheduledAt: null
-      }
-      rows.set(p.workspaceId, workspace)
-      members.set(
-        key(p.workspaceId, p.ownerUserId),
-        member(p.workspaceId, p.ownerUserId, p.ownerRole)
-      )
-      return { status: 'created', workspace }
-    },
-    findById: async ({ workspaceId }) => rows.get(workspaceId) ?? null,
-    rename: async ({ workspaceId, name, actor }) => {
-      const row = rows.get(workspaceId)
-      if (actorChanged(workspaceId, actor)) return 'actor_changed'
-      if (row === undefined) return 'not_found'
-      rows.set(workspaceId, { ...row, name })
-      return 'ok'
-    },
-    updateStatus: async ({ workspaceId, status, expectedStatus, deletionScheduledAt, actor }) => {
-      const row = rows.get(workspaceId)
-      if (actor !== undefined && actorChanged(workspaceId, actor)) return 'actor_changed'
-      if (row === undefined) return 'not_found'
-      if (row.status !== expectedStatus) return 'status_conflict'
-      rows.set(workspaceId, { ...row, status, deletionScheduledAt })
-      return 'ok'
-    }
-  }
-  const memberships: Partial<IMembershipRepository> = {
-    find: async ({ workspaceId, userId }) => {
-      const row = members.get(key(workspaceId, userId)) ?? null
-      const change = afterFind
-      afterFind = undefined
-      change?.()
-      return row
-    },
-    countOwned: async () => 0,
-    changeRole: async ({ workspaceId, userId, role, ownerRole, expectedRole, actor }) => {
-      const row = members.get(key(workspaceId, userId))
-      if (actorChanged(workspaceId, actor)) return 'actor_changed'
-      if (row === undefined || row.role !== expectedRole) return 'not_found'
-      if (
-        row.role === ownerRole &&
-        role !== ownerRole &&
-        owners(workspaceId, ownerRole).length === 1
-      ) {
-        return 'last_owner'
-      }
-      members.set(key(workspaceId, userId), { ...row, role })
-      return 'ok'
-    },
-    remove: async ({ workspaceId, userId, ownerRole, expectedRole, actor }) => {
-      const row = members.get(key(workspaceId, userId))
-      if (actor !== undefined && actorChanged(workspaceId, actor)) return 'actor_changed'
-      if (row === undefined || (expectedRole !== undefined && row.role !== expectedRole)) {
-        return 'not_found'
-      }
-      if (row.role === ownerRole && owners(workspaceId, ownerRole).length === 1) return 'last_owner'
-      members.delete(key(workspaceId, userId))
-      return 'ok'
-    },
-    transferOwnership: async ({ workspaceId, fromUserId, toUserId, ownerRole, demoteFromTo }) => {
-      const from = members.get(key(workspaceId, fromUserId))
-      const to = members.get(key(workspaceId, toUserId))
-      if (from?.role !== ownerRole) return 'not_found'
-      if (to === undefined) return 'target_not_member'
-      members.set(key(workspaceId, toUserId), { ...to, role: ownerRole })
-      if (demoteFromTo !== null)
-        members.set(key(workspaceId, fromUserId), { ...from, role: demoteFromTo })
-      return 'ok'
-    }
-  }
-  return {
-    workspaces: workspaces as IWorkspaceRepository,
-    memberships: memberships as IMembershipRepository,
-    seedMember: (workspaceId, userId, role) => {
-      members.set(key(workspaceId, userId), member(workspaceId, userId, role))
-    },
-    afterNextFind: (change) => {
-      afterFind = change
-    }
-  }
-}
 
 interface Harness {
   workspaceService: WorkspaceService

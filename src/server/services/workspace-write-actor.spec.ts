@@ -39,9 +39,9 @@ interface Services {
   memberships: Record<string, jest.Mock>
 }
 
-/** Both services over repositories that accept every write. */
-function build(): Services {
-  const workspaces: Record<string, jest.Mock> = {
+/** A workspace repository that accepts every write. */
+function acceptingWorkspaces(): Record<string, jest.Mock> {
+  return {
     createWithOwner: jest.fn().mockResolvedValue({ status: 'created', workspace: workspaceRow() }),
     findById: jest
       .fn()
@@ -49,7 +49,12 @@ function build(): Services {
     rename: jest.fn().mockResolvedValue('ok'),
     updateStatus: jest.fn().mockResolvedValue('ok')
   }
-  const memberships: Record<string, jest.Mock> = {
+}
+
+/** A membership repository that accepts every write and holds one viewer. */
+function acceptingMemberships(): Record<string, jest.Mock> {
+  const page = { items: [], nextCursor: null }
+  return {
     find: jest.fn().mockResolvedValue({
       ...WORKSPACE_REF,
       userId: 'u2',
@@ -62,36 +67,45 @@ function build(): Services {
     changeRole: jest.fn().mockResolvedValue('ok'),
     remove: jest.fn().mockResolvedValue('ok'),
     transferOwnership: jest.fn().mockResolvedValue('ok'),
-    listForUser: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
-    listForWorkspace: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
-    listSoleOwned: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    listForUser: jest.fn().mockResolvedValue(page),
+    listForWorkspace: jest.fn().mockResolvedValue(page),
+    listSoleOwned: jest.fn().mockResolvedValue(page),
     countOwned: jest.fn().mockResolvedValue(0),
     setLastActiveWorkspaceId: jest.fn()
   }
-  const access = {
+}
+
+/** The access service, with the actor resolving as the owner. */
+function owningAccess(): Partial<WorkspaceAccessService> {
+  return {
     invalidateWorkspace: jest.fn().mockResolvedValue(undefined),
     invalidateMembership: jest.fn().mockResolvedValue(undefined),
     resolveMembership: jest
       .fn()
       .mockResolvedValue({ ...WORKSPACE_REF, userId: 'actor-1', role: 'owner' })
   }
-  const events = { emit: jest.fn() }
+}
+
+/** Both services over repositories that accept every write. */
+function build(): Services {
+  const workspaces = acceptingWorkspaces()
+  const memberships = acceptingMemberships()
+  const access = owningAccess() as WorkspaceAccessService
+  const events = { emit: jest.fn() } as Partial<WorkspaceEventsService> as WorkspaceEventsService
   const options = workspaceOptions()
+  const workspaceRepository = workspaces as Partial<IWorkspaceRepository> as IWorkspaceRepository
+  const membershipRepository =
+    memberships as Partial<IMembershipRepository> as IMembershipRepository
   return {
     workspace: new WorkspaceService(
-      workspaces as Partial<IWorkspaceRepository> as IWorkspaceRepository,
-      memberships as Partial<IMembershipRepository> as IMembershipRepository,
-      access as Partial<WorkspaceAccessService> as WorkspaceAccessService,
-      events as Partial<WorkspaceEventsService> as WorkspaceEventsService,
+      workspaceRepository,
+      membershipRepository,
+      access,
+      events,
       {} as IAuthHooks,
       options
     ),
-    membership: new MembershipService(
-      memberships as Partial<IMembershipRepository> as IMembershipRepository,
-      access as Partial<WorkspaceAccessService> as WorkspaceAccessService,
-      events as Partial<WorkspaceEventsService> as WorkspaceEventsService,
-      options
-    ),
+    membership: new MembershipService(membershipRepository, access, events, options),
     workspaces,
     memberships
   }

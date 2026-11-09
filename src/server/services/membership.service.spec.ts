@@ -261,14 +261,36 @@ describe('MembershipService', () => {
       )
     })
 
-    it('does nothing for a member who already holds the role', async () => {
-      const { service, memberships, events } = build()
+    it('writes and reports nothing for a member who already holds the role, but ends their cached access', async () => {
+      const { service, memberships, access, events } = build()
       memberships['find']?.mockResolvedValue(member('u2', 'editor'))
 
       await service.changeRole(WORKSPACE_REF, 'u2', 'editor', OWNER, CONTEXT)
 
       expect(memberships['changeRole']).not.toHaveBeenCalled()
       expect(events.emit).not.toHaveBeenCalled()
+      expect(access.invalidateMembership).toHaveBeenCalledWith({ ...WORKSPACE_REF, userId: 'u2' })
+    })
+
+    // The first attempt wrote the role and its bump failed; the retry finds the role already set.
+    it('repairs the cached access when a retry follows a failed bump', async () => {
+      const { service, memberships, access } = build()
+      memberships['find']
+        ?.mockResolvedValueOnce(member('u2', 'editor'))
+        .mockResolvedValueOnce(member('u2', 'viewer'))
+      access.invalidateMembership.mockRejectedValueOnce(new Error('redis down'))
+
+      await expect(
+        service.changeRole(WORKSPACE_REF, 'u2', 'viewer', OWNER, CONTEXT)
+      ).rejects.toThrow('redis down')
+      await expect(
+        service.changeRole(WORKSPACE_REF, 'u2', 'viewer', OWNER, CONTEXT)
+      ).resolves.toBeUndefined()
+
+      expect(access.invalidateMembership.mock.calls).toEqual([
+        [{ ...WORKSPACE_REF, userId: 'u2' }],
+        [{ ...WORKSPACE_REF, userId: 'u2' }]
+      ])
     })
 
     it('names the role field when the role is outside the hierarchy', async () => {

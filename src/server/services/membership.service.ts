@@ -71,6 +71,11 @@ function pageSize(limit: number | undefined): number {
  * `expectedRole` and the actor's role, which the repository checks in the write's own transaction. A
  * member promoted, or an actor demoted, between the read and the write is answered `not_found` or
  * `actor_changed` and nothing changes. A repository that ignores both keeps that window open.
+ *
+ * A write whose cache bump failed throws, and retrying a role change repeats the bump. A removal is
+ * different: once the member is gone the retry answers `auth.workspace_not_found`, so the stale
+ * access ends when `workspaces.membershipCacheTtlSeconds` elapses, or at once through
+ * `WorkspaceAccessService.invalidateMembership`.
  */
 @Injectable()
 export class MembershipService {
@@ -184,7 +189,12 @@ export class MembershipService {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     }
     const target = await this.activeMember(ref, userId, actor)
-    if (target.role === role) return
+    if (target.role === role) {
+      // Nothing to write. A retry of a change whose cache bump failed lands here, and it still has
+      // to end the access the first attempt left cached.
+      await this.access.invalidateMembership({ ...ref, userId })
+      return
+    }
 
     const event = {
       type: 'member.role_changed' as const,
