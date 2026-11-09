@@ -10,7 +10,6 @@ import { Inject, Injectable } from '@nestjs/common'
 import { MembershipService } from './membership.service'
 import { WorkspaceEventsService } from './workspace-events.service'
 import { WorkspaceInvitationStore } from './workspace-invitation.store'
-import type { PendingInvitation } from './workspace-invitation.store'
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
@@ -133,7 +132,6 @@ export class WorkspaceInvitationService {
     const live = indexed?.record == null ? null : { key: indexed.key, record: indexed.record }
     if (live !== null) this.assertMayReissue(actor, live.record)
     const account = await this.assertNotMember(ref, email)
-    if (live === null) await this.assertRoom(ref)
     await this.issue(
       { ref, actor, email, role, expected: indexed?.key ?? null, live, account },
       context
@@ -279,14 +277,6 @@ export class WorkspaceInvitationService {
     const member = await this.memberships.find({ ...ref, userId: account.id })
     if (member?.status === 'active') throw new AuthException(AUTH_ERROR_CODES.ALREADY_MEMBER)
     return account
-  }
-
-  /** Refuses a new invitation once the workspace holds the configured number of pending ones. */
-  private async assertRoom(ref: WorkspaceRef): Promise<void> {
-    const pending: PendingInvitation[] = await this.store.pending(ref)
-    if (pending.length >= this.group.maxPendingInvitationsPerWorkspace) {
-      throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
-    }
   }
 
   /** Mints a token, stores its record, retires the one it replaces, and mails it. */

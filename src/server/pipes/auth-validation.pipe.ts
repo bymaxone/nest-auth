@@ -126,10 +126,11 @@ export function createAuthValidationPipe(options: ValidationPipeOptions = {}): V
     ...options,
     exceptionFactory: (errors: ValidationError[]): AuthException => {
       const entries = flattenValidationErrors(errors)
-      // The shared entry stands for every unnameable property, wherever it sits, so it is kept once.
+      // Entries are distinct objects except the shared one that stands for every unnameable property,
+      // so keeping the first of each keeps that one once.
       return new AuthException(
         AUTH_ERROR_CODES.VALIDATION,
-        entries.filter((entry, at) => entry !== UNNAMEABLE_KEY || entries.indexOf(entry) === at)
+        entries.filter((entry, at) => entries.indexOf(entry) === at)
       )
     }
   })

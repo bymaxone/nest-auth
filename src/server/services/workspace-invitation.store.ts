@@ -140,6 +140,8 @@ export class WorkspaceInvitationStore {
     ttlSeconds: number,
     limit = 0
   ): Promise<boolean> {
+    // Members whose record expired still count in the set, so they are dropped before it is counted.
+    if (limit > 0) await this.pending(ref)
     await this.redis.set(key, JSON.stringify(record), ttlSeconds)
     const listed = await this.redis.eval(
       ADD_PENDING_SCRIPT,

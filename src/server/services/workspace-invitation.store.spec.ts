@@ -75,6 +75,14 @@ describe('WorkspaceInvitationStore', () => {
       ])
     })
 
+    it('does not count a member whose record has expired', async () => {
+      const { store, redis } = build()
+      await store.write(WORKSPACE_REF, 'winv:dead', record(), 300, 1)
+      await redis.del('winv:dead')
+
+      expect(await store.write(WORKSPACE_REF, 'winv:live', record(), 300, 1)).toBe(true)
+    })
+
     it('has no limit when none is given', async () => {
       const { store } = build()
 

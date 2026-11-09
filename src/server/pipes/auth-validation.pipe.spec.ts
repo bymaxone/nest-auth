@@ -250,6 +250,28 @@ describe('createAuthValidationPipe — a missing body', () => {
     })
   })
 
+  it('names a declared property that fails, however long its name', async () => {
+    const long = 'p'.repeat(200)
+    class LongNameDto {
+      [long]!: number
+    }
+    IsInt()(LongNameDto.prototype, long)
+
+    try {
+      await createAuthValidationPipe().transform(
+        { [long]: 'text' },
+        { type: 'body', metatype: LongNameDto }
+      )
+    } catch (error) {
+      const fields = (
+        (error as AuthException).getResponse() as { error: { details: Array<{ field: string }> } }
+      ).error.details.map((d) => d.field)
+      expect(fields).toEqual([long])
+      return
+    }
+    throw new Error('expected a validation error')
+  })
+
   it('holds the unknown-property cap the wire contract states', () => {
     const contract = JSON.parse(
       readFileSync(join(__dirname, '../../../conformance/wire-contract.json'), 'utf8')
