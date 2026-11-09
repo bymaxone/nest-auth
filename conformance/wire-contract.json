@@ -897,7 +897,7 @@
       "min": 1,
       "max": 100,
       "default": 50,
-      "$comment": "The `limit` query parameter of a paginated list, a whole number written in decimal digits without a leading zero (`5`, not `05`). A value outside 1 to 100, or not written that way, is refused with 400 auth.validation naming the field limit; it is never clamped. The cursor is opaque, at most 512 characters with no control character, and says only where the next page starts: the tenant and the workspace of a list always come from the credential and the route."
+      "$comment": "The `limit` query parameter of a paginated list, a whole number written in decimal digits without a leading zero (`5`, not `05`). A value outside 1 to 100, or not written that way, is refused with 400 auth.validation naming the field limit, a present but empty `limit=` included; it is never clamped. The cursor is opaque, 1 to 512 characters (an empty `cursor=` is refused) with no control character, and says only where the next page starts: the tenant and the workspace of a list always come from the credential and the route."
     }
   },
   "refreshTokenInput": {
@@ -906,8 +906,8 @@
       "`opaqueToken` bound in `requestFieldBounds`; no token either library mints is longer.",
       "A value refused here is refused before any store lookup."
     ],
-    "body": "a string of 1 to 2048 characters; anything else present (not a string, empty, longer) is refused with 400 auth.validation naming the field refreshToken",
-    "cookie": "a value over 2048 characters is refused with 400 auth.validation naming the field refreshToken, except on logout, which reads it as no token (204, the auth cookies cleared, no refresh session touched); an empty cookie is no token; under tokenDelivery both, a cookie over 2048 on logout is read as absent, so a valid refreshToken in the body is the token that applies and its session is revoked"
+    "body": "a string of 1 to 2048 characters; a missing field or a JSON null is no token; anything else present (not a string, empty, longer) is refused with 400 auth.validation naming the field refreshToken",
+    "cookie": "a value over 2048 characters is refused with 400 auth.validation naming the field refreshToken, except on logout, which reads it as no token (204, the auth cookies cleared, no refresh session touched, and a presented access token is still blacklisted); an empty cookie is no token; under tokenDelivery both, a cookie over 2048 on logout is read as absent, so a valid refreshToken in the body is the token that applies and its session is revoked"
   },
   "sessionIndexMembers": {
     "$comment": [
@@ -1423,7 +1423,7 @@
     }
   },
   "errorEnvelope": {
-    "$comment": "The body shape every auth error serializes to. `details` is present and null when the thrower supplied none. For `auth.validation`, each `details[].field` is the WIRE property name, the key the client sent in the request JSON or query (`currentPassword`, never a language-level field name), and a nested field is its dotted path.",
+    "$comment": "The body shape every auth error serializes to. `details` is present and null when the thrower supplied none. For `auth.validation`, each `details[].field` is the WIRE property name, the key the client sent in the request JSON or query (`currentPassword`, never a language-level field name), and a nested field is its dotted path with an array index as a segment (`billing.name`, `items.1.name`), never bracketed.",
     "shape": {
       "error": {
         "code": "string",

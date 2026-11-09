@@ -87,6 +87,21 @@ describe.each(['cookie', 'both'] as const)('a refresh cookie, in %s delivery (E2
     expect(await liveSessions()).toBe(before)
   })
 
+  // Scenario: logout carries the access cookie and an oversize refresh cookie. Expected: 204, and
+  // the access token is blacklisted as for any logout. Why: the contract states it, and the
+  // oversize refresh value must not make logout skip the half it can still perform.
+  it('still blacklists the presented access token when the refresh cookie is over the bound', async () => {
+    const session = await signUp(`cookie-access-${delivery}@example.com`)
+
+    const res = await request(app.getHttpServer())
+      .post('/logout')
+      .set('Cookie', `${session.accessCookie}; refresh_token=${'a'.repeat(MAX_LENGTH + 1)}`)
+    const me = await request(app.getHttpServer()).get('/me').set('Cookie', session.accessCookie)
+
+    expect(res.status).toBe(204)
+    expect(me.status).toBe(401)
+  })
+
   // Scenario: a cookie of exactly the bound. Expected: it is a well-formed but unknown token, so
   // refresh answers 401 and not 400. Why: the bound is inclusive.
   it('treats a cookie of exactly the bound as a token, not as a malformed value', async () => {

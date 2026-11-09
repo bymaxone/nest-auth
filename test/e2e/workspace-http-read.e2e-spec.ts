@@ -309,6 +309,7 @@ describe('workspace read routes (E2E)', () => {
       ['a limit over the maximum', 'limit=101'],
       ['a limit that is not a number', 'limit=abc'],
       ['a fractional limit', 'limit=1.5'],
+      ['an empty limit', 'limit='],
       ['an empty cursor', 'cursor='],
       ['a cursor over the length bound', `cursor=${'a'.repeat(513)}`],
       ['a cursor with a control character', 'cursor=ab%00cd'],
