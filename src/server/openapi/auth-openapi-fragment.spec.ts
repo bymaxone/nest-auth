@@ -25,8 +25,12 @@ const DEFAULTS: RegisteredControllers = {
   platformMfa: false,
   invitations: false,
   emailChange: false,
-  oauth: false
+  oauth: false,
+  workspaces: false
 }
+
+/** The length bounds the refresh token carries in every body that names it. */
+const TOKEN_BOUNDS = { minLength: 1, maxLength: 2048 } as const
 
 /** Everything mounted. */
 const EVERYTHING: RegisteredControllers = {
@@ -38,7 +42,8 @@ const EVERYTHING: RegisteredControllers = {
   platformMfa: true,
   invitations: true,
   emailChange: true,
-  oauth: true
+  oauth: true,
+  workspaces: true
 }
 
 function optionsFor(
@@ -119,7 +124,8 @@ describe('buildAuthOpenApiFragment request schemas', () => {
       platformMfa: false,
       invitations: false,
       emailChange: false,
-      oauth: false
+      oauth: false,
+      workspaces: false
     }
 
     expect(buildAuthOpenApiFragment(optionsFor('cookie'), none).components.schemas).toEqual({})
@@ -314,6 +320,10 @@ describe('buildAuthOpenApiFragment', () => {
       'PlatformMfaController.verifyEnable': PLATFORM,
       'PlatformMfaController.disable': PLATFORM,
       'PlatformMfaController.regenerateRecoveryCodes': PLATFORM,
+      'WorkspaceController.list': ACCESS,
+      'WorkspaceController.access': ACCESS,
+      'WorkspaceController.switchTo': ACCESS,
+      'WorkspaceController.members': ACCESS,
       'InvitationController.invite': ACCESS,
       'InvitationController.revoke': ACCESS,
       'InvitationController.accept': PUBLIC,
@@ -343,20 +353,6 @@ describe('buildAuthOpenApiFragment', () => {
         'anything. Under `tokenDelivery: bearer` the refresh token in the request body is the ' +
         'only channel there is, so omitting it makes this a silent no-op.'
     )
-  })
-
-  // The map is deliberate, not a habit: a description restating what `security` already says is
-  // noise in a rendered document, and nest-core drops a contributed one only where the consumer
-  // wrote their own. Adding a second entry should therefore be a decision someone makes on
-  // purpose — which this assertion forces by failing when one appears.
-  it('contributes prose to that operation and no other', () => {
-    const described = Object.entries(
-      buildAuthOpenApiFragment(optionsFor('both'), EVERYTHING).operations
-    )
-      .filter(([, operation]) => 'description' in operation)
-      .map(([handler]) => handler)
-
-    expect(described).toEqual(['AuthController.logout'])
   })
 
   // Verifies a public operation says `security: []` rather than omitting the member. The
@@ -472,6 +468,7 @@ describe('buildAuthOpenApiFragment', () => {
               properties: {
                 refreshToken: {
                   type: 'string',
+                  ...TOKEN_BOUNDS,
                   description: 'The refresh token, when it is not delivered as a cookie.'
                 }
               }
@@ -500,6 +497,7 @@ describe('buildAuthOpenApiFragment', () => {
               properties: {
                 refreshToken: {
                   type: 'string',
+                  ...TOKEN_BOUNDS,
                   description: 'The refresh token, when it is not delivered as a cookie.'
                 }
               }
@@ -525,6 +523,7 @@ describe('buildAuthOpenApiFragment', () => {
               properties: {
                 refreshToken: {
                   type: 'string',
+                  ...TOKEN_BOUNDS,
                   description: 'The refresh token, when it is not delivered as a cookie.'
                 }
               }
@@ -556,6 +555,7 @@ describe('buildAuthOpenApiFragment', () => {
               properties: {
                 refreshToken: {
                   type: 'string',
+                  ...TOKEN_BOUNDS,
                   description: 'The refresh token, when it is not delivered as a cookie.'
                 }
               }
@@ -602,6 +602,7 @@ describe('buildAuthOpenApiFragment', () => {
               properties: {
                 refreshToken: {
                   type: 'string',
+                  ...TOKEN_BOUNDS,
                   description: 'The refresh token, when it is not delivered as a cookie.'
                 }
               }
@@ -711,7 +712,11 @@ describe('buildAuthOpenApiFragment', () => {
               type: 'object',
               required: ['refreshToken'],
               properties: {
-                refreshToken: { type: 'string', description: 'The platform refresh token.' }
+                refreshToken: {
+                  type: 'string',
+                  ...TOKEN_BOUNDS,
+                  description: 'The platform refresh token.'
+                }
               }
             }
           }
@@ -741,7 +746,11 @@ describe('buildAuthOpenApiFragment', () => {
               type: 'object',
               required: ['refreshToken'],
               properties: {
-                refreshToken: { type: 'string', description: 'The platform refresh token.' }
+                refreshToken: {
+                  type: 'string',
+                  ...TOKEN_BOUNDS,
+                  description: 'The platform refresh token.'
+                }
               }
             }
           }

@@ -195,6 +195,24 @@ export const AUTH_OAUTH_ROUTES = {
 } as const
 
 /**
+ * Workspace routes (`controllers.workspaces: true`).
+ *
+ * Mounted under `workspaces/` (`src/server/controllers/workspace.controller.ts`). The
+ * `:workspaceId` placeholder must be substituted before the request is issued; the workspace a
+ * request acts in is always this path segment, never the body or a header.
+ */
+export const AUTH_WORKSPACE_ROUTES = {
+  /** GET — the caller's own active memberships and the workspace they last switched to. */
+  list: 'workspaces',
+  /** GET — the workspace and the caller's role in it. */
+  access: 'workspaces/:workspaceId/access',
+  /** POST — record the workspace as the caller's last active one. */
+  switch: 'workspaces/:workspaceId/switch',
+  /** GET — the members of the workspace. */
+  members: 'workspaces/:workspaceId/members'
+} as const
+
+/**
  * Aggregated route map grouped by domain.
  *
  * Provides a single import point for client code that needs to reach
@@ -209,7 +227,8 @@ export const AUTH_ROUTES = {
   sessions: AUTH_SESSION_ROUTES,
   invitations: AUTH_INVITATION_ROUTES,
   emailChange: AUTH_EMAIL_CHANGE_ROUTES,
-  oauth: AUTH_OAUTH_ROUTES
+  oauth: AUTH_OAUTH_ROUTES,
+  workspaces: AUTH_WORKSPACE_ROUTES
 } as const
 
 /**

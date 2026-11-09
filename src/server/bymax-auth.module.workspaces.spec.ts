@@ -14,6 +14,7 @@ import {
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from './bymax-auth.constants'
 import { BymaxAuthModule } from './bymax-auth.module'
+import { WorkspaceController } from './controllers/workspace.controller'
 import type { BymaxAuthModuleOptions } from './interfaces/auth-module-options.interface'
 import { WorkspaceGuard } from './guards/workspace.guard'
 import { MembershipService } from './services/membership.service'
@@ -45,12 +46,14 @@ const MEMBERSHIP_REPOSITORY = { provide: BYMAX_AUTH_MEMBERSHIP_REPOSITORY, useVa
 /** Compiles the module with the given options and extra providers. */
 function compile(
   options: BymaxAuthModuleOptions,
-  extra: Array<{ provide: symbol; useValue: unknown }>
+  extra: Array<{ provide: symbol; useValue: unknown }>,
+  controllers: BymaxAuthModuleOptions['controllers'] = {}
 ) {
   return Test.createTestingModule({
     imports: [
       BymaxAuthModule.registerAsync({
         useFactory: () => options,
+        controllers,
         extraProviders: [...BASE, ...extra]
       })
     ]
@@ -122,6 +125,24 @@ describe('BymaxAuthModule — workspace providers', () => {
 
     await expect(compile(disabled, [MEMBERSHIP_REPOSITORY])).rejects.toThrow(
       /provided but workspaces\.enabled is not true/
+    )
+  })
+})
+
+describe('BymaxAuthModule — workspace controller', () => {
+  it('mounts the controller only when it is switched on', async () => {
+    const on = await compile(WORKSPACES, [WORKSPACE_REPOSITORY, MEMBERSHIP_REPOSITORY], {
+      workspaces: true
+    })
+    const off = await compile(WORKSPACES, [WORKSPACE_REPOSITORY, MEMBERSHIP_REPOSITORY])
+
+    expect(on.get(WorkspaceController, { strict: false })).toBeInstanceOf(WorkspaceController)
+    expect(() => off.get(WorkspaceController, { strict: false })).toThrow()
+  })
+
+  it('refuses to boot with the controller switched on and the feature off', async () => {
+    await expect(compile(OPTIONS, [], { workspaces: true })).rejects.toThrow(
+      'controllers.workspaces: true requires workspaces.enabled: true'
     )
   })
 })

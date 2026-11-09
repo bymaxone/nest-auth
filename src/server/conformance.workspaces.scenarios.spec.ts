@@ -45,6 +45,7 @@ interface Step {
     cachedUnder?: string | null
     absentUnder?: string[]
     versions?: string
+    countersAbsent?: boolean
   }
 }
 
@@ -235,6 +236,14 @@ async function playStep(harness: Harness, step: Step): Promise<void> {
   for (const under of step.expect.absentUnder ?? []) {
     expect(await redis.get(`${base}:${under}`)).toBeNull()
   }
+  if (step.expect.countersAbsent === true) await expectNoCounters(harness)
+}
+
+/** Neither version counter exists: a read has never created one. */
+async function expectNoCounters(harness: Harness): Promise<void> {
+  const { redis, hmacKey } = harness
+  expect(await redis.get(workspaceVersionKey('t1', 'w1', hmacKey))).toBeNull()
+  expect(await redis.get(membershipVersionKey('t1', 'w1', 'u1', hmacKey))).toBeNull()
 }
 
 describe('behavioural scenarios', () => {

@@ -43,5 +43,6 @@ export const REQUEST_SCHEMAS_BY_CONTROLLER: Readonly<
   platformMfa: ['MfaSetupDto', 'MfaVerifyDto', 'MfaDisableDto', 'MfaRegenerateRecoveryCodesDto'],
   invitations: ['CreateInvitationDto', 'RevokeInvitationDto', 'AcceptInvitationDto'],
   emailChange: ['ChangeEmailDto', 'ConfirmEmailChangeDto'],
-  oauth: []
+  oauth: [],
+  workspaces: []
 }

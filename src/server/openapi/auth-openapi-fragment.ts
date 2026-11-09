@@ -107,6 +107,7 @@ export interface RegisteredControllers {
   invitations: boolean
   emailChange: boolean
   oauth: boolean
+  workspaces: boolean
 }
 
 /** One OpenAPI object, copied into the document and never interpreted. */
@@ -285,6 +286,12 @@ export const OPERATIONS: Readonly<
   oauth: {
     'OAuthController.initiate': 'none',
     'OAuthController.callback': 'none'
+  },
+  workspaces: {
+    'WorkspaceController.list': 'access',
+    'WorkspaceController.access': 'access',
+    'WorkspaceController.switchTo': 'access',
+    'WorkspaceController.members': 'access'
   }
 }
 
@@ -318,6 +325,20 @@ const OPERATION_DESCRIPTIONS = new Map<string, string>([
       'still be able to sign out — but a call that carries none succeeds without revoking ' +
       'anything. Under `tokenDelivery: bearer` the refresh token in the request body is the only ' +
       'channel there is, so omitting it makes this a silent no-op.'
+  ],
+  // The two lists are the routes a reader would suspect of enumerating, and the requirement
+  // cannot say that they do not: both answer only data the caller already belongs to.
+  [
+    'WorkspaceController.list',
+    "Lists only the caller's own active memberships. The tenant and the member come from the " +
+      'access token, and the cursor says where the next page starts, never whose memberships ' +
+      'are listed.'
+  ],
+  [
+    'WorkspaceController.members',
+    'Lists the members of the workspace named in the path, to a caller the workspace guard ' +
+      'admitted to it with a role the deployment allows to view members. The cursor says where ' +
+      'the next page starts, never which workspace is listed.'
   ]
 ])
 
@@ -339,6 +360,10 @@ const REFRESH_BODY: FragmentObject = {
         properties: {
           refreshToken: {
             type: 'string',
+            // The bound `RefreshTokenBodyDto` publishes in the request-schema artifact; a spec
+            // holds the two equal.
+            minLength: 1,
+            maxLength: 2048,
             description: 'The refresh token, when it is not delivered as a cookie.'
           }
         }
@@ -373,6 +398,8 @@ const REQUIRED_REFRESH_BODY: FragmentObject = {
         properties: {
           refreshToken: {
             type: 'string',
+            minLength: 1,
+            maxLength: 2048,
             description: 'The refresh token, when it is not delivered as a cookie.'
           }
         }
@@ -390,7 +417,12 @@ const PLATFORM_REFRESH_BODY: FragmentObject = {
         type: 'object',
         required: ['refreshToken'],
         properties: {
-          refreshToken: { type: 'string', description: 'The platform refresh token.' }
+          refreshToken: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 2048,
+            description: 'The platform refresh token.'
+          }
         }
       }
     }

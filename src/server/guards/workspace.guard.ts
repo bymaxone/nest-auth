@@ -16,6 +16,10 @@ import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
 import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
 import { ALLOW_PENDING_WORKSPACE_KEY } from '../decorators/allow-pending-workspace.decorator'
 import type { WorkspaceRequest } from '../decorators/current-workspace.decorator'
+import {
+  WORKSPACE_PERMISSION_KEY,
+  type WorkspaceAction
+} from '../decorators/workspace-permission.decorator'
 import { WORKSPACE_ROLES_KEY } from '../decorators/workspace-roles.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -38,8 +42,9 @@ type AcceptedRole = string | typeof ANY_WORKSPACE_MEMBER
  * auth.forbidden` before anything else, including for an anonymous caller, so a misconfigured
  * route fails closed whatever the token. In order it:
  *
- * 1. refuses a route that declares no `@WorkspaceRoles(...)`, with `403 auth.forbidden`, before any
- *    lookup, so a forgotten decorator closes the route rather than opening it;
+ * 1. refuses a route that declares neither `@WorkspaceRoles(...)` nor `@WorkspacePermission(...)`,
+ *    with `403 auth.forbidden`, before any lookup, so a forgotten decorator closes the route
+ *    rather than opening it;
  * 2. refuses anything but a verified dashboard token. A platform token is refused outright: there
  *    is no implicit bypass for platform operators;
  * 3. resolves the workspace from the route or the host's resolver (never the body, never a
@@ -109,15 +114,23 @@ export class WorkspaceGuard implements CanActivate {
     )
   }
 
+  /**
+   * The roles the route accepts: those it declares, or those configured for the action it declares.
+   * The handler's declaration replaces the class's; a target that declares both is undeclared.
+   */
   private declaredRoles(context: ExecutionContext): AcceptedRole[] {
-    const roles = this.reflector.getAllAndOverride<AcceptedRole[] | undefined>(
-      WORKSPACE_ROLES_KEY,
-      [context.getHandler(), context.getClass()]
-    )
-    if (roles === undefined || roles.length === 0) {
-      throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
+    for (const target of [context.getHandler(), context.getClass()]) {
+      const roles = this.reflector.get<AcceptedRole[] | undefined>(WORKSPACE_ROLES_KEY, target)
+      const action = this.reflector.get<WorkspaceAction | undefined>(
+        WORKSPACE_PERMISSION_KEY,
+        target
+      )
+      if (roles !== undefined && action !== undefined) break
+      const declared = action === undefined ? roles : permittedRoles(this.group.permissions, action)
+      if (declared !== undefined && declared.length > 0) return [...declared]
+      if (declared !== undefined) break
     }
-    return roles
+    throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
   }
 
   private accepts(accepted: AcceptedRole[], role: string): boolean {
@@ -137,4 +150,27 @@ export class WorkspaceGuard implements CanActivate {
  */
 function hasText(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== ''
+}
+
+/**
+ * The roles configured for an action.
+ *
+ * @param permissions - The resolved `workspaces.permissions`.
+ * @param action - The action a route declared.
+ * @returns The roles that may perform it.
+ */
+function permittedRoles(
+  permissions: ResolvedWorkspaceOptions['permissions'],
+  action: WorkspaceAction
+): readonly AcceptedRole[] {
+  switch (action) {
+    case 'manageWorkspace':
+      return permissions.manageWorkspace
+    case 'deleteWorkspace':
+      return permissions.deleteWorkspace
+    case 'manageMembers':
+      return permissions.manageMembers
+    case 'viewMembers':
+      return permissions.viewMembers
+  }
 }

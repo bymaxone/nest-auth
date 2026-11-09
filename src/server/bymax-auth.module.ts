@@ -34,6 +34,7 @@ import { PasswordResetController } from './controllers/password-reset.controller
 import { PlatformAuthController } from './controllers/platform-auth.controller'
 import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
+import { WorkspaceController } from './controllers/workspace.controller'
 import { ApiKeyGuard } from './guards/api-key.guard'
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
@@ -159,7 +160,8 @@ export const AUTH_CONTROLLERS: readonly Type<object>[] = [
   PlatformMfaController,
   OAuthController,
   InvitationController,
-  EmailChangeController
+  EmailChangeController,
+  WorkspaceController
 ]
 
 /**
@@ -306,6 +308,10 @@ export class BymaxAuthModule {
     // without wiring the message fails at startup rather than at a user's first attempt.
     const includeEmailChange = options.controllers?.emailChange === true
 
+    // WorkspaceController — opt-in. Needs the workspace layer, which the repository providers
+    // register and `workspaces.enabled` configures; the factory below checks both.
+    const includeWorkspaceController = options.controllers?.workspaces === true
+
     // Resolved options provider — wraps the consumer's factory with resolveOptions().
     const resolvedOptionsProvider: Provider = {
       provide: BYMAX_AUTH_OPTIONS,
@@ -417,6 +423,12 @@ export class BymaxAuthModule {
           hasProviderToken(extraProviders, BYMAX_AUTH_WORKSPACE_REPOSITORY),
           hasProviderToken(extraProviders, BYMAX_AUTH_MEMBERSHIP_REPOSITORY)
         )
+        if (includeWorkspaceController && resolved.workspaces === undefined) {
+          throw new Error(
+            '[BymaxAuthModule] controllers.workspaces: true requires workspaces.enabled: true ' +
+              'and both workspace repository providers in extraProviders.'
+          )
+        }
 
         // Auditing every request was demanded: refuse a module that is plainly unable to write it.
         // The guard denies at runtime too, which also covers what is not inspectable here.
@@ -484,7 +496,8 @@ export class BymaxAuthModule {
       ...(includePlatform ? [PlatformAuthController, PlatformMfaController] : []),
       ...(includeOAuth ? [OAuthController] : []),
       ...(includeInvitations ? [InvitationController] : []),
-      ...(includeEmailChange ? [EmailChangeController] : [])
+      ...(includeEmailChange ? [EmailChangeController] : []),
+      ...(includeWorkspaceController ? [WorkspaceController] : [])
     ]
 
     // MfaService and MfaRequiredGuard are only registered when MFA is enabled so
@@ -578,7 +591,8 @@ export class BymaxAuthModule {
             platformMfa: includePlatform,
             invitations: includeInvitations,
             emailChange: includeEmailChange,
-            oauth: includeOAuth
+            oauth: includeOAuth,
+            workspaces: includeWorkspaceController
           } satisfies RegisteredControllers
         },
         AuthOpenApiContributor,

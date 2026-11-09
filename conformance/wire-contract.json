@@ -13,7 +13,7 @@
     "Changing a value here is a breaking change to the shared keyspace. Do it in both repos in",
     "the same change, and only with a migration story for data already written in the old form."
   ],
-  "version": 2,
+  "version": 3,
   "hmacKeyDerivation": {
     "$comment": [
       "The identifier-hashing key both sides derive from the identifier secret, and one",
@@ -502,7 +502,7 @@
       ],
       "counterLoss": {
         "$comment": [
-          "Starts from a store with no entries. A fill that finds a counter moved writes nothing, and a counter that is lost reads as 0 and is recreated at 1 by the next bump, so no entry written before the loss can be read after it."
+          "Starts from a store with no entries. A fill that finds a counter moved writes nothing, and a counter that is lost reads as 0 and is recreated at 1 by the next bump, so no entry written before the loss can be read after it, on a store where no entry is alive under a value the counter will restart at; an entry that is, is the documented eviction exposure."
         ],
         "steps": [
           {
@@ -557,7 +557,8 @@
             "expect": {
               "answer": "editor",
               "source": "repository",
-              "cachedUnder": "0:0"
+              "cachedUnder": "0:0",
+              "countersAbsent": true
             }
           },
           {
@@ -893,6 +894,15 @@
       "max": 2048
     }
   },
+  "refreshTokenInput": {
+    "$comment": [
+      "Where a refresh token may arrive and what each place accepts. The bound is the",
+      "`opaqueToken` bound in `requestFieldBounds`; no token either library mints is longer.",
+      "A value refused here is refused before any store lookup."
+    ],
+    "body": "a string of 1 to 2048 characters; anything else present (not a string, empty, longer) is refused with 400 auth.validation naming the field refreshToken",
+    "cookie": "a value over 2048 characters is refused with 400 auth.validation naming the field refreshToken, except on logout, which reads it as no token (204, the auth cookies cleared, no refresh session touched); an empty cookie is no token"
+  },
   "sessionIndexMembers": {
     "$comment": [
       "Index members are FULL key suffixes, not bare hashes. The member has to name its own",
@@ -1153,7 +1163,11 @@
     "revokeSession": "10/60",
     "revokeAllSessions": "5/60",
     "oauthInitiate": "10/60",
-    "oauthCallback": "10/60"
+    "oauthCallback": "10/60",
+    "workspaceList": "30/60",
+    "workspaceAccess": "60/60",
+    "workspaceSwitch": "20/60",
+    "workspaceMembers": "30/60"
   },
   "accessTokenClaims": {
     "$comment": [
@@ -1403,7 +1417,7 @@
     }
   },
   "errorEnvelope": {
-    "$comment": "The body shape every auth error serializes to. `details` is present and null when the thrower supplied none.",
+    "$comment": "The body shape every auth error serializes to. `details` is present and null when the thrower supplied none. For `auth.validation`, each `details[].field` is the WIRE property name, the key the client sent in the request JSON or query (`currentPassword`, never a language-level field name), and a nested field is its dotted path.",
     "shape": {
       "error": {
         "code": "string",
@@ -1555,7 +1569,7 @@
       "POST invitations/revoke",
       "POST invitations/accept"
     ],
-    "whenBody": ["POST mfa/setup", "POST platform/mfa/setup"],
+    "whenBody": ["POST mfa/setup", "POST platform/mfa/setup", "POST workspaces/:workspaceId/switch"],
     "unchecked": [
       "POST logout",
       "POST refresh",
