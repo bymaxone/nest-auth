@@ -1,3 +1,9 @@
+/**
+ * @fileoverview `WorkspaceController`: the workspace read routes, behind `controllers.workspaces`.
+ *
+ * @layer Controller
+ */
+
 import {
   Controller,
   Get,

@@ -1,3 +1,9 @@
+/**
+ * @fileoverview The query of the two paginated workspace lists: a positional cursor and a page size.
+ *
+ * @layer DTO
+ */
+
 import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator'
 
 import { NO_CONTROL_CHARACTERS } from './no-control-characters'

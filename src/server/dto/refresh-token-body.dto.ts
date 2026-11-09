@@ -1,3 +1,10 @@
+/**
+ * @fileoverview The refresh-token request body, declared so the request-schema artifact states the
+ * bound both libraries enforce.
+ *
+ * @layer DTO
+ */
+
 import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator'
 
 /**
