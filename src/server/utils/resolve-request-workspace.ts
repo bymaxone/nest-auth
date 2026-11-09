@@ -4,6 +4,7 @@
  * @layer Utility
  */
 
+import { exceedsCodePoints } from './code-points'
 import { NO_CONTROL_CHARACTERS } from '../dto/no-control-characters'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -40,7 +41,7 @@ function assertWorkspaceId(value: unknown): string {
   if (
     typeof value !== 'string' ||
     value.trim() === '' ||
-    value.length > MAX_WORKSPACE_ID_LENGTH ||
+    exceedsCodePoints(value, MAX_WORKSPACE_ID_LENGTH) ||
     !NO_CONTROL_CHARACTERS.test(value)
   ) {
     return invalidWorkspaceId(

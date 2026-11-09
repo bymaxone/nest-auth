@@ -848,7 +848,11 @@
       "PROVING one (login, or the current-password re-proof) floors at 1, because the credential",
       "may predate whatever the policy says today and a policy floor on a login door refuses a",
       "legitimate holder with a validation error while telling an unauthenticated caller what the",
-      "policy is, before any key derivation runs."
+      "policy is, before any key derivation runs.",
+      "",
+      "Every length bound here, on a request field or on the service-side check behind it, counts",
+      "Unicode CODE POINTS and not UTF-16 units, as validator.js isLength does by subtracting",
+      "surrogate pairs: an emoji is one. A string of 120 emoji meets a bound of 120."
     ],
     "email": {
       "max": 255
@@ -896,6 +900,11 @@
     "opaqueToken": {
       "min": 1,
       "max": 2048
+    },
+    "memberUserId": {
+      "min": 1,
+      "max": 128,
+      "$comment": "The user id of a workspace member, in a path segment or a body field, with no control character."
     },
     "workspaceName": {
       "min": 1,
@@ -1199,7 +1208,11 @@
     "workspaceCreate": "10/3600",
     "workspaceRename": "20/60",
     "workspaceScheduleDeletion": "5/300",
-    "workspaceRestore": "5/300"
+    "workspaceRestore": "5/300",
+    "workspaceChangeRole": "20/60",
+    "workspaceRemoveMember": "20/60",
+    "workspaceLeave": "10/60",
+    "workspaceTransferOwnership": "3/300"
   },
   "accessTokenClaims": {
     "$comment": [
@@ -1602,9 +1615,11 @@
       "POST invitations/accept",
       "POST workspaces",
       "PATCH workspaces/:workspaceId",
-      "POST workspaces/:workspaceId/schedule-deletion"
+      "POST workspaces/:workspaceId/schedule-deletion",
+      "PATCH workspaces/:workspaceId/members/:userId",
+      "POST workspaces/:workspaceId/transfer-ownership"
     ],
-    "whenBody": ["POST mfa/setup", "POST platform/mfa/setup", "POST workspaces/:workspaceId/switch", "POST workspaces/:workspaceId/restore"],
+    "whenBody": ["POST mfa/setup", "POST platform/mfa/setup", "POST workspaces/:workspaceId/switch", "POST workspaces/:workspaceId/restore", "POST workspaces/:workspaceId/leave"],
     "unchecked": [
       "POST logout",
       "POST refresh",

@@ -5,7 +5,9 @@
  */
 
 import type { HookContext } from '../interfaces/auth-hooks.interface'
+import type { AuthMembership } from '../interfaces/membership-repository.interface'
 import type { AuthWorkspace } from '../interfaces/workspace-repository.interface'
+import type { MembershipService } from './membership.service'
 import { WorkspaceActionsService } from './workspace-actions.service'
 import type { WorkspaceCallerService } from './workspace-caller.service'
 import type { WorkspaceService } from './workspace.service'
@@ -14,12 +16,33 @@ const CALLER = { sub: 'u1', tenantId: 't1' }
 const REF = { tenantId: 't1', workspaceId: 'w1' }
 const ACTOR = { userId: 'u1', role: 'owner' }
 const CONTEXT = { plane: 'dashboard' } as HookContext
-const WORKSPACE = { id: 'w1', name: 'Acme' } as AuthWorkspace
+const WORKSPACE: AuthWorkspace = {
+  id: 'w1',
+  tenantId: 't1',
+  name: 'Acme',
+  status: 'active',
+  createdAt: new Date(0),
+  deletionScheduledAt: null
+}
+const MEMBER: AuthMembership = {
+  tenantId: 't1',
+  workspaceId: 'w1',
+  userId: 'u2',
+  role: 'editor',
+  status: 'active',
+  invitedByUserId: null,
+  createdAt: new Date(0),
+  updatedAt: new Date(0)
+}
 
 function build(): {
   service: WorkspaceActionsService
   workspaces: Record<'create' | 'rename' | 'getAccess' | 'scheduleDeletion', jest.Mock>
   callers: Record<'load' | 'reauthenticate', jest.Mock>
+  memberships: Record<
+    'changeRole' | 'getMember' | 'assertMayTransfer' | 'transferOwnership',
+    jest.Mock
+  >
   order: string[]
 } {
   const order: string[] = []
@@ -36,13 +59,24 @@ function build(): {
     load: jest.fn().mockResolvedValue({ id: 'u1', tenantId: 't1' }),
     reauthenticate: jest.fn().mockImplementation(async () => void order.push('reauthenticate'))
   }
+  const memberships = {
+    changeRole: jest.fn().mockImplementation(async () => void order.push('change')),
+    getMember: jest.fn().mockImplementation(async () => {
+      order.push('read member')
+      return MEMBER
+    }),
+    assertMayTransfer: jest.fn().mockImplementation(() => void order.push('check')),
+    transferOwnership: jest.fn().mockImplementation(async () => void order.push('transfer'))
+  }
   return {
     service: new WorkspaceActionsService(
       workspaces as Partial<WorkspaceService> as WorkspaceService,
+      memberships as Partial<MembershipService> as MembershipService,
       callers as Partial<WorkspaceCallerService> as WorkspaceCallerService
     ),
     workspaces,
     callers,
+    memberships,
     order
   }
 }
@@ -105,5 +139,70 @@ describe('WorkspaceActionsService', () => {
       'invalid credentials'
     )
     expect(workspaces.scheduleDeletion).not.toHaveBeenCalled()
+  })
+
+  it('changes a role, then reads the membership back', async () => {
+    const { service, memberships, order } = build()
+
+    await expect(service.changeRole(REF, 'u2', 'editor', ACTOR, CONTEXT)).resolves.toBe(MEMBER)
+
+    expect(memberships.changeRole).toHaveBeenCalledWith(REF, 'u2', 'editor', ACTOR, CONTEXT)
+    expect(memberships.getMember).toHaveBeenCalledWith(REF, 'u2')
+    expect(order).toEqual(['change', 'read member'])
+  })
+
+  it('reads no membership back when the change is refused', async () => {
+    const { service, memberships } = build()
+    memberships.changeRole.mockRejectedValue(new Error('last owner'))
+
+    await expect(service.changeRole(REF, 'u2', 'viewer', ACTOR, CONTEXT)).rejects.toThrow(
+      'last owner'
+    )
+    expect(memberships.getMember).not.toHaveBeenCalled()
+  })
+
+  describe('transferOwnership', () => {
+    const HAND_OVER = { toUserId: 'u2', keeps: 'editor', password: 'pw' }
+
+    it('checks the request locally, then re-proves the caller, then hands ownership over', async () => {
+      const { service, memberships, callers, order } = build()
+
+      await service.transferOwnership(REF, ACTOR, CALLER, HAND_OVER, CONTEXT)
+
+      expect(memberships.assertMayTransfer).toHaveBeenCalledWith(ACTOR, 'u2', 'editor')
+      expect(callers.reauthenticate).toHaveBeenCalledWith(CALLER, 'pw')
+      expect(memberships.transferOwnership).toHaveBeenCalledWith(
+        REF,
+        ACTOR,
+        'u2',
+        'editor',
+        CONTEXT
+      )
+      expect(order).toEqual(['check', 'reauthenticate', 'transfer'])
+    })
+
+    it('never re-proves a caller the local check refuses, and writes nothing', async () => {
+      const { service, memberships, callers } = build()
+      memberships.assertMayTransfer.mockImplementation(() => {
+        throw new Error('not an owner')
+      })
+
+      await expect(
+        service.transferOwnership(REF, ACTOR, CALLER, { ...HAND_OVER, keeps: null }, CONTEXT)
+      ).rejects.toThrow('not an owner')
+
+      expect(callers.reauthenticate).not.toHaveBeenCalled()
+      expect(memberships.transferOwnership).not.toHaveBeenCalled()
+    })
+
+    it('writes nothing when the re-proof fails', async () => {
+      const { service, memberships, callers } = build()
+      callers.reauthenticate.mockRejectedValue(new Error('invalid credentials'))
+
+      await expect(
+        service.transferOwnership(REF, ACTOR, CALLER, HAND_OVER, CONTEXT)
+      ).rejects.toThrow('invalid credentials')
+      expect(memberships.transferOwnership).not.toHaveBeenCalled()
+    })
   })
 })

@@ -46,7 +46,8 @@ describe('the prose the fragment contributes', () => {
       'AuthController.logout',
       'WorkspaceController.list',
       'WorkspaceController.members',
-      'WorkspaceController.scheduleDeletion'
+      'WorkspaceController.scheduleDeletion',
+      'WorkspaceController.transferOwnership'
     ])
   })
 
@@ -78,6 +79,18 @@ describe('the prose the fragment contributes', () => {
       "Schedules the workspace for deletion and ends every member's access at once. The caller is " +
         're-proved: by the account password in the request body, or, for an account with no ' +
         'password, by a recent sign-in. It is a POST because a body on DELETE has no defined semantics.'
+    )
+  })
+
+  // Scenario: the transfer-ownership operation. Expected: it says it needs the caller to be
+  // re-proved and to be the owner. Why: neither fits in a security requirement.
+  it('says the transfer-ownership operation needs the owner to be re-proved', () => {
+    const operations = buildAuthOpenApiFragment(optionsFor('bearer'), EVERYTHING).operations
+
+    expect(operations['WorkspaceController.transferOwnership']?.['description']).toBe(
+      'Hands ownership to another active member. Only an owner may do it. The caller is re-proved: by ' +
+        'the account password in the request body, or, for an account with no password, by a recent ' +
+        'sign-in. The caller is checked as the owner before the password is looked at.'
     )
   })
 })

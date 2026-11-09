@@ -223,7 +223,15 @@ export const AUTH_WORKSPACE_ROUTES = {
    */
   scheduleDeletion: 'workspaces/:workspaceId/schedule-deletion',
   /** POST — undo a scheduled deletion within its grace period. */
-  restore: 'workspaces/:workspaceId/restore'
+  restore: 'workspaces/:workspaceId/restore',
+  /**
+   * PATCH — change a member's role. DELETE on the same path removes the member, with no body.
+   */
+  member: 'workspaces/:workspaceId/members/:userId',
+  /** POST — leave the workspace. */
+  leave: 'workspaces/:workspaceId/leave',
+  /** POST — hand ownership to another member, re-proving the caller. */
+  transferOwnership: 'workspaces/:workspaceId/transfer-ownership'
 } as const
 
 /**

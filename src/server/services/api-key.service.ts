@@ -23,6 +23,7 @@ import type {
   AuthApiKeySummary,
   IApiKeyRepository
 } from '../interfaces/api-key-repository.interface'
+import { exceedsCodePoints } from '../utils/code-points'
 
 /** Longest label accepted, in characters. A label names a machine caller, it is not a payload. */
 export const API_KEY_MAX_LABEL_LENGTH = 128
@@ -190,7 +191,7 @@ export class ApiKeyService {
     if (
       typeof label !== 'string' ||
       label.trim().length === 0 ||
-      label.length > API_KEY_MAX_LABEL_LENGTH ||
+      exceedsCodePoints(label, API_KEY_MAX_LABEL_LENGTH) ||
       CONTROL_CHARACTERS.test(label)
     ) {
       throw validation(

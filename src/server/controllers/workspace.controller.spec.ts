@@ -47,8 +47,14 @@ function build(): {
     scheduleDeletion: jest.Mock
     restore: jest.Mock
   }
-  memberships: { listMine: jest.Mock; listMembers: jest.Mock }
-  actions: { create: jest.Mock; rename: jest.Mock; scheduleDeletion: jest.Mock }
+  memberships: { listMine: jest.Mock; listMembers: jest.Mock; remove: jest.Mock; leave: jest.Mock }
+  actions: {
+    create: jest.Mock
+    rename: jest.Mock
+    scheduleDeletion: jest.Mock
+    changeRole: jest.Mock
+    transferOwnership: jest.Mock
+  }
 } {
   const workspaces = {
     getAccess: jest.fn(),
@@ -58,8 +64,19 @@ function build(): {
     scheduleDeletion: jest.fn(),
     restore: jest.fn()
   }
-  const memberships = { listMine: jest.fn(), listMembers: jest.fn() }
-  const actions = { create: jest.fn(), rename: jest.fn(), scheduleDeletion: jest.fn() }
+  const memberships = {
+    listMine: jest.fn(),
+    listMembers: jest.fn(),
+    remove: jest.fn(),
+    leave: jest.fn()
+  }
+  const actions = {
+    create: jest.fn(),
+    rename: jest.fn(),
+    scheduleDeletion: jest.fn(),
+    changeRole: jest.fn(),
+    transferOwnership: jest.fn()
+  }
   return {
     controller: new WorkspaceController(
       workspaces as Partial<WorkspaceService> as WorkspaceService,
@@ -219,6 +236,93 @@ describe('WorkspaceController', () => {
       expect(workspaces.restore).toHaveBeenCalledWith(
         REF,
         { userId: 'u1', role: 'editor' },
+        expect.objectContaining({ plane: 'dashboard' })
+      )
+    })
+  })
+
+  describe('member routes', () => {
+    const PARAMS = { workspaceId: 'w1', userId: 'u2' }
+    const MEMBER = {
+      userId: 'u2',
+      role: 'editor',
+      status: 'active' as const,
+      invitedByUserId: null,
+      createdAt: new Date(0)
+    }
+
+    it('delegates a role change and shapes the membership it returns', async () => {
+      const { controller, actions } = build()
+      actions.changeRole.mockResolvedValue(MEMBER)
+
+      const result = await controller.changeRole(ACCESS, USER, PARAMS, { role: 'editor' }, REQUEST)
+
+      expect(actions.changeRole).toHaveBeenCalledWith(
+        REF,
+        'u2',
+        'editor',
+        { userId: 'u1', role: 'editor' },
+        expect.objectContaining({ plane: 'dashboard' })
+      )
+      expect(result).toEqual({
+        userId: 'u2',
+        role: 'editor',
+        status: 'active',
+        invitedByUserId: null,
+        createdAt: '1970-01-01T00:00:00.000Z'
+      })
+    })
+
+    it('removes the member named in the path by the workspace key and the judged actor', async () => {
+      const { controller, memberships } = build()
+
+      await controller.removeMember(ACCESS, USER, PARAMS, REQUEST)
+
+      expect(memberships.remove).toHaveBeenCalledWith(
+        REF,
+        'u2',
+        { userId: 'u1', role: 'editor' },
+        expect.objectContaining({ plane: 'dashboard' })
+      )
+    })
+
+    it('lets the caller leave, as themselves', async () => {
+      const { controller, memberships } = build()
+
+      await controller.leave(ACCESS, USER, REQUEST)
+
+      expect(memberships.leave).toHaveBeenCalledWith(
+        REF,
+        'u1',
+        expect.objectContaining({ plane: 'dashboard' })
+      )
+    })
+
+    it('delegates a hand-over with the receiver, the role the giver keeps and the proof', async () => {
+      const { controller, actions } = build()
+
+      await controller.transferOwnership(
+        ACCESS,
+        USER,
+        { userId: 'u2', demoteSelfTo: 'editor', password: 'pw' },
+        REQUEST
+      )
+      await controller.transferOwnership(ACCESS, USER, { userId: 'u3' }, REQUEST)
+
+      expect(actions.transferOwnership).toHaveBeenNthCalledWith(
+        1,
+        REF,
+        { userId: 'u1', role: 'editor' },
+        USER,
+        { toUserId: 'u2', keeps: 'editor', password: 'pw' },
+        expect.objectContaining({ plane: 'dashboard' })
+      )
+      expect(actions.transferOwnership).toHaveBeenNthCalledWith(
+        2,
+        REF,
+        { userId: 'u1', role: 'editor' },
+        USER,
+        { toUserId: 'u3', keeps: null, password: undefined },
         expect.objectContaining({ plane: 'dashboard' })
       )
     })

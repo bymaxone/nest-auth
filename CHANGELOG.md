@@ -18,6 +18,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **Length bounds on user text now count Unicode code points everywhere, as the validation pipe
+  already did.** The service-side checks counted UTF-16 units, so an emoji counted twice. Four
+  checks changed: the workspace name, the workspace id, the API key label, and the password floor
+  (`password.minLength`, default 15). Only the password floor can newly refuse an existing
+  caller: a password made of characters outside the Basic Multilingual Plane that met the floor by
+  units can now be refused, **when it is set or changed** (registration, reset, change, invitation
+  acceptance). Existing hashes and logins are unaffected, because the floor is never applied at
+  login. A workspace name of exactly its bound in emoji, which the pipe accepted and the service
+  refused, is now accepted. Tokens, one-time codes and the other checks that never hold user text
+  keep counting units.
+
 ### Changed
 
 - **A password reset with no usable proof is refused as an invalid token before its password is judged.** `POST password/reset-password` now classifies the proof first, without spending it: more than one proof, none, or one the configured `passwordReset.method` does not accept answers `auth.password_reset_token_invalid` whatever the new password is. Before, such a request with a password under the policy floor answered `auth.validation`. The password is then judged, and the proof is spent last, as before, so a refused password still does not burn a single-use proof. A caller who holds no usable proof can no longer reach the password policy, and with it the breach screen, which is an outbound query when the host wires the bundled HIBP provider.
