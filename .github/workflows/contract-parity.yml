@@ -1,17 +1,20 @@
-# Compares this repository's `conformance/wire-contract.json` with the copy in
-# bymaxone/rust-auth, byte for byte.
+# Compares this repository's shared conformance files with the copies in
+# bymaxone/rust-auth, byte for byte: the wire contract and the request schemas.
+# Each file has its own tracking issue under its own label, so a drift in one
+# cannot hide behind a known drift in the other.
 #
-# The contract is duplicated in two repositories because both libraries read
-# and write one Redis, and each suite validates its own copy against its own
-# constant. Two independent local hashes cannot enforce agreement between two
-# repositories, because neither one reads the other: both CIs stay green over a
-# divergent keyspace. This is the check that reads the other side.
+# The files are duplicated in two repositories because both libraries read
+# and write one Redis and one request surface, and each suite validates its
+# own copy against its own constant. Two independent local hashes cannot
+# enforce agreement between two repositories, because neither one reads the
+# other: both CIs stay green over a divergent keyspace. This is the check that
+# reads the other side.
 #
-# It reports through a tracking issue and never fails a pull request. Parity
-# rounds are sequential by design — one side lands first, the other follows —
-# so a red gate on the PR that STARTS a round would block the very change it is
-# meant to coordinate. The issue is the signal; it closes itself once the two
-# copies agree.
+# It reports through one tracking issue per file and never fails a pull
+# request. Parity rounds are sequential by design — one side lands first, the
+# other follows — so a red gate on the PR that STARTS a round would block the
+# very change it is meant to coordinate. The issue is the signal; it closes
+# itself once the two copies agree.
 #
 # Three triggers, because no single one is enough:
 #   - `schedule` catches the other repository changing. GitHub documents that
@@ -19,7 +22,7 @@
 #     activity has occurred in 60 days" in a public repository, and that the
 #     event "can be delayed during periods of high loads", so it cannot be the
 #     only trigger.
-#   - `push` to the default branch on the contract path catches THIS repository
+#   - `push` to the default branch on the compared paths catches THIS repository
 #     changing, within minutes, without waiting for a schedule.
 #   - `workflow_dispatch` is the manual re-check after the other side lands.
 # https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows
@@ -34,6 +37,7 @@ on:
     branches: [main]
     paths:
       - conformance/wire-contract.json
+      - conformance/openapi-request-schemas.json
       - .github/workflows/contract-parity.yml
   workflow_dispatch:
 
@@ -53,17 +57,38 @@ permissions:
 
 jobs:
   parity:
-    name: Contract parity with rust-auth
+    name: Contract parity with rust-auth (${{ matrix.name }})
     # `workflow_dispatch` can be fired from any branch. Comparing a branch's
     # unmerged contract and writing the result to the repository-wide tracking
     # issue would report a state this package does not declare.
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # One leg per compared file. A failed leg must not cancel the other: they
+    # report through different issues.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: wire contract
+            path: conformance/wire-contract.json
+            label: contract-drift
+            title: Wire contract differs from rust-auth
+            description: The wire contract differs between nest-auth and rust-auth
+            explanation: Both libraries read and write one Redis, so a record or key that one declares and the other does not is a divergent keyspace. During a parity round this is expected until the second side lands.
+          - name: request schemas
+            path: conformance/openapi-request-schemas.json
+            label: schema-drift
+            title: Request schemas differ from rust-auth
+            description: The request-body schemas differ between nest-auth and rust-auth
+            explanation: Each library tests its request DTOs against this file, so a difference means the two accept different bodies for the same route. During a parity round this is expected until the second side lands.
     env:
       SIBLING: bymaxone/rust-auth
-      CONTRACT_PATH: conformance/wire-contract.json
-      LABEL: contract-drift
+      CONTRACT_PATH: ${{ matrix.path }}
+      LABEL: ${{ matrix.label }}
+      TITLE: ${{ matrix.title }}
+      LABEL_DESCRIPTION: ${{ matrix.description }}
+      EXPLANATION: ${{ matrix.explanation }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,8 +102,13 @@ jobs:
           # A failed fetch fails the job. Treating "could not read it" as "it
           # matches" would close a real tracking issue on an outage, and
           # treating it as "it differs" would open one on the same outage.
-          gh api "repos/$SIBLING/contents/$CONTRACT_PATH" \
-            -H 'Accept: application/vnd.github.raw+json' > "$RUNNER_TEMP/sibling.json"
+          #
+          # Never read the copy through the raw media type: `gh api` returns the text
+          # of a JSON escape for a control character (a backslash, `u0000`) in caret
+          # notation, which changes the bytes compared. The base64 `content` field is
+          # decoded here and is exact.
+          gh api "repos/$SIBLING/contents/$CONTRACT_PATH" --jq .content \
+            | base64 --decode > "$RUNNER_TEMP/sibling.json"
           test -s "$RUNNER_TEMP/sibling.json"
 
       - name: Compare
@@ -99,7 +129,7 @@ jobs:
             "$RUNNER_TEMP/sibling.json" "$CONTRACT_PATH" | head -n 200 > "$RUNNER_TEMP/contract.diff" || true
 
           {
-            echo "## Contract parity"
+            echo "## Contract parity: $CONTRACT_PATH"
             echo
             echo "| Repository | sha256 |"
             echo "| --- | --- |"
@@ -116,7 +146,6 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          TITLE="Wire contract differs from rust-auth"
           # Markdown code spans need backticks, and a backtick inside shell quotes
           # reads as a command substitution to the reader even where it is not
           # one, so it is held in a variable.
@@ -125,7 +154,7 @@ jobs:
           # The label doubles as the lookup key, so it has to exist before the
           # first issue is filed.
           gh label create "$LABEL" --color B60205 \
-            --description "The wire contract differs between nest-auth and rust-auth" \
+            --description "$LABEL_DESCRIPTION" \
             2>/dev/null || true
 
           EXISTING=$(gh issue list --state open --label "$LABEL" --limit 1 --json number --jq '.[0].number // empty')
@@ -149,7 +178,7 @@ jobs:
             echo "| ${BT}$GITHUB_REPOSITORY${BT} | ${BT}$LOCAL_SHA${BT} |"
             echo "| ${BT}$SIBLING${BT} | ${BT}$SIBLING_SHA${BT} |"
             echo
-            echo "Both libraries read and write one Redis, so a record or key that one declares and the other does not is a divergent keyspace. During a parity round this is expected until the second side lands."
+            echo "$EXPLANATION"
             echo
             echo "<details><summary>Diff ($SIBLING → $GITHUB_REPOSITORY, first 200 lines)</summary>"
             echo
