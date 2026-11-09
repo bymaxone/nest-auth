@@ -20,6 +20,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Changed
 
+- **A password reset with no usable proof is refused as an invalid token before its password is judged.** `POST password/reset-password` now classifies the proof first, without spending it: more than one proof, none, or one the configured `passwordReset.method` does not accept answers `auth.password_reset_token_invalid` whatever the new password is. Before, such a request with a password under the policy floor answered `auth.validation`. The password is then judged, and the proof is spent last, as before, so a refused password still does not burn a single-use proof. A caller who holds no usable proof can no longer reach the password policy, and with it the breach screen, which is an outbound query when the host wires the bundled HIBP provider.
+
 - **A refresh cookie over 2048 characters is refused with `400 auth.validation`.** The body value
   already was; the cookie is now held to the same bound on the routes that read the refresh token,
   in `cookie` and `both` delivery. The error names the field `refreshToken` and nothing is looked
