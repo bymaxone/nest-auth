@@ -21,7 +21,10 @@ import { Type } from 'class-transformer'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import { createAuthValidationPipe } from './auth-validation.pipe'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { MAX_REPORTED_KEY_CODE_POINTS, createAuthValidationPipe } from './auth-validation.pipe'
 
 import type { ArgumentMetadata } from '@nestjs/common'
 
@@ -197,5 +200,63 @@ describe('createAuthValidationPipe — a missing body', () => {
     )
 
     expect(out).toMatchObject({ password: 'x' })
+  })
+
+  describe('an unknown property the caller named', () => {
+    const VALID = { email: 'abcd', nested: { quantity: 3 } }
+    const run = async (body: object): Promise<Array<{ field: string; message: string }>> => {
+      try {
+        await createAuthValidationPipe().transform({ ...VALID, ...body }, METADATA)
+      } catch (error) {
+        return ((error as AuthException).getResponse() as { error: { details: never } }).error
+          .details
+      }
+      return []
+    }
+
+    it('is named when it is short and holds no control character', async () => {
+      expect(await run({ extra: 1 })).toEqual([
+        { field: 'extra', message: 'property extra should not exist' }
+      ])
+    })
+
+    it('is named at exactly 128 code points', async () => {
+      const key = '\u{1F600}'.repeat(128)
+
+      expect(await run({ [key]: 1 })).toEqual([
+        { field: key, message: `property ${key} should not exist` }
+      ])
+    })
+
+    it.each([
+      ['over 128 code points', 'x'.repeat(129)],
+      ['over 128 code points in emoji', '\u{1F600}'.repeat(129)],
+      ['holding a control character', 'a\u0007b'],
+      ['empty', '']
+    ])('is reported once under body when it is %s, and never repeated', async (_name, key) => {
+      const details = await run({ [key]: 1 })
+
+      expect(details).toEqual([
+        { field: 'body', message: 'the request body has a property that is not accepted' }
+      ])
+      expect(JSON.stringify(details)).not.toContain(key === '' ? '\u0000' : key)
+    })
+
+    it('reports several unnameable properties once and still names every other failure', async () => {
+      const details = await run({ email: 'x', ['a\u0007b']: 1, ['x'.repeat(200)]: 2, extra: 3 })
+
+      expect(details.filter((d) => d.field === 'body')).toHaveLength(1)
+      expect(details.map((d) => d.field).sort()).toEqual(['body', 'email', 'extra'])
+    })
+  })
+
+  it('holds the unknown-property cap the wire contract states', () => {
+    const contract = JSON.parse(
+      readFileSync(join(__dirname, '../../../conformance/wire-contract.json'), 'utf8')
+    ) as { errorEnvelope: { $comment: string } }
+
+    expect(contract.errorEnvelope.$comment).toContain(
+      `at most ${MAX_REPORTED_KEY_CODE_POINTS} code points and holds no control character`
+    )
   })
 })
