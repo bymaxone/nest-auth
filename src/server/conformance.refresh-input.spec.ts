@@ -106,5 +106,6 @@ describe('the page limit the contract states', () => {
     })
     expect(accepted).toEqual(Array.from({ length: MAX_PAGE_SIZE }, (_, index) => String(index + 1)))
     expect(pattern.test('1.5')).toBe(false)
+    expect(['05', '007', '0100'].some((value) => pattern.test(value))).toBe(false)
   })
 })

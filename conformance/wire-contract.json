@@ -897,7 +897,7 @@
       "min": 1,
       "max": 100,
       "default": 50,
-      "$comment": "The `limit` query parameter of a paginated list, a whole number. A value outside 1 to 100, or not a whole number, is refused with 400 auth.validation naming the field limit; it is never clamped. The cursor is opaque, at most 512 characters with no control character, and says only where the next page starts: the tenant and the workspace of a list always come from the credential and the route."
+      "$comment": "The `limit` query parameter of a paginated list, a whole number written in decimal digits without a leading zero (`5`, not `05`). A value outside 1 to 100, or not written that way, is refused with 400 auth.validation naming the field limit; it is never clamped. The cursor is opaque, at most 512 characters with no control character, and says only where the next page starts: the tenant and the workspace of a list always come from the credential and the route."
     }
   },
   "refreshTokenInput": {
