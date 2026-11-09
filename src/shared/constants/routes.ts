@@ -202,14 +202,28 @@ export const AUTH_OAUTH_ROUTES = {
  * request acts in is always this path segment, never the body or a header.
  */
 export const AUTH_WORKSPACE_ROUTES = {
-  /** GET — the caller's own active memberships and the workspace they last switched to. */
+  /**
+   * GET — the caller's own active memberships and the workspace they last switched to. POST on the
+   * same path creates a workspace.
+   */
   list: 'workspaces',
   /** GET — the workspace and the caller's role in it. */
   access: 'workspaces/:workspaceId/access',
   /** POST — record the workspace as the caller's last active one. */
   switch: 'workspaces/:workspaceId/switch',
   /** GET — the members of the workspace. */
-  members: 'workspaces/:workspaceId/members'
+  members: 'workspaces/:workspaceId/members',
+  /** PATCH — rename the workspace. */
+  rename: 'workspaces/:workspaceId',
+  /**
+   * POST — schedule the workspace for deletion, re-proving the caller.
+   *
+   * POST rather than DELETE because the password travels in the body, and a payload on DELETE has
+   * no defined semantics (RFC 9110), so an intermediary or a generated client may drop it.
+   */
+  scheduleDeletion: 'workspaces/:workspaceId/schedule-deletion',
+  /** POST — undo a scheduled deletion within its grace period. */
+  restore: 'workspaces/:workspaceId/restore'
 } as const
 
 /**

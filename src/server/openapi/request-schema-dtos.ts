@@ -16,6 +16,7 @@ import { ChangeEmailDto } from '../dto/change-email.dto'
 import { ChangePasswordDto } from '../dto/change-password.dto'
 import { ConfirmEmailChangeDto } from '../dto/confirm-email-change.dto'
 import { CreateInvitationDto } from '../dto/create-invitation.dto'
+import { CreateWorkspaceDto } from '../dto/create-workspace.dto'
 import { ForgotPasswordDto } from '../dto/forgot-password.dto'
 import { LoginDto } from '../dto/login.dto'
 import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
@@ -28,10 +29,12 @@ import { OAuthInitiateQueryDto } from '../dto/oauth-initiate-query.dto'
 import { PlatformLoginDto } from '../dto/platform-login.dto'
 import { RefreshTokenBodyDto } from '../dto/refresh-token-body.dto'
 import { RegisterDto } from '../dto/register.dto'
+import { RenameWorkspaceDto } from '../dto/rename-workspace.dto'
 import { ResendOtpDto } from '../dto/resend-otp.dto'
 import { ResendVerificationDto } from '../dto/resend-verification.dto'
 import { ResetPasswordDto } from '../dto/reset-password.dto'
 import { RevokeInvitationDto } from '../dto/revoke-invitation.dto'
+import { ScheduleWorkspaceDeletionDto } from '../dto/schedule-workspace-deletion.dto'
 import { VerifyEmailDto } from '../dto/verify-email.dto'
 import { VerifyOtpDto } from '../dto/verify-otp.dto'
 import { WorkspacePageQueryDto } from '../dto/workspace-page-query.dto'
@@ -43,6 +46,7 @@ export const REQUEST_SCHEMA_DTOS: readonly DtoClass[] = [
   ChangePasswordDto,
   ConfirmEmailChangeDto,
   CreateInvitationDto,
+  CreateWorkspaceDto,
   ForgotPasswordDto,
   LoginDto,
   MfaChallengeDto,
@@ -55,10 +59,12 @@ export const REQUEST_SCHEMA_DTOS: readonly DtoClass[] = [
   PlatformLoginDto,
   RefreshTokenBodyDto,
   RegisterDto,
+  RenameWorkspaceDto,
   ResendOtpDto,
   ResendVerificationDto,
   ResetPasswordDto,
   RevokeInvitationDto,
+  ScheduleWorkspaceDeletionDto,
   VerifyEmailDto,
   VerifyOtpDto,
   WorkspacePageQueryDto

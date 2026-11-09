@@ -291,7 +291,11 @@ export const OPERATIONS: Readonly<
     'WorkspaceController.list': 'access',
     'WorkspaceController.access': 'access',
     'WorkspaceController.switchTo': 'access',
-    'WorkspaceController.members': 'access'
+    'WorkspaceController.members': 'access',
+    'WorkspaceController.create': 'access',
+    'WorkspaceController.rename': 'access',
+    'WorkspaceController.scheduleDeletion': 'access',
+    'WorkspaceController.restore': 'access'
   }
 }
 
@@ -333,6 +337,12 @@ const OPERATION_DESCRIPTIONS = new Map<string, string>([
     "Lists only the caller's own active memberships. The tenant and the member come from the " +
       'access token, and the cursor says where the next page starts, never whose memberships ' +
       'are listed.'
+  ],
+  [
+    'WorkspaceController.scheduleDeletion',
+    "Schedules the workspace for deletion and ends every member's access at once. The caller is " +
+      're-proved: by the account password in the request body, or, for an account with no ' +
+      'password, by a recent sign-in. It is a POST because a body on DELETE has no defined semantics.'
   ],
   [
     'WorkspaceController.members',

@@ -45,7 +45,8 @@ describe('the prose the fragment contributes', () => {
     expect(described).toEqual([
       'AuthController.logout',
       'WorkspaceController.list',
-      'WorkspaceController.members'
+      'WorkspaceController.members',
+      'WorkspaceController.scheduleDeletion'
     ])
   })
 
@@ -64,6 +65,19 @@ describe('the prose the fragment contributes', () => {
       'Lists the members of the workspace named in the path, to a caller the workspace guard ' +
         'admitted to it with a role the deployment allows to view members. The cursor says where ' +
         'the next page starts, never which workspace is listed.'
+    )
+  })
+
+  // Scenario: the schedule-deletion operation. Expected: it says it re-proves the caller and why it
+  // is a POST. Why: the security requirement cannot say that a password or a fresh sign-in is
+  // needed, and a client generated from a DELETE-shaped guess would drop the body.
+  it('says the schedule-deletion operation needs the caller to be re-proved', () => {
+    const operations = buildAuthOpenApiFragment(optionsFor('bearer'), EVERYTHING).operations
+
+    expect(operations['WorkspaceController.scheduleDeletion']?.['description']).toBe(
+      "Schedules the workspace for deletion and ends every member's access at once. The caller is " +
+        're-proved: by the account password in the request body, or, for an account with no ' +
+        'password, by a recent sign-in. It is a POST because a body on DELETE has no defined semantics.'
     )
   })
 })

@@ -166,5 +166,20 @@ export const AUTH_THROTTLE_CONFIGS = {
   workspaceSwitch: { default: { limit: 20, ttl: 60_000 } },
 
   /** GET /workspaces/:workspaceId/members — 30 requests per minute per IP. */
-  workspaceMembers: { default: { limit: 30, ttl: 60_000 } }
+  workspaceMembers: { default: { limit: 30, ttl: 60_000 } },
+
+  /** POST /workspaces — 10 requests per hour per IP. Each one can create a workspace and its owner. */
+  workspaceCreate: { default: { limit: 10, ttl: 3_600_000 } },
+
+  /** PATCH /workspaces/:workspaceId — 20 requests per minute per IP. */
+  workspaceRename: { default: { limit: 20, ttl: 60_000 } },
+
+  /**
+   * POST /workspaces/:workspaceId/schedule-deletion — 5 requests per 5 minutes per IP. The route
+   * checks a password, so it is limited like the other routes that do.
+   */
+  workspaceScheduleDeletion: { default: { limit: 5, ttl: 300_000 } },
+
+  /** POST /workspaces/:workspaceId/restore — 5 requests per 5 minutes per IP. */
+  workspaceRestore: { default: { limit: 5, ttl: 300_000 } }
 } as const

@@ -5,11 +5,13 @@
  */
 
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
   HttpStatus,
   Inject,
+  Patch,
   Post,
   Query,
   Req,
@@ -22,6 +24,7 @@ import type { Request } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
+import { AllowPendingWorkspace } from '../decorators/allow-pending-workspace.decorator'
 import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { CurrentWorkspace } from '../decorators/current-workspace.decorator'
@@ -29,6 +32,9 @@ import type { CurrentWorkspaceContext } from '../decorators/current-workspace.de
 import { RequestEncoding } from '../decorators/request-encoding.decorator'
 import { WorkspacePermission } from '../decorators/workspace-permission.decorator'
 import { WorkspaceRoles } from '../decorators/workspace-roles.decorator'
+import { CreateWorkspaceDto } from '../dto/create-workspace.dto'
+import { RenameWorkspaceDto } from '../dto/rename-workspace.dto'
+import { ScheduleWorkspaceDeletionDto } from '../dto/schedule-workspace-deletion.dto'
 import { WorkspacePageQueryDto } from '../dto/workspace-page-query.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
@@ -41,17 +47,20 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { MembershipService } from '../services/membership.service'
+import { WorkspaceCallerService } from '../services/workspace-caller.service'
 import { WorkspaceService } from '../services/workspace.service'
 import { dashboardHookContext } from '../utils/request-hook-context'
 import {
   toAccessResponse,
   toMembersResponse,
-  toMyWorkspacesResponse
+  toMyWorkspacesResponse,
+  toWorkspaceView
 } from '../utils/workspace-views'
 import type {
   MembersResponse,
   MyWorkspacesResponse,
-  WorkspaceAccessResponse
+  WorkspaceAccessResponse,
+  WorkspaceView
 } from '../utils/workspace-views'
 
 // ---------------------------------------------------------------------------
@@ -90,7 +99,8 @@ import type {
 export class WorkspaceController {
   constructor(
     @Inject(WorkspaceService) private readonly workspaces: WorkspaceService,
-    @Inject(MembershipService) private readonly memberships: MembershipService
+    @Inject(MembershipService) private readonly memberships: MembershipService,
+    @Inject(WorkspaceCallerService) private readonly callers: WorkspaceCallerService
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -198,6 +208,135 @@ export class WorkspaceController {
   ): Promise<MembersResponse> {
     return toMembersResponse(await this.memberships.listMembers(refOf(workspace), pageOf(query)))
   }
+
+  // ---------------------------------------------------------------------------
+  // POST /workspaces
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Creates a workspace owned by the caller.
+   *
+   * No workspace exists yet, so there is no guard to pass: the caller needs only a verified token.
+   * Whether they may create one, and how many they may own, is the service's decision.
+   *
+   * @param user - Verified JWT payload from the access token.
+   * @param dto - The new workspace's name.
+   * @param req - Incoming request, for the hook context.
+   * @returns The created workspace.
+   */
+  @Throttle(AUTH_THROTTLE_CONFIGS.workspaceCreate)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceCreate)
+  @Post()
+  async create(
+    @CurrentUser() user: DashboardJwtPayload,
+    @Body() dto: CreateWorkspaceDto,
+    @Req() req: Request
+  ): Promise<WorkspaceView> {
+    const created = await this.workspaces.create(
+      await this.callers.load(user),
+      { name: dto.name },
+      dashboardHookContext(req, user)
+    )
+    return toWorkspaceView(created)
+  }
+
+  // ---------------------------------------------------------------------------
+  // PATCH /workspaces/:workspaceId
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Renames the workspace.
+   *
+   * @param workspace - The access the guard resolved.
+   * @param user - Verified JWT payload from the access token.
+   * @param dto - The new name.
+   * @param req - Incoming request, for the hook context.
+   * @returns The workspace as it now reads.
+   */
+  @UseGuards(WorkspaceGuard)
+  @WorkspacePermission('manageWorkspace')
+  @Throttle(AUTH_THROTTLE_CONFIGS.workspaceRename)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceRename)
+  @Patch(':workspaceId')
+  async rename(
+    @CurrentWorkspace() workspace: CurrentWorkspaceContext,
+    @CurrentUser() user: DashboardJwtPayload,
+    @Body() dto: RenameWorkspaceDto,
+    @Req() req: Request
+  ): Promise<WorkspaceView> {
+    const ref = refOf(workspace)
+    await this.workspaces.rename(ref, dto.name, actorOf(workspace), dashboardHookContext(req, user))
+    return toWorkspaceView((await this.workspaces.getAccess(ref, workspace.userId)).workspace)
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /workspaces/:workspaceId/schedule-deletion
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Schedules the workspace for deletion, ending every member's access at once.
+   *
+   * The caller is re-proved only after the guard has admitted them with a role that may delete: a
+   * caller who may not is refused before they can spend a key derivation or a lockout attempt.
+   *
+   * @param workspace - The access the guard resolved.
+   * @param user - Verified JWT payload from the access token.
+   * @param dto - The caller's proof.
+   * @param req - Incoming request, for the hook context.
+   */
+  @UseGuards(WorkspaceGuard)
+  @WorkspacePermission('deleteWorkspace')
+  @Throttle(AUTH_THROTTLE_CONFIGS.workspaceScheduleDeletion)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceScheduleDeletion)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Post(':workspaceId/schedule-deletion')
+  async scheduleDeletion(
+    @CurrentWorkspace() workspace: CurrentWorkspaceContext,
+    @CurrentUser() user: DashboardJwtPayload,
+    @Body() dto: ScheduleWorkspaceDeletionDto,
+    @Req() req: Request
+  ): Promise<void> {
+    await this.callers.reauthenticate(user, dto.password)
+    await this.workspaces.scheduleDeletion(
+      refOf(workspace),
+      actorOf(workspace),
+      dashboardHookContext(req, user)
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /workspaces/:workspaceId/restore
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Undoes a scheduled deletion within its grace period.
+   *
+   * The guard admits only the owner of a workspace pending deletion here, and only on this route;
+   * everyone else is answered as for a workspace that does not exist.
+   *
+   * @param workspace - The access the guard resolved.
+   * @param user - Verified JWT payload from the access token.
+   * @param req - Incoming request, for the hook context.
+   */
+  @UseGuards(WorkspaceGuard)
+  @WorkspacePermission('deleteWorkspace')
+  @AllowPendingWorkspace()
+  @Throttle(AUTH_THROTTLE_CONFIGS.workspaceRestore)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceRestore)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequestEncoding('when-body')
+  @Post(':workspaceId/restore')
+  async restore(
+    @CurrentWorkspace() workspace: CurrentWorkspaceContext,
+    @CurrentUser() user: DashboardJwtPayload,
+    @Req() req: Request
+  ): Promise<void> {
+    await this.workspaces.restore(
+      refOf(workspace),
+      actorOf(workspace),
+      dashboardHookContext(req, user)
+    )
+  }
 }
 
 /**
@@ -224,4 +363,14 @@ function pageOf(query: WorkspacePageQueryDto): { cursor?: string; limit?: number
  */
 function refOf(workspace: CurrentWorkspaceContext): WorkspaceRef {
   return { tenantId: workspace.tenantId, workspaceId: workspace.workspaceId }
+}
+
+/**
+ * The acting member as the guard resolved them, for a write the repository re-checks.
+ *
+ * @param workspace - The access the guard resolved.
+ * @returns The caller and the role they held when the guard admitted them.
+ */
+function actorOf(workspace: CurrentWorkspaceContext): { userId: string; role: string } {
+  return { userId: workspace.userId, role: workspace.role }
 }

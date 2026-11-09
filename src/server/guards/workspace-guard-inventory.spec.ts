@@ -92,7 +92,7 @@ function routesAdmittingPending(controller: Constructor): string[] {
 }
 
 /** The only shipped routes allowed to admit a workspace pending deletion. */
-const ROUTES_ADMITTING_PENDING: string[] = []
+const ROUTES_ADMITTING_PENDING: string[] = ['WorkspaceController.restore']
 
 describe('WorkspaceGuard route inventory', () => {
   // The check has to be able to fail, or the sweep over the shipped controllers proves nothing.
