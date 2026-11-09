@@ -48,7 +48,10 @@ overrides:
   # measured on a fresh directory (3 files with minimatch 9, 0 with 11). So the two parents that
   # still pull glob 10 move off it instead: test-exclude 7 (jest coverage, through
   # babel-plugin-istanbul) to the 8 line, which uses glob 13, and archiver 7 (testcontainers) to
-  # the 8 line, which no longer depends on glob. Remove each once its parent releases that itself.
+  # the 8 line, which no longer depends on glob. Remove each once its parent releases that itself:
+  # delete the entry, reinstall, and read `pnpm why minimatch` and `pnpm why glob`; keep it while a
+  # parent still resolves the old line. The minimatch selector stops at 10 on purpose: forcing 11 onto
+  # 7 to 9 is what breaks glob 10, so a new parent that pulls those is moved off them, as here.
   'minimatch@>=10.0.0 <11.0.1': '>=11.0.1'
   'test-exclude@^7': '^8'
   'archiver@^7': '^8'
