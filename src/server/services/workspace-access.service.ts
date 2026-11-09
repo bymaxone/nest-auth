@@ -53,6 +53,12 @@ interface MembershipRead {
  *
  * The cache is advisory. Redis being unreachable never fails a request: the answer then comes from
  * the repositories, which are authoritative, and nothing is written back.
+ *
+ * The repository reads that fill the cache must come from the primary or be read-your-writes: a
+ * lagging replica would cache a removed member as present under the new version. A counter evicted
+ * under memory pressure restarts at 0 and can make an entry written under 0:0 readable again for
+ * up to its lifetime, the exposure the token-epoch counters have, so run the store with a
+ * no-eviction policy for the auth keyspace.
  */
 @Injectable()
 export class WorkspaceAccessService {

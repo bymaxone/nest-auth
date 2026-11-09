@@ -9,9 +9,12 @@
  * @layer Test
  */
 
+import type { Redis } from 'ioredis'
+
 import { resolveOptions } from '../../src/server/config/resolved-options'
 import {
   WORKSPACE_VERSION_RETENTION_SECONDS,
+  membershipCacheKeyBase,
   membershipVersionKey,
   workspaceVersionKey
 } from '../../src/server/constants/workspace-keys'
@@ -34,8 +37,8 @@ const WORKSPACE_REF = { tenantId: 't1', workspaceId: 'w1' }
 interface Store {
   workspace: AuthWorkspace
   membership: AuthMembership | null
-  /** Runs inside `findById`, between the cache read and the repository answer. */
-  duringWorkspaceRead?: (() => Promise<void>) | undefined
+  /** Runs after the membership row is read and before the repository answers: a concurrent change. */
+  afterMembershipRead?: (() => Promise<void>) | undefined
 }
 
 function freshStore(): Store {
@@ -59,9 +62,29 @@ function freshStore(): Store {
   }
 }
 
+/**
+ * Wraps a client so every command rejects while an outage is switched on.
+ *
+ * The failure is injected at the client boundary so it is the same on the in-memory mock and on a
+ * real server; a real disconnect would not fail the mock's commands at all.
+ */
+function failingWhile(outage: { active: boolean }, client: Redis): Redis {
+  return new Proxy(client, {
+    get(target, property, receiver) {
+      const value: unknown = Reflect.get(target, property, receiver)
+      if (typeof value !== 'function') return value
+      return (...args: unknown[]) =>
+        outage.active
+          ? Promise.reject(new Error('Connection is closed.'))
+          : (value as (...rest: unknown[]) => unknown).apply(target, args)
+    }
+  })
+}
+
 function build(store: Store): {
   service: WorkspaceAccessService
   redis: AuthRedisService
+  outage: { active: boolean }
   hmacKey: string
 } {
   const namespace = realRedisNamespace()
@@ -75,21 +98,24 @@ function build(store: Store): {
       roles: { hierarchy: { owner: ['editor'], editor: [] }, ownerRole: 'owner' }
     }
   })
-  const redis = new AuthRedisService(createMockRedis(), options)
-  const workspaces: Partial<IWorkspaceRepository> = {
-    findById: async () => {
-      await store.duringWorkspaceRead?.()
-      return store.workspace
+  const outage = { active: false }
+  const client = failingWhile(outage, createMockRedis())
+  const redis = new AuthRedisService(client, options)
+  const workspaces: Partial<IWorkspaceRepository> = { findById: async () => store.workspace }
+  const memberships: Partial<IMembershipRepository> = {
+    find: async () => {
+      const row = store.membership
+      await store.afterMembershipRead?.()
+      return row
     }
   }
-  const memberships: Partial<IMembershipRepository> = { find: async () => store.membership }
   const service = new WorkspaceAccessService(
     redis,
     workspaces as IWorkspaceRepository,
     memberships as IMembershipRepository,
     options
   )
-  return { service, redis, hmacKey: options.hmacKey }
+  return { service, redis, outage, hmacKey: options.hmacKey }
 }
 
 describe('workspace membership cache against Redis', () => {
@@ -134,16 +160,46 @@ describe('workspace membership cache against Redis', () => {
   // never read again and the next request reads the new state.
   it('never serves a refill written after a concurrent change', async () => {
     const store = freshStore()
-    const { service } = build(store)
-    store.duringWorkspaceRead = async () => {
+    const { service, redis, hmacKey } = build(store)
+    // The repository answers `editor`; before the answer is cached the member is promoted and the
+    // membership version is bumped. The answer in hand is stale by then.
+    store.afterMembershipRead = async () => {
       store.membership = store.membership && { ...store.membership, role: 'owner' }
       await service.invalidateMembership(REF)
-      store.duringWorkspaceRead = undefined
+      store.afterMembershipRead = undefined
     }
 
-    await service.resolveMembership(REF)
+    await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
 
+    // The stale refill exists, under the versions read before the bump, and is not the key read.
+    const base = membershipCacheKeyBase('t1', 'w1', 'u1', hmacKey)
+    expect(await redis.get(`${base}:0:0`)).toContain('"role":"editor"')
     await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'owner' })
+  })
+
+  it('answers from the repositories while Redis is down, and works normally after', async () => {
+    const store = freshStore()
+    const { service, outage } = build(store)
+    await service.resolveMembership(REF)
+    store.membership = store.membership && { ...store.membership, role: 'owner' }
+
+    outage.active = true
+    await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'owner' })
+    outage.active = false
+
+    await service.invalidateMembership(REF)
+    await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'owner' })
+  })
+
+  it('refuses to report a change as invalidated while Redis is down', async () => {
+    const store = freshStore()
+    const { service, outage } = build(store)
+    outage.active = true
+
+    await expect(service.invalidateMembership(REF)).rejects.toThrow('Connection is closed.')
+    await expect(service.invalidateWorkspace(WORKSPACE_REF)).rejects.toThrow(
+      'Connection is closed.'
+    )
   })
 
   it('keeps each version counter for the retention window', async () => {

@@ -15,6 +15,11 @@
  * The versions are returned so the caller can write a refill under THEM: they were read before the
  * repository, so a change that lands afterwards moves a counter and the refill is written under a
  * key nobody reads.
+ *
+ * One script is an optimisation: the wire contract requires the ORDER (workspace version,
+ * membership version, entry, repositories), not the atomicity. The entry key is built inside the
+ * script from the two values just read, so it is not a declared key; the script therefore needs a
+ * standalone Redis or Sentinel, like every other multi-key script in this library.
  */
 export const READ_MEMBERSHIP_SCRIPT = `
 local workspaceVersion = redis.call('GET', KEYS[1])
