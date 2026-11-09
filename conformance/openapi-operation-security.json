@@ -33,6 +33,9 @@
     "GET /oauth/:provider/callback": "none",
     "GET /platform/me": "platform",
     "GET /sessions": "accessWithOptionalRefreshCookie",
+    "GET /workspaces": "access",
+    "GET /workspaces/:workspaceId/access": "access",
+    "GET /workspaces/:workspaceId/members": "access",
     "POST /email/change": "access",
     "POST /email/change/confirm": "none",
     "POST /invitations": "access",
@@ -63,6 +66,7 @@
     "POST /resend-verification": "none",
     "POST /sessions/revoke-all": "accessAndRefreshRequired",
     "POST /verify-email": "none",
+    "POST /workspaces/:workspaceId/switch": "access",
     "POST /ws-ticket": "access"
   }
 }

@@ -15,12 +15,17 @@ import { RequestMethod, type Type } from '@nestjs/common'
 import { METHOD_METADATA } from '@nestjs/common/constants'
 import { DiscoveryService, ModulesContainer, Reflector } from '@nestjs/core'
 
-import { BYMAX_AUTH_EMAIL_PROVIDER } from '../../src/server/bymax-auth.constants'
+import {
+  BYMAX_AUTH_EMAIL_PROVIDER,
+  BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
+  BYMAX_AUTH_WORKSPACE_REPOSITORY
+} from '../../src/server/bymax-auth.constants'
 import { AUTH_CONTROLLERS } from '../../src/server/bymax-auth.module'
 import { AuthOpenApiContributor } from '../../src/server/openapi/auth-openapi.contributor'
 import { OPENAPI_CONTRIBUTOR_METADATA } from '../../src/server/openapi/auth-openapi-fragment'
 import { bootstrapTestApp, createMockEmailProvider } from './setup'
 import type { BootstrappedTestApp } from './setup'
+import { memoryRepositories } from './workspace-memory-repositories'
 
 /**
  * The methods that DEFINE what a payload means, which is the list OpenAPI 3.0.3 defers to.
@@ -54,6 +59,10 @@ const CONTROLLERS: Readonly<Record<string, Type<object>>> = Object.fromEntries(
 /** The options every optional controller needs before the module will mount it. */
 const EVERY_FEATURE = {
   platform: { enabled: true },
+  workspaces: {
+    enabled: true,
+    roles: { hierarchy: { owner: [] }, ownerRole: 'owner' }
+  },
   invitations: { enabled: true, tokenTtlSeconds: 3_600 },
   oauth: {
     google: {
@@ -63,6 +72,8 @@ const EVERY_FEATURE = {
     }
   }
 }
+
+const repositories = memoryRepositories()
 
 /**
  * Every registration switch on, so no family is filtered out before a check can see it.
@@ -74,6 +85,8 @@ const EVERY_FEATURE = {
  */
 const EVERY_CONTROLLER = {
   extraModuleProviders: [
+    { provide: BYMAX_AUTH_WORKSPACE_REPOSITORY, useValue: repositories.workspaces },
+    { provide: BYMAX_AUTH_MEMBERSHIP_REPOSITORY, useValue: repositories.memberships },
     {
       provide: BYMAX_AUTH_EMAIL_PROVIDER,
       // `sendEmailChangeVerification` is optional on `IEmailProvider` and the shared mock leaves
@@ -94,7 +107,8 @@ const EVERY_CONTROLLER = {
     platform: true,
     invitations: true,
     emailChange: true,
-    oauth: true
+    oauth: true,
+    workspaces: true
   }
 }
 

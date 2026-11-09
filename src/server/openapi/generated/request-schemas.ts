@@ -317,6 +317,16 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
       "password"
     ]
   },
+  "RefreshTokenBodyDto": {
+    "type": "object",
+    "properties": {
+      "refreshToken": {
+        "type": "string",
+        "maxLength": 2048,
+        "minLength": 1
+      }
+    }
+  },
   "RegisterDto": {
     "type": "object",
     "properties": {
@@ -489,5 +499,20 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
       "email",
       "otp"
     ]
+  },
+  "WorkspacePageQueryDto": {
+    "type": "object",
+    "properties": {
+      "cursor": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "maxLength": 512,
+        "minLength": 1
+      },
+      "limit": {
+        "type": "string",
+        "pattern": "^(?:[1-9][0-9]?|100)$"
+      }
+    }
   }
 }

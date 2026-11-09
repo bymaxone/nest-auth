@@ -473,6 +473,11 @@ export type { IssueApiKeyInput, IssuedApiKey, RotateApiKeyInput } from './servic
 export type { ApiKeyClock } from './services/api-key-clock'
 export { WorkspaceRoles, WORKSPACE_ROLES_KEY } from './decorators/workspace-roles.decorator'
 export {
+  WorkspacePermission,
+  WORKSPACE_PERMISSION_KEY
+} from './decorators/workspace-permission.decorator'
+export type { WorkspaceAction } from './decorators/workspace-permission.decorator'
+export {
   ALLOW_PENDING_WORKSPACE_KEY,
   AllowPendingWorkspace
 } from './decorators/allow-pending-workspace.decorator'

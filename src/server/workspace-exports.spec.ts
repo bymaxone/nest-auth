@@ -17,8 +17,10 @@ import {
   MembershipService,
   WorkspaceAccessService,
   WorkspaceGuard,
+  WorkspacePermission,
   WorkspaceRoles,
-  WorkspaceService
+  WorkspaceService,
+  type WorkspaceAction
 } from './index'
 
 describe('workspace exports', () => {
@@ -63,5 +65,11 @@ describe('workspace exports', () => {
     ])
     expect(typeof WorkspaceRoles).toBe('function')
     expect(typeof CurrentWorkspace).toBe('function')
+  })
+
+  it('lets a host declare a route by the action it performs', () => {
+    const action: WorkspaceAction = 'manageMembers'
+
+    expect(typeof WorkspacePermission(action)).toBe('function')
   })
 })

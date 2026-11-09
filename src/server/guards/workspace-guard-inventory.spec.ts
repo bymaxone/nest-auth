@@ -18,6 +18,10 @@ import {
   ALLOW_PENDING_WORKSPACE_KEY,
   AllowPendingWorkspace
 } from '../decorators/allow-pending-workspace.decorator'
+import {
+  WORKSPACE_PERMISSION_KEY,
+  WorkspacePermission
+} from '../decorators/workspace-permission.decorator'
 import { WORKSPACE_ROLES_KEY, WorkspaceRoles } from '../decorators/workspace-roles.decorator'
 import { WorkspaceGuard } from './workspace.guard'
 
@@ -29,15 +33,29 @@ function usesGuard(guards: unknown): boolean {
 }
 
 /**
- * Names every route of a controller that runs behind `WorkspaceGuard` and has no roles declared on
- * the handler or on the class.
+ * Whether a target declares exactly one of roles or a permission.
+ *
+ * @param target - A handler or a controller class.
+ * @returns `'none'`, `'one'`, or `'both'`, which the guard refuses as undeclared.
+ */
+function declarationOn(target: object): 'none' | 'one' | 'both' {
+  const roles: unknown = Reflect.getMetadata(WORKSPACE_ROLES_KEY, target)
+  const permission: unknown = Reflect.getMetadata(WORKSPACE_PERMISSION_KEY, target)
+  const hasRoles = Array.isArray(roles) && roles.length > 0
+  const hasPermission = typeof permission === 'string'
+  if (hasRoles && hasPermission) return 'both'
+  return hasRoles || hasPermission ? 'one' : 'none'
+}
+
+/**
+ * Names every route of a controller that runs behind `WorkspaceGuard` and declares neither roles
+ * nor a permission on the handler or on the class, or declares both on one target.
  *
  * @param controller - The controller class.
  * @returns The `Class.method` of each offending route.
  */
 function routesWithoutRoles(controller: Constructor): string[] {
   const classGuarded = usesGuard(Reflect.getMetadata(GUARDS_METADATA, controller))
-  const classRoles: unknown = Reflect.getMetadata(WORKSPACE_ROLES_KEY, controller)
   const prototype = controller.prototype as Record<string, unknown>
 
   return Object.getOwnPropertyNames(prototype)
@@ -45,8 +63,9 @@ function routesWithoutRoles(controller: Constructor): string[] {
     .filter((name) => {
       const handler = prototype[name] as object
       const guarded = classGuarded || usesGuard(Reflect.getMetadata(GUARDS_METADATA, handler))
-      const roles: unknown = Reflect.getMetadata(WORKSPACE_ROLES_KEY, handler) ?? classRoles
-      return guarded && !(Array.isArray(roles) && roles.length > 0)
+      const onHandler = declarationOn(handler)
+      const declared = onHandler === 'none' ? declarationOn(controller) : onHandler
+      return guarded && declared !== 'one'
     })
     .map((name) => `${controller.name}.${name}`)
 }
@@ -134,6 +153,24 @@ describe('WorkspaceGuard route inventory', () => {
       }
 
       expect([...routesWithoutRoles(Declared), ...routesWithoutRoles(OnHandler)]).toEqual([])
+    })
+
+    it('accepts a permission in place of roles, and flags both on one handler', () => {
+      @Controller()
+      class Permitted {
+        @UseGuards(WorkspaceGuard)
+        @WorkspacePermission('viewMembers')
+        @Get()
+        a(): void {}
+
+        @UseGuards(WorkspaceGuard)
+        @WorkspacePermission('viewMembers')
+        @WorkspaceRoles('owner')
+        @Get()
+        b(): void {}
+      }
+
+      expect(routesWithoutRoles(Permitted)).toEqual(['Permitted.b'])
     })
 
     it('ignores a route that is not behind the guard', () => {

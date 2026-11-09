@@ -11,7 +11,7 @@ import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.i
 const HOSTNAME_RE = /^[a-z0-9.-]+$/i
 
 /** Longest refresh token a request body may carry; the wire contract's opaque-token bound. */
-const REFRESH_TOKEN_MAX_LENGTH = 2048
+export const REFRESH_TOKEN_MAX_LENGTH = 2048
 
 /**
  * Auth response for cookie mode — tokens delivered via HttpOnly cookies.
