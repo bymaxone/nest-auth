@@ -2079,7 +2079,7 @@ requirement depends on your `tokenDelivery` and is not in the file.
 
 These are development artifacts — they are not in the published tarball, and nothing reads
 them at runtime yet. They exist so the schemas are a function of the decorators rather than a
-second description maintained by hand, and so the same file can be asserted from `rust-auth`.
+second description maintained by hand.
 
 ### Administrative operations — methods, deliberately not routes
 
