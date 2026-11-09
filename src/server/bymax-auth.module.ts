@@ -34,6 +34,7 @@ import { PasswordResetController } from './controllers/password-reset.controller
 import { PlatformAuthController } from './controllers/platform-auth.controller'
 import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
+import { WorkspaceInvitationController } from './controllers/workspace-invitation.controller'
 import { WorkspaceController } from './controllers/workspace.controller'
 import { ApiKeyGuard } from './guards/api-key.guard'
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard'
@@ -88,6 +89,8 @@ import { WorkspaceAccessService } from './services/workspace-access.service'
 import { WorkspaceActionsService } from './services/workspace-actions.service'
 import { WorkspaceCallerService } from './services/workspace-caller.service'
 import { WorkspaceEventsService } from './services/workspace-events.service'
+import { WorkspaceInvitationService } from './services/workspace-invitation.service'
+import { WorkspaceInvitationStore } from './services/workspace-invitation.store'
 import { WorkspaceService } from './services/workspace.service'
 import { WsTicketService } from './services/ws-ticket.service'
 
@@ -163,7 +166,8 @@ export const AUTH_CONTROLLERS: readonly Type<object>[] = [
   OAuthController,
   InvitationController,
   EmailChangeController,
-  WorkspaceController
+  WorkspaceController,
+  WorkspaceInvitationController
 ]
 
 /**
@@ -316,6 +320,10 @@ export class BymaxAuthModule {
     // register and `workspaces.enabled` configures; the factory below checks both.
     const includeWorkspaceController = options.controllers?.workspaces === true
 
+    // WorkspaceInvitationController — opt-in, on the same workspace layer. Its service refuses to
+    // boot when the email provider cannot deliver the invitation.
+    const includeWorkspaceInvitations = options.controllers?.workspaceInvitations === true
+
     // Resolved options provider — wraps the consumer's factory with resolveOptions().
     const resolvedOptionsProvider: Provider = {
       provide: BYMAX_AUTH_OPTIONS,
@@ -434,6 +442,13 @@ export class BymaxAuthModule {
           )
         }
 
+        if (includeWorkspaceInvitations && resolved.workspaces === undefined) {
+          throw new Error(
+            '[BymaxAuthModule] controllers.workspaceInvitations: true requires ' +
+              'workspaces.enabled: true and both workspace repository providers in extraProviders.'
+          )
+        }
+
         // Auditing every request was demanded: refuse a module that is plainly unable to write it.
         // The guard denies at runtime too, which also covers what is not inspectable here.
         if (resolved.apiKeys.auditMode === 'required' && cannotAuditApiKeys(extraProviders)) {
@@ -468,6 +483,9 @@ export class BymaxAuthModule {
     // refuses a module whose flag and providers disagree, so the service never starts half-wired.
     const includeWorkspaces = hasProviderToken(extraProviders, BYMAX_AUTH_WORKSPACE_REPOSITORY)
     const workspaceProviders: Provider[] = includeWorkspaces ? WORKSPACE_PROVIDERS : []
+    const workspaceInvitationProviders: Provider[] = includeWorkspaceInvitations
+      ? [WorkspaceInvitationStore, WorkspaceInvitationService]
+      : []
 
     // Fallback email provider — only registered when the consumer has not supplied one.
     const emailProviders: Provider[] = hasProviderToken(extraProviders, BYMAX_AUTH_EMAIL_PROVIDER)
@@ -501,7 +519,8 @@ export class BymaxAuthModule {
       ...(includeOAuth ? [OAuthController] : []),
       ...(includeInvitations ? [InvitationController] : []),
       ...(includeEmailChange ? [EmailChangeController] : []),
-      ...(includeWorkspaceController ? [WorkspaceController] : [])
+      ...(includeWorkspaceController ? [WorkspaceController] : []),
+      ...(includeWorkspaceInvitations ? [WorkspaceInvitationController] : [])
     ]
 
     // MfaService and MfaRequiredGuard are only registered when MFA is enabled so
@@ -596,7 +615,8 @@ export class BymaxAuthModule {
             invitations: includeInvitations,
             emailChange: includeEmailChange,
             oauth: includeOAuth,
-            workspaces: includeWorkspaceController
+            workspaces: includeWorkspaceController,
+            workspaceInvitations: includeWorkspaceInvitations
           } satisfies RegisteredControllers
         },
         AuthOpenApiContributor,
@@ -657,7 +677,8 @@ export class BymaxAuthModule {
         ...emailChangeProviders,
         // Service API keys — only when the host supplied the repository.
         ...apiKeyProviders,
-        ...workspaceProviders
+        ...workspaceProviders,
+        ...workspaceInvitationProviders
       ],
       controllers,
       exports: [

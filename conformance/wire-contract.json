@@ -103,7 +103,11 @@
     "userEmailVerified": "uev",
     "workspaceVersion": "wsv",
     "membershipVersion": "wmv",
-    "membershipCache": "wm"
+    "membershipCache": "wm",
+    "workspaceInvitation": "winv",
+    "workspaceInvitationIndex": "winvidx",
+    "workspaceInvitationSet": "winvset",
+    "workspaceInvitationInviterRate": "winvrl"
   },
   "userStatusCache": {
     "$comment": [
@@ -829,12 +833,20 @@
       "",
       "The invitee index takes the canonicalized address alone — the tenant is already a literal",
       "segment of that key. It is an HMAC and not a bare digest for the reason all of these are:",
-      "an address carries too little entropy for a plain SHA-256 to hide it."
+      "an address carries too little entropy for a plain SHA-256 to hide it.",
+      "an address carries too little entropy for a plain SHA-256 to hide it.",
+      "",
+      "The two workspace-invitation preimages use the same length prefix, in UTF-8 bytes, for the",
+      "reason `userSubjectPreimages` gives, and leave the last component unprefixed because nothing",
+      "follows it. The pending set of a workspace is keyed on the workspace subject of",
+      "`workspaceMembershipCache`. None of the three starts with a prefix any other preimage uses."
     ],
     "dashboard": "hmac_sha256(hmacKey, 'dashboard:{tenantId}:{email}')",
     "platform": "hmac_sha256(hmacKey, 'platform:{email}')",
     "otpRecord": "hmac_sha256(hmacKey, '{tenantId}:{email}')",
-    "inviteeIndex": "hmac_sha256(hmacKey, '{email}')"
+    "inviteeIndex": "hmac_sha256(hmacKey, '{email}')",
+    "workspaceInvitationEmail": "wie:{utf8ByteLength(tenantId)}:{tenantId}:{utf8ByteLength(workspaceId)}:{workspaceId}:{email}",
+    "workspaceInviterRate": "wir:{utf8ByteLength(tenantId)}:{tenantId}:{userId}"
   },
   "requestFieldBounds": {
     "$comment": [
@@ -850,9 +862,10 @@
       "legitimate holder with a validation error while telling an unauthenticated caller what the",
       "policy is, before any key derivation runs.",
       "",
-      "Every length bound here, on a request field or on the service-side check behind it, counts",
-      "Unicode CODE POINTS and not UTF-16 units, as validator.js isLength does by subtracting",
-      "surrogate pairs: an emoji is one. A string of 120 emoji meets a bound of 120."
+      "Every length bound on text a USER SUBMITS, on a request field or on the service-side check behind",
+      "it, counts Unicode CODE POINTS and not UTF-16 units, as validator.js isLength does by subtracting",
+      "surrogate pairs: an emoji is one. A string of 120 emoji meets a bound of 120. Store-key and",
+      "storage bounds are not user text and may count bytes by design."
     ],
     "email": {
       "max": 255
@@ -916,6 +929,17 @@
       "max": 100,
       "default": 50,
       "$comment": "The `limit` query parameter of a paginated list, a whole number written in decimal digits without a leading zero (`5`, not `05`). A value outside 1 to 100, or not written that way, is refused with 400 auth.validation naming the field limit, a present but empty `limit=` included; it is never clamped. The cursor is opaque, 1 to 512 characters (an empty `cursor=` is refused) with no control character, and says only where the next page starts: the tenant and the workspace of a list always come from the credential and the route."
+    },
+    "pathParameters": {
+      "$comment": "A path parameter that is over its bound, blank, or carries a control character is refused with 400 auth.validation naming the parameter, ahead of authorization. The workspace guard runs first, so when both `workspaceId` and another parameter are bad only `workspaceId` is reported. A well-formed parameter that names nothing, or a workspace the caller may not see, is the identical 404 auth.workspace_not_found.",
+      "workspaceId": {
+        "min": 1,
+        "max": 128
+      },
+      "userId": {
+        "min": 1,
+        "max": 128
+      }
     }
   },
   "passwordResetOrder": {
@@ -1212,7 +1236,12 @@
     "workspaceChangeRole": "20/60",
     "workspaceRemoveMember": "20/60",
     "workspaceLeave": "10/60",
-    "workspaceTransferOwnership": "3/300"
+    "workspaceTransferOwnership": "3/300",
+    "workspaceInvite": "30/3600",
+    "workspaceInvitations": "30/60",
+    "workspaceInvitationResend": "10/300",
+    "workspaceInvitationRevoke": "20/60",
+    "workspaceInvitationPreview": "20/60"
   },
   "accessTokenClaims": {
     "$comment": [
@@ -1617,7 +1646,11 @@
       "PATCH workspaces/:workspaceId",
       "POST workspaces/:workspaceId/schedule-deletion",
       "PATCH workspaces/:workspaceId/members/:userId",
-      "POST workspaces/:workspaceId/transfer-ownership"
+      "POST workspaces/:workspaceId/transfer-ownership",
+      "POST workspaces/:workspaceId/invitations",
+      "POST workspaces/:workspaceId/invitations/resend",
+      "POST workspaces/:workspaceId/invitations/revoke",
+      "POST workspaces/invitations/preview"
     ],
     "whenBody": ["POST mfa/setup", "POST platform/mfa/setup", "POST workspaces/:workspaceId/switch", "POST workspaces/:workspaceId/restore", "POST workspaces/:workspaceId/leave"],
     "unchecked": [
@@ -1628,5 +1661,118 @@
       "POST platform/refresh",
       "POST sessions/revoke-all"
     ]
+  },
+  "workspaceInvitations": {
+    "$comment": [
+      "Workspace invitations, shared by both libraries on one Redis. An invitation is a record keyed by",
+      "the SHA-256 of a token only the invitee's mailbox holds; the token is 32 CSPRNG bytes, 64",
+      "lowercase hex characters, and is never stored. Only the member who invited, and the owner, can",
+      "see that an invitation exists, and only through the routes below.",
+      "",
+      "Three structures and one counter. `winv:{sha256(token)}` holds the record. `winvidx:` names the",
+      "ONE live invitation of an address in a workspace by the record key it points at; it is set by",
+      "compare-and-set against the key the writer read, so two writers for one address cannot both",
+      "succeed, and it is claimed BEFORE the record is written, so a crash leaves an index naming",
+      "nothing, which reads as no invitation. `winvset:` holds the record keys of a workspace's pending",
+      "invitations, for listing and for the pending cap; a member whose record is gone is dropped when",
+      "the set is read. `winvrl:` counts the invitations one member issues, one hour from the first.",
+      "",
+      "Every record, index and set expires `workspaces.invitationTtlSeconds` after it is written",
+      "(default 604800, at most 2592000)."
+    ],
+    "record": {
+      "key": "winv:{sha256(token)}",
+      "fields": [
+        "email",
+        "role",
+        "tenantId",
+        "workspaceId",
+        "inviterUserId",
+        "createdAt",
+        "resendCount"
+      ],
+      "email": "the invited address, trimmed and lowercased",
+      "createdAt": "iso8601-string; when the CURRENT token was issued, reset by a resend",
+      "resendCount": "JSON number; 0 on the first invitation, one more on each resend or second invitation of the address",
+      "$comment": "A value under the key that is not an object with every field of the right type reads as no record."
+    },
+    "keys": {
+      "index": "winvidx:{hmacSha256(hmacKey, workspaceInvitationEmail preimage)}, value: the record key `winv:{hash}`",
+      "set": "winvset:{hmacSha256(hmacKey, workspace subject)}, members: record keys `winv:{hash}`",
+      "inviterRate": "winvrl:{hmacSha256(hmacKey, workspaceInviterRate preimage)}, value: a counter whose TTL is set on the first increment only"
+    },
+    "fullKeyVectors": [
+      {
+        "tenantId": "tenant-1",
+        "workspaceId": "ws-1",
+        "email": "invitee@example.com",
+        "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "indexSubject": "wie:8:tenant-1:4:ws-1:invitee@example.com",
+        "indexKey": "{namespace}:winvidx:7414c8278dd3a2657f4ceb26a59dee3a533f58f6c0ec19a8e29c480bcb7d12ce",
+        "setSubject": "wsp:8:tenant-1:4:ws-1",
+        "setKey": "{namespace}:winvset:89a04c5f97b071aa56b591f7e37dceb01b52ee8c2a71271cb267b33d24cfde2e",
+        "recordKey": "{namespace}:winv:a8ae6e6ee929abea3afcfc5258c8ccd6f85273e0d4626d26c7279f3250f77c8e"
+      },
+      {
+        "tenantId": "acme:prod",
+        "workspaceId": "w1",
+        "email": "a@example.com",
+        "token": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+        "indexSubject": "wie:9:acme:prod:2:w1:a@example.com",
+        "indexKey": "{namespace}:winvidx:a43059a7446a2ce20cbcf938fea7aad77db5f87c999abd1f54bec4c2c87f2321",
+        "setSubject": "wsp:9:acme:prod:2:w1",
+        "setKey": "{namespace}:winvset:274c11e1218f7f0e1e5a1864357a8fec12f0e780c36d14dccc796a254cc3386a",
+        "recordKey": "{namespace}:winv:7b9d07f2404b102b3c62fede026097c5ab81668f18414abd8ea560cecb008006"
+      },
+      {
+        "tenantId": "acme",
+        "workspaceId": "prod:w1",
+        "email": "a@example.com",
+        "token": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+        "indexSubject": "wie:4:acme:7:prod:w1:a@example.com",
+        "indexKey": "{namespace}:winvidx:6e5d8188a87db061ced47af873b68b6e997cbff10c003579e45bc5fa67c3a965",
+        "setSubject": "wsp:4:acme:7:prod:w1",
+        "setKey": "{namespace}:winvset:e4b41f85a2e19f6b3f24963d925924f89feb344a7210ae2636707817753b40cd",
+        "recordKey": "{namespace}:winv:7b9d07f2404b102b3c62fede026097c5ab81668f18414abd8ea560cecb008006"
+      },
+      {
+        "tenantId": "ten\u00e9",
+        "workspaceId": "w\u00e9",
+        "email": "\u00e9@example.com",
+        "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "indexSubject": "wie:5:ten\u00e9:3:w\u00e9:\u00e9@example.com",
+        "indexKey": "{namespace}:winvidx:a6309b1909c3436b9c2774ad570c90949798de37bca2d1bf684b3ef3996d6e9d",
+        "setSubject": "wsp:5:ten\u00e9:3:w\u00e9",
+        "setKey": "{namespace}:winvset:0e67c0148f86d72570840b5db8fb688f0fac3f3106b1baf126f6a19cd87afab4",
+        "recordKey": "{namespace}:winv:a8ae6e6ee929abea3afcfc5258c8ccd6f85273e0d4626d26c7279f3250f77c8e"
+      }
+    ],
+    "inviterRateVectors": [
+      {
+        "tenantId": "tenant-1",
+        "userId": "user-1",
+        "subject": "wir:8:tenant-1:user-1",
+        "key": "{namespace}:winvrl:d7aafebe8e7b88f2d5499f5784d212a7583092f1a53cb065b61242e46e3dab45"
+      },
+      {
+        "tenantId": "tenant-\u00e9",
+        "userId": "user:1",
+        "subject": "wir:9:tenant-\u00e9:user:1",
+        "key": "{namespace}:winvrl:86f6bc8ce5d6419fbf092f2c55bddf99d101d5ba66d761e79b882d53c12ac570"
+      }
+    ],
+    "rules": {
+      "oneLiveInvitationPerAddress": "Inviting an address that already has a live invitation is a resend: it mints a new token, takes the role of the new request, and retires the old record.",
+      "roleCeiling": "The owner role may invite to any role. Every other role invites only to a role strictly below its own, and acts on (resends, revokes, replaces) only an invitation to such a role. This is stricter than `at or below`; the owner may grant the owner role. A role outside the hierarchy is refused with 400 auth.validation naming `role`.",
+      "outrankedInvitation": "A resend or a revoke of an address with no live invitation, or one the actor may not act on, answers 204 and changes nothing. A second invitation the actor may not replace is refused with 403 auth.insufficient_workspace_role.",
+      "alreadyMember": "An address whose account is an active member of the workspace is refused with 409 auth.already_member.",
+      "resendCooldownSeconds": 60,
+      "maxResends": 5,
+      "invitationsPerInviterPerHour": 20,
+      "limitsAnswer": "The cooldown, the resend limit, the hourly limit, the pending cap (`workspaces.maxPendingInvitationsPerWorkspace`, default 100) and a lost compare-and-set on the index are all refused with 429 auth.too_many_requests. The cooldown and the resend limit apply to a second invitation of the same address as to a resend.",
+      "answers": "POST invite, resend and revoke answer 204 with no body, whether or not the address has an account. The email provider is told `accountExists`.",
+      "preview": "POST workspaces/invitations/preview takes `{token}` of exactly 64 characters, needs no credential, and answers `{workspaceName, inviterName, role, maskedEmail, accountExists}`. A token that never existed, expired, was withdrawn or consumed, or whose workspace is not active or whose inviter is gone, is answered with the SAME 400 auth.invalid_invitation_token, and the library performs the same repository reads in each case.",
+      "tokenInEmail": "A delivery failure is re-thrown without the failing text, which may quote the token."
+    }
   }
 }

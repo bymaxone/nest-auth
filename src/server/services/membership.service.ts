@@ -343,6 +343,35 @@ export class MembershipService {
   }
 
   /**
+   * Refuses a role the actor may not grant: the owner role may grant any role, every other role only
+   * a role it includes and does not itself hold.
+   *
+   * @param actorRole - The role the actor holds.
+   * @param role - The role to grant.
+   * @throws {AuthException} `auth.validation` for a role outside the hierarchy,
+   *   `auth.insufficient_workspace_role` when the actor may not grant it.
+   */
+  assertMayGrant(actorRole: string, role: string): void {
+    if (!Object.hasOwn(this.group.roles.hierarchy, role)) {
+      throw invalid('role', 'role must be one of the workspace roles')
+    }
+    if (!this.outranks(actorRole, role)) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
+    }
+  }
+
+  /**
+   * Whether the actor's role stands above another role, so they may act on an invitation or a member
+   * holding it. The same rule {@link assertMayGrant} applies, as an answer rather than a refusal.
+   *
+   * @param actorRole - The role the actor holds.
+   * @param otherRole - The role acted on.
+   */
+  mayActOn(actorRole: string, otherRole: string): boolean {
+    return this.outranks(actorRole, otherRole)
+  }
+
+  /**
    * Reads one member of a workspace.
    *
    * @param ref - The workspace.

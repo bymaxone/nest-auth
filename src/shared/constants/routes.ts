@@ -231,7 +231,18 @@ export const AUTH_WORKSPACE_ROUTES = {
   /** POST — leave the workspace. */
   leave: 'workspaces/:workspaceId/leave',
   /** POST — hand ownership to another member, re-proving the caller. */
-  transferOwnership: 'workspaces/:workspaceId/transfer-ownership'
+  transferOwnership: 'workspaces/:workspaceId/transfer-ownership',
+  /**
+   * POST — invite an address to the workspace (`controllers.workspaceInvitations: true`). GET on the
+   * same path lists the pending invitations.
+   */
+  invitations: 'workspaces/:workspaceId/invitations',
+  /** POST — send a pending invitation again under a new token. */
+  resendInvitation: 'workspaces/:workspaceId/invitations/resend',
+  /** POST — withdraw a pending invitation. */
+  revokeInvitation: 'workspaces/:workspaceId/invitations/revoke',
+  /** POST — what a token is for, without signing in. Public. */
+  previewInvitation: 'workspaces/invitations/preview'
 } as const
 
 /**
