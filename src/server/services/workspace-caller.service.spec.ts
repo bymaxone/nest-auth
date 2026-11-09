@@ -12,14 +12,21 @@ import type { ReauthenticationService } from './reauthentication.service'
 import { WorkspaceCallerService } from './workspace-caller.service'
 
 const CALLER = { sub: 'u1', tenantId: 't1' }
-const USER = {
+const USER: AuthUser = {
   id: 'u1',
-  tenantId: 't1',
   email: 'a@b.c',
+  name: 'Alice',
   passwordHash: 'hash',
+  role: 'MEMBER',
+  status: 'ACTIVE',
+  tenantId: 't1',
+  emailVerified: true,
+  mfaEnabled: true,
   mfaSecret: 'secret',
-  mfaRecoveryCodes: ['x']
-} as unknown as AuthUser
+  mfaRecoveryCodes: ['x'],
+  lastLoginAt: null,
+  createdAt: new Date(0)
+}
 
 function build(found: AuthUser | null = USER): {
   service: WorkspaceCallerService
@@ -86,7 +93,7 @@ describe('WorkspaceCallerService', () => {
     })
 
     it('hands a passwordless account to the re-proof with a null hash', async () => {
-      const { service, assertReauthenticated } = build({ ...USER, passwordHash: null } as AuthUser)
+      const { service, assertReauthenticated } = build({ ...USER, passwordHash: null })
 
       await service.reauthenticate(CALLER, undefined)
 

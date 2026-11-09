@@ -27,7 +27,7 @@ const REQUEST = {
   headers: { 'user-agent': 'jest' },
   socket: { remoteAddress: '203.0.113.9' },
   ip: '203.0.113.9'
-} as unknown as Request
+} as Partial<Request> as Request
 const WORKSPACE = {
   id: 'w1',
   tenantId: 't1',
@@ -129,7 +129,7 @@ describe('WorkspaceController', () => {
         headers: { 'user-agent': 'jest' },
         socket: { remoteAddress: '203.0.113.9' },
         ip: '203.0.113.9'
-      } as unknown as Request
+      } as Partial<Request> as Request
 
       await controller.switchTo(ACCESS, USER, request)
 
