@@ -15,6 +15,7 @@ import {
 } from './bymax-auth.constants'
 import { BymaxAuthModule } from './bymax-auth.module'
 import type { BymaxAuthModuleOptions } from './interfaces/auth-module-options.interface'
+import { WorkspaceGuard } from './guards/workspace.guard'
 import { WorkspaceAccessService } from './services/workspace-access.service'
 
 const OPTIONS: BymaxAuthModuleOptions = {
@@ -68,10 +69,17 @@ describe('BymaxAuthModule — workspace providers', () => {
     )
   })
 
+  it('registers the guard when the feature is on', async () => {
+    const module = await compile(WORKSPACES, [WORKSPACE_REPOSITORY, MEMBERSHIP_REPOSITORY])
+
+    expect(module.get(WorkspaceGuard, { strict: false })).toBeInstanceOf(WorkspaceGuard)
+  })
+
   it('does not register the access service when the feature is off', async () => {
     const module = await compile(OPTIONS, [])
 
     expect(() => module.get(WorkspaceAccessService, { strict: false })).toThrow()
+    expect(() => module.get(WorkspaceGuard, { strict: false })).toThrow()
   })
 
   it('compiles with the feature off and no repository', async () => {

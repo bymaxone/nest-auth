@@ -8,11 +8,15 @@ import {
   ANY_WORKSPACE_MEMBER,
   BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY,
+  CurrentWorkspace,
   type BymaxAuthModuleOptions,
   type RegistrationMode,
   type WorkspaceOptions,
   type WorkspacePermissionOptions,
-  type WorkspaceRoleList
+  type WorkspaceRoleList,
+  WorkspaceAccessService,
+  WorkspaceGuard,
+  WorkspaceRoles
 } from './index'
 
 describe('workspace exports', () => {
@@ -44,5 +48,14 @@ describe('workspace exports', () => {
 
     expect(options.registration).toBe('invitation-only')
     expect(options.workspaces?.permissions?.viewMembers).toContain(ANY_WORKSPACE_MEMBER)
+  })
+
+  it('exports the guard, the decorators and the access service a host mounts', () => {
+    expect([WorkspaceGuard, WorkspaceAccessService].map((value) => typeof value)).toEqual([
+      'function',
+      'function'
+    ])
+    expect(typeof WorkspaceRoles).toBe('function')
+    expect(typeof CurrentWorkspace).toBe('function')
   })
 })
