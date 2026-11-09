@@ -47,6 +47,9 @@ class Declared {
   @WorkspaceRoles('owner')
   own(): void {}
 
+  @WorkspaceRoles('owner', 'viewer')
+  either(): void {}
+
   undeclared(): void {}
 
   @WorkspaceRoles()
@@ -263,6 +266,9 @@ describe('WorkspaceGuard', () => {
       ['edit', 'viewer', AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE],
       ['own', 'editor', AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE],
       ['read', 'viewer', 'allowed'],
+      ['either', 'viewer', 'allowed'],
+      ['either', 'editor', 'allowed'],
+      ['either', 'unknown-role', AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE],
       ['edit', 'unknown-role', AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE]
     ])('on %s a %s is %s', async (method, role, expected) => {
       const { guard, resolveMembership } = build()

@@ -184,14 +184,18 @@ export class WorkspaceAccessService {
     }
   }
 
+  /**
+   * Reads the workspace and the membership together, whatever the first one says.
+   *
+   * A missing workspace, an inactive one and a non-member then cost the same repository work, so
+   * the time an answer takes does not tell a caller which of the three it was.
+   */
   private async readRepositories(ref: MembershipRef): Promise<ResolvedWorkspaceMember | null> {
-    const workspace = await this.workspaceRepo.findById({
-      tenantId: ref.tenantId,
-      workspaceId: ref.workspaceId
-    })
-    if (workspace?.status !== 'active') return null
-    const membership = await this.membershipRepo.find(ref)
-    if (membership?.status !== 'active') return null
+    const [workspace, membership] = await Promise.all([
+      this.workspaceRepo.findById({ tenantId: ref.tenantId, workspaceId: ref.workspaceId }),
+      this.membershipRepo.find(ref)
+    ])
+    if (workspace?.status !== 'active' || membership?.status !== 'active') return null
     return { ...ref, role: membership.role }
   }
 }

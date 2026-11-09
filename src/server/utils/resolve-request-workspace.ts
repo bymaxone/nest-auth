@@ -35,9 +35,9 @@ function invalidWorkspaceId(message: string): never {
  * @throws {AuthException} `auth.validation` when it is not.
  */
 function assertWorkspaceId(value: unknown): string {
+  // The pattern needs at least one character, so it also refuses an empty id.
   if (
     typeof value !== 'string' ||
-    value.length === 0 ||
     value.length > MAX_WORKSPACE_ID_LENGTH ||
     !NO_CONTROL_CHARACTERS.test(value)
   ) {

@@ -203,23 +203,24 @@ describe('WorkspaceAccessService', () => {
       ])
     })
 
-    it('answers null for a workspace that does not exist, and caches nothing', async () => {
-      const { service, redis, workspaces, memberships } = build()
-      workspaces.findById.mockResolvedValue(null)
-
-      await expect(service.resolveMembership(REF)).resolves.toBeNull()
-      expect(memberships.find).not.toHaveBeenCalled()
-      expect(fills(redis)).toEqual([])
-    })
-
-    it.each(['pending_deletion', 'suspended', 'deleted'] as const)(
-      'answers null for a %s workspace without reading the membership',
-      async (status) => {
+    // Every cause of "no access" costs the same repository work, so the time an answer takes does
+    // not say which cause it was: both rows are read, by their full keys, whatever the first says.
+    it.each([
+      ['a workspace that does not exist', null, MEMBERSHIP],
+      ['a pending_deletion workspace', { ...WORKSPACE, status: 'pending_deletion' }, MEMBERSHIP],
+      ['a suspended workspace', { ...WORKSPACE, status: 'suspended' }, MEMBERSHIP],
+      ['a deleted workspace', { ...WORKSPACE, status: 'deleted' }, MEMBERSHIP],
+      ['a caller who is not a member', WORKSPACE, null]
+    ])(
+      'reads both rows and answers null for %s, caching nothing',
+      async (_name, workspace, row) => {
         const { service, redis, workspaces, memberships } = build()
-        workspaces.findById.mockResolvedValue({ ...WORKSPACE, status })
+        workspaces.findById.mockResolvedValue(workspace)
+        memberships.find.mockResolvedValue(row)
 
         await expect(service.resolveMembership(REF)).resolves.toBeNull()
-        expect(memberships.find).not.toHaveBeenCalled()
+        expect(workspaces.findById).toHaveBeenCalledWith(WORKSPACE_REF)
+        expect(memberships.find).toHaveBeenCalledWith(REF)
         expect(fills(redis)).toEqual([])
       }
     )

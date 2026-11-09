@@ -12,6 +12,10 @@ import type { CurrentWorkspaceContext } from './current-workspace.decorator'
 import { WORKSPACE_ROLES_KEY, WorkspaceRoles } from './workspace-roles.decorator'
 
 describe('WorkspaceRoles', () => {
+  it('keeps its metadata under a key of its own', () => {
+    expect(WORKSPACE_ROLES_KEY).toBe('workspaceRoles')
+  })
+
   class Controller {
     @WorkspaceRoles('owner', ANY_WORKSPACE_MEMBER)
     handler(): void {}

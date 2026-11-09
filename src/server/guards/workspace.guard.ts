@@ -31,7 +31,9 @@ type AcceptedRole = string | typeof ANY_WORKSPACE_MEMBER
 /**
  * Authorizes a request in the workspace it names.
  *
- * Run it after `JwtAuthGuard` and `UserStatusGuard`. In order it:
+ * Run it after `JwtAuthGuard` and `UserStatusGuard`: it reads the verified user they attach. Without
+ * them, or with no `request.user`, it answers `401 auth.token_invalid` and never reads further.
+ * In order it:
  *
  * 1. refuses a route that declares no `@WorkspaceRoles(...)`, with `403 auth.forbidden`, before any
  *    lookup, so a forgotten decorator closes the route rather than opening it;
@@ -97,10 +99,11 @@ export class WorkspaceGuard implements CanActivate {
 
   private accepts(accepted: AcceptedRole[], role: string): boolean {
     const { hierarchy } = this.group.roles
+    // `hasRole` compares roles by identity, so the any-member marker, handled first, would match
+    // no role even if it reached it.
     return accepted.some(
       (required) =>
-        required === ANY_WORKSPACE_MEMBER ||
-        (typeof required === 'string' && hasRole(role, required, hierarchy))
+        required === ANY_WORKSPACE_MEMBER || hasRole(role, required as string, hierarchy)
     )
   }
 }

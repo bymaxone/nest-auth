@@ -106,6 +106,13 @@ class HostWorkspaceController {
     return { reached: true }
   }
 
+  @Get('w/:workspaceId/no-auth')
+  @UseGuards(WorkspaceGuard)
+  @WorkspaceRoles(ANY_WORKSPACE_MEMBER)
+  withoutAuth(): { reached: true } {
+    return { reached: true }
+  }
+
   @Get('no-workspace')
   @UseGuards(JwtAuthGuard, UserStatusGuard, WorkspaceGuard)
   @WorkspaceRoles(ANY_WORKSPACE_MEMBER)
@@ -270,6 +277,13 @@ describe('WorkspaceGuard (E2E)', () => {
   describe('the token', () => {
     it('refuses a request with no token before the guard is consulted', async () => {
       const res = await request(app.getHttpServer()).get('/host/w/w1/read')
+
+      expectAuthError(res, AUTH_ERROR_CODES.TOKEN_INVALID)
+    })
+
+    // The guard reads the user the guards before it attach. Mounted alone it must refuse, not throw.
+    it('answers 401 when mounted without the guard that verifies the token', async () => {
+      const res = await get('/host/w/w1/no-auth')
 
       expectAuthError(res, AUTH_ERROR_CODES.TOKEN_INVALID)
     })
