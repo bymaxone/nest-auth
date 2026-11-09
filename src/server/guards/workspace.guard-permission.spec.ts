@@ -55,6 +55,9 @@ class ClassPermission {
 class ClassRoles {
   @WorkspacePermission('manageMembers')
   override(): void {}
+
+  @WorkspaceRoles()
+  emptied(): void {}
 }
 
 function guardFor(
@@ -189,5 +192,24 @@ describe('WorkspaceGuard with @WorkspacePermission', () => {
     await expect(outcome(guard, contextOf(ClassRoles, 'override'))).resolves.toBe(
       AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE
     )
+  })
+
+  // Scenario: a handler declares an empty roles list under a class that declares roles. Expected:
+  // refused. Why: an empty list is a declaration of nothing, and falling through to the class
+  // would admit a route that listed no role at all.
+  it('refuses a handler with an empty roles list instead of using the class roles', async () => {
+    const { guard, resolveAccess } = guardFor(undefined, 'viewer')
+
+    await expect(outcome(guard, contextOf(ClassRoles, 'emptied'))).resolves.toBe(
+      AUTH_ERROR_CODES.FORBIDDEN
+    )
+    expect(resolveAccess).not.toHaveBeenCalled()
+  })
+
+  // The metadata key is part of what a host that writes its own guard reads.
+  it('stores the declared action under a stable metadata key', () => {
+    const handler = Routes.prototype.rename
+
+    expect(Reflect.getMetadata('workspacePermission', handler)).toBe('manageWorkspace')
   })
 })

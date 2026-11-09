@@ -55,9 +55,15 @@ describe('the prose the fragment contributes', () => {
   it("says the workspace lists answer only the caller's own data", () => {
     const operations = buildAuthOpenApiFragment(optionsFor('bearer'), EVERYTHING).operations
 
-    expect(operations['WorkspaceController.list']?.['description']).toMatch(/only the caller's own/)
-    expect(operations['WorkspaceController.members']?.['description']).toMatch(
-      /never which workspace is listed/
+    expect(operations['WorkspaceController.list']?.['description']).toBe(
+      "Lists only the caller's own active memberships. The tenant and the member come from the " +
+        'access token, and the cursor says where the next page starts, never whose memberships ' +
+        'are listed.'
+    )
+    expect(operations['WorkspaceController.members']?.['description']).toBe(
+      'Lists the members of the workspace named in the path, to a caller the workspace guard ' +
+        'admitted to it with a role the deployment allows to view members. The cursor says where ' +
+        'the next page starts, never which workspace is listed.'
     )
   })
 })

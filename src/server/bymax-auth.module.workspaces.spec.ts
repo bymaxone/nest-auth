@@ -142,7 +142,8 @@ describe('BymaxAuthModule — workspace controller', () => {
 
   it('refuses to boot with the controller switched on and the feature off', async () => {
     await expect(compile(OPTIONS, [], { workspaces: true })).rejects.toThrow(
-      'controllers.workspaces: true requires workspaces.enabled: true'
+      '[BymaxAuthModule] controllers.workspaces: true requires workspaces.enabled: true ' +
+        'and both workspace repository providers in extraProviders.'
     )
   })
 })
