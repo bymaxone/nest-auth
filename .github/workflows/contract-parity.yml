@@ -102,8 +102,13 @@ jobs:
           # A failed fetch fails the job. Treating "could not read it" as "it
           # matches" would close a real tracking issue on an outage, and
           # treating it as "it differs" would open one on the same outage.
-          gh api "repos/$SIBLING/contents/$CONTRACT_PATH" \
-            -H 'Accept: application/vnd.github.raw+json' > "$RUNNER_TEMP/sibling.json"
+          #
+          # The copy is read from the base64 `content` field and decoded here. Read
+          # through `gh api` with the raw media type, a file holding the text of a JSON
+          # escape for a control character (a backslash, `u0000`) came back with it
+          # in caret notation, so a byte-identical file hashed differently.
+          gh api "repos/$SIBLING/contents/$CONTRACT_PATH" --jq .content \
+            | base64 --decode > "$RUNNER_TEMP/sibling.json"
           test -s "$RUNNER_TEMP/sibling.json"
 
       - name: Compare
