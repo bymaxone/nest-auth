@@ -1,5 +1,6 @@
 # Compares this repository's shared conformance files with the copies in
-# bymaxone/rust-auth, byte for byte: the wire contract and the request schemas.
+# bymaxone/rust-auth, byte for byte: the wire contract, the request schemas and the
+# per-operation security table.
 # Each file has its own tracking issue under its own label, so a drift in one
 # cannot hide behind a known drift in the other.
 #
@@ -38,6 +39,7 @@ on:
     paths:
       - conformance/wire-contract.json
       - conformance/openapi-request-schemas.json
+      - conformance/openapi-operation-security.json
       - .github/workflows/contract-parity.yml
   workflow_dispatch:
 
@@ -82,6 +84,12 @@ jobs:
             title: Request schemas differ from rust-auth
             description: The request-body schemas differ between nest-auth and rust-auth
             explanation: Each library tests its request DTOs against this file, so a difference means the two accept different bodies for the same route. During a parity round this is expected until the second side lands.
+          - name: operation security
+            path: conformance/openapi-operation-security.json
+            label: security-drift
+            title: Operation security differs from rust-auth
+            description: The per-operation security table differs between nest-auth and rust-auth
+            explanation: Each library tests its mounted routes against this file, so a difference means the two require a different kind of credential on the same operation. During a parity round this is expected until the second side lands.
     env:
       SIBLING: bymaxone/rust-auth
       CONTRACT_PATH: ${{ matrix.path }}
