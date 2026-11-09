@@ -23,7 +23,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **Length bounds on user text now count Unicode code points everywhere, as the validation pipe
   already did.** The service-side checks counted UTF-16 units, so an emoji counted twice. Four
   checks changed: the workspace name, the workspace id, the API key label, and the password floor
-  (`password.minLength`, default 15). Only the password floor can change an outcome for an existing
+  (`password.minLength`, default 15). Only the password floor can newly refuse an existing
   caller: a password made of characters outside the Basic Multilingual Plane that met the floor by
   units can now be refused, **when it is set or changed** (registration, reset, change, invitation
   acceptance). Existing hashes and logins are unaffected, because the floor is never applied at
