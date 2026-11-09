@@ -169,6 +169,17 @@ describe('WorkspaceGuard', () => {
       expect(resolveMembership).not.toHaveBeenCalled()
     })
 
+    it('refuses an undeclared route with 403 before the token, even for an anonymous caller', async () => {
+      const { guard, resolveMembership } = build()
+      const request = requestFor({ workspaceId: 'w1' }, {})
+      delete request['user']
+
+      await expect(refusal(guard, contextOf(Declared, 'undeclared', request))).resolves.toBe(
+        AUTH_ERROR_CODES.FORBIDDEN
+      )
+      expect(resolveMembership).not.toHaveBeenCalled()
+    })
+
     it('uses the class declaration when the handler has none', async () => {
       const { guard, resolveMembership } = build()
       resolveMembership.mockResolvedValue({
