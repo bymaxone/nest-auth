@@ -9,7 +9,7 @@
 /// <reference path="../../test/e2e/ioredis-mock.d.ts" />
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 
 import type { Redis } from 'ioredis'
 import RedisMock from 'ioredis-mock'
@@ -194,7 +194,7 @@ describe('workspace subject prefixes', () => {
 
     const spelled = files
       .filter((file) => /['"`](wsp|wms):/.test(readFileSync(file, 'utf8')))
-      .map((file) => file.slice(file.indexOf('/src/') + 1))
+      .map((file) => relative(join(__dirname, '../..'), file))
 
     expect(spelled).toEqual(['src/server/constants/workspace-keys.ts'])
   })
