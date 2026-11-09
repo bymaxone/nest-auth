@@ -297,7 +297,10 @@ export const AUTH_ERROR_CODES = {
   /** The registration mode refused a sign-up that carried no valid invitation. */
   REGISTRATION_CLOSED: 'auth.registration_closed',
 
-  /** The account already owns the most workspaces `workspaces.maxWorkspacesPerUser` allows. */
+  /**
+   * The account already owns the most workspaces `workspaces.maxWorkspacesPerUser` allows,
+   * counting any that are pending deletion until they are finalized or restored.
+   */
   WORKSPACE_LIMIT_REACHED: 'auth.workspace_limit_reached',
 
   /** Answered to an owner only; every other caller gets `auth.workspace_not_found`. */
@@ -458,7 +461,8 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.already_member': 'Already a member of this workspace',
   'auth.invitation_email_mismatch': 'This invitation was sent to a different email address',
   'auth.registration_closed': 'Registration is closed',
-  'auth.workspace_limit_reached': 'Workspace limit reached',
+  'auth.workspace_limit_reached':
+    'Workspace limit reached. Workspaces pending deletion count toward the limit.',
   'auth.workspace_pending_deletion': 'Workspace is scheduled for deletion',
   'auth.internal': 'Internal server error'
 }

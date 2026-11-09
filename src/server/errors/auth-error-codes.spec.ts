@@ -41,4 +41,11 @@ describe('AUTH_ERROR_MESSAGES', () => {
 
     expect(messageKeys).toEqual(codeValues)
   })
+
+  // The limit counts workspaces pending deletion, which reads as a bug unless the answer says so.
+  it('says that workspaces pending deletion count toward the workspace limit', () => {
+    expect(AUTH_ERROR_MESSAGES[AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED]).toBe(
+      'Workspace limit reached. Workspaces pending deletion count toward the limit.'
+    )
+  })
 })
