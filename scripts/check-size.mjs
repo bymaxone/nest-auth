@@ -118,9 +118,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     about 6%, inside this entry's historical band. It is a capability the consumer's interim
 //     guard cannot be deleted without, with red-checked tests behind it, which is the
 //     distinction this budget exists to force.
-//     144 KiB covers the workspace option group (its validation, defaults and the startup
-//     cross-check with the repository providers): with it the bundle is 137.65 KiB, which is
-//     1.22 KiB more than the 136.43 KiB without it. That leaves about 4.6% headroom.
+//     146 KiB sits about 4.8% above the measured 139.36 KiB. The size includes the workspace
+//     layer: its option group with validation, the membership access service with its Lua
+//     scripts, and the key builders.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
@@ -138,6 +138,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     bundle back without losing a word a consumer reads (they read the `.d.ts`). Not done here
 //     because it is a build change with its own blast radius, and this PR is a route fix.
 //     Recorded so the next raise is argued against that number instead of discovering it again.
+//     4.5 KiB sits about 5% above the measured 4.27 KiB. The size includes the nine workspace
+//     error codes with their statuses.
 //   client   2.64 KiB →  3.5 KiB (~33% headroom; fetch client may grow with auth flows)
 //     Raised to 4.25 KiB: the 401 interceptor stopped deciding by path alone and now reads the
 //     error code, because a path list cannot separate the two meanings a single JWT-guarded
@@ -154,8 +156,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 144 * 1024 },
-  { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.25 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 146 * 1024 },
+  { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },
   { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 10 * 1024 }
