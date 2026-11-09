@@ -394,7 +394,7 @@
     ],
     "scenarios": {
       "$comment": [
-        "Run by both implementations against a store and two repositories. `repository` is the state the repositories hold at that step; `expect.answer` is the role returned or null; `expect.source` is where the answer came from; `expect.cachedUnder` is the versions of the entry that exists afterwards for this member, or null when there is no entry under the CURRENT versions. Versions start at 0:0."
+        "Run by both implementations against a store and two repositories. `repository` is the state the repositories hold at that step; `expect.answer` is the role returned or null; `expect.source` is where the answer came from; `expect.cachedUnder` is the versions of the entry that exists afterwards for this member, or null when there is no entry under the CURRENT versions; `expect.absentUnder` lists versions under which no entry may exist afterwards. Versions start at 0:0. `concurrentBump` names a counter bumped after the reader has read the versions and the repositories and before the fill; `dropCounter` removes a counter, standing for its expiry, and the counter then reads as 0. `counterLoss` runs on a fresh store."
       ],
       "steps": [
         {
@@ -499,7 +499,93 @@
             "cachedUnder": "1:1"
           }
         }
-      ]
+      ],
+      "counterLoss": {
+        "$comment": [
+          "Starts from a store with no entries. A fill that finds a counter moved writes nothing, and a counter that is lost reads as 0 and is recreated at 1 by the next bump, so no entry written before the loss can be read after it."
+        ],
+        "steps": [
+          {
+            "do": "bumpMembership",
+            "repository": {
+              "workspace": "active",
+              "membership": "active",
+              "role": "owner"
+            },
+            "expect": {
+              "versions": "0:1"
+            }
+          },
+          {
+            "do": "resolve",
+            "concurrentBump": "membership",
+            "repository": {
+              "workspace": "active",
+              "membership": "active",
+              "role": "owner"
+            },
+            "expect": {
+              "answer": "owner",
+              "source": "repository",
+              "cachedUnder": null,
+              "absentUnder": [
+                "0:1",
+                "0:2"
+              ],
+              "versions": "0:2"
+            }
+          },
+          {
+            "do": "dropCounter",
+            "counter": "membership",
+            "repository": {
+              "workspace": "active",
+              "membership": "active",
+              "role": "owner"
+            },
+            "expect": {
+              "versions": "0:0"
+            }
+          },
+          {
+            "do": "resolve",
+            "repository": {
+              "workspace": "active",
+              "membership": "active",
+              "role": "editor"
+            },
+            "expect": {
+              "answer": "editor",
+              "source": "repository",
+              "cachedUnder": "0:0"
+            }
+          },
+          {
+            "do": "bumpMembership",
+            "repository": {
+              "workspace": "active",
+              "membership": "active",
+              "role": "viewer"
+            },
+            "expect": {
+              "versions": "0:1"
+            }
+          },
+          {
+            "do": "resolve",
+            "repository": {
+              "workspace": "active",
+              "membership": "active",
+              "role": "viewer"
+            },
+            "expect": {
+              "answer": "viewer",
+              "source": "repository",
+              "cachedUnder": "0:1"
+            }
+          }
+        ]
+      }
     },
     "entryRefreshesCounters": "a fill writes the entry only if both counters still hold the versions it read (absent counts as 0), and in the same step extends every existing counter to the retention"
   },

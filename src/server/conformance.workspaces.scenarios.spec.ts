@@ -20,20 +20,30 @@ import {
   membershipVersionKey,
   workspaceVersionKey
 } from './constants/workspace-keys'
-import type { AuthMembership } from './interfaces/membership-repository.interface'
-import type { AuthWorkspace, WorkspaceStatus } from './interfaces/workspace-repository.interface'
+import type {
+  AuthMembership,
+  IMembershipRepository
+} from './interfaces/membership-repository.interface'
+import type {
+  AuthWorkspace,
+  IWorkspaceRepository,
+  WorkspaceStatus
+} from './interfaces/workspace-repository.interface'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { WorkspaceAccessService } from './services/workspace-access.service'
 
 interface Step {
-  do: 'resolve' | 'bumpMembership' | 'bumpWorkspace' | 'seedEntry'
+  do: 'resolve' | 'bumpMembership' | 'bumpWorkspace' | 'seedEntry' | 'dropCounter'
   entry?: string
   under?: string
+  counter?: 'membership' | 'workspace'
+  concurrentBump?: 'membership' | 'workspace'
   repository: { workspace: WorkspaceStatus; membership: 'active'; role: string }
   expect: {
     answer?: string | null
     source?: string
     cachedUnder?: string | null
+    absentUnder?: string[]
     versions?: string
   }
 }
@@ -55,7 +65,7 @@ interface Contract {
   userSubjectPreimages: unknown
   workspaceMembershipCache: {
     fullKeyVectors: FullKeyVector[]
-    scenarios: { steps: Step[] }
+    scenarios: { steps: Step[]; counterLoss: { steps: Step[] } }
   }
 }
 
@@ -84,81 +94,165 @@ describe('full-key vectors', () => {
   )
 })
 
-describe('behavioural scenarios', () => {
-  const REF = { tenantId: 't1', workspaceId: 'w1', userId: 'u1' }
+const REF = { tenantId: 't1', workspaceId: 'w1', userId: 'u1' }
 
-  it('plays every contract step against the real service', async () => {
-    const options = resolveOptions({
-      jwt: { secret: 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B' },
-      roles: { hierarchy: { ADMIN: [] } },
-      rateLimit: { clientIpSource: 'peer' },
-      workspaces: { enabled: true, roles: { hierarchy: { owner: [] }, ownerRole: 'owner' } }
-    })
-    const redis = new AuthRedisService(
-      new RedisMock({ port: 42_000 }) as Partial<Redis> as Redis,
-      options
-    )
-    const state = { workspace: 'active' as WorkspaceStatus, role: 'editor', workspaceReads: 0 }
-    const workspaces = {
-      findById: async (): Promise<AuthWorkspace> => {
-        state.workspaceReads += 1
-        return {
-          id: 'w1',
-          tenantId: 't1',
-          name: 'W',
-          status: state.workspace,
-          createdAt: new Date(0),
-          deletionScheduledAt: null
-        }
+/** One isolated in-memory keyspace per harness. */
+let nextPort = 42_000
+
+/** The state the in-memory repositories report, and how often the workspace was read. */
+interface RepositoryState {
+  workspace: WorkspaceStatus
+  role: string
+  workspaceReads: number
+  /** Runs after the membership row is read and before the repositories answer. */
+  afterMembershipRead?: (() => Promise<void>) | undefined
+}
+
+/** Two in-memory repositories that report `state` and count the workspace reads. */
+function memoryRepositories(state: RepositoryState): {
+  workspaces: IWorkspaceRepository
+  memberships: IMembershipRepository
+} {
+  const workspaces: Partial<IWorkspaceRepository> = {
+    findById: async (): Promise<AuthWorkspace> => {
+      state.workspaceReads += 1
+      return {
+        id: 'w1',
+        tenantId: 't1',
+        name: 'W',
+        status: state.workspace,
+        createdAt: new Date(0),
+        deletionScheduledAt: null
       }
     }
-    const memberships = {
-      find: async (): Promise<AuthMembership> => ({
+  }
+  const memberships: Partial<IMembershipRepository> = {
+    find: async (): Promise<AuthMembership> => {
+      const row: AuthMembership = {
         ...REF,
         role: state.role,
         status: 'active',
         invitedByUserId: null,
         createdAt: new Date(0),
         updatedAt: new Date(0)
-      })
+      }
+      await state.afterMembershipRead?.()
+      return row
     }
-    const service = new WorkspaceAccessService(
-      redis,
-      workspaces as never,
-      memberships as never,
-      options
+  }
+  return {
+    workspaces: workspaces as IWorkspaceRepository,
+    memberships: memberships as IMembershipRepository
+  }
+}
+
+/** The real service over an in-memory Redis and two repositories driven by `state`. */
+function scenarioHarness(): {
+  service: WorkspaceAccessService
+  redis: AuthRedisService
+  state: RepositoryState
+  base: string
+  hmacKey: string
+  versions: { workspace: number; membership: number }
+} {
+  const options = resolveOptions({
+    jwt: { secret: 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B' },
+    roles: { hierarchy: { ADMIN: [] } },
+    rateLimit: { clientIpSource: 'peer' },
+    workspaces: { enabled: true, roles: { hierarchy: { owner: [] }, ownerRole: 'owner' } }
+  })
+  const redis = new AuthRedisService(
+    new RedisMock({ port: (nextPort += 1) }) as Partial<Redis> as Redis,
+    options
+  )
+  const state: RepositoryState = { workspace: 'active', role: 'editor', workspaceReads: 0 }
+  const { workspaces, memberships } = memoryRepositories(state)
+  const service = new WorkspaceAccessService(redis, workspaces, memberships, options)
+  return {
+    service,
+    redis,
+    state,
+    base: membershipCacheKeyBase('t1', 'w1', 'u1', options.hmacKey),
+    hmacKey: options.hmacKey,
+    versions: { workspace: 0, membership: 0 }
+  }
+}
+
+type Harness = ReturnType<typeof scenarioHarness>
+
+/** Moves a counter the way the library does and keeps the harness's view of the versions. */
+async function bump(harness: Harness, counter: 'membership' | 'workspace'): Promise<void> {
+  if (counter === 'membership') await harness.service.invalidateMembership(REF)
+  else await harness.service.invalidateWorkspace(REF)
+  harness.versions[counter] += 1
+}
+
+/** Performs the action of one contract step. */
+async function act(harness: Harness, step: Step): Promise<void> {
+  const { redis, base, versions } = harness
+  if (step.do === 'bumpMembership') await bump(harness, 'membership')
+  else if (step.do === 'bumpWorkspace') await bump(harness, 'workspace')
+  else if (step.do === 'seedEntry') await redis.set(`${base}:${step.under}`, step.entry ?? '')
+  else if (step.do === 'dropCounter') {
+    const counter = step.counter ?? 'membership'
+    const key =
+      counter === 'membership'
+        ? membershipVersionKey('t1', 'w1', 'u1', harness.hmacKey)
+        : workspaceVersionKey('t1', 'w1', harness.hmacKey)
+    await redis.del(key)
+    versions[counter] = 0
+  }
+}
+
+/** Performs one contract step and checks what the step expects. */
+async function playStep(harness: Harness, step: Step): Promise<void> {
+  const { service, redis, state, base, versions } = harness
+  state.workspace = step.repository.workspace
+  state.role = step.repository.role
+  const readsBefore = state.workspaceReads
+  await act(harness, step)
+  if (step.do === 'resolve' || step.do === 'seedEntry') {
+    const concurrent = step.concurrentBump
+    state.afterMembershipRead =
+      concurrent === undefined
+        ? undefined
+        : async () => {
+            state.afterMembershipRead = undefined
+            await bump(harness, concurrent)
+          }
+    const answer = await service.resolveMembership(REF)
+    expect(answer?.role ?? null).toBe(step.expect.answer)
+    expect(state.workspaceReads > readsBefore ? 'repository' : 'cache').toBe(step.expect.source)
+  }
+  const current = `${versions.workspace}:${versions.membership}`
+  if (step.expect.versions !== undefined) expect(current).toBe(step.expect.versions)
+  if (step.expect.cachedUnder !== undefined) {
+    const entry = await redis.get(`${base}:${step.expect.cachedUnder ?? current}`)
+    expect(entry !== null && JSON.parse(entry).status === 'active').toBe(
+      step.expect.cachedUnder !== null
     )
-    const base = membershipCacheKeyBase('t1', 'w1', 'u1', options.hmacKey)
-    const versions = { workspace: 0, membership: 0 }
+  }
+  for (const under of step.expect.absentUnder ?? []) {
+    expect(await redis.get(`${base}:${under}`)).toBeNull()
+  }
+}
+
+describe('behavioural scenarios', () => {
+  it('plays every contract step against the real service', async () => {
+    const harness = scenarioHarness()
 
     for (const step of contract.workspaceMembershipCache.scenarios.steps) {
-      state.workspace = step.repository.workspace
-      state.role = step.repository.role
-      const readsBefore = state.workspaceReads
-      if (step.do === 'bumpMembership') {
-        await service.invalidateMembership(REF)
-        versions.membership += 1
-      } else if (step.do === 'bumpWorkspace') {
-        await service.invalidateWorkspace(REF)
-        versions.workspace += 1
-      } else if (step.do === 'seedEntry') {
-        await redis.set(`${base}:${step.under}`, step.entry ?? '')
-      }
-      if (step.do === 'resolve' || step.do === 'seedEntry') {
-        const answer = await service.resolveMembership(REF)
-        expect(answer?.role ?? null).toBe(step.expect.answer)
-        expect(state.workspaceReads > readsBefore ? 'repository' : 'cache').toBe(step.expect.source)
-      }
-      if (step.expect.versions !== undefined) {
-        expect(`${versions.workspace}:${versions.membership}`).toBe(step.expect.versions)
-      }
-      if (step.expect.cachedUnder !== undefined) {
-        const current = `${versions.workspace}:${versions.membership}`
-        const entry = await redis.get(`${base}:${step.expect.cachedUnder ?? current}`)
-        expect(entry !== null && JSON.parse(entry).status === 'active').toBe(
-          step.expect.cachedUnder !== null
-        )
-      }
+      await playStep(harness, step)
+    }
+  })
+
+  // A bump that lands before the fill, and a counter that is lost, must leave nothing readable
+  // under a value the library can reach again.
+  it('plays the counter-loss steps on a fresh store', async () => {
+    const harness = scenarioHarness()
+
+    for (const step of contract.workspaceMembershipCache.scenarios.counterLoss.steps) {
+      await playStep(harness, step)
     }
   })
 })
