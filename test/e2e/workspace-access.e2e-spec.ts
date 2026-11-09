@@ -171,9 +171,9 @@ describe('workspace membership cache against Redis', () => {
 
     await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
 
-    // The stale refill exists, under the versions read before the bump, and is not the key read.
+    // The fill found the counter moved and wrote nothing, so no stale entry exists to be read.
     const base = membershipCacheKeyBase('t1', 'w1', 'u1', hmacKey)
-    expect(await redis.get(`${base}:0:0`)).toContain('"role":"editor"')
+    expect(await redis.get(`${base}:0:0`)).toBeNull()
     await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'owner' })
   })
 
@@ -216,6 +216,26 @@ describe('workspace membership cache against Redis', () => {
     const entry = `${membershipCacheKeyBase('t1', 'w1', 'u1', hmacKey)}:0:1`
     expect(await redis.ttl(entry)).toBeGreaterThan(0)
     expect(await redis.ttl(counter)).toBeGreaterThan(await redis.ttl(entry))
+  })
+
+  // The counter expires after the versions were read and before the entry is written. The entry
+  // would bear a value the next bump recreates, so a fill that finds the counters changed writes
+  // nothing.
+  it('writes nothing when a counter expired between the version read and the fill', async () => {
+    const store = freshStore()
+    const { service, redis, hmacKey } = build(store)
+    await service.invalidateMembership(REF)
+    const counter = membershipVersionKey('t1', 'w1', 'u1', hmacKey)
+    store.afterMembershipRead = async () => {
+      await redis.del(counter)
+      store.afterMembershipRead = undefined
+    }
+
+    await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
+    store.membership = store.membership && { ...store.membership, role: 'owner' }
+    await service.invalidateMembership(REF)
+
+    await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'owner' })
   })
 
   it('keeps each version counter for the retention window', async () => {

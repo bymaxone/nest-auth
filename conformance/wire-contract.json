@@ -215,12 +215,15 @@
       "request that finished a moment earlier would be; separate reads do not make a read that",
       "straddles a bump fresh, and the contract does not ask them to.",
       "",
-      "A counter must outlive every entry that bears its value. A counter that expires restarts at 1 on",
-      "its next bump, and an entry still alive under 1 would be current again. A retention longer than",
-      "the entry lifetime is not enough on its own, since an entry can be written in the last moment",
-      "of a counter's retention. So the writer of an entry refreshes the retention of BOTH counters, if",
-      "they exist, in the same step that writes the entry. A counter that does not exist is left absent:",
-      "it reads as 0, and a read never creates a counter.",
+      "A counter value is never reused while an entry bearing it can live. A counter that expires",
+      "restarts at 1 on its next bump, and an entry still alive under 1 would be current again. A",
+      "retention longer than the entry lifetime is not enough on its own, since an entry can be written",
+      "in the last moment of a counter's retention, or after the counter expired between the version",
+      "read and the write. So a fill writes only if both counters still hold the versions it read (an",
+      "absent counter counts as 0), and in the same step it extends every counter that exists to the",
+      "retention. A counter that does not exist is left absent: it reads as 0, and a read never creates",
+      "a counter. A fill that finds a counter moved writes nothing, which also skips an entry nobody",
+      "could read.",
       "",
       "A writer changes the repository FIRST and bumps the counter after, and a failed bump is an",
       "error: a change is never reported as invalidated when it was not. A bump is INCR followed by",
@@ -498,7 +501,7 @@
         }
       ]
     },
-    "entryRefreshesCounters": "writing an entry refreshes the retention of both version counters that exist, in the same step"
+    "entryRefreshesCounters": "a fill writes the entry only if both counters still hold the versions it read (absent counts as 0), and in the same step extends every existing counter to the retention"
   },
   "graceRecoveryWrite": {
     "$comment": [

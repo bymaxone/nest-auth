@@ -185,7 +185,9 @@ describe('WorkspaceAccessService', () => {
           [
             JSON.stringify({ role: 'editor', status: 'active' }),
             '60',
-            String(WORKSPACE_VERSION_RETENTION_SECONDS)
+            String(WORKSPACE_VERSION_RETENTION_SECONDS),
+            '3',
+            '7'
           ]
         ]
       ])
@@ -197,7 +199,7 @@ describe('WorkspaceAccessService', () => {
       await service.resolveMembership(REF)
 
       expect(fills(redis).map(([, args]) => args)).toEqual([
-        [expect.any(String), '15', String(WORKSPACE_VERSION_RETENTION_SECONDS)]
+        [expect.any(String), '15', String(WORKSPACE_VERSION_RETENTION_SECONDS), '0', '0']
       ])
     })
 

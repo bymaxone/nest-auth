@@ -174,7 +174,9 @@ export class WorkspaceAccessService {
         [
           JSON.stringify({ role, status: 'active' }),
           String(ttl),
-          String(WORKSPACE_VERSION_RETENTION_SECONDS)
+          String(WORKSPACE_VERSION_RETENTION_SECONDS),
+          read.workspaceVersion,
+          read.membershipVersion
         ]
       )
     } catch {

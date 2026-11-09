@@ -81,14 +81,18 @@ describe('BUMP_VERSION_SCRIPT', () => {
 })
 
 describe('FILL_MEMBERSHIP_SCRIPT', () => {
-  const fill = (redis: InstanceType<typeof RedisMock>): Promise<unknown> =>
+  const fill = (
+    redis: InstanceType<typeof RedisMock>,
+    seen: [string, string] = ['0', '0']
+  ): Promise<unknown> =>
     redis.eval(
       FILL_MEMBERSHIP_SCRIPT,
       3,
       ...KEYS,
       '{"role":"owner","status":"active"}',
       '60',
-      '1000'
+      '1000',
+      ...seen
     )
 
   it('writes the entry with the given lifetime', async () => {
@@ -106,7 +110,7 @@ describe('FILL_MEMBERSHIP_SCRIPT', () => {
     await redis.set('wsv:a', '4', 'EX', 5)
     await redis.set('wmv:b', '9', 'EX', 5)
 
-    await fill(redis)
+    await fill(redis, ['4', '9'])
 
     expect(await redis.ttl('wsv:a')).toBeGreaterThan(990)
     expect(await redis.ttl('wmv:b')).toBeGreaterThan(990)
@@ -125,8 +129,39 @@ describe('FILL_MEMBERSHIP_SCRIPT', () => {
     await redis.set('wsv:a', '4')
     await redis.set('wmv:b', '9')
 
-    await fill(redis)
+    await fill(redis, ['4', '9'])
 
     expect([await redis.get('wsv:a'), await redis.get('wmv:b')]).toEqual(['4', '9'])
+  })
+
+  it('returns 1 when it wrote and 0 when a counter had moved', async () => {
+    const redis = client()
+    await redis.set('wmv:b', '2')
+
+    const stale = await fill(redis, ['0', '1'])
+    const current = await fill(redis, ['0', '2'])
+
+    expect([stale, current]).toEqual([0, 1])
+  })
+
+  it.each([
+    ['the workspace counter', 'wsv:a', ['5', '9'] as [string, string]],
+    ['the membership counter', 'wmv:b', ['4', '8'] as [string, string]]
+  ])('writes nothing when %s has moved', async (_name, _key, seen) => {
+    const redis = client()
+    await redis.set('wsv:a', '4')
+    await redis.set('wmv:b', '9')
+
+    await fill(redis, seen)
+
+    expect(await redis.exists('wm:c')).toBe(0)
+  })
+
+  it('treats an absent counter as 0 against what the reader saw', async () => {
+    const redis = client()
+
+    await fill(redis, ['0', '1'])
+
+    expect(await redis.exists('wm:c')).toBe(0)
   })
 })

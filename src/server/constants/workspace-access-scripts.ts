@@ -44,17 +44,27 @@ return version
 `
 
 /**
- * Writes a cache entry and extends the retention of both version counters, in a single step.
+ * Writes a cache entry, only while both version counters still hold the values the reader saw, and
+ * extends the retention of every counter that exists, in a single step.
  *
  * `KEYS[1]` is the workspace version, `KEYS[2]` the membership version and `KEYS[3]` the entry's
- * full key; `ARGV[1]` is the entry, `ARGV[2]` its lifetime and `ARGV[3]` the counters' retention,
- * in seconds.
+ * full key; `ARGV[1]` is the entry, `ARGV[2]` its lifetime, `ARGV[3]` the counters' retention in
+ * seconds, and `ARGV[4]` and `ARGV[5]` the workspace and membership versions the reader saw. An
+ * absent counter counts as `'0'`, as it does on a read. Returns `1` when the entry was written and
+ * `0` when a counter had moved.
  *
- * A counter must outlive every entry that bears its value: a counter that expires restarts at 1
- * on its next bump, and an entry still alive under 1 would be current again. A counter that does
- * not exist is left absent, since it reads as 0 and an absent counter is never created by a read.
+ * A counter value must never be reused while an entry bearing it can live. A counter that expires
+ * restarts at 1 on its next bump, so an entry written under the old value would be current again.
+ * Extending the retention covers a counter that is alive; the comparison covers one that expired
+ * between the read and this write, which reads as `'0'` here and no longer matches. An entry written
+ * after a bump was never readable, so skipping it also saves the write.
  */
 export const FILL_MEMBERSHIP_SCRIPT = `
+local workspaceVersion = redis.call('GET', KEYS[1])
+if not workspaceVersion then workspaceVersion = '0' end
+local membershipVersion = redis.call('GET', KEYS[2])
+if not membershipVersion then membershipVersion = '0' end
+if workspaceVersion ~= ARGV[4] or membershipVersion ~= ARGV[5] then return 0 end
 if redis.call('EXISTS', KEYS[1]) == 1 then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
 if redis.call('EXISTS', KEYS[2]) == 1 then redis.call('EXPIRE', KEYS[2], ARGV[3]) end
 redis.call('SET', KEYS[3], ARGV[1], 'EX', ARGV[2])
