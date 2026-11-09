@@ -488,6 +488,8 @@ export type {
 } from './decorators/current-workspace.decorator'
 export { WorkspaceAccessService } from './services/workspace-access.service'
 export { MembershipService } from './services/membership.service'
+export { WorkspaceCallerService } from './services/workspace-caller.service'
+export { WorkspaceActionsService } from './services/workspace-actions.service'
 export type { MyWorkspaces } from './services/membership.service'
 export { WorkspaceService } from './services/workspace.service'
 export type {

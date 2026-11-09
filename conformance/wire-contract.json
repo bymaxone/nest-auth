@@ -11,7 +11,11 @@
     "sessions, lockouts, and reset links that silently miss each other in production.",
     "",
     "Changing a value here is a breaking change to the shared keyspace. Do it in both repos in",
-    "the same change, and only with a migration story for data already written in the old form."
+    "the same change, and only with a migration story for data already written in the old form.",
+    "",
+    "`version` names the contract a RELEASE of nest-auth ships. It moves once per release that",
+    "changes the contract, never once per change: an edit to a version no release has shipped yet",
+    "stays inside that version, and rust-auth reads it the same way."
   ],
   "version": 3,
   "hmacKeyDerivation": {
@@ -893,6 +897,11 @@
       "min": 1,
       "max": 2048
     },
+    "workspaceName": {
+      "min": 1,
+      "max": 120,
+      "$comment": "The display name of a workspace. The bound and the control-character rule apply to the value as submitted, before any trimming: a name over 120 characters as submitted, or carrying a control character anywhere, is refused with 400 auth.validation naming the field name. The name is then stored trimmed, and one that is blank after trimming is refused the same way."
+    },
     "pageLimit": {
       "min": 1,
       "max": 100,
@@ -909,7 +918,7 @@
     "steps": [
       "1. classify the proof without spending it: more than one proof, none, or one the configured passwordReset.method does not accept answers auth.password_reset_token_invalid, whatever the new password is",
       "2. judge the new password (the policy floor, then the breach screen): auth.validation for a password under the floor, auth.password_compromised for a known one",
-      "3. spend the proof: auth.password_reset_token_invalid or auth.otp_invalid for a proof that is not valid"
+      "3. spend the proof: auth.password_reset_token_invalid for a token proof that is not valid; auth.otp_invalid for EVERY OTP failure (a wrong code, an absent record, an expired one and an exhausted attempt ceiling are indistinguishable)"
     ],
     "reason": "A request with no usable proof never reaches the password policy, so an unproven caller cannot drive the breach screen (an outbound query when a host wires one), and a refused password never consumes a single-use proof."
   },
@@ -1186,7 +1195,11 @@
     "workspaceList": "30/60",
     "workspaceAccess": "60/60",
     "workspaceSwitch": "20/60",
-    "workspaceMembers": "30/60"
+    "workspaceMembers": "30/60",
+    "workspaceCreate": "10/3600",
+    "workspaceRename": "20/60",
+    "workspaceScheduleDeletion": "5/300",
+    "workspaceRestore": "5/300"
   },
   "accessTokenClaims": {
     "$comment": [
@@ -1436,7 +1449,7 @@
     }
   },
   "errorEnvelope": {
-    "$comment": "The body shape every auth error serializes to. `details` is present and null when the thrower supplied none. For `auth.validation`, each `details[].field` is the WIRE property name, the key the client sent in the request JSON or query (`currentPassword`, never a language-level field name), and a nested field is its dotted path with an array index as a segment (`billing.name`, `items.1.name`), never bracketed.",
+    "$comment": "The body shape every auth error serializes to. `details` is present and null when the thrower supplied none. For `auth.validation`, each `details[].field` is the WIRE property name, the key the client sent in the request JSON or query (`currentPassword`, never a language-level field name), and a nested field is its dotted path with an array index as a segment (`billing.name`, `items.1.name`), never bracketed. What is normative for an `auth.validation` answer is the status, the code, the top-level message and the SET of distinct `details[].field` values for a given input; the per-entry message text and the number of entries per field are not, and a library words its own, provided no message repeats the client's value or type.",
     "shape": {
       "error": {
         "code": "string",
@@ -1586,9 +1599,12 @@
       "POST platform/mfa/recovery-codes",
       "POST invitations",
       "POST invitations/revoke",
-      "POST invitations/accept"
+      "POST invitations/accept",
+      "POST workspaces",
+      "PATCH workspaces/:workspaceId",
+      "POST workspaces/:workspaceId/schedule-deletion"
     ],
-    "whenBody": ["POST mfa/setup", "POST platform/mfa/setup", "POST workspaces/:workspaceId/switch"],
+    "whenBody": ["POST mfa/setup", "POST platform/mfa/setup", "POST workspaces/:workspaceId/switch", "POST workspaces/:workspaceId/restore"],
     "unchecked": [
       "POST logout",
       "POST refresh",

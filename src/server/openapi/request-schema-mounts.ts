@@ -44,5 +44,5 @@ export const REQUEST_SCHEMAS_BY_CONTROLLER: Readonly<
   invitations: ['CreateInvitationDto', 'RevokeInvitationDto', 'AcceptInvitationDto'],
   emailChange: ['ChangeEmailDto', 'ConfirmEmailChangeDto'],
   oauth: [],
-  workspaces: []
+  workspaces: ['CreateWorkspaceDto', 'RenameWorkspaceDto', 'ScheduleWorkspaceDeletionDto']
 }

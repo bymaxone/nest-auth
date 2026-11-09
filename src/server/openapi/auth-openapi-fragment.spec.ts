@@ -156,7 +156,7 @@ describe('buildAuthOpenApiFragment request schemas', () => {
 
     expect(schemas).not.toHaveProperty('OAuthInitiateQueryDto')
     expect(schemas).not.toHaveProperty('OAuthCallbackQueryDto')
-    expect(Object.keys(schemas)).toHaveLength(20)
+    expect(Object.keys(schemas)).toHaveLength(23)
   })
 })
 
@@ -324,6 +324,10 @@ describe('buildAuthOpenApiFragment', () => {
       'WorkspaceController.access': ACCESS,
       'WorkspaceController.switchTo': ACCESS,
       'WorkspaceController.members': ACCESS,
+      'WorkspaceController.create': ACCESS,
+      'WorkspaceController.rename': ACCESS,
+      'WorkspaceController.scheduleDeletion': ACCESS,
+      'WorkspaceController.restore': ACCESS,
       'InvitationController.invite': ACCESS,
       'InvitationController.revoke': ACCESS,
       'InvitationController.accept': PUBLIC,

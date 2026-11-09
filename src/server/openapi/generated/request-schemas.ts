@@ -120,6 +120,20 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
       "role"
     ]
   },
+  "CreateWorkspaceDto": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "maxLength": 120,
+        "minLength": 1
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
   "ForgotPasswordDto": {
     "type": "object",
     "properties": {
@@ -358,6 +372,20 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
       "password"
     ]
   },
+  "RenameWorkspaceDto": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "maxLength": 120,
+        "minLength": 1
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
   "ResendOtpDto": {
     "type": "object",
     "properties": {
@@ -449,6 +477,16 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
     "required": [
       "email"
     ]
+  },
+  "ScheduleWorkspaceDeletionDto": {
+    "type": "object",
+    "properties": {
+      "password": {
+        "type": "string",
+        "maxLength": 128,
+        "minLength": 1
+      }
+    }
   },
   "VerifyEmailDto": {
     "type": "object",

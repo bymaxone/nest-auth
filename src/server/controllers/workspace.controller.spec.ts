@@ -11,6 +11,7 @@ import type { Request } from 'express'
 import type { CurrentWorkspaceContext } from '../decorators/current-workspace.decorator'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { MembershipService } from '../services/membership.service'
+import type { WorkspaceActionsService } from '../services/workspace-actions.service'
 import type { WorkspaceService } from '../services/workspace.service'
 import { WorkspaceController } from './workspace.controller'
 
@@ -22,6 +23,11 @@ const ACCESS: CurrentWorkspaceContext = {
   role: 'editor'
 }
 const REF = { tenantId: 't1', workspaceId: 'w1' }
+const REQUEST = {
+  headers: { 'user-agent': 'jest' },
+  socket: { remoteAddress: '203.0.113.9' },
+  ip: '203.0.113.9'
+} as Partial<Request> as Request
 const WORKSPACE = {
   id: 'w1',
   tenantId: 't1',
@@ -33,18 +39,36 @@ const WORKSPACE = {
 
 function build(): {
   controller: WorkspaceController
-  workspaces: { getAccess: jest.Mock; switchTo: jest.Mock }
+  workspaces: {
+    getAccess: jest.Mock
+    switchTo: jest.Mock
+    create: jest.Mock
+    rename: jest.Mock
+    scheduleDeletion: jest.Mock
+    restore: jest.Mock
+  }
   memberships: { listMine: jest.Mock; listMembers: jest.Mock }
+  actions: { create: jest.Mock; rename: jest.Mock; scheduleDeletion: jest.Mock }
 } {
-  const workspaces = { getAccess: jest.fn(), switchTo: jest.fn() }
+  const workspaces = {
+    getAccess: jest.fn(),
+    switchTo: jest.fn(),
+    create: jest.fn(),
+    rename: jest.fn(),
+    scheduleDeletion: jest.fn(),
+    restore: jest.fn()
+  }
   const memberships = { listMine: jest.fn(), listMembers: jest.fn() }
+  const actions = { create: jest.fn(), rename: jest.fn(), scheduleDeletion: jest.fn() }
   return {
     controller: new WorkspaceController(
       workspaces as Partial<WorkspaceService> as WorkspaceService,
-      memberships as Partial<MembershipService> as MembershipService
+      memberships as Partial<MembershipService> as MembershipService,
+      actions as Partial<WorkspaceActionsService> as WorkspaceActionsService
     ),
     workspaces,
-    memberships
+    memberships,
+    actions
   }
 }
 
@@ -105,7 +129,7 @@ describe('WorkspaceController', () => {
         headers: { 'user-agent': 'jest' },
         socket: { remoteAddress: '203.0.113.9' },
         ip: '203.0.113.9'
-      } as unknown as Request
+      } as Partial<Request> as Request
 
       await controller.switchTo(ACCESS, USER, request)
 
@@ -134,6 +158,69 @@ describe('WorkspaceController', () => {
       await controller.members(ACCESS, {})
 
       expect(Object.keys(memberships.listMembers.mock.calls[0]?.[1] as object)).toEqual([])
+    })
+  })
+
+  describe('create', () => {
+    it('delegates the creation for the token, with the name and a dashboard context, and shapes the workspace', async () => {
+      const { controller, actions } = build()
+      actions.create.mockResolvedValue(WORKSPACE)
+
+      const result = await controller.create(USER, { name: 'Acme' }, REQUEST)
+
+      expect(actions.create).toHaveBeenCalledWith(
+        USER,
+        'Acme',
+        expect.objectContaining({ plane: 'dashboard', userId: 'u1', tenantId: 't1' })
+      )
+      expect(result).toMatchObject({ id: 'w1', name: 'Acme', status: 'active' })
+    })
+  })
+
+  describe('rename', () => {
+    it('delegates by the workspace key and the judged actor, and shapes the workspace it returns', async () => {
+      const { controller, actions } = build()
+      actions.rename.mockResolvedValue({ ...WORKSPACE, name: 'New' })
+
+      const result = await controller.rename(ACCESS, USER, { name: 'New' }, REQUEST)
+
+      expect(actions.rename).toHaveBeenCalledWith(
+        REF,
+        { userId: 'u1', role: 'editor' },
+        'New',
+        expect.objectContaining({ plane: 'dashboard' })
+      )
+      expect(result).toMatchObject({ id: 'w1', name: 'New' })
+    })
+  })
+
+  describe('scheduleDeletion', () => {
+    it('delegates by the workspace key, the judged actor, the token and the submitted password', async () => {
+      const { controller, actions } = build()
+
+      await controller.scheduleDeletion(ACCESS, USER, { password: 'pw' }, REQUEST)
+
+      expect(actions.scheduleDeletion).toHaveBeenCalledWith(
+        REF,
+        { userId: 'u1', role: 'editor' },
+        USER,
+        'pw',
+        expect.objectContaining({ plane: 'dashboard' })
+      )
+    })
+  })
+
+  describe('restore', () => {
+    it('restores by the workspace key and the judged actor', async () => {
+      const { controller, workspaces } = build()
+
+      await controller.restore(ACCESS, USER, REQUEST)
+
+      expect(workspaces.restore).toHaveBeenCalledWith(
+        REF,
+        { userId: 'u1', role: 'editor' },
+        expect.objectContaining({ plane: 'dashboard' })
+      )
     })
   })
 })
