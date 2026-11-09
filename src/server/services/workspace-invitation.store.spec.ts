@@ -218,6 +218,25 @@ describe('WorkspaceInvitationStore', () => {
       expect((await store.readByEmail(WORKSPACE_REF, EMAIL))?.key).toBe('winv:b')
     })
 
+    it('takes over an abandoned index only while the old record is absent', async () => {
+      const { store } = build()
+      await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:a', 300)
+
+      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, 'winv:a', 'winv:b', 300, true)).toBe(true)
+      await store.publish(WORKSPACE_REF, EMAIL, 'winv:b', record(), 300)
+      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, 'winv:b', 'winv:c', 300, true)).toBe(
+        false
+      )
+      expect((await store.readByEmail(WORKSPACE_REF, EMAIL))?.key).toBe('winv:b')
+    })
+
+    it('replaces a live index when it was not read as abandoned', async () => {
+      const { store } = build()
+      await put(store, 'winv:a', record(), 300)
+
+      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, 'winv:a', 'winv:b', 300)).toBe(true)
+    })
+
     it('keeps one address in one workspace apart from the same address elsewhere', async () => {
       const { store } = build()
       await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:a', 300)

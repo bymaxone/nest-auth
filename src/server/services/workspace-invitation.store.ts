@@ -30,11 +30,16 @@ export interface PendingInvitation {
 
 /**
  * Sets the index to a new record key only while it still holds the key the caller read (an empty
- * `ARGV[1]` meaning absent), so two writers for one address cannot both succeed.
+ * `ARGV[1]` meaning absent). When `ARGV[4]` is `1` the held key was read as abandoned, its record
+ * being absent, and the takeover also needs that record to be absent still: a writer that was slow
+ * to publish is not abandoned once it has.
  */
 const CLAIM_INDEX_SCRIPT = `
 local current = redis.call('GET', KEYS[1])
 if (current == false and ARGV[1] == '') or current == ARGV[1] then
+  if ARGV[4] == '1' and redis.call('EXISTS', KEYS[2]) == 1 then
+    return 0
+  end
   redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
   return 1
 end
@@ -111,6 +116,8 @@ export class WorkspaceInvitationStore {
    * @param expectedKey - The record key the caller read, or `null` for none.
    * @param newKey - The record key to name.
    * @param ttlSeconds - How long the index lives.
+   * @param abandoned - Whether the caller read `expectedKey` with no record behind it; the claim
+   *   then also needs that record to be absent still.
    * @returns `false` when another writer moved the index first.
    */
   async claimIndex(
@@ -118,12 +125,13 @@ export class WorkspaceInvitationStore {
     email: string,
     expectedKey: string | null,
     newKey: string,
-    ttlSeconds: number
+    ttlSeconds: number,
+    abandoned = false
   ): Promise<boolean> {
     const claimed = await this.redis.eval(
       CLAIM_INDEX_SCRIPT,
-      [this.indexKey(ref, email)],
-      [expectedKey ?? '', newKey, String(ttlSeconds)]
+      [this.indexKey(ref, email), expectedKey ?? newKey],
+      [expectedKey ?? '', newKey, String(ttlSeconds), abandoned ? '1' : '0']
     )
     return claimed === 1
   }

@@ -316,6 +316,46 @@ describe('WorkspaceInvitationService', () => {
       expect((await h.store.readByEmail(WORKSPACE_REF, 'a@example.com'))?.record).not.toBeNull()
     })
 
+    it('does not take over an index whose record is published after it was read as abandoned', async () => {
+      const h = build()
+      const realPublish = h.store.publish.bind(h.store)
+      const realClaim = h.store.claimIndex.bind(h.store)
+      let releasePublish: () => void = () => undefined
+      let releaseClaim: () => void = () => undefined
+      const publishHeld = new Promise<void>((resolve) => {
+        releasePublish = resolve
+      })
+      const claimHeld = new Promise<void>((resolve) => {
+        releaseClaim = resolve
+      })
+      let publishes = 0
+      let claims = 0
+      jest.spyOn(h.store, 'publish').mockImplementation(async (...args) => {
+        publishes += 1
+        if (publishes === 1) await publishHeld
+        return realPublish(...args)
+      })
+      jest.spyOn(h.store, 'claimIndex').mockImplementation(async (...args) => {
+        claims += 1
+        if (claims === 2) await claimHeld
+        return realClaim(...args)
+      })
+      const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+      const a = code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
+      await tick()
+      const b = code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
+      await tick()
+      releasePublish()
+      await a
+      releaseClaim()
+      const outcomes = [await a, await b]
+
+      expect(outcomes.filter((c) => c === AUTH_ERROR_CODES.TOO_MANY_REQUESTS)).toHaveLength(1)
+      expect(await h.store.pending(WORKSPACE_REF)).toHaveLength(1)
+      expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(1)
+    })
+
     it('lets only one of two concurrent invitations take the last place', async () => {
       const h = build({ maxPendingInvitationsPerWorkspace: 1 })
 

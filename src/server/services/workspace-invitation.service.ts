@@ -301,7 +301,9 @@ export class WorkspaceInvitationService {
     // The index is claimed first: a crash before the record is written leaves an index naming
     // nothing, which reads as no invitation. Whether the claim held is decided by `publish`, which
     // writes only while the index still names this record.
-    await this.store.claimIndex(ref, email, plan.expected, key, ttl)
+    // An index read with no record behind it is taken over only while that record is still absent.
+    const abandoned = live === null && plan.expected !== null
+    await this.store.claimIndex(ref, email, plan.expected, key, ttl, abandoned)
     // A replacement takes the place of the record it retires, so only a first invitation is capped.
     const limit = live === null ? this.group.maxPendingInvitationsPerWorkspace : 0
     if ((await this.store.publish(ref, email, key, record, ttl, limit)) !== 'published') {
