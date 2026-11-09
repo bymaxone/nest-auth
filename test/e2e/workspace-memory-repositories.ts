@@ -22,6 +22,8 @@ import type {
 interface Store {
   rows: Map<string, AuthWorkspace>
   members: Map<string, AuthMembership>
+  /** The workspace each user last switched to, by user id. */
+  lastActive: Map<string, string>
   afterFind: (() => void) | undefined
 }
 
@@ -131,8 +133,52 @@ function membershipReads(store: Store): Partial<IMembershipRepository> {
       change?.()
       return row
     },
-    countOwned: async () => 0
+    countOwned: async () => 0,
+    listForUser: async ({ userId, cursor, limit }) => {
+      const mine = [...store.members.values()]
+        .filter(
+          (m) => m.userId === userId && m.status === 'active' && store.rows.has(m.workspaceId)
+        )
+        .sort((a, b) => a.workspaceId.localeCompare(b.workspaceId))
+      const page = pageAfter(mine, (m) => m.workspaceId, cursor, limit)
+      return {
+        items: page.items.map((m) => ({
+          ...m,
+          workspace: store.rows.get(m.workspaceId) as AuthWorkspace
+        })),
+        nextCursor: page.nextCursor
+      }
+    },
+    listForWorkspace: async ({ workspaceId, cursor, limit }) => {
+      const members = [...store.members.values()]
+        .filter((m) => m.workspaceId === workspaceId)
+        .sort((a, b) => a.userId.localeCompare(b.userId))
+      return pageAfter(members, (m) => m.userId, cursor, limit)
+    },
+    getLastActiveWorkspaceId: async ({ userId }) => store.lastActive.get(userId) ?? null,
+    setLastActiveWorkspaceId: async ({ userId, workspaceId }) => {
+      store.lastActive.set(userId, workspaceId)
+    }
   }
+}
+
+/**
+ * One keyset page over rows already in order. The cursor is the sort key of the last row of the
+ * previous page and says only where to start inside THESE rows, so a cursor taken from another
+ * list cannot bring a row from it.
+ */
+function pageAfter<T>(
+  rows: T[],
+  keyOf: (row: T) => string,
+  cursor: string | undefined,
+  limit: number
+): { items: T[]; nextCursor: string | null } {
+  const after = cursor === undefined ? [] : rows.filter((row) => keyOf(row) > cursor)
+  const rest = cursor === undefined ? rows : after
+  const items = rest.slice(0, limit)
+  const last = items[items.length - 1]
+  const more = rest.length > items.length && last !== undefined
+  return { items, nextCursor: more ? keyOf(last) : null }
 }
 
 /** The membership port's writes, each deciding the last-owner rule and the judged roles itself. */
@@ -188,7 +234,12 @@ export interface MemoryRepositories {
  * @returns The repositories and their two test handles.
  */
 export function memoryRepositories(): MemoryRepositories {
-  const store: Store = { rows: new Map(), members: new Map(), afterFind: undefined }
+  const store: Store = {
+    rows: new Map(),
+    members: new Map(),
+    lastActive: new Map(),
+    afterFind: undefined
+  }
   return {
     workspaces: workspaceRepository(store),
     memberships: {

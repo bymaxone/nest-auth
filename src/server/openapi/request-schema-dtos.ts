@@ -26,6 +26,7 @@ import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { OAuthCallbackQueryDto } from '../dto/oauth-callback-query.dto'
 import { OAuthInitiateQueryDto } from '../dto/oauth-initiate-query.dto'
 import { PlatformLoginDto } from '../dto/platform-login.dto'
+import { RefreshTokenBodyDto } from '../dto/refresh-token-body.dto'
 import { RegisterDto } from '../dto/register.dto'
 import { ResendOtpDto } from '../dto/resend-otp.dto'
 import { ResendVerificationDto } from '../dto/resend-verification.dto'
@@ -33,6 +34,7 @@ import { ResetPasswordDto } from '../dto/reset-password.dto'
 import { RevokeInvitationDto } from '../dto/revoke-invitation.dto'
 import { VerifyEmailDto } from '../dto/verify-email.dto'
 import { VerifyOtpDto } from '../dto/verify-otp.dto'
+import { WorkspacePageQueryDto } from '../dto/workspace-page-query.dto'
 
 /** Every DTO whose request body the library documents. */
 export const REQUEST_SCHEMA_DTOS: readonly DtoClass[] = [
@@ -51,11 +53,13 @@ export const REQUEST_SCHEMA_DTOS: readonly DtoClass[] = [
   OAuthCallbackQueryDto,
   OAuthInitiateQueryDto,
   PlatformLoginDto,
+  RefreshTokenBodyDto,
   RegisterDto,
   ResendOtpDto,
   ResendVerificationDto,
   ResetPasswordDto,
   RevokeInvitationDto,
   VerifyEmailDto,
-  VerifyOtpDto
+  VerifyOtpDto,
+  WorkspacePageQueryDto
 ]

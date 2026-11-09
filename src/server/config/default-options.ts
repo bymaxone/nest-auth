@@ -172,7 +172,8 @@ export const DEFAULT_OPTIONS = {
     platform: false,
     oauth: false,
     invitations: false,
-    emailChange: false
+    emailChange: false,
+    workspaces: false
   },
 
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],

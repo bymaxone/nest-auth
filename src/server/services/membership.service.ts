@@ -28,10 +28,10 @@ import type { AuthWorkspace, WorkspaceRef } from '../interfaces/workspace-reposi
 import { hasRole } from '../utils/roles.util'
 
 /** The most rows one page may hold. */
-const MAX_PAGE_SIZE = 100
+export const MAX_PAGE_SIZE = 100
 
 /** Rows per page when the caller names none. */
-const DEFAULT_PAGE_SIZE = 20
+export const DEFAULT_PAGE_SIZE = 50
 
 /** The audit events a removal produces: an administrator removing a member, or a member leaving. */
 type MemberRemovalEvent = WorkspaceAuditEvent & { type: 'member.removed' | 'member.left' }

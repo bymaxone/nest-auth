@@ -154,5 +154,17 @@ export const AUTH_THROTTLE_CONFIGS = {
    * GET /auth/oauth/:provider/callback — 10 requests per minute per IP.
    * Matches `oauthInitiate` to prevent callback-only flooding attacks.
    */
-  oauthCallback: { default: { limit: 10, ttl: 60_000 } }
+  oauthCallback: { default: { limit: 10, ttl: 60_000 } },
+
+  /** GET /workspaces — 30 requests per minute per IP. A workspace switcher reads it on load. */
+  workspaceList: { default: { limit: 30, ttl: 60_000 } },
+
+  /** GET /workspaces/:workspaceId/access — 60 requests per minute per IP. SSR calls it per page. */
+  workspaceAccess: { default: { limit: 60, ttl: 60_000 } },
+
+  /** POST /workspaces/:workspaceId/switch — 20 requests per minute per IP. */
+  workspaceSwitch: { default: { limit: 20, ttl: 60_000 } },
+
+  /** GET /workspaces/:workspaceId/members — 30 requests per minute per IP. */
+  workspaceMembers: { default: { limit: 30, ttl: 60_000 } }
 } as const
