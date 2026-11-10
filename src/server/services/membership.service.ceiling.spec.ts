@@ -88,6 +88,15 @@ describe('MembershipService', () => {
       expect(memberships['find']).toHaveBeenCalledWith({ ...WORKSPACE_REF, userId: 'u2' })
     })
 
+    it('names the userId field and says why in the refusal', async () => {
+      const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer', 'suspended'))
+
+      expect(await detailsOf(service.assertTransferTarget(WORKSPACE_REF, 'u2'))).toEqual([
+        { field: 'userId', message: 'userId must be an active member' }
+      ])
+    })
+
     it('accepts an active receiver', async () => {
       const { service, memberships } = build()
       memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
