@@ -94,14 +94,14 @@ function calleeRoot(call) {
 }
 
 /**
- * A test title made safe to sit inside a key: `#` and `>` are escaped. The ` > ` between path
+ * A test title made safe to sit inside a key: `\`, `#` and `>` are escaped. The ` > ` between path
  * segments, the ` #2` ordinal and the `<dynamic>` placeholder are then the only places those
  * characters appear unescaped in a title segment, so no title can spell one of them and make two
  * functions share a key. A member or class name cannot: an identifier holds neither, and a quoted or
  * computed name carries its quotes or brackets into the key.
  */
 function escapeSegment(text) {
-  return text.replace(/[#>]/g, '\\$&')
+  return text.replace(/[\\#>]/g, '\\$&')
 }
 
 /** The first argument of a call as text when it is a plain string, else a placeholder. */
@@ -234,6 +234,11 @@ function functionsIn(root) {
   const offenders = new Map()
   const longest = new Map()
   for (const path of trackedSources(root)) {
+    if (path.includes('::')) {
+      throw new Error(
+        `${path}: a tracked path containing '::' cannot be told apart from a function name in a key. Rename the file.`
+      )
+    }
     const result = measure(path, readFileSync(join(root, path), 'utf8'))
     for (const entry of result.offenders) offenders.set(entry.key, entry)
     for (const { base, lines } of result.longest) {

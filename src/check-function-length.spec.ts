@@ -207,6 +207,15 @@ describe('check-function-length', () => {
       expect(run(repo({ 'src/a.spec.ts': spec })).status).toBe(0)
     })
 
+    it('refuses a tracked path that contains the key delimiter', () => {
+      const result = run(repo({ 'src/x.ts::it y.ts': declaration('f', 51) }))
+
+      expect(result.status).not.toBe(0)
+      expect(result.output).toContain(
+        "src/x.ts::it y.ts: a tracked path containing '::' cannot be told apart"
+      )
+    })
+
     it('does not let a suite title spell the path of nested suites', () => {
       const test = (lines: number): string => `it('case', () => {\n${statements(lines)}})\n`
       const nested = (lines: number): string =>
