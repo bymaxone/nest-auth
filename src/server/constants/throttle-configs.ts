@@ -211,5 +211,14 @@ export const AUTH_THROTTLE_CONFIGS = {
   workspaceInvitationRevoke: { default: { limit: 20, ttl: 60_000 } },
 
   /** POST /workspaces/invitations/preview — 20 requests per minute per IP. Public, so it is metered tightly. */
-  workspaceInvitationPreview: { default: { limit: 20, ttl: 60_000 } }
+  workspaceInvitationPreview: { default: { limit: 20, ttl: 60_000 } },
+
+  /** POST /workspaces/invitations/accept — 10 requests per minute per IP. */
+  workspaceInvitationAccept: { default: { limit: 10, ttl: 60_000 } },
+
+  /**
+   * POST /workspaces/invitations/accept-signup — 5 requests per minute per IP. Public, and each
+   * request can drive a password key derivation and a breach lookup.
+   */
+  workspaceInvitationAcceptSignup: { default: { limit: 5, ttl: 60_000 } }
 } as const

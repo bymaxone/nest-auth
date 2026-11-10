@@ -930,7 +930,7 @@
       "$comment": "The `limit` query parameter of a paginated list, a whole number written in decimal digits without a leading zero (`5`, not `05`). A value outside 1 to 100, or not written that way, is refused with 400 auth.validation naming the field limit, a present but empty `limit=` included; it is never clamped. The cursor is opaque, 1 to 512 characters (an empty `cursor=` is refused) with no control character, and says only where the next page starts: the tenant and the workspace of a list always come from the credential and the route."
     },
     "pathParameters": {
-      "$comment": "A path parameter that is over its bound, blank, or carries a control character is refused with 400 auth.validation naming the parameter, ahead of authorization. The workspace guard runs first, so when both `workspaceId` and another parameter are bad only `workspaceId` is reported. A well-formed parameter that names nothing, or a workspace the caller may not see, is the identical 404 auth.workspace_not_found.",
+      "$comment": "A path parameter that is over its bound, blank, or carries a control character is refused with 400 auth.validation naming the parameter, ahead of authorization. The workspace guard runs first, so when both `workspaceId` and another parameter are bad only `workspaceId` is reported. A well-formed parameter that names nothing, or a workspace the caller may not see, is the identical 404 auth.workspace_not_found. `Blank` means only JS `\\s` whitespace; the control-character rule is a separate pattern. A workspace id is always a library-generated UUID, so it can never be `invitations`, and the static `workspaces/invitations/...` routes cannot shadow a workspace.",
       "workspaceId": {
         "min": 1,
         "max": 128
@@ -1240,7 +1240,9 @@
     "workspaceInvitations": "30/60",
     "workspaceInvitationResend": "10/300",
     "workspaceInvitationRevoke": "20/60",
-    "workspaceInvitationPreview": "20/60"
+    "workspaceInvitationPreview": "20/60",
+    "workspaceInvitationAccept": "10/60",
+    "workspaceInvitationAcceptSignup": "5/60"
   },
   "accessTokenClaims": {
     "$comment": [
@@ -1649,7 +1651,9 @@
       "POST workspaces/:workspaceId/invitations",
       "POST workspaces/:workspaceId/invitations/resend",
       "POST workspaces/:workspaceId/invitations/revoke",
-      "POST workspaces/invitations/preview"
+      "POST workspaces/invitations/preview",
+      "POST workspaces/invitations/accept",
+      "POST workspaces/invitations/accept-signup"
     ],
     "whenBody": ["POST mfa/setup", "POST platform/mfa/setup", "POST workspaces/:workspaceId/switch", "POST workspaces/:workspaceId/restore", "POST workspaces/:workspaceId/leave"],
     "unchecked": [
@@ -1689,18 +1693,39 @@
     "record": {
       "key": "winv:{sha256(token)}",
       "fields": [
+        "kind",
         "email",
         "role",
         "tenantId",
         "workspaceId",
-        "inviterUserId",
         "createdAt",
         "resendCount"
       ],
+      "kinds": {
+        "member": {
+          "adds": [
+            "inviterUserId"
+          ],
+          "forbids": [
+            "workspaceName"
+          ],
+          "$comment": "Issued by a workspace member for a workspace that exists. `role` is a role of the workspace hierarchy."
+        },
+        "bootstrap": {
+          "adds": [
+            "workspaceName"
+          ],
+          "forbids": [
+            "inviterUserId"
+          ],
+          "$comment": "Issued by the platform for the invitee to OWN a workspace that does not exist until they accept. `role` is the owner role, `workspaceId` is the id the workspace will be created with, and `workspaceName` is held in the form the create route stores it: already trimmed, 1 to 120 code points, no control character, `blank` meaning only JS `\\s` whitespace. There is no inviter."
+        }
+      },
+      "kind": "`member` or `bootstrap`, required. A record with no kind, another kind, or any other combination of the fields above is not a record: it is read as absent and answered as `auth.invalid_invitation_token`.",
       "email": "the invited address, trimmed and lowercased",
       "createdAt": "iso8601-string; when the CURRENT token was issued, reset by a resend",
       "resendCount": "JSON number; 0 on the first invitation, one more on each resend or second invitation of the address",
-      "$comment": "A value under the key that is not an object with every field of the right type reads as no record."
+      "$comment": "A value under the key that is not an object with every field of the right type reads as no record. The ordinary invite route cannot set `kind`, `workspaceName` or `workspaceId`: its body accepts only `email` and `role`, and any other property is refused."
     },
     "keys": {
       "index": "winvidx:{hmacSha256(hmacKey, workspaceInvitationEmail preimage)}, value: the record key `winv:{hash}`",
@@ -1777,8 +1802,14 @@
       "invitationsPerInviterPerHour": 20,
       "limitsAnswer": "The cooldown, the resend limit, the hourly limit, the pending cap (`workspaces.maxPendingInvitationsPerWorkspace`, default 100, checked in the same step that adds the record to the set, so two writers cannot both take the last place) and a lost compare-and-set on the index are all refused with 429 auth.too_many_requests. The cooldown and the resend limit apply to a second invitation of the same address as to a resend.",
       "answers": "POST invite, resend and revoke answer 204 with no body, whether or not the address has an account. The email provider is told `accountExists`.",
-      "preview": "POST workspaces/invitations/preview takes `{token}` of exactly 64 characters, needs no credential, and answers `{workspaceName, inviterName, role, maskedEmail, accountExists}`. A token that never existed, expired, was withdrawn or consumed, or whose workspace is not active or whose inviter is gone, is answered with the SAME 400 auth.invalid_invitation_token, and the library performs the same repository reads in each case.",
-      "tokenInEmail": "A delivery failure is re-thrown without the failing text, which may quote the token."
+      "preview": "POST workspaces/invitations/preview takes `{token}` of exactly 64 characters, needs no credential, and answers `{workspaceName, inviterName, role, maskedEmail, accountExists}`, where `inviterName` is `null` for a bootstrap invitation. A bootstrap token previews while its workspace does not exist, and is invalid once that workspace exists and is not active. A token that never existed, expired, was withdrawn or consumed, or whose workspace is not active or whose inviter is gone, is answered with the SAME 400 auth.invalid_invitation_token, and the library performs the same repository reads in each case.",
+      "tokenInEmail": "A delivery failure is re-thrown without the failing text, which may quote the token.",
+      "capOnReplacement": "Replacing a LIVE record skips the pending cap: the set does not grow. An index naming a record that is already gone counts as a first invitation for the cap, with `resendCount` 0 and no cooldown, because the dead entry is dropped before the cap is counted. Example: at a cap of 1 with one live invitation to a@x, inviting a@x again succeeds, and a first invitation to b@x answers 429.",
+      "accept": "POST workspaces/invitations/accept takes `{token}` of exactly 64 characters and a signed-in caller, and answers 200 `{workspaceId, role}` where `role` is the role the caller ACTUALLY holds in the workspace afterwards: the invited role, or the role of a caller who was already a member, whose membership the invitation never changes. Decided in this order, without spending the token: the token names a record, of a known role, in the caller's tenant (else 400 auth.invalid_invitation_token); the caller's address equals the record's, compared in lowercase (else 403 auth.invitation_email_mismatch); that address is verified (else 403 auth.email_not_verified); the workspace is active and the inviter still exists, is not blocked, is in the tenant, and is an ACTIVE member whose role outranks the invited role (else 400 auth.invalid_invitation_token, whatever the reason). A bootstrap record skips the inviter and member checks and needs its workspace absent or active. Then the membership is written, and only then the record is spent.",
+      "acceptOrder": "The acceptance takes effect when the membership is written. Spending the record afterwards deletes the token's own record key always, and the index and the set entry only while they still name that key; a revoke or a resend that lands between the write and the spend therefore cannot undo the acceptance, and the answer is still 200. A failure before the write leaves the invitation usable; a failure after it retries into `already_member`, which counts as success. The hook event for the acceptance carries `lostConsumeRace: true` only when the spend found the index no longer naming the record.",
+      "acceptSignup": "POST workspaces/invitations/accept-signup takes `{token, name, password}` (token exactly 64 characters, name 2 to 100, password 8 to 128 code points) and needs no credential. Order: the record, then the inviter and workspace checks as above, then an existing account for the address (409 auth.email_already_exists, the pointer to sign in and accept as above), then the password policy and breach screen, then the account is created with a verified address and no role of its own, the membership is written, the record is spent, and the session is issued as a sign-in does. A password that is refused spends nothing. When creating the account fails and an account for the address now exists, the answer is 409 auth.email_already_exists, never a server error. When the account is created and the membership write fails, the record is NOT spent and the retry answers 409 auth.email_already_exists: the holder signs in and accepts as above. Answers 201 with the sign-in body of the configured delivery mode, plus `workspaceId` and `role`.",
+      "bootstrap": "A bootstrap invitation is issued by the host through a service call, with no route: the platform plane's authorization is the host's. The call returns the workspace id the invitation reserves; each call is its own invitation for its own workspace. Accepting creates the workspace and the owner membership in one repository call, then spends the record. A retry that finds the workspace already created, with this caller as its active owner, is success and spends the record. A bootstrap invitation is withdrawn by the host through a second service call keyed by that workspace id; no workspace route can reach it, because its workspace does not exist.",
+      "acceptLimits": "accept is limited to 10 per minute per IP and accept-signup to 5 per minute per IP; the token is 256 bits, so no per-account limit adds anything."
     }
   }
 }

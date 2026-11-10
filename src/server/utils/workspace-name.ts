@@ -35,3 +35,19 @@ export function normalizeWorkspaceName(raw: unknown): string {
   }
   return name
 }
+
+/**
+ * Whether a value is a workspace name in the form it is stored: already trimmed, 1 to
+ * {@link MAX_WORKSPACE_NAME_LENGTH} code points, no control character.
+ *
+ * @param value - What was read back from storage.
+ * @returns `true` when it is a usable stored name.
+ */
+export function isStoredWorkspaceName(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim() === value &&
+    !exceedsCodePoints(value, MAX_WORKSPACE_NAME_LENGTH) &&
+    NO_CONTROL_CHARACTERS.test(value)
+  )
+}

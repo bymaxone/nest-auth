@@ -140,9 +140,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     bundle back without losing a word a consumer reads (they read the `.d.ts`). Not done here
 //     because it is a build change with its own blast radius, and this PR is a route fix.
 //     Recorded so the next raise is argued against that number instead of discovering it again.
-//     4.75 KiB sits about 5% above the measured 4.52 KiB. The size includes the nine workspace
-//     error codes with their statuses and the route names of the eight workspace routes, each of
-//     which a client composes a URL from.
+//     5 KiB sits about 5% above the measured 4.75 KiB. The size includes the nine workspace
+//     error codes with their statuses and the route names of the workspace and workspace
+//     invitation routes, each of which a client composes a URL from.
 //   client   2.64 KiB →  3.5 KiB (~33% headroom; fetch client may grow with auth flows)
 //     Raised to 4.25 KiB: the 401 interceptor stopped deciding by path alone and now reads the
 //     error code, because a path list cannot separate the two meanings a single JWT-guarded
@@ -160,7 +160,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
   { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 161 * 1024 },
-  { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.75 * 1024 },
+  { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },
   { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 10 * 1024 }

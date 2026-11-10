@@ -184,6 +184,17 @@ function pageAfter<T>(
 /** The membership port's writes, each deciding the last-owner rule and the judged roles itself. */
 function membershipWrites(store: Store): Partial<IMembershipRepository> {
   return {
+    create: async ({ workspaceId, userId, role, invitedByUserId, tenantId }) => {
+      if (!store.rows.has(workspaceId)) return 'workspace_not_found'
+      const existing = store.members.get(membershipKey(workspaceId, userId))
+      if (existing !== undefined) return 'already_member'
+      store.members.set(membershipKey(workspaceId, userId), {
+        ...member(workspaceId, userId, role),
+        tenantId,
+        invitedByUserId
+      })
+      return 'ok'
+    },
     changeRole: async ({ workspaceId, userId, role, ownerRole, expectedRole, actor }) => {
       const row = store.members.get(membershipKey(workspaceId, userId))
       if (actorChanged(store, workspaceId, actor)) return 'actor_changed'

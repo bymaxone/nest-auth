@@ -309,7 +309,10 @@ export const OPERATIONS: Readonly<
     'WorkspaceInvitationController.revoke': 'access',
     // Public: the holder has a token, not a session. Every token that cannot be previewed gets the
     // same answer.
-    'WorkspaceInvitationController.preview': 'none'
+    'WorkspaceInvitationController.preview': 'none',
+    'WorkspaceInvitationController.accept': 'access',
+    // Public: the holder proves the mailbox with the token and chooses a password.
+    'WorkspaceInvitationController.acceptSignup': 'none'
   }
 }
 

@@ -4,7 +4,10 @@
  * @layer Utility
  */
 
-import type { WorkspaceInvitationView } from '../interfaces/workspace-invitation.interface'
+import type {
+  MemberInvitationRecord,
+  WorkspaceInvitationView
+} from '../interfaces/workspace-invitation.interface'
 import type { PendingInvitation } from '../services/workspace-invitation.store'
 
 /** Page size when the caller names none. */
@@ -19,6 +22,14 @@ export interface InvitationPage {
   items: WorkspaceInvitationView[]
   /** Pass it back as the cursor for the next page; `null` on the last one. */
   nextCursor: string | null
+}
+
+/** A pending invitation that a workspace member issued; only those are listed. */
+type PendingMemberInvitation = PendingInvitation & { record: MemberInvitationRecord }
+
+/** Whether a pending invitation is a member invitation. */
+function isMemberInvitation(pending: PendingInvitation): pending is PendingMemberInvitation {
+  return pending.record.kind === 'member'
 }
 
 /** The position of an invitation in the order: when it was issued, then its record key. */
@@ -41,7 +52,9 @@ export function pageInvitations(
   now: number
 ): InvitationPage {
   const limit = Math.min(Math.max(page.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT)
-  const ordered = [...pending].sort((a, b) => positionOf(a).localeCompare(positionOf(b)))
+  const ordered = pending
+    .filter(isMemberInvitation)
+    .sort((a, b) => positionOf(a).localeCompare(positionOf(b)))
   const { cursor } = page
   const after = cursor === undefined ? ordered : ordered.filter((p) => positionOf(p) > cursor)
   const slice = after.slice(0, limit)

@@ -242,7 +242,11 @@ export const AUTH_WORKSPACE_ROUTES = {
   /** POST — withdraw a pending invitation. */
   revokeInvitation: 'workspaces/:workspaceId/invitations/revoke',
   /** POST — what a token is for, without signing in. Public. */
-  previewInvitation: 'workspaces/invitations/preview'
+  previewInvitation: 'workspaces/invitations/preview',
+  /** POST — accept an invitation as the signed-in account it was addressed to. */
+  acceptInvitation: 'workspaces/invitations/accept',
+  /** POST — accept an invitation by creating the account it was addressed to. Public. */
+  acceptInvitationSignup: 'workspaces/invitations/accept-signup'
 } as const
 
 /**

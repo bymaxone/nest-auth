@@ -19,6 +19,7 @@ function pending(
     key,
     ttlSeconds,
     record: {
+      kind: 'member',
       email,
       role: 'viewer',
       tenantId: 't1',
@@ -109,5 +110,24 @@ describe('pageInvitations', () => {
     expect(pageInvitations(many, { limit: 1_000 }, NOW).items).toHaveLength(100)
     expect(pageInvitations(many, { limit: 0 }, NOW).items).toHaveLength(1)
     expect(pageInvitations(many, { limit: -5 }, NOW).items).toHaveLength(1)
+  })
+
+  it('lists only member invitations', () => {
+    const boot: PendingInvitation = {
+      key: 'winv:boot',
+      ttlSeconds: 10,
+      record: {
+        kind: 'bootstrap',
+        email: 'o@x.io',
+        role: 'owner',
+        tenantId: 't1',
+        workspaceId: 'w1',
+        createdAt: A.record.createdAt,
+        resendCount: 0,
+        workspaceName: 'Acme'
+      }
+    }
+
+    expect(emails(pageInvitations([boot, A], {}, NOW))).toEqual(['a@x.io'])
   })
 })

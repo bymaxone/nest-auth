@@ -9,6 +9,7 @@ import { plainToInstance } from 'class-transformer'
 import { validate } from 'class-validator'
 
 import { InviteToWorkspaceDto } from './invite-to-workspace.dto'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 
 async function failures(plain: object): Promise<string[]> {
   return (await validate(plainToInstance(InviteToWorkspaceDto, plain))).map((e) => e.property)
@@ -45,4 +46,18 @@ describe('InviteToWorkspaceDto', () => {
   it('accepts a role of exactly 64 characters', async () => {
     expect(await failures({ email: 'a@example.com', role: 'r'.repeat(64) })).toEqual([])
   })
+
+  it.each(['kind', 'workspaceName', 'workspaceId', 'inviterUserId'])(
+    'cannot be made to carry the record field %s',
+    async (field) => {
+      const pipe = createAuthValidationPipe()
+
+      await expect(
+        pipe.transform(
+          { email: 'a@example.com', role: 'viewer', [field]: 'bootstrap' },
+          { type: 'body', metatype: InviteToWorkspaceDto }
+        )
+      ).rejects.toThrow()
+    }
+  )
 })
