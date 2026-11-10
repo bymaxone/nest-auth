@@ -115,6 +115,20 @@ describe('WorkspaceInvitationAcceptService', () => {
       expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).not.toBeNull()
     })
 
+    it('refuses a workspace that stopped being active between the two reads that judge it', async () => {
+      const h = await bootstrapped()
+      h.workspaces.findById
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(workspaceRow({ status: 'pending_deletion' }))
+      h.memberships.find.mockResolvedValue(member('caller', 'owner'))
+
+      expect(await code(h.service.accept(CALLER, TOKEN, CONTEXT))).toBe(
+        AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN
+      )
+
+      expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).not.toBeNull()
+    })
+
     it('refuses a workspace that exists and is not active, even to its active owner', async () => {
       const h = await bootstrapped()
       h.workspaces.findById.mockResolvedValue(workspaceRow({ status: 'pending_deletion' }))

@@ -1796,7 +1796,7 @@
       "oneLiveInvitationPerAddress": "Inviting an address that already has a live invitation is a resend: it mints a new token, takes the role of the new request, and retires the old record.",
       "roleCeiling": "The owner role may invite to any role. Every other role invites only to a role strictly below its own, and acts on (resends, revokes, replaces) only an invitation to such a role. This is stricter than `at or below`; the owner may grant the owner role. A role outside the hierarchy is refused with 400 auth.validation naming `role`.",
       "outrankedInvitation": "A resend or a revoke of an address with no live invitation, or one the actor may not act on, answers 204 and changes nothing. A second invitation the actor may not replace is refused with 403 auth.insufficient_workspace_role.",
-      "alreadyMember": "An address whose account is an active member of the workspace is refused with 409 auth.already_member.",
+      "alreadyMember": "An address whose account has a membership of the workspace, in ANY status, is refused with 409 auth.already_member: a suspended member is still a member, and an invitation cannot reinstate one. Accepting, a caller whose existing membership is not active is answered 400 auth.invalid_invitation_token and the record is not spent.",
       "resendCooldownSeconds": 60,
       "maxResends": 5,
       "invitationsPerInviterPerHour": 20,

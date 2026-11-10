@@ -141,17 +141,27 @@ describe('WorkspaceInvitationService', () => {
       expect(h.email.sendWorkspaceInvitation).not.toHaveBeenCalled()
     })
 
-    it('invites an address whose membership is not active, and one with no membership', async () => {
+    it('refuses an address whose membership is suspended, as it does an active one', async () => {
       const h = build()
       h.users.findByEmail.mockResolvedValue(user('u9'))
-      h.memberships.find.mockResolvedValueOnce(
+      h.memberships.find.mockResolvedValue(
         membership('u9', 'suspended' as AuthMembership['status'])
       )
 
-      await h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT)
-      await h.service.invite(WORKSPACE_REF, OWNER, 'b@example.com', 'viewer', CONTEXT)
+      expect(
+        await code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
+      ).toBe(AUTH_ERROR_CODES.ALREADY_MEMBER)
 
-      expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(2)
+      expect(h.email.sendWorkspaceInvitation).not.toHaveBeenCalled()
+    })
+
+    it('invites an address that has an account but no membership', async () => {
+      const h = build()
+      h.users.findByEmail.mockResolvedValue(user('u9'))
+
+      await h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT)
+
+      expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(1)
     })
 
     it('looks the member up in this workspace by the account the address belongs to', async () => {

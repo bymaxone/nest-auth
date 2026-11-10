@@ -361,12 +361,13 @@ export class WorkspaceInvitationService {
     }
   }
 
-  /** Refuses an address that already belongs to the workspace; returns its account, if any. */
+  /** Refuses an address that already has a membership of the workspace; returns its account. */
   private async assertNotMember(ref: WorkspaceRef, email: string): Promise<AuthUser | null> {
     const account = await this.users.findByEmail({ email, tenantId: ref.tenantId })
     if (account === null) return null
     const member = await this.memberships.find({ ...ref, userId: account.id })
-    if (member?.status === 'active') throw new AuthException(AUTH_ERROR_CODES.ALREADY_MEMBER)
+    // A suspended member is still a member: an invitation cannot reinstate one.
+    if (member !== null) throw new AuthException(AUTH_ERROR_CODES.ALREADY_MEMBER)
     return account
   }
 

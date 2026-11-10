@@ -156,8 +156,8 @@ export class WorkspaceInvitationAcceptService {
    * @param request - The request facts for the session and the hook.
    * @returns The new account's session, issued as a sign-in would.
    * @throws {AuthException} `auth.invalid_invitation_token`; `auth.email_already_exists` when the
-   *   address already has an account, which then accepts by signing in; and whatever the password
-   *   policy refuses.
+   *   address already has an account, whose holder signs in and uses {@link accept}; and whatever
+   *   the password policy refuses.
    */
   async acceptSignup(
     dto: AcceptWorkspaceInvitationSignupDto,
@@ -322,9 +322,10 @@ export class WorkspaceInvitationAcceptService {
     if (created === 'workspace_not_found') throw invalidToken()
     if (created === 'ok') return record.role
     // Already a member: the invitation is spent and changes nothing, so the answer is the role
-    // they hold, not the one the invitation offered.
+    // they hold, not the one the invitation offered. A membership that is not active is not one
+    // the invitation can reinstate, and it is not spent for it.
     const existing = await this.memberships.find({ ...ref, userId: user.id })
-    if (existing === null) throw invalidToken()
+    if (existing?.status !== 'active') throw invalidToken()
     return existing.role
   }
 
@@ -335,8 +336,11 @@ export class WorkspaceInvitationAcceptService {
     at: string
   ): Promise<string> {
     const ref = refOf(record)
-    if ((await this.workspaces.findById(ref)) !== null) {
-      // Created by an earlier attempt that did not get to spend the token.
+    const existing = await this.workspaces.findById(ref)
+    if (existing !== null) {
+      // Created by an earlier attempt that did not get to spend the token. It is read again here,
+      // so it is judged again: a workspace that stopped being active in between is not joined.
+      if (existing.status !== 'active') throw invalidToken()
       const member = await this.memberships.find({ ...ref, userId: user.id })
       if (member?.status !== 'active' || member.role !== record.role) throw invalidToken()
       return record.role

@@ -274,6 +274,24 @@ describe('WorkspaceInvitationAcceptService', () => {
       )
     })
 
+    it('refuses an invitee whose existing membership is suspended, and does not spend the invitation', async () => {
+      const h = build()
+      await seed(h)
+      h.memberships.create.mockResolvedValue('already_member')
+      h.memberships.find.mockImplementation(async ({ userId }: { userId: string }) =>
+        userId === 'inviter'
+          ? member('inviter', 'owner')
+          : member('caller', 'viewer', 'suspended' as AuthMembership['status'])
+      )
+
+      expect(await code(h.service.accept(CALLER, TOKEN, CONTEXT))).toBe(
+        AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN
+      )
+
+      expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).not.toBeNull()
+      expect(h.events.emit).not.toHaveBeenCalled()
+    })
+
     it('lets a revoke that lands between the write and the spend change nothing, and says so', async () => {
       const h = build()
       await seed(h)
