@@ -14,8 +14,11 @@ import type { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
  *
  * - `'open'`: anyone may register, by password or through an OAuth provider.
  * - `'invitation-only'`: sign-up is closed except through a valid invitation for that exact
- *   address. Existing accounts keep signing in. Startup refuses this mode because no enforcement
- *   exists for it: a mode accepted without a gate would leave sign-up open.
+ *   address. `POST /auth/register` and the OAuth `create` action answer `403
+ *   auth.registration_closed`, the invitation accept routes stay open, and an OAuth flow started
+ *   with a workspace invitation may create the account it was addressed to. Existing accounts
+ *   keep signing in. Startup refuses the mode when workspaces and tenant invitations are both
+ *   disabled, since no account could ever be created.
  */
 export type RegistrationMode = 'open' | 'invitation-only'
 
