@@ -76,8 +76,10 @@ export interface SignupRequest {
 }
 
 /** A record read by its token, with the key it is stored under. */
-interface Loaded {
+export interface LoadedInvitation {
+  /** The key the record is stored under. */
   key: string
+  /** The record. */
   record: StoredWorkspaceInvitation
 }
 
@@ -141,12 +143,69 @@ export class WorkspaceInvitationAcceptService {
     const user = await this.users.findById({ id: caller.sub, tenantId: caller.tenantId })
     if (user === null) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     if (user.tenantId !== loaded.record.tenantId) throw invalidToken()
-    if (normalizeEmail(user.email) !== loaded.record.email) {
-      throw new AuthException(AUTH_ERROR_CODES.INVITATION_EMAIL_MISMATCH)
-    }
-    if (!user.emailVerified) throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+    assertAddress(loaded.record, user.email, user.emailVerified)
     await this.assertStillGrantable(loaded.record)
     return this.finish(loaded, user, context)
+  }
+
+  /**
+   * Vets an invitation against the profile an OAuth provider returned, before the account it is
+   * for exists or is known. Nothing is written and the token is not spent.
+   *
+   * @param tokenHash - The sha256 the OAuth state record carries, never the raw token.
+   * @param tenantId - The tenant the OAuth flow resolved to.
+   * @param profile - The provider's address for the person and whether the provider verified it.
+   * @returns The record, to be handed to {@link completeOAuth}.
+   * @throws {AuthException} `auth.invalid_invitation_token` for a record that cannot be honoured
+   *   or is another tenant's; `auth.invitation_email_mismatch` when the address is not the invited
+   *   one and `auth.email_not_verified` when it is but the provider did not verify it.
+   */
+  async prepareOAuth(
+    tokenHash: string,
+    tenantId: string,
+    profile: { email: string; emailVerified: boolean }
+  ): Promise<LoadedInvitation> {
+    const loaded = await this.loadByHash(tokenHash)
+    if (loaded.record.tenantId !== tenantId) throw invalidToken()
+    assertAddress(loaded.record, profile.email, profile.emailVerified)
+    await this.assertStillGrantable(loaded.record)
+    return loaded
+  }
+
+  /**
+   * Completes an invitation vetted by {@link prepareOAuth} for the account the OAuth flow signs in.
+   *
+   * The account must be the invited address in the invitation's tenant. The membership is written
+   * first and the token spent after, as for every acceptance, and a bootstrap invitation applies
+   * the owner cap and the host's `beforeWorkspaceCreate` before it creates the workspace.
+   *
+   * @param loaded - What {@link prepareOAuth} returned.
+   * @param user - The account the flow signed in.
+   * @param created - Whether the flow created the account, which is when the host's
+   *   after-acceptance hook runs.
+   * @param context - Request metadata for the hooks.
+   * @returns The workspace joined and the role held there.
+   * @throws {AuthException} The refusals of {@link accept} for the account, and
+   *   `auth.workspace_limit_reached` or `auth.forbidden` for a bootstrap invitation the account may
+   *   not own another workspace of; none of them spends the token.
+   */
+  async completeOAuth(
+    loaded: LoadedInvitation,
+    user: AuthUser,
+    created: boolean,
+    context: HookContext
+  ): Promise<AcceptedInvitation> {
+    if (user.tenantId !== loaded.record.tenantId) throw invalidToken()
+    assertAddress(loaded.record, user.email, user.emailVerified)
+    const accepted = await this.finish(loaded, user, context)
+    if (created) {
+      runDetached(
+        this.logger,
+        () => this.hooks.afterInvitationAccepted?.(toSafeUser(user), context),
+        'afterInvitationAccepted hook threw'
+      )
+    }
+    return accepted
   }
 
   /**
@@ -213,8 +272,12 @@ export class WorkspaceInvitationAcceptService {
   }
 
   /** Reads the record a token names, or refuses a token that names nothing usable. */
-  private async load(token: string): Promise<Loaded> {
-    const tokenHash = sha256(token)
+  private async load(token: string): Promise<LoadedInvitation> {
+    return this.loadByHash(sha256(token))
+  }
+
+  /** Reads the record a token's hash names, or refuses a hash that names nothing usable. */
+  private async loadByHash(tokenHash: string): Promise<LoadedInvitation> {
     const record = await this.store.readByHash(tokenHash)
     if (record === null || !this.grantsAKnownRole(record)) throw invalidToken()
     return { key: `winv:${tokenHash}`, record }
@@ -270,7 +333,7 @@ export class WorkspaceInvitationAcceptService {
    * the spend lost the race.
    */
   private async finish(
-    loaded: Loaded,
+    loaded: LoadedInvitation,
     user: AuthUser,
     context: HookContext
   ): Promise<AcceptedInvitation> {
@@ -426,6 +489,18 @@ export class WorkspaceInvitationAcceptService {
     )
     return result
   }
+}
+
+/**
+ * Refuses an address that is not the invited one, then one that is but is not verified.
+ *
+ * @throws {AuthException} `auth.invitation_email_mismatch`, or `auth.email_not_verified`.
+ */
+function assertAddress(record: StoredWorkspaceInvitation, email: string, verified: boolean): void {
+  if (normalizeEmail(email) !== record.email) {
+    throw new AuthException(AUTH_ERROR_CODES.INVITATION_EMAIL_MISMATCH)
+  }
+  if (!verified) throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
 }
 
 /** The one answer for every token that cannot be honoured. */
