@@ -287,8 +287,8 @@ describe('WorkspaceInvitationService', () => {
       expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(2)
     })
 
-    it('lets only one of two overlapping invitations for one address publish', async () => {
-      const h = build()
+    /** Holds the first publish until `release` is called; every later publish runs at once. */
+    function holdFirstPublish(h: Harness): () => void {
       const realPublish = h.store.publish.bind(h.store)
       let release: () => void = () => undefined
       const held = new Promise<void>((resolve) => {
@@ -302,11 +302,19 @@ describe('WorkspaceInvitationService', () => {
         }
         return realPublish(...args)
       })
+      return release
+    }
+
+    const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+    it('lets only one of two overlapping first invitations for one address publish', async () => {
+      const h = build()
+      const release = holdFirstPublish(h)
 
       const a = code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
-      await new Promise((resolve) => setImmediate(resolve))
+      await tick()
       const b = code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
-      await new Promise((resolve) => setImmediate(resolve))
+      await tick()
       release()
       const outcomes = await Promise.all([a, b])
 
@@ -316,44 +324,35 @@ describe('WorkspaceInvitationService', () => {
       expect((await h.store.readByEmail(WORKSPACE_REF, 'a@example.com'))?.record).not.toBeNull()
     })
 
-    it('does not take over an index whose record is published after it was read as abandoned', async () => {
+    it('lets only one of two overlapping replacements of one invitation publish', async () => {
       const h = build()
-      const realPublish = h.store.publish.bind(h.store)
-      const realClaim = h.store.claimIndex.bind(h.store)
-      let releasePublish: () => void = () => undefined
-      let releaseClaim: () => void = () => undefined
-      const publishHeld = new Promise<void>((resolve) => {
-        releasePublish = resolve
-      })
-      const claimHeld = new Promise<void>((resolve) => {
-        releaseClaim = resolve
-      })
-      let publishes = 0
-      let claims = 0
-      jest.spyOn(h.store, 'publish').mockImplementation(async (...args) => {
-        publishes += 1
-        if (publishes === 1) await publishHeld
-        return realPublish(...args)
-      })
-      jest.spyOn(h.store, 'claimIndex').mockImplementation(async (...args) => {
-        claims += 1
-        if (claims === 2) await claimHeld
-        return realClaim(...args)
-      })
-      const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+      await h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT)
+      jest.spyOn(Date, 'now').mockReturnValue(NOW + COOLDOWN_MS)
+      const release = holdFirstPublish(h)
 
-      const a = code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
+      const a = code(h.service.resend(WORKSPACE_REF, OWNER, 'a@example.com', CONTEXT))
       await tick()
-      const b = code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
+      const b = code(h.service.resend(WORKSPACE_REF, OWNER, 'a@example.com', CONTEXT))
       await tick()
-      releasePublish()
-      await a
-      releaseClaim()
-      const outcomes = [await a, await b]
+      release()
+      const outcomes = await Promise.all([a, b])
 
       expect(outcomes.filter((c) => c === AUTH_ERROR_CODES.TOO_MANY_REQUESTS)).toHaveLength(1)
       expect(await h.store.pending(WORKSPACE_REF)).toHaveLength(1)
-      expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(1)
+      expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not publish a first invitation over one a slower writer published first', async () => {
+      const h = build()
+      const release = holdFirstPublish(h)
+
+      const a = code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
+      await tick()
+      await h.service.invite(WORKSPACE_REF, EDITOR, 'a@example.com', 'viewer', CONTEXT)
+      release()
+
+      expect(await a).toBe(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
+      expect(await h.store.pending(WORKSPACE_REF)).toHaveLength(1)
     })
 
     it('lets only one of two concurrent invitations take the last place', async () => {
@@ -402,7 +401,7 @@ describe('WorkspaceInvitationService', () => {
 
     it('leaves nothing behind and mails nothing when another writer moved the address first', async () => {
       const h = build()
-      jest.spyOn(h.store, 'claimIndex').mockResolvedValue(false)
+      jest.spyOn(h.store, 'publish').mockResolvedValue('lost')
 
       expect(
         await code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))

@@ -41,7 +41,7 @@ function build(): { store: WorkspaceInvitationStore; redis: AuthRedisService; hm
   return { store: new WorkspaceInvitationStore(redis, options), redis, hmacKey: options.hmacKey }
 }
 
-/** Claims the address's index for `key`, then publishes the record under it. */
+/** Publishes under the key the address's index holds now, as a writer that has just read it. */
 async function put(
   store: WorkspaceInvitationStore,
   key: string,
@@ -50,76 +50,93 @@ async function put(
   limit = 0
 ): Promise<'published' | 'lost' | 'full'> {
   const current = await store.readByEmail(WORKSPACE_REF, rec.email)
-  await store.claimIndex(WORKSPACE_REF, rec.email, current?.key ?? null, key, ttl)
-  return store.publish(WORKSPACE_REF, rec.email, key, rec, ttl, limit)
+  return store.publish(WORKSPACE_REF, rec.email, key, rec, ttl, limit, current?.key ?? null)
 }
 
 describe('WorkspaceInvitationStore', () => {
-  it('writes a record that reads back by its digest, with the lifetime it was given', async () => {
-    const { store, redis } = build()
-
-    await put(store, 'winv:h1', record(), 300)
-
-    expect(await store.readByHash('h1')).toEqual(record())
-    expect(await redis.ttl('winv:h1')).toBe(300)
-  })
-
-  it('lists the record as pending and keeps the set alive as long as the record', async () => {
-    const { store, redis, hmacKey } = build()
-
-    await put(store, 'winv:h1', record(), 300)
-
-    expect(await redis.smembers(invitationSetKey('t1', 'w1', hmacKey))).toEqual(['winv:h1'])
-    expect(await redis.ttl(invitationSetKey('t1', 'w1', hmacKey))).toBe(300)
-  })
-
   describe('publish', () => {
-    it('writes nothing when the index no longer names the key', async () => {
-      const { store, redis } = build()
-      await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:a', 300)
-      await store.claimIndex(WORKSPACE_REF, EMAIL, 'winv:a', 'winv:b', 300)
+    it('writes the record, points the index at it and lists it, all with the given lifetime', async () => {
+      const { store, redis, hmacKey } = build()
 
-      expect(await store.publish(WORKSPACE_REF, EMAIL, 'winv:a', record(), 300)).toBe('lost')
+      expect(await put(store, 'winv:h1', record(), 300)).toBe('published')
 
-      expect(await redis.get('winv:a')).toBeNull()
-      expect(await store.pending(WORKSPACE_REF)).toEqual([])
+      expect(await store.readByHash('h1')).toEqual(record())
+      expect(await redis.ttl('winv:h1')).toBe(300)
+      expect(await redis.ttl(invitationIndexKey('t1', 'w1', EMAIL, hmacKey))).toBe(300)
+      expect(await redis.smembers(invitationSetKey('t1', 'w1', hmacKey))).toEqual(['winv:h1'])
+      expect(await redis.ttl(invitationSetKey('t1', 'w1', hmacKey))).toBe(300)
+      expect(await store.readByEmail(WORKSPACE_REF, EMAIL)).toEqual({
+        key: 'winv:h1',
+        record: record()
+      })
     })
 
-    it('writes nothing when the address has no index', async () => {
-      const { store } = build()
+    it('retires the record it replaces, in the same step', async () => {
+      const { store, redis } = build()
+      await put(store, 'winv:old', record(), 300)
 
-      expect(await store.publish(WORKSPACE_REF, EMAIL, 'winv:a', record(), 300)).toBe('lost')
+      expect(await put(store, 'winv:new', record({ resendCount: 1 }), 300)).toBe('published')
+
+      expect(await redis.get('winv:old')).toBeNull()
+      expect((await store.pending(WORKSPACE_REF)).map((p) => p.key)).toEqual(['winv:new'])
+      expect((await store.readByEmail(WORKSPACE_REF, EMAIL))?.key).toBe('winv:new')
     })
 
-    it('writes nothing, and leaves the claim to the caller, when the workspace is full', async () => {
+    it('replaces an index whose record is already gone', async () => {
       const { store, redis } = build()
-      await put(store, 'winv:a', record(), 300, 1)
-      await store.claimIndex(WORKSPACE_REF, 'b@example.com', null, 'winv:b', 300)
+      await put(store, 'winv:old', record(), 300)
+      await redis.del('winv:old')
+
+      expect(await put(store, 'winv:new', record(), 300)).toBe('published')
+
+      expect((await store.pending(WORKSPACE_REF)).map((p) => p.key)).toEqual(['winv:new'])
+    })
+
+    it('writes nothing when the index no longer holds the key the writer read', async () => {
+      const { store, redis } = build()
+      await put(store, 'winv:a', record(), 300)
 
       expect(
-        await store.publish(
-          WORKSPACE_REF,
-          'b@example.com',
-          'winv:b',
-          record({ email: 'b@example.com' }),
-          300,
-          1
-        )
-      ).toBe('full')
+        await store.publish(WORKSPACE_REF, EMAIL, 'winv:b', record(), 300, 0, 'winv:stale')
+      ).toBe('lost')
+      expect(await store.publish(WORKSPACE_REF, EMAIL, 'winv:b', record(), 300, 0, null)).toBe(
+        'lost'
+      )
+
+      expect(await redis.get('winv:b')).toBeNull()
+      expect((await store.readByEmail(WORKSPACE_REF, EMAIL))?.key).toBe('winv:a')
+      expect((await store.pending(WORKSPACE_REF)).map((p) => p.key)).toEqual(['winv:a'])
+    })
+
+    it('writes nothing when a key is expected and the address has no index', async () => {
+      const { store, redis } = build()
+
+      expect(
+        await store.publish(WORKSPACE_REF, EMAIL, 'winv:b', record(), 300, 0, 'winv:gone')
+      ).toBe('lost')
 
       expect(await redis.get('winv:b')).toBeNull()
     })
+
+    it('keeps one address in one workspace apart from the same address elsewhere', async () => {
+      const { store } = build()
+      await put(store, 'winv:a', record(), 300)
+
+      expect(await store.readByEmail({ tenantId: 't1', workspaceId: 'w2' }, EMAIL)).toBeNull()
+      expect(await store.readByEmail({ tenantId: 't2', workspaceId: 'w1' }, EMAIL)).toBeNull()
+    })
   })
 
-  describe('write with a limit', () => {
-    it('lists a record while the workspace is under the limit and refuses it at the limit, leaving nothing', async () => {
+  describe('publish with a limit', () => {
+    it('lists while under the limit and refuses at it, leaving nothing and the index as it was', async () => {
       const { store, redis } = build()
+      await put(store, 'winv:a', record(), 300, 2)
+      await put(store, 'winv:b', record({ email: 'b@example.com' }), 300, 2)
 
-      expect(await put(store, 'winv:a', record(), 300, 2)).toBe('published')
-      expect(await put(store, 'winv:b', record(), 300, 2)).toBe('published')
-      expect(await put(store, 'winv:c', record(), 300, 2)).toBe('full')
+      expect(await put(store, 'winv:c', record({ email: 'c@example.com' }), 300, 2)).toBe('full')
 
       expect(await redis.get('winv:c')).toBeNull()
+      expect(await store.readByEmail(WORKSPACE_REF, 'c@example.com')).toBeNull()
       expect((await store.pending(WORKSPACE_REF)).map((p) => p.key).sort()).toEqual([
         'winv:a',
         'winv:b'
@@ -131,7 +148,9 @@ describe('WorkspaceInvitationStore', () => {
       await put(store, 'winv:dead', record(), 300, 1)
       await redis.del('winv:dead')
 
-      expect(await put(store, 'winv:live', record(), 300, 1)).toBe('published')
+      expect(await put(store, 'winv:live', record({ email: 'b@example.com' }), 300, 1)).toBe(
+        'published'
+      )
     })
 
     it('reads the set only when there is a limit to count against', async () => {
@@ -141,15 +160,17 @@ describe('WorkspaceInvitationStore', () => {
       await put(store, 'winv:a', record(), 300)
       expect(read).not.toHaveBeenCalled()
 
-      await put(store, 'winv:b', record(), 300, 5)
+      await put(store, 'winv:b', record({ email: 'b@example.com' }), 300, 5)
       expect(read).toHaveBeenCalledTimes(1)
     })
 
     it('has no limit when none is given', async () => {
       const { store } = build()
 
-      for (const key of ['winv:a', 'winv:b', 'winv:c']) {
-        expect(await put(store, key, record(), 300)).toBe('published')
+      for (const email of ['a', 'b', 'c']) {
+        expect(
+          await put(store, `winv:${email}`, record({ email: `${email}@example.com` }), 300)
+        ).toBe('published')
       }
     })
   })
@@ -184,73 +205,18 @@ describe('WorkspaceInvitationStore', () => {
     expect(await store.readByEmail(WORKSPACE_REF, EMAIL)).toBeNull()
   })
 
-  it('names the key and record an index points at, and the key alone when the record is gone', async () => {
-    const { store } = build()
+  it('names the key alone when the record behind the index is gone', async () => {
+    const { store, redis } = build()
     await put(store, 'winv:h1', record(), 300)
-    await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:h1', 300)
-
-    expect(await store.readByEmail(WORKSPACE_REF, EMAIL)).toEqual({
-      key: 'winv:h1',
-      record: record()
-    })
-
-    await store.remove(WORKSPACE_REF, 'other@example.com', 'winv:h1')
+    await redis.del('winv:h1')
 
     expect(await store.readByEmail(WORKSPACE_REF, EMAIL)).toEqual({ key: 'winv:h1', record: null })
-  })
-
-  describe('claimIndex', () => {
-    it('claims an absent index only when none was expected, and gives it the lifetime', async () => {
-      const { store, redis, hmacKey } = build()
-
-      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, 'winv:old', 'winv:new', 300)).toBe(false)
-      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:new', 300)).toBe(true)
-      expect(await redis.ttl(invitationIndexKey('t1', 'w1', EMAIL, hmacKey))).toBe(300)
-    })
-
-    it('replaces the index only while it still names the key that was read', async () => {
-      const { store } = build()
-      await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:a', 300)
-
-      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, 'winv:stale', 'winv:b', 300)).toBe(false)
-      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:b', 300)).toBe(false)
-      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, 'winv:a', 'winv:b', 300)).toBe(true)
-      expect((await store.readByEmail(WORKSPACE_REF, EMAIL))?.key).toBe('winv:b')
-    })
-
-    it('takes over an abandoned index only while the old record is absent', async () => {
-      const { store } = build()
-      await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:a', 300)
-
-      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, 'winv:a', 'winv:b', 300, true)).toBe(true)
-      await store.publish(WORKSPACE_REF, EMAIL, 'winv:b', record(), 300)
-      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, 'winv:b', 'winv:c', 300, true)).toBe(
-        false
-      )
-      expect((await store.readByEmail(WORKSPACE_REF, EMAIL))?.key).toBe('winv:b')
-    })
-
-    it('replaces a live index when it was not read as abandoned', async () => {
-      const { store } = build()
-      await put(store, 'winv:a', record(), 300)
-
-      expect(await store.claimIndex(WORKSPACE_REF, EMAIL, 'winv:a', 'winv:b', 300)).toBe(true)
-    })
-
-    it('keeps one address in one workspace apart from the same address elsewhere', async () => {
-      const { store } = build()
-      await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:a', 300)
-
-      expect(await store.readByEmail({ tenantId: 't1', workspaceId: 'w2' }, EMAIL)).toBeNull()
-      expect(await store.readByEmail({ tenantId: 't2', workspaceId: 'w1' }, EMAIL)).toBeNull()
-    })
   })
 
   describe('remove', () => {
     it('deletes the record, its place in the set and the index that names it', async () => {
       const { store } = build()
       await put(store, 'winv:h1', record(), 300)
-      await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:h1', 300)
 
       await store.remove(WORKSPACE_REF, EMAIL, 'winv:h1')
 
@@ -263,7 +229,6 @@ describe('WorkspaceInvitationStore', () => {
       const { store } = build()
       await put(store, 'winv:old', record(), 300)
       await put(store, 'winv:new', record(), 300)
-      await store.claimIndex(WORKSPACE_REF, EMAIL, null, 'winv:new', 300)
 
       await store.remove(WORKSPACE_REF, EMAIL, 'winv:old')
 
@@ -278,8 +243,8 @@ describe('WorkspaceInvitationStore', () => {
       await put(store, 'winv:live', record(), 300)
       await put(store, 'winv:dead', record({ email: 'b@example.com' }), 300)
       await redis.del('winv:dead')
-
       const prune = jest.spyOn(redis, 'pruneDeadMembers')
+
       const pending = await store.pending(WORKSPACE_REF)
 
       expect(prune).toHaveBeenCalledWith(invitationSetKey('t1', 'w1', hmacKey), ['winv:dead'])

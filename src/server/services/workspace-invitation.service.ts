@@ -298,20 +298,10 @@ export class WorkspaceInvitationService {
       createdAt: new Date(Date.now()).toISOString(),
       resendCount: live === null ? 0 : live.record.resendCount + 1
     }
-    // The index is claimed first: a crash before the record is written leaves an index naming
-    // nothing, which reads as no invitation. Whether the claim held is decided by `publish`, which
-    // writes only while the index still names this record.
-    // An index read with no record behind it is taken over only while that record is still absent.
-    const abandoned = live === null && plan.expected !== null
-    await this.store.claimIndex(ref, email, plan.expected, key, ttl, abandoned)
     // A replacement takes the place of the record it retires, so only a first invitation is capped.
     const limit = live === null ? this.group.maxPendingInvitationsPerWorkspace : 0
-    if ((await this.store.publish(ref, email, key, record, ttl, limit)) !== 'published') {
-      // Releases the claim if this writer still holds it; a writer that lost it releases nothing.
-      await this.store.remove(ref, email, key)
-      throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
-    }
-    if (live !== null) await this.store.remove(ref, email, live.key)
+    const outcome = await this.store.publish(ref, email, key, record, ttl, limit, plan.expected)
+    if (outcome !== 'published') throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
 
     await this.deliver(ref, email, workspace, inviter, record, token, plan.account !== null, ttl)
     this.events.emit(

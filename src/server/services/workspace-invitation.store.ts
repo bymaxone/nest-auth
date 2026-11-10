@@ -29,38 +29,30 @@ export interface PendingInvitation {
 }
 
 /**
- * Sets the index to a new record key only while it still holds the key the caller read (an empty
- * `ARGV[1]` meaning absent). When `ARGV[4]` is `1` the held key was read as abandoned, its record
- * being absent, and the takeover also needs that record to be absent still: a writer that was slow
- * to publish is not abandoned once it has.
- */
-const CLAIM_INDEX_SCRIPT = `
-local current = redis.call('GET', KEYS[1])
-if (current == false and ARGV[1] == '') or current == ARGV[1] then
-  if ARGV[4] == '1' and redis.call('EXISTS', KEYS[2]) == 1 then
-    return 0
-  end
-  redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
-  return 1
-end
-return 0`
-
-/**
- * Publishes a record only while the address's index still names it, and lists it as pending unless
- * the set already holds `ARGV[4]` members (`0` meaning no limit). The ownership test, the cap and
- * the writes are one step, so a writer that lost the index writes nothing and two writers cannot
- * both take the last place. Returns 1 published, 0 index moved, 2 workspace full.
+ * Publishes a record in one step: only while the address's index still holds the key the writer
+ * read (`ARGV[5]`, empty meaning none), and, when `ARGV[4]` is not `0`, only while the pending set
+ * holds fewer members than that. It writes the record, points the index at it, lists it, and
+ * retires the record it replaces (`KEYS[4]`, `ARGV[5]`). A writer that read a stale index, or finds
+ * the workspace full, writes nothing, and no state exists in which an index names a record that is
+ * not yet written. Returns 1 published, 0 index moved, 2 workspace full.
  */
 const PUBLISH_SCRIPT = `
-if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+local current = redis.call('GET', KEYS[1])
+if current == false then current = '' end
+if current ~= ARGV[5] then
   return 0
 end
 if tonumber(ARGV[4]) > 0 and redis.call('SCARD', KEYS[3]) >= tonumber(ARGV[4]) then
   return 2
 end
 redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
 redis.call('SADD', KEYS[3], ARGV[1])
 redis.call('EXPIRE', KEYS[3], ARGV[3])
+if ARGV[5] ~= '' then
+  redis.call('DEL', KEYS[4])
+  redis.call('SREM', KEYS[3], ARGV[5])
+end
 return 1`
 
 /** Deletes the index only while it still names the given record key. */
@@ -109,45 +101,23 @@ export class WorkspaceInvitationStore {
   }
 
   /**
-   * Makes an address's index name a new record, but only while it still names `expectedKey`.
+   * Writes a record, points the address's index at it and lists it as pending, retiring the record
+   * the index named when it was read, all in one step.
+   *
+   * It writes only while the index still holds `expectedKey`, and, when `limit` is not `0`, only
+   * while the workspace holds fewer than `limit` pending invitations.
    *
    * @param ref - The workspace.
    * @param email - The invitee, normalized.
-   * @param expectedKey - The record key the caller read, or `null` for none.
-   * @param newKey - The record key to name.
-   * @param ttlSeconds - How long the index lives.
-   * @param abandoned - Whether the caller read `expectedKey` with no record behind it; the claim
-   *   then also needs that record to be absent still.
-   * @returns `false` when another writer moved the index first.
-   */
-  async claimIndex(
-    ref: WorkspaceRef,
-    email: string,
-    expectedKey: string | null,
-    newKey: string,
-    ttlSeconds: number,
-    abandoned = false
-  ): Promise<boolean> {
-    const claimed = await this.redis.eval(
-      CLAIM_INDEX_SCRIPT,
-      [this.indexKey(ref, email), expectedKey ?? newKey],
-      [expectedKey ?? '', newKey, String(ttlSeconds), abandoned ? '1' : '0']
-    )
-    return claimed === 1
-  }
-
-  /**
-   * Writes a record and lists it as pending for its workspace, but only while the address's index
-   * still names it and the workspace holds fewer than `limit` pending invitations.
-   *
-   * @param ref - The workspace.
-   * @param email - The invitee, normalized.
-   * @param key - The record key, `winv:{hash}`, which the caller has claimed the index for.
+   * @param key - The new record key, `winv:{hash}`.
    * @param record - What to store.
-   * @param ttlSeconds - How long it lives; the set lives as long as its longest member.
+   * @param ttlSeconds - How long the record and the index live; the set lives as long as its
+   *   longest member.
    * @param limit - The most pending invitations the workspace may hold, or `0` for no limit.
-   * @returns `published`; `lost` when another writer moved the index first, with nothing written;
-   *   or `full` when the workspace holds `limit`, with nothing written.
+   * @param expectedKey - The record key the index held when the caller read it, or `null` for no
+   *   index. A key whose record is already gone is retired all the same.
+   * @returns `published`; `lost` when the index no longer holds `expectedKey`; or `full` when the
+   *   workspace holds `limit`. Nothing is written unless `published`.
    */
   async publish(
     ref: WorkspaceRef,
@@ -155,14 +125,15 @@ export class WorkspaceInvitationStore {
     key: string,
     record: StoredWorkspaceInvitation,
     ttlSeconds: number,
-    limit = 0
+    limit: number,
+    expectedKey: string | null
   ): Promise<'published' | 'lost' | 'full'> {
     // Members whose record expired still count in the set, so they are dropped before it is counted.
     if (limit > 0) await this.pending(ref)
     const outcome = await this.redis.eval(
       PUBLISH_SCRIPT,
-      [this.indexKey(ref, email), key, this.setKey(ref)],
-      [key, JSON.stringify(record), String(ttlSeconds), String(limit)]
+      [this.indexKey(ref, email), key, this.setKey(ref), expectedKey ?? key],
+      [key, JSON.stringify(record), String(ttlSeconds), String(limit), expectedKey ?? '']
     )
     return outcome === 1 ? 'published' : outcome === 2 ? 'full' : 'lost'
   }
