@@ -61,7 +61,7 @@ export function decodeWorkspaceScopedName(name: string): {
   let at = 0
   while (at < bytes.length) {
     const colon = bytes.indexOf(0x3a, at)
-    const prefix = colon === -1 ? '' : bytes.toString('utf8', at, colon)
+    const prefix = bytes.toString('utf8', at, colon)
     if (!/^(?:0|[1-9]\d*)$/.test(prefix)) throw malformed(name)
     const end = colon + 1 + Number(prefix)
     if (end > bytes.length) throw malformed(name)

@@ -193,6 +193,23 @@ describe('assertStillAuthorized', () => {
     }
   )
 
+  it('says what a tenant or actor must be, in the validation detail', async () => {
+    const error = await build()
+      .assertStillAuthorized({ ...JOB, tenantId: '' }, ['viewer'])
+      .catch((e: unknown) => e as AuthException)
+
+    expect((error as AuthException).getResponse()).toMatchObject({
+      error: {
+        details: [
+          {
+            field: 'tenantId',
+            message: 'tenantId must be 1 to 128 characters, not blank, with no control characters'
+          }
+        ]
+      }
+    })
+  })
+
   it.each([
     ['null', null],
     ['undefined', undefined],
@@ -241,7 +258,9 @@ describe('assertStillAuthorized', () => {
       options
     )
 
-    await expect(bare.assertStillAuthorized(JOB, ['viewer'])).rejects.toThrow(TypeError)
+    await expect(bare.assertStillAuthorized(JOB, ['viewer'])).rejects.toThrow(
+      'assertStillAuthorized needs the account status service'
+    )
   })
 })
 

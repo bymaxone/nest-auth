@@ -94,9 +94,7 @@ export class WsWorkspaceGuard implements CanActivate {
   /** The workspace the message names, as the host's resolver or the default field reads it. */
   private named(message: unknown): unknown {
     if (this.group.resolveWsWorkspace !== undefined) return this.group.resolveWsWorkspace(message)
-    return typeof message === 'object' && message !== null
-      ? (message as { workspaceId?: unknown }).workspaceId
-      : undefined
+    return (message as { workspaceId?: unknown } | null | undefined)?.workspaceId
   }
 }
 

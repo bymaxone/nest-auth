@@ -86,6 +86,19 @@ describe('workspaceScopedName', () => {
       )
     })
 
+    it('says which piece and why, for every kind of piece', () => {
+      expect(() => workspaceScopedName('t', '')).toThrow('workspaceId must not be empty')
+      expect(() => workspaceScopedName('t', 'w\u0001')).toThrow(
+        'workspaceId must not contain a control character'
+      )
+      expect(() => workspaceScopedName('t', 'w', '\ud800')).toThrow(
+        'part 0 must be well-formed Unicode'
+      )
+      expect(() => workspaceScopedName('t', 'w', 'a', 'b', 5 as never)).toThrow(
+        'part 2 must be a string'
+      )
+    })
+
     it('names the piece it refused', () => {
       expect(() => workspaceScopedName('t', 'w', 'ok', 'a\tb')).toThrow('part 1 must not contain')
       expect(() => workspaceScopedName('', 'w')).toThrow('tenantId must not be empty')
@@ -160,6 +173,7 @@ describe('workspaceScopedName', () => {
       ]
     ])('refuses %s', (_name, name) => {
       expect(() => decodeWorkspaceScopedName(name)).toThrow(TypeError)
+      expect(() => decodeWorkspaceScopedName(name)).toThrow('is not a workspace-scoped name')
     })
   })
 })
