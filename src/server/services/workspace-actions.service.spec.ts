@@ -40,7 +40,7 @@ function build(): {
   workspaces: Record<'create' | 'rename' | 'getAccess' | 'scheduleDeletion', jest.Mock>
   callers: Record<'load' | 'reauthenticate', jest.Mock>
   memberships: Record<
-    'changeRole' | 'getMember' | 'assertMayTransfer' | 'transferOwnership',
+    'changeRole' | 'getMember' | 'assertMayTransfer' | 'assertTransferTarget' | 'transferOwnership',
     jest.Mock
   >
   order: string[]
@@ -66,6 +66,7 @@ function build(): {
       return MEMBER
     }),
     assertMayTransfer: jest.fn().mockImplementation(() => void order.push('check')),
+    assertTransferTarget: jest.fn().mockImplementation(async () => void order.push('target')),
     transferOwnership: jest.fn().mockImplementation(async () => void order.push('transfer'))
   }
   return {
@@ -164,7 +165,7 @@ describe('WorkspaceActionsService', () => {
   describe('transferOwnership', () => {
     const HAND_OVER = { toUserId: 'u2', keeps: 'editor', password: 'pw' }
 
-    it('checks the request locally, then re-proves the caller, then hands ownership over', async () => {
+    it('checks the request locally, then the receiver, then re-proves the caller, then hands ownership over', async () => {
       const { service, memberships, callers, order } = build()
 
       await service.transferOwnership(REF, ACTOR, CALLER, HAND_OVER, CONTEXT)
@@ -178,7 +179,8 @@ describe('WorkspaceActionsService', () => {
         'editor',
         CONTEXT
       )
-      expect(order).toEqual(['check', 'reauthenticate', 'transfer'])
+      expect(memberships.assertTransferTarget).toHaveBeenCalledWith(REF, 'u2')
+      expect(order).toEqual(['check', 'target', 'reauthenticate', 'transfer'])
     })
 
     it('never re-proves a caller the local check refuses, and writes nothing', async () => {
@@ -190,6 +192,18 @@ describe('WorkspaceActionsService', () => {
       await expect(
         service.transferOwnership(REF, ACTOR, CALLER, { ...HAND_OVER, keeps: null }, CONTEXT)
       ).rejects.toThrow('not an owner')
+
+      expect(callers.reauthenticate).not.toHaveBeenCalled()
+      expect(memberships.transferOwnership).not.toHaveBeenCalled()
+    })
+
+    it('never re-proves a caller whose receiver is not an active member, and writes nothing', async () => {
+      const { service, memberships, callers } = build()
+      memberships.assertTransferTarget.mockRejectedValue(new Error('not an active member'))
+
+      await expect(
+        service.transferOwnership(REF, ACTOR, CALLER, HAND_OVER, CONTEXT)
+      ).rejects.toThrow('not an active member')
 
       expect(callers.reauthenticate).not.toHaveBeenCalled()
       expect(memberships.transferOwnership).not.toHaveBeenCalled()

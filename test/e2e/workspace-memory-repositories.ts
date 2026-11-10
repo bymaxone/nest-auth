@@ -219,7 +219,7 @@ function membershipWrites(store: Store): Partial<IMembershipRepository> {
       const from = store.members.get(membershipKey(workspaceId, fromUserId))
       const to = store.members.get(membershipKey(workspaceId, toUserId))
       if (from?.role !== ownerRole) return 'not_found'
-      if (to === undefined) return 'target_not_member'
+      if (to?.status !== 'active') return 'target_not_member'
       store.members.set(membershipKey(workspaceId, toUserId), { ...to, role: ownerRole })
       if (demoteFromTo !== null) {
         store.members.set(membershipKey(workspaceId, fromUserId), { ...from, role: demoteFromTo })
@@ -234,7 +234,12 @@ export interface MemoryRepositories {
   workspaces: IWorkspaceRepository
   memberships: IMembershipRepository
   /** Writes a membership directly, as a host's own flow would. */
-  seedMember: (workspaceId: string, userId: string, role: string) => void
+  seedMember: (
+    workspaceId: string,
+    userId: string,
+    role: string,
+    status?: AuthMembership['status']
+  ) => void
   /** Runs once, right after the next membership read returns: a change that lands before the write. */
   afterNextFind: (change: () => void) => void
 }
@@ -257,8 +262,11 @@ export function memoryRepositories(): MemoryRepositories {
       ...membershipReads(store),
       ...membershipWrites(store)
     } as IMembershipRepository,
-    seedMember: (workspaceId, userId, role) => {
-      store.members.set(membershipKey(workspaceId, userId), member(workspaceId, userId, role))
+    seedMember: (workspaceId, userId, role, status = 'active') => {
+      store.members.set(membershipKey(workspaceId, userId), {
+        ...member(workspaceId, userId, role),
+        status
+      })
     },
     afterNextFind: (change) => {
       store.afterFind = change

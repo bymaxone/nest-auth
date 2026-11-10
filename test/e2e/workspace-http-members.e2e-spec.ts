@@ -282,6 +282,25 @@ describe('workspace member routes (E2E)', () => {
     })
   })
 
+  describe('a suspended member', () => {
+    it('cannot receive ownership, and the refusal comes before the password is looked at', async () => {
+      const { id, owner } = await team()
+      const suspended = await signUp()
+      repositories.seedMember(id, suspended.id, 'editor', 'suspended')
+      const compare = jest.spyOn(app.get(PasswordService, { strict: false }), 'compare')
+
+      const res = await send('post', `/workspaces/${id}/transfer-ownership`, owner, {
+        userId: suspended.id,
+        password: 'Wrong-1!'
+      })
+
+      expectAuthError(res, 'auth.validation')
+      expect(res.body).toMatchObject({ error: { details: [{ field: 'userId' }] } })
+      expect(compare).not.toHaveBeenCalled()
+      expect((await access(id, owner)).body).toMatchObject({ role: 'owner' })
+    })
+  })
+
   describe('names counted in code points', () => {
     // Scenario: a name of exactly the bound in emoji, each one code point and two UTF-16 units.
     // Expected: created and renamed; one more is refused. Why: the contract counts code points.

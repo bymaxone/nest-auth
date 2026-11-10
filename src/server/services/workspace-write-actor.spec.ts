@@ -173,6 +173,7 @@ const MEMBERSHIP_METHODS: Record<string, Entry> = {
     kind: 'exempt',
     reason: 'a local check that writes nothing; the invitation service applies it before it stores'
   },
+  assertTransferTarget: { kind: 'read' },
   mayActOn: {
     kind: 'exempt',
     reason: 'a local comparison of two roles that writes nothing'

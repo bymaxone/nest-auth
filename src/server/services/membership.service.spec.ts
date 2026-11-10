@@ -652,9 +652,43 @@ describe('MembershipService', () => {
     })
   })
 
+  describe('assertTransferTarget', () => {
+    it.each([
+      ['absent', null],
+      ['suspended', member('u2', 'viewer', 'suspended')]
+    ])('refuses a receiver who is %s, naming userId', async (_name, found) => {
+      const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(found)
+
+      expect(await code(service.assertTransferTarget(WORKSPACE_REF, 'u2'))).toBe(
+        AUTH_ERROR_CODES.VALIDATION
+      )
+      expect(memberships['find']).toHaveBeenCalledWith({ ...WORKSPACE_REF, userId: 'u2' })
+    })
+
+    it('accepts an active receiver', async () => {
+      const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
+
+      await expect(service.assertTransferTarget(WORKSPACE_REF, 'u2')).resolves.toBeUndefined()
+    })
+
+    it('is run by the hand-over itself, which then writes nothing for a suspended receiver', async () => {
+      const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer', 'suspended'))
+
+      expect(await code(service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', null, CONTEXT))).toBe(
+        AUTH_ERROR_CODES.VALIDATION
+      )
+
+      expect(memberships['transferOwnership']).not.toHaveBeenCalled()
+    })
+  })
+
   describe('transferOwnership', () => {
     it.each(['editor', 'viewer'])('refuses a transfer by a %s, before any write', async (role) => {
       const { service, memberships, access, events } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
 
       await expect(
         code(
@@ -668,6 +702,7 @@ describe('MembershipService', () => {
 
     it("hands ownership over atomically, ends both members' access, then reports it", async () => {
       const { service, memberships, access, events } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
 
       await service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', 'editor', CONTEXT)
 
@@ -696,6 +731,7 @@ describe('MembershipService', () => {
 
     it('keeps both as owners when no demotion is asked', async () => {
       const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
 
       await service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', null, CONTEXT)
 
@@ -718,6 +754,7 @@ describe('MembershipService', () => {
       ]
     ])('refuses a transfer %s', async (_name, from, to, demote, field, message) => {
       const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
 
       const result = service.transferOwnership(
         WORKSPACE_REF,
@@ -740,6 +777,7 @@ describe('MembershipService', () => {
 
     it('refuses a target who is not an active member, without bumping or reporting', async () => {
       const { service, memberships, access, events } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
       memberships['transferOwnership']?.mockResolvedValue('target_not_member')
 
       const result = service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', null, CONTEXT)
@@ -761,6 +799,7 @@ describe('MembershipService', () => {
       ['last_owner', AUTH_ERROR_CODES.LAST_OWNER]
     ])('maps %s to %s', async (result, expected) => {
       const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
       memberships['transferOwnership']?.mockResolvedValue(result)
 
       await expect(

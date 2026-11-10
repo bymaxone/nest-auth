@@ -126,7 +126,7 @@ export class WorkspaceActionsService {
    * Hands ownership to another member, running the checks from cheapest to costliest.
    *
    * Everything the request alone decides (only an owner may hand it over, not to oneself, the role
-   * the giver keeps must exist) is checked first, so a caller who cannot succeed cannot spend a key
+   * the giver keeps must exist), then that the receiver is an active member, is checked first, so a caller who cannot succeed cannot spend a key
    * derivation or a lockout attempt. Then the caller is re-proved, then the write is made.
    *
    * @param ref - The workspace.
@@ -145,6 +145,7 @@ export class WorkspaceActionsService {
     context: HookContext
   ): Promise<void> {
     this.memberships.assertMayTransfer(actor, handOver.toUserId, handOver.keeps)
+    await this.memberships.assertTransferTarget(ref, handOver.toUserId)
     await this.callers.reauthenticate(caller, handOver.password)
     await this.memberships.transferOwnership(ref, actor, handOver.toUserId, handOver.keeps, context)
   }
