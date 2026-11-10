@@ -77,6 +77,8 @@ export interface SignupRequest {
 
 /** A record read by its token, with the key it is stored under. */
 export interface LoadedInvitation {
+  /** The sha256 of the token, which names the record. */
+  tokenHash: string
   /** The key the record is stored under. */
   key: string
   /** The record. */
@@ -175,9 +177,10 @@ export class WorkspaceInvitationAcceptService {
   /**
    * Completes an invitation vetted by {@link prepareOAuth} for the account the OAuth flow signs in.
    *
-   * The account must be the invited address in the invitation's tenant, and the inviter's standing
-   * and the workspace are judged again here, because the host's hook and the account write ran
-   * since {@link prepareOAuth}. The membership is written first and the token spent after, as for
+   * The record is read again and the account must be the invited address in its tenant, and the
+   * inviter's standing and the workspace are judged again here, because the host's hook and the
+   * account write ran since {@link prepareOAuth}: an invitation revoked, replaced or expired in
+   * that time is refused. The membership is written first and the token spent after, as for
    * every acceptance, and a bootstrap invitation applies
    * the owner cap and the host's `beforeWorkspaceCreate` before it creates the workspace.
    *
@@ -197,10 +200,11 @@ export class WorkspaceInvitationAcceptService {
     created: boolean,
     context: HookContext
   ): Promise<AcceptedInvitation> {
-    if (user.tenantId !== loaded.record.tenantId) throw invalidToken()
-    assertAddress(loaded.record, user.email, user.emailVerified)
-    await this.assertStillGrantable(loaded.record)
-    const accepted = await this.finish(loaded, user, context)
+    const current = await this.loadByHash(loaded.tokenHash)
+    if (user.tenantId !== current.record.tenantId) throw invalidToken()
+    assertAddress(current.record, user.email, user.emailVerified)
+    await this.assertStillGrantable(current.record)
+    const accepted = await this.finish(current, user, context)
     if (created) {
       runDetached(
         this.logger,
@@ -283,7 +287,7 @@ export class WorkspaceInvitationAcceptService {
   private async loadByHash(tokenHash: string): Promise<LoadedInvitation> {
     const record = await this.store.readByHash(tokenHash)
     if (record === null || !this.grantsAKnownRole(record)) throw invalidToken()
-    return { key: `winv:${tokenHash}`, record }
+    return { tokenHash, key: `winv:${tokenHash}`, record }
   }
 
   /** A member record grants a role of the hierarchy; a bootstrap record grants the owner role. */

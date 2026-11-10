@@ -143,6 +143,23 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       )
     })
 
+    it('refuses when the invitation is revoked between the vetting and the completion, writing nothing', async () => {
+      const h = build()
+      await seed(h)
+      const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
+      await h.store.remove(WORKSPACE_REF, EMAIL, invitationKey(TOKEN))
+
+      const refused = h.service.completeOAuth(
+        invitation,
+        user('new', { email: EMAIL }),
+        true,
+        CONTEXT
+      )
+
+      expect(await code(refused)).toBe(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
+      expect(h.memberships.create).not.toHaveBeenCalled()
+    })
+
     it.each([
       ['the inviter is removed', (h: Harness) => h.memberships.find.mockResolvedValue(null)],
       [
