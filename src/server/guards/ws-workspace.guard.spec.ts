@@ -256,6 +256,14 @@ describe('WsWorkspaceGuard', () => {
     expect(access).not.toHaveBeenCalled()
   })
 
+  it('treats a null message as naming no workspace, not as a crash', async () => {
+    const access = jest.fn()
+
+    expect(
+      await code(build(access).canActivate(contextFor('read', { data: { user: IDENTITY } }, null)))
+    ).toBe(AUTH_ERROR_CODES.VALIDATION)
+  })
+
   it('treats a message that is not an object as naming no workspace', async () => {
     const access = jest.fn()
 

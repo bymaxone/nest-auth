@@ -193,6 +193,21 @@ describe('assertStillAuthorized', () => {
     }
   )
 
+  it('accepts a tenant and an actor of exactly 128 characters and refuses 129', async () => {
+    world('active', { role: 'viewer', status: 'active' })
+    const edge = { tenantId: 't'.repeat(128), workspaceId: 'w1', actorUserId: 'u'.repeat(128) }
+
+    await expect(build().assertStillAuthorized(edge, ['viewer'])).resolves.toBeDefined()
+    expect(
+      await code(build().assertStillAuthorized({ ...edge, tenantId: 't'.repeat(129) }, ['viewer']))
+    ).toBe(AUTH_ERROR_CODES.VALIDATION)
+    expect(
+      await code(
+        build().assertStillAuthorized({ ...edge, actorUserId: 'u'.repeat(129) }, ['viewer'])
+      )
+    ).toBe(AUTH_ERROR_CODES.VALIDATION)
+  })
+
   it('is a TypeError when built without the account status service', async () => {
     const options = Object.assign({} as ResolvedOptions, {
       workspaces: {
