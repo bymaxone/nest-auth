@@ -10,6 +10,7 @@
 
 import { createHash } from 'node:crypto'
 
+import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import {
@@ -99,7 +100,11 @@ const mockEmailProvider = {
   sendMfaEnabledNotification: jest.fn(),
   sendMfaDisabledNotification: jest.fn()
 }
-const mockHooks = { afterMfaEnabled: jest.fn(), afterMfaDisabled: jest.fn() }
+const mockHooks = {
+  afterMfaEnabled: jest.fn(),
+  afterMfaDisabled: jest.fn(),
+  afterMfaRecoveryCodesRegenerated: jest.fn()
+}
 const mockSessionService = { createSession: jest.fn(), revokeSession: jest.fn() }
 
 const mockOptions = {
@@ -283,6 +288,72 @@ describe('MfaService — the account handed to the MFA hooks', () => {
       lastLoginAt: null,
       createdAt: new Date('2026-01-01'),
       mfaEnabled: false
+    })
+  })
+
+  // Scenario: the host's hook is declared `void` and throws synchronously. Expected: the call that
+  // already wrote the transition still answers, and the failure is logged. Why: the hook runs after
+  // the write, so a throw that escaped would tell the caller a completed transition failed.
+  describe('a hook that throws synchronously', () => {
+    const hookThrows = (hook: jest.Mock): void => {
+      hook.mockImplementation(() => {
+        throw new Error('hook broke')
+      })
+    }
+
+    it('does not fail verifyAndEnable, and logs afterMfaEnabled', async () => {
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const { code, encryptedSecret } = totpFixture()
+      mockUserRepo.findById.mockResolvedValue(recordFor('dashboard', false, null))
+      const setupData = JSON.stringify({
+        encryptedSecret,
+        hashedCodes: ['$scrypt$hashed$code1'],
+        encryptedPlainCodes: encrypt('[]', VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.get.mockResolvedValue(setupData)
+      mockRedis.getdel.mockResolvedValue(setupData)
+      hookThrows(mockHooks.afterMfaEnabled)
+
+      await expect(
+        service.verifyAndEnable('user-1', code, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
+      ).resolves.toBeUndefined()
+
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('afterMfaEnabled hook threw'))
+    })
+
+    it('does not fail disable, and logs afterMfaDisabled', async () => {
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const { code, encryptedSecret } = totpFixture()
+      mockUserRepo.findById.mockResolvedValue(recordFor('dashboard', true, encryptedSecret))
+      hookThrows(mockHooks.afterMfaDisabled)
+
+      await expect(
+        service.disable('user-1', code, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
+      ).resolves.toBeUndefined()
+
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('afterMfaDisabled hook threw'))
+    })
+
+    it('does not fail regenerateRecoveryCodes, and logs the regeneration hook', async () => {
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const { code, encryptedSecret } = totpFixture()
+      mockUserRepo.findById.mockResolvedValue(recordFor('dashboard', true, encryptedSecret))
+      hookThrows(mockHooks.afterMfaRecoveryCodesRegenerated)
+
+      await expect(
+        service.regenerateRecoveryCodes(
+          'user-1',
+          code,
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
+      ).resolves.toHaveProperty('recoveryCodes')
+
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('afterMfaRecoveryCodesRegenerated hook threw')
+      )
     })
   })
 })

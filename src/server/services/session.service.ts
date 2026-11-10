@@ -20,6 +20,7 @@ import type {
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
+import { runDetached } from '../utils/run-detached'
 import { raiseFirst } from '../utils/settle-writes'
 
 // ---------------------------------------------------------------------------
@@ -425,15 +426,10 @@ export class SessionService {
         .findById({ id: userId, tenantId })
         .then((user) => {
           if (!user) return
-          // Explicit `void` so the inner promise's lifecycle is unambiguous —
-          // the .catch() attaches a rejection handler, but neither `return`ing
-          // the chain nor leaving it bare reads cleanly. The hook is fire-and-
-          // forget by contract; this matches the pattern used elsewhere in the
-          // codebase (auth.service afterLogin/afterRegister, mfa.service afterLogin).
-          void Promise.resolve(onNewSession(toSafeUser(user), minimalSessionInfo, context)).catch(
-            (err: unknown) => {
-              this.logger.error(`onNewSession hook threw: ${describeChannelStatus(err)}`)
-            }
+          runDetached(
+            this.logger,
+            () => onNewSession(toSafeUser(user), minimalSessionInfo, context),
+            'onNewSession hook threw'
           )
         })
         .catch((err: unknown) => {
@@ -1046,11 +1042,11 @@ export class SessionService {
 
       // Fire onSessionEvicted hook — fire-and-forget; errors must not propagate.
       if (this.hooks?.onSessionEvicted) {
-        // Note: entry.memberHash is SHA-256 (not HMAC-SHA-256) of the refresh token.
-        void Promise.resolve(this.hooks.onSessionEvicted(userId, entry.memberHash, context)).catch(
-          (err: unknown) => {
-            this.logger.error(`onSessionEvicted hook threw: ${describeChannelStatus(err)}`)
-          }
+        const onSessionEvicted = this.hooks.onSessionEvicted.bind(this.hooks)
+        runDetached(
+          this.logger,
+          () => onSessionEvicted(userId, entry.memberHash, context),
+          'onSessionEvicted hook threw'
         )
       }
     }

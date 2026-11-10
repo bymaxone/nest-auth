@@ -36,6 +36,7 @@ import { logSafe } from '../utils/log-safe'
 import { normalizeEmail } from '../utils/normalize-email'
 import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
+import { runDetached } from '../utils/run-detached'
 import { safeLogLine } from '../utils/safe-log-line'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { tenantScoped } from '../utils/tenant-scoped'
@@ -732,31 +733,30 @@ export class PasswordResetService {
     // The breach check ran in `resetPassword`, before the proof was spent — see the note there.
     const passwordHash = await this.passwordService.hash(newPassword)
     await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash })
-    // Revoke every session AND invalidate already-issued access tokens. This is two Redis
-    // operations (a Lua session-invalidation followed by the epoch bump), not a single atomic
-    // transaction — the bump simply must land before the reset returns. Deleting the refresh
-    // sessions alone would leave stateless access tokens valid until their exp (they are not
-    // tracked per-jti), so a stolen access token would survive a reset-after-compromise for
-    // the full access-token TTL. The Lua-backed session deletion is itself atomic, avoiding
-    // the race where a concurrent login adds a session between the SMEMBERS read and the DEL.
+    // Revoke every session AND invalidate already-issued access tokens: a Lua session
+    // invalidation (atomic, so a concurrent login cannot slip a session in between the SMEMBERS
+    // read and the DEL) followed by the epoch bump, which must land before the reset returns.
+    // Deleting the refresh sessions alone would leave a stolen access token valid until its exp.
     await this.redis.invalidateUserSessions(userId, tenantId, 'dashboard')
     await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
 
-    // afterPasswordReset — fire-and-forget; errors must not propagate. The same repository read
-    // serves the notification, which a reset needs at least as much as a change does: the
-    // classic takeover completes a reset from a compromised mailbox and deletes the mail.
+    // The same repository read serves the notification, which a reset needs at least as much as
+    // a change does: the classic takeover completes a reset from a compromised mailbox and
+    // deletes the mail. The hook after it is fire-and-forget.
     const user = await this.userRepo.findById({ id: userId, tenantId })
     if (user) {
       await this.notifyPasswordChanged(user)
       if (this.hooks?.afterPasswordReset) {
-        void Promise.resolve(
-          this.hooks.afterPasswordReset(toSafeUser(user), {
-            ...createEmptyHookContext(),
-            plane: 'dashboard'
-          })
-        ).catch((err: unknown) => {
-          this.logger.error(`afterPasswordReset hook threw: ${describeChannelStatus(err)}`)
-        })
+        const afterPasswordReset = this.hooks.afterPasswordReset.bind(this.hooks)
+        runDetached(
+          this.logger,
+          () =>
+            afterPasswordReset(toSafeUser(user), {
+              ...createEmptyHookContext(),
+              plane: 'dashboard'
+            }),
+          'afterPasswordReset hook threw'
+        )
       }
     }
   }

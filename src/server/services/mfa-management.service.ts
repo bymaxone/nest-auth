@@ -34,6 +34,7 @@ import { assertPlaneTenant } from '../utils/mfa-plane-tenant'
 import { DEFAULT_RECOVERY_CODE_COUNT, generateRecoveryCodes } from '../utils/mfa-recovery-codes'
 import { committedSafeUser, platformUserAsSafeUser, toSafeUser } from '../utils/mfa-safe-user'
 import { decryptMfaSecret } from '../utils/mfa-secret-cipher'
+import { runDetached } from '../utils/run-detached'
 
 /** The plane, account and tenant an MFA change applies to. */
 interface AccountScope {
@@ -375,15 +376,19 @@ export class MfaManagementService {
     const safeUser = committedSafeUser(scope.context, user, false)
 
     if (this.hooks.afterMfaDisabled) {
-      void Promise.resolve(
-        this.hooks.afterMfaDisabled(safeUser, {
-          plane: scope.context,
-          userId: scope.userId,
-          ip,
-          userAgent,
-          sanitizedHeaders: {}
-        })
-      ).catch(() => undefined)
+      const afterMfaDisabled = this.hooks.afterMfaDisabled.bind(this.hooks)
+      runDetached(
+        this.logger,
+        () =>
+          afterMfaDisabled(safeUser, {
+            plane: scope.context,
+            userId: scope.userId,
+            ip,
+            userAgent,
+            sanitizedHeaders: {}
+          }),
+        'afterMfaDisabled hook threw'
+      )
     }
   }
 
@@ -407,15 +412,19 @@ export class MfaManagementService {
         scope.context === 'platform'
           ? platformUserAsSafeUser(user as AuthPlatformUser)
           : toSafeUser(user as AuthUser)
-      void Promise.resolve(
-        this.hooks.afterMfaRecoveryCodesRegenerated(safeUser, {
-          plane: scope.context,
-          userId: scope.userId,
-          ip,
-          userAgent,
-          sanitizedHeaders: {}
-        })
-      ).catch(() => undefined)
+      const afterRegenerated = this.hooks.afterMfaRecoveryCodesRegenerated.bind(this.hooks)
+      runDetached(
+        this.logger,
+        () =>
+          afterRegenerated(safeUser, {
+            plane: scope.context,
+            userId: scope.userId,
+            ip,
+            userAgent,
+            sanitizedHeaders: {}
+          }),
+        'afterMfaRecoveryCodesRegenerated hook threw'
+      )
     }
   }
 }
