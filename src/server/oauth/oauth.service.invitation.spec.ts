@@ -339,6 +339,8 @@ describe('OAuthService with workspace invitations', () => {
     it.each([
       ['a hash of the wrong length', { workspaceInvitation: 'abc' }],
       ['a hash one character short', { workspaceInvitation: HASH.slice(1) }],
+      ['a hash with a character before it', { workspaceInvitation: `a${HASH}` }],
+      ['a hash with a character after it', { workspaceInvitation: `${HASH}a` }],
       ['a hash that is not a string', { workspaceInvitation: 5 }]
     ])('refuses a state record carrying %s', async (_n, extra) => {
       const service = await build()

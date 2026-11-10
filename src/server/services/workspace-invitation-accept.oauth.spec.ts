@@ -237,7 +237,7 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
         throw new Error('hook')
       })
       jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
-      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       const h = build(false, { afterInvitationAccepted })
       await seed(h)
       const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
@@ -245,6 +245,9 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       await expect(
         h.service.completeOAuth(invitation, user('new', { email: EMAIL }), true, CONTEXT)
       ).resolves.toEqual({ workspaceId: 'w1', role: 'viewer' })
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('afterInvitationAccepted hook threw')
+      )
     })
   })
 
