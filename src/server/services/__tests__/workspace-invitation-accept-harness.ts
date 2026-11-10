@@ -7,7 +7,6 @@
 
 /// <reference path="../../../../test/e2e/ioredis-mock.d.ts" />
 
-import { Logger } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 import RedisMock from 'ioredis-mock'
 
@@ -19,15 +18,8 @@ import type { WorkspaceAccessService } from '../workspace-access.service'
 import type { WorkspaceEventsService } from '../workspace-events.service'
 import { WorkspaceInvitationAcceptService } from '../workspace-invitation-accept.service'
 import { WorkspaceInvitationStore } from '../workspace-invitation.store'
-import {
-  CONTEXT,
-  WORKSPACE_REF,
-  optionsWithoutWorkspaces,
-  workspaceOptions,
-  workspaceRow
-} from './workspace-service-harness'
+import { WORKSPACE_REF, workspaceOptions, workspaceRow } from './workspace-service-harness'
 import { invitationKey } from '../../constants/workspace-invitation-keys'
-import { AUTH_ERROR_CODES } from '../../errors/auth-error-codes'
 import type { AuthException } from '../../errors/auth-exception'
 import type { IAuthHooks } from '../../interfaces/auth-hooks.interface'
 import type {
