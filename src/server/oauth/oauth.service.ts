@@ -37,9 +37,9 @@ import {
 import { generateSecureToken, sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type { HookContext, IAuthHooks, OAuthLoginResult } from '../interfaces/auth-hooks.interface'
 import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
-import type { OAuthProviderPlugin } from '../interfaces/oauth-provider.interface'
+import type { OAuthProfile, OAuthProviderPlugin } from '../interfaces/oauth-provider.interface'
 import type {
   AuthUser,
   IUserRepository,
@@ -283,94 +283,9 @@ export class OAuthService {
     // otherwise need to restart the entire flow.
     const plugin = this.resolvePlugin(provider)
 
-    // Bind the callback to the browser that started the flow (RFC 6749 §10.12). A `state`
-    // that merely exists in Redis proves only that *somebody* started a flow: an attacker can
-    // run their own authorization to the point of holding a valid `?code=…&state=…` URL, never
-    // visit it, and lure the victim there instead — the victim's browser would then be logged
-    // into the attacker's account, and anything they added afterwards would be the attacker's
-    // to read. Only the cookie distinguishes the two, so a missing one is as fatal as a wrong
-    // one. Checked before `getdel` so a callback that fails the binding cannot burn a state
-    // the legitimate browser is still entitled to complete. Hashes are compared rather than
-    // the raw values so the constant-time path is not skipped by a length mismatch.
-    if (stateCookie === undefined || !timingSafeCompare(sha256(state), sha256(stateCookie))) {
-      this.logger.warn(`handleCallback: OAuth state not bound to this browser provider=${provider}`)
-      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-    }
+    const { tenantId, codeVerifier } = await this.consumeState(provider, state, stateCookie)
 
-    // Atomically read and delete the CSRF state — single-use enforcement.
-    const stateKey = `os:${sha256(state)}`
-    const rawState = await this.redis.getdel(stateKey)
-
-    if (!rawState) {
-      this.logger.warn(`handleCallback: invalid or expired OAuth state provider=${provider}`)
-      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-    }
-
-    let parsedState: unknown
-    try {
-      parsedState = JSON.parse(rawState)
-    } catch {
-      // A state key that exists but does not parse is corrupted storage, not a stale or
-      // forged callback — the two are indistinguishable to the caller (both answer
-      // OAUTH_FAILED) and only this line tells them apart in an operator's logs.
-      this.logger.warn(`handleCallback: unparseable OAuth state provider=${provider}`)
-      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone the unparsed state fails `isStoredOAuthState` on the next line and raises the identical OAUTH_FAILED.
-      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-    }
-
-    if (!isStoredOAuthState(parsedState)) {
-      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-    }
-
-    // Mix-up defence (RFC 9700 §2.1/§4.4). `provider` here comes from the callback's own URL
-    // path; the record says which provider the flow was actually started with. A mismatch means
-    // this state was minted for somebody else, and consuming it would forward the `code` and
-    // the PKCE `code_verifier` to a provider the user never authorized — which is exactly what
-    // lets a hostile provider redeem an honest one's code.
-    //
-    // A plain comparison, deliberately, unlike the state-cookie binding above: this is not a
-    // secret. Both sides are provider names drawn from the registered plugins, and the
-    // callback's own value is a URL path segment the caller supplied. There is nothing here for
-    // a timing side channel to reveal, and a constant-time compare would only imply otherwise.
-    if (parsedState.provider !== provider) {
-      this.logger.warn(`handleCallback: OAuth state provider mismatch provider=${provider}`)
-      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-    }
-
-    const { tenantId, codeVerifier } = parsedState
-
-    // Exchange code and fetch profile — wrap in try/catch for observability.
-    //
-    // The access token stays INSIDE the `try`. It was hoisted out for one reason — so the catch
-    // could name it in a redaction list — and that list is gone, because nothing the plugin wrote
-    // is published any more. Left hoisted, its `''` initialiser would be a value no test can
-    // observe, which is a mutation survivor and, more plainly, a variable whose scope no longer
-    // matches its use.
-    let profile: Awaited<ReturnType<typeof plugin.fetchProfile>>
-    try {
-      const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
-      profile = await plugin.fetchProfile(tokenResponse.access_token)
-    } catch (err: unknown) {
-      // Nothing the plugin wrote is published. This path holds a LIVE ACCESS TOKEN: the plugin
-      // received `code`, `codeVerifier` and `accessToken`, and an HTTP client attaching its
-      // request config to the error is the ordinary case rather than an exotic one — axios does
-      // it by default.
-      //
-      // Naming the three values was the previous shape, and the comment justifying it conceded
-      // the defect in its own second sentence: redaction is a substring match, so it holds for a
-      // value the plugin echoed as given and not for one it re-encoded. A token in a base64 or
-      // URL-encoded request body is not present as written, so no list finds it — the same
-      // measurement that took the mail channel's text out of these lines. There is nothing to
-      // name because nothing the plugin authored comes through.
-      //
-      // A plugin that wants its own diagnostics logged in full can log them itself, where the
-      // operator knows the audience.
-      this.logger.error(
-        `OAuth plugin '${provider}' failed during code exchange or profile fetch: ` +
-          describeChannelStatus(err)
-      )
-      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-    }
+    const profile = await this.fetchProfile(plugin, provider, code, codeVerifier)
 
     // Look up an existing user linked to this OAuth identity.
     const existingAuthUser = await this.userRepo.findByOAuthId({
@@ -407,76 +322,13 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
-    let authUser: AuthUser
-    switch (hookResult.action) {
-      case 'create': {
-        // `String.prototype.split` always returns at least one element on a
-        // non-empty input (which `@IsEmail` has already validated), so the
-        // `?? profile.email` defence-in-depth branch is not expected at runtime.
-        /* istanbul ignore next -- defensive fallback: split('@')[0] is always defined for a validated email */
-        const derivedName = profile.name ?? profile.email.split('@')[0] ?? profile.email
-
-        // An account may already own this address without being linked to this OAuth identity
-        // — a local registration, or a link to a different provider. `findByOAuthId` above does
-        // not see it, so creating would violate the repository's uniqueness constraint and
-        // surface as an opaque 500. It is a conflict, and the caller can act on it (sign in and
-        // link instead), so it is reported as one. rust-auth answers the same 409
-        // `auth.oauth_email_mismatch` for the same collision.
-        //
-        // A concurrent create between this check and the insert still reaches the repository.
-        // Nothing portable can be done about that here — `IUserRepository` is host-implemented
-        // and its errors are untyped — so the check closes the deterministic case and leaves
-        // the race to the constraint.
-        if (await this.userRepo.findByEmail({ email: profile.email, tenantId })) {
-          this.logger.warn(
-            `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${logSafe(tenantId)}`
-          )
-          throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
-        }
-
-        authUser = await this.userRepo.createWithOAuth({
-          email: profile.email,
-          name: derivedName,
-          tenantId,
-          // What the provider actually asserted, not a convenient constant. An account created
-          // from an unverified address belongs to whoever controls the OAuth account, not to
-          // whoever controls the mailbox; marking it verified would make the consumer's
-          // "this email is proven" invariant false from the first login.
-          emailVerified: profile.emailVerified,
-          oauthProvider: provider,
-          oauthProviderId: profile.providerId
-        })
-        break
-      }
-
-      case 'link': {
-        if (!existingAuthUser) {
-          // Hook returned 'link' but there is no existing user — treat as OAuth failure.
-          throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-        }
-        await this.userRepo.linkOAuth({
-          id: existingAuthUser.id,
-          tenantId: existingAuthUser.tenantId,
-          provider,
-          providerId: profile.providerId
-        })
-        // Re-fetch by primary key (more direct than findByOAuthId — id is already known).
-        const linked = await this.userRepo.findById({
-          id: existingAuthUser.id,
-          tenantId: existingAuthUser.tenantId
-        })
-        if (!linked) {
-          throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-        }
-        authUser = linked
-        break
-      }
-
-      case 'reject':
-      default: {
-        throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-      }
-    }
+    const authUser = await this.resolveAccount(
+      provider,
+      tenantId,
+      profile,
+      hookResult,
+      existingAuthUser
+    )
 
     // Status gate. Every credential flow in this library runs it — password login, the MFA
     // challenge, both password-reset steps, the platform login — and OAuth was the one that
@@ -560,6 +412,249 @@ export class OAuthService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Validates and spends the `state` of a callback.
+   *
+   * The state must be bound to this browser by the `oauth_state` cookie, must exist (and is
+   * deleted as it is read), must parse, and must name the provider the callback names.
+   *
+   * @param provider - The provider named by the callback path.
+   * @param state - The `state` query value.
+   * @param stateCookie - The `oauth_state` cookie value, or `undefined` when none was sent.
+   * @returns The stored record of the flow.
+   * @throws `AuthException(OAUTH_FAILED)` for a state that is unbound, missing, unparseable,
+   *   malformed or minted for another provider.
+   */
+  private async consumeState(
+    provider: string,
+    state: string,
+    stateCookie: string | undefined
+  ): Promise<StoredOAuthState> {
+    // Bind the callback to the browser that started the flow (RFC 6749 §10.12). A `state`
+    // that merely exists in Redis proves only that *somebody* started a flow: an attacker can
+    // run their own authorization to the point of holding a valid `?code=…&state=…` URL, never
+    // visit it, and lure the victim there instead — the victim's browser would then be logged
+    // into the attacker's account, and anything they added afterwards would be the attacker's
+    // to read. Only the cookie distinguishes the two, so a missing one is as fatal as a wrong
+    // one. Checked before `getdel` so a callback that fails the binding cannot burn a state
+    // the legitimate browser is still entitled to complete. Hashes are compared rather than
+    // the raw values so the constant-time path is not skipped by a length mismatch.
+    if (stateCookie === undefined || !timingSafeCompare(sha256(state), sha256(stateCookie))) {
+      this.logger.warn(`handleCallback: OAuth state not bound to this browser provider=${provider}`)
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+
+    const stored = await this.readState(provider, state)
+
+    // Mix-up defence (RFC 9700 §2.1/§4.4). `provider` here comes from the callback's own URL
+    // path; the record says which provider the flow was actually started with. A mismatch means
+    // this state was minted for somebody else, and consuming it would forward the `code` and
+    // the PKCE `code_verifier` to a provider the user never authorized — which is exactly what
+    // lets a hostile provider redeem an honest one's code.
+    //
+    // A plain comparison, deliberately, unlike the state-cookie binding above: this is not a
+    // secret. Both sides are provider names drawn from the registered plugins, and the
+    // callback's own value is a URL path segment the caller supplied. There is nothing here for
+    // a timing side channel to reveal, and a constant-time compare would only imply otherwise.
+    if (stored.provider !== provider) {
+      this.logger.warn(`handleCallback: OAuth state provider mismatch provider=${provider}`)
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+
+    return stored
+  }
+
+  /**
+   * Reads and deletes the state record of a flow, in one step so it can be used once.
+   *
+   * @param provider - The provider named by the callback path, for the log lines.
+   * @param state - The `state` query value.
+   * @returns The stored record.
+   * @throws `AuthException(OAUTH_FAILED)` for a state that is missing, unparseable or malformed.
+   */
+  private async readState(provider: string, state: string): Promise<StoredOAuthState> {
+    // Atomically read and delete the CSRF state — single-use enforcement.
+    const stateKey = `os:${sha256(state)}`
+    const rawState = await this.redis.getdel(stateKey)
+
+    if (!rawState) {
+      this.logger.warn(`handleCallback: invalid or expired OAuth state provider=${provider}`)
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+
+    let parsedState: unknown
+    try {
+      parsedState = JSON.parse(rawState)
+    } catch {
+      // A state key that exists but does not parse is corrupted storage, not a stale or
+      // forged callback — the two are indistinguishable to the caller (both answer
+      // OAUTH_FAILED) and only this line tells them apart in an operator's logs.
+      this.logger.warn(`handleCallback: unparseable OAuth state provider=${provider}`)
+      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone the unparsed state fails `isStoredOAuthState` on the next line and raises the identical OAUTH_FAILED.
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+
+    if (!isStoredOAuthState(parsedState)) {
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+
+    return parsedState
+  }
+
+  /**
+   * Exchanges the authorization code and fetches the provider's profile.
+   *
+   * @param plugin - The provider plugin.
+   * @param provider - Its name, for the log line.
+   * @param code - The authorization code.
+   * @param codeVerifier - The PKCE verifier stored with the state.
+   * @returns The normalized profile.
+   * @throws `AuthException(OAUTH_FAILED)` when the exchange or the fetch fails.
+   */
+  private async fetchProfile(
+    plugin: OAuthProviderPlugin,
+    provider: string,
+    code: string,
+    codeVerifier: string
+  ): Promise<OAuthProfile> {
+    try {
+      const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
+      return await plugin.fetchProfile(tokenResponse.access_token)
+    } catch (err: unknown) {
+      // Nothing the plugin wrote is published. This path holds a LIVE ACCESS TOKEN: the plugin
+      // received `code`, `codeVerifier` and `accessToken`, and an HTTP client attaching its
+      // request config to the error is the ordinary case rather than an exotic one — axios does
+      // it by default. Redaction is a substring match, so it cannot find a token the plugin
+      // re-encoded (in a base64 or URL-encoded request body); there is nothing to name because
+      // nothing the plugin authored comes through.
+      //
+      // A plugin that wants its own diagnostics logged in full can log them itself, where the
+      // operator knows the audience.
+      this.logger.error(
+        `OAuth plugin '${provider}' failed during code exchange or profile fetch: ` +
+          describeChannelStatus(err)
+      )
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+  }
+
+  /**
+   * Provisions a new account from a verified OAuth profile.
+   *
+   * @param provider - The provider name.
+   * @param tenantId - The tenant the flow resolved to.
+   * @param profile - The provider's profile.
+   * @returns The created account.
+   * @throws `AuthException(OAUTH_EMAIL_MISMATCH)` when the address already belongs to an account.
+   */
+  private async createAccount(
+    provider: string,
+    tenantId: string,
+    profile: OAuthProfile
+  ): Promise<AuthUser> {
+    // `String.prototype.split` always returns at least one element on a
+    // non-empty input (which `@IsEmail` has already validated), so the
+    // `?? profile.email` defence-in-depth branch is not expected at runtime.
+    /* istanbul ignore next -- defensive fallback: split('@')[0] is always defined for a validated email */
+    const derivedName = profile.name ?? profile.email.split('@')[0] ?? profile.email
+
+    // An account may already own this address without being linked to this OAuth identity
+    // — a local registration, or a link to a different provider. `findByOAuthId` above does
+    // not see it, so creating would violate the repository's uniqueness constraint and
+    // surface as an opaque 500. It is a conflict, and the caller can act on it (sign in and
+    // link instead), so it is reported as one. rust-auth answers the same 409
+    // `auth.oauth_email_mismatch` for the same collision.
+    //
+    // A concurrent create between this check and the insert still reaches the repository.
+    // Nothing portable can be done about that here — `IUserRepository` is host-implemented
+    // and its errors are untyped — so the check closes the deterministic case and leaves
+    // the race to the constraint.
+    if (await this.userRepo.findByEmail({ email: profile.email, tenantId })) {
+      this.logger.warn(
+        `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${logSafe(tenantId)}`
+      )
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
+    }
+
+    return this.userRepo.createWithOAuth({
+      email: profile.email,
+      name: derivedName,
+      tenantId,
+      // What the provider actually asserted, not a convenient constant. An account created
+      // from an unverified address belongs to whoever controls the OAuth account, not to
+      // whoever controls the mailbox; marking it verified would make the consumer's
+      // "this email is proven" invariant false from the first login.
+      emailVerified: profile.emailVerified,
+      oauthProvider: provider,
+      oauthProviderId: profile.providerId
+    })
+  }
+
+  /**
+   * Links the OAuth identity to the account the flow already found.
+   *
+   * @param provider - The provider name.
+   * @param profile - The provider's profile.
+   * @param existingAuthUser - The account to link, or `null` when there is none.
+   * @returns The account re-read after linking.
+   * @throws `AuthException(OAUTH_FAILED)` when there is no account to link or it cannot be re-read.
+   */
+  private async linkAccount(
+    provider: string,
+    profile: OAuthProfile,
+    existingAuthUser: AuthUser | null
+  ): Promise<AuthUser> {
+    if (!existingAuthUser) {
+      // Hook returned 'link' but there is no existing user — treat as OAuth failure.
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+    await this.userRepo.linkOAuth({
+      id: existingAuthUser.id,
+      tenantId: existingAuthUser.tenantId,
+      provider,
+      providerId: profile.providerId
+    })
+    // Re-fetch by primary key (more direct than findByOAuthId — id is already known).
+    const linked = await this.userRepo.findById({
+      id: existingAuthUser.id,
+      tenantId: existingAuthUser.tenantId
+    })
+    if (!linked) {
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+    return linked
+  }
+
+  /**
+   * Carries out the account strategy the `onOAuthLogin` hook chose.
+   *
+   * @param provider - The provider name.
+   * @param tenantId - The tenant the flow resolved to.
+   * @param profile - The verified provider profile.
+   * @param hookResult - The hook's decision.
+   * @param existingAuthUser - The account already linked to this identity, or `null`.
+   * @returns The account the flow signs in.
+   * @throws `AuthException` for a rejected flow, a `link` with no account to link, or a
+   *   create that collides with an existing address.
+   */
+  private async resolveAccount(
+    provider: string,
+    tenantId: string,
+    profile: OAuthProfile,
+    hookResult: OAuthLoginResult,
+    existingAuthUser: AuthUser | null
+  ): Promise<AuthUser> {
+    switch (hookResult.action) {
+      case 'create':
+        return this.createAccount(provider, tenantId, profile)
+      case 'link':
+        return this.linkAccount(provider, profile, existingAuthUser)
+      case 'reject':
+      default:
+        throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+  }
 
   /**
    * Resolves a plugin by name or throws `OAUTH_FAILED` when not found.
