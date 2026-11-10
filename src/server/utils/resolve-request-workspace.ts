@@ -24,6 +24,9 @@ export interface WorkspaceRouteRequest extends TenantResolverRequest {
  * @param message - What is wrong with it.
  * @throws {AuthException} Always, as `auth.validation` on `workspaceId`.
  */
+/** What a workspace id must be, as the validation detail says it. */
+const WORKSPACE_ID_RULE = `workspaceId must be 1 to ${MAX_WORKSPACE_ID_LENGTH} characters, not blank, with no control characters`
+
 function invalidWorkspaceId(message: string): never {
   throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [{ field: 'workspaceId', message }])
 }
@@ -35,7 +38,7 @@ function invalidWorkspaceId(message: string): never {
  * @returns The id.
  * @throws {AuthException} `auth.validation` when it is not.
  */
-function assertWorkspaceId(value: unknown): string {
+export function assertWorkspaceId(value: unknown): string {
   // A blank id is refused here, as `WorkspaceAccessService` refuses one with an error that would
   // reach the caller as a 500. The pattern needs a character, so it also refuses an empty id.
   if (
@@ -44,11 +47,22 @@ function assertWorkspaceId(value: unknown): string {
     exceedsCodePoints(value, MAX_WORKSPACE_ID_LENGTH) ||
     !NO_CONTROL_CHARACTERS.test(value)
   ) {
-    return invalidWorkspaceId(
-      `workspaceId must be 1 to ${MAX_WORKSPACE_ID_LENGTH} characters, not blank, with no control characters`
-    )
+    return invalidWorkspaceId(WORKSPACE_ID_RULE)
   }
   return value
+}
+
+/**
+ * Requires a socket message to be an object, the only thing that can carry a workspace id and be
+ * told apart from every other message in flight.
+ *
+ * @param message - What the gateway received.
+ * @returns The message.
+ * @throws {AuthException} `auth.validation` naming `workspaceId` when it is not an object.
+ */
+export function assertWorkspaceMessage(message: unknown): object {
+  if (typeof message !== 'object' || message === null) return invalidWorkspaceId(WORKSPACE_ID_RULE)
+  return message
 }
 
 /**

@@ -198,6 +198,30 @@ export class AccountStatusService {
   }
 
   /**
+   * The same decision as {@link assertDashboardAccountUsable}, read from the repository now.
+   *
+   * Neither reads nor writes the status cache, so the answer is as current as the repository:
+   * for a caller whose contract is "authorized at this moment", such as a queued job that may run
+   * long after the request that enqueued it, and for which a ban inside the cache window is exactly
+   * the case that must not slip through. It costs one repository read per call.
+   *
+   * @param ref - The account and its tenant.
+   * @throws {AuthException} `TOKEN_INVALID` for an account that no longer exists, the blocked
+   *   status's own code, or `EMAIL_NOT_VERIFIED` when verification is required and missing.
+   */
+  async assertDashboardAccountUsableNow(ref: {
+    readonly userId: string
+    readonly tenantId: string
+  }): Promise<void> {
+    const user = await this.userRepo.findById({ id: ref.userId, tenantId: ref.tenantId })
+    if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    assertNotBlocked(user.status, this.options.blockedStatuses)
+    if (this.options.emailVerification.required && !user.emailVerified) {
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+    }
+  }
+
+  /**
    * Refuses a platform administrator whose account is blocked or gone.
    *
    * Uncached, unlike the dashboard side. The platform repository exposes `findById(id)` with no

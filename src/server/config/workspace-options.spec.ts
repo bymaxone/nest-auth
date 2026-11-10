@@ -272,6 +272,18 @@ describe('resolveWorkspaceOptions', () => {
       ).toThrow('workspaces.allowCreate must be a boolean or a function.')
     })
 
+    it('refuses a resolveWsWorkspace that is not a function, and carries one that is', () => {
+      expect(() =>
+        resolveWorkspaceOptions(options({ resolveWsWorkspace: 'room' as never }))
+      ).toThrow('workspaces.resolveWsWorkspace must be a function.')
+
+      const resolver = (message: unknown): unknown => message
+      expect(resolveWorkspaceOptions(options({ resolveWsWorkspace: resolver }))).toMatchObject({
+        resolveWsWorkspace: resolver
+      })
+      expect(resolveWorkspaceOptions(options({}))).not.toHaveProperty('resolveWsWorkspace')
+    })
+
     it('refuses a resolveRequestWorkspace that is not a function', () => {
       expect(() =>
         resolveWorkspaceOptions(

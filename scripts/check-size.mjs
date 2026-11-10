@@ -123,6 +123,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     scripts, the key builders, the guard and the lifecycle services) and workspace invitations
 //     (their service and Redis store, the controller, three request DTOs with their schemas, the
 //     page helper and the operation rows).
+//     169 KiB sits about 5% above the measured 161.05 KiB, which also holds the OAuth acceptance of a
+//     workspace invitation, the closed-registration gate, the workspace verifier option, the socket
+//     guard, the live job check and the workspace name encoder.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
@@ -159,7 +162,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 161 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 169 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },

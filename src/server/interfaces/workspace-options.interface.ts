@@ -99,4 +99,12 @@ export interface WorkspaceOptions {
    * Return `undefined` when the request names none. Never read it from the body.
    */
   resolveRequestWorkspace?: (req: TenantResolverRequest) => string | undefined
+
+  /**
+   * Reads the workspace a socket message names, for `WsWorkspaceGuard`. Receives the message body
+   * and nothing else: never the URL, a header or the handshake, so the workspace cannot come from
+   * where a confused deputy could be steered. Without it the guard reads `data.workspaceId`.
+   * A value that is not a well-formed workspace id is refused as a validation error.
+   */
+  resolveWsWorkspace?: (message: unknown) => unknown
 }

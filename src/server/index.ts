@@ -266,6 +266,7 @@ export { RequestEncodingGuard } from './guards/request-encoding.guard'
 export { TrustedOriginGuard } from './guards/trusted-origin.guard'
 export { UserStatusGuard } from './guards/user-status.guard'
 export { WorkspaceGuard } from './guards/workspace.guard'
+export { WsWorkspaceGuard } from './guards/ws-workspace.guard'
 export { WsJwtGuard } from './guards/ws-jwt.guard'
 
 // ---------------------------------------------------------------------------
@@ -416,7 +417,9 @@ export { AuthTokenVerifierService } from './services/auth-token-verifier.service
 export type {
   AuthPlane,
   VerifiedAccessToken,
-  VerifyAccessTokenOptions
+  VerifiedWorkspaceAccessToken,
+  VerifyAccessTokenOptions,
+  WorkspaceCheck
 } from './services/auth-token-verifier.service'
 // Exported because `UserStatusGuard` depends on it, and so a consumer that already holds a
 // verified payload can re-ask the one question whose answer changes while a stream is open.
@@ -482,11 +485,15 @@ export {
   AllowPendingWorkspace
 } from './decorators/allow-pending-workspace.decorator'
 export { CurrentWorkspace } from './decorators/current-workspace.decorator'
+export { CurrentWsWorkspace } from './decorators/current-ws-workspace.decorator'
 export type {
   CurrentWorkspaceContext,
   WorkspaceRequest
 } from './decorators/current-workspace.decorator'
 export { WorkspaceAccessService } from './services/workspace-access.service'
+export { decodeWorkspaceScopedName, workspaceScopedName } from './utils/workspace-scoped'
+export { stampJobContext } from './utils/workspace-job'
+export type { WorkspaceJobContext } from './interfaces/workspace-job-context.interface'
 export { MembershipService } from './services/membership.service'
 export { WorkspaceCallerService } from './services/workspace-caller.service'
 export { WorkspaceActionsService } from './services/workspace-actions.service'
