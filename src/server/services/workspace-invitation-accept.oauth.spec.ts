@@ -19,7 +19,7 @@ import {
   user
 } from './__tests__/workspace-invitation-accept-harness'
 import type { Harness } from './__tests__/workspace-invitation-accept-harness'
-import { CONTEXT, WORKSPACE_REF } from './__tests__/workspace-service-harness'
+import { CONTEXT, WORKSPACE_REF, workspaceRow } from './__tests__/workspace-service-harness'
 import { invitationKey } from '../constants/workspace-invitation-keys'
 import { sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -142,6 +142,35 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
         CONTEXT
       )
     })
+
+    it.each([
+      ['the inviter is removed', (h: Harness) => h.memberships.find.mockResolvedValue(null)],
+      [
+        'the workspace is no longer active',
+        (h: Harness) =>
+          h.workspaces.findById.mockResolvedValue(workspaceRow({ status: 'pending_deletion' }))
+      ]
+    ])(
+      'refuses when %s between the vetting and the completion, writing and spending nothing',
+      async (_n, change) => {
+        const h = build()
+        await seed(h)
+        const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
+        change(h)
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+        const refused = h.service.completeOAuth(
+          invitation,
+          user('new', { email: EMAIL }),
+          true,
+          CONTEXT
+        )
+
+        expect(await code(refused)).toBe(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
+        expect(h.memberships.create).not.toHaveBeenCalled()
+        expect(await stillThere(h)).toBe(true)
+      }
+    )
 
     it('refuses an account of another tenant, writing and spending nothing', async () => {
       const h = build()

@@ -175,8 +175,10 @@ export class WorkspaceInvitationAcceptService {
   /**
    * Completes an invitation vetted by {@link prepareOAuth} for the account the OAuth flow signs in.
    *
-   * The account must be the invited address in the invitation's tenant. The membership is written
-   * first and the token spent after, as for every acceptance, and a bootstrap invitation applies
+   * The account must be the invited address in the invitation's tenant, and the inviter's standing
+   * and the workspace are judged again here, because the host's hook and the account write ran
+   * since {@link prepareOAuth}. The membership is written first and the token spent after, as for
+   * every acceptance, and a bootstrap invitation applies
    * the owner cap and the host's `beforeWorkspaceCreate` before it creates the workspace.
    *
    * @param loaded - What {@link prepareOAuth} returned.
@@ -197,6 +199,7 @@ export class WorkspaceInvitationAcceptService {
   ): Promise<AcceptedInvitation> {
     if (user.tenantId !== loaded.record.tenantId) throw invalidToken()
     assertAddress(loaded.record, user.email, user.emailVerified)
+    await this.assertStillGrantable(loaded.record)
     const accepted = await this.finish(loaded, user, context)
     if (created) {
       runDetached(

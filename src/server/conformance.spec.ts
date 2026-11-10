@@ -145,7 +145,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = '9953374740fa07d161a9b131f6f0f79e7f87a8c9c4ede1b22240c362d1bb37fd'
+const CONTRACT_SHA256 = 'b5d07c9bc1e3d6b16b8f72b0d53fdb84a222be712f1066109c4420eb5e9b20f0'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {

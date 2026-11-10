@@ -221,6 +221,33 @@ describe('workspace invitation through OAuth (E2E)', () => {
       expect(access.body).toMatchObject({ role: 'editor' })
     })
 
+    it('hands an account with a second factor the challenge, leaving the token for the signed-in accept', async () => {
+      const mfaPerson = 'mfa.person@example.com'
+      flow.profile = profileFor(mfaPerson, true)
+      const first = await invitation(mfaPerson)
+      const signedIn = await finish(await start(first.token))
+      const bearer = `Bearer ${(signedIn.body as { accessToken: string }).accessToken}`
+      const account = await b.repo.findByEmail({ email: mfaPerson, tenantId: 'tenant-1' })
+      await b.repo.updateMfa({
+        id: account?.id ?? '',
+        tenantId: 'tenant-1',
+        data: { mfaEnabled: true, mfaSecret: 'secret', mfaRecoveryCodes: [] }
+      })
+      const second = await invitation(mfaPerson)
+      flow.decision = { action: 'link' }
+
+      const challenge = await finish(await start(second.token))
+
+      expect(challenge.body).toMatchObject({ mfaRequired: true })
+      expect((await preview(second.token)).status).toBe(200)
+      const accepted = await request(app.getHttpServer())
+        .post('/workspaces/invitations/accept')
+        .set('Authorization', bearer)
+        .send({ token: second.token })
+      expect(accepted.body).toEqual({ workspaceId: second.id, role: 'editor' })
+      expectAuthError(await preview(second.token), 'auth.invalid_invitation_token')
+    })
+
     it('keeps the state bound to the browser that started the flow', async () => {
       const { token } = await invitation(INVITEE)
       const startRes = await start(token)
