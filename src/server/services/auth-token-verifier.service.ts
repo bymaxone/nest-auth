@@ -4,13 +4,15 @@
  * @layer Service
  */
 
-import { Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { AccountStatusService } from './account-status.service'
 import { AuthRevocationService } from './auth-revocation.service'
+import { WorkspaceAccessService } from './workspace-access.service'
 import type { ResolvedOptions } from '../config/resolved-options'
+import type { CurrentWorkspaceContext } from '../decorators/current-workspace.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import {
@@ -20,9 +22,12 @@ import {
   assertValidTenantId
 } from '../guards/utils/assert-token-type'
 import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
+import type { WorkspaceRoleList } from '../interfaces/workspace-options.interface'
 import { assertTenantBinding, tenantBindingEnforced } from '../utils/assert-tenant-binding'
 import type { HandshakeLike } from '../utils/handshake-request'
+import { assertWorkspaceId } from '../utils/resolve-request-workspace'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
+import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
 /**
  * Which identity plane a caller expects a token to belong to.
@@ -44,6 +49,34 @@ export type AuthPlane = 'dashboard' | 'platform'
 export type VerifiedAccessToken =
   | { readonly plane: 'dashboard'; readonly payload: DashboardJwtPayload }
   | { readonly plane: 'platform'; readonly payload: PlatformJwtPayload }
+
+/**
+ * The workspace a verification also admits the caller to.
+ *
+ * Judged exactly as `WorkspaceGuard` judges a route: the same access resolution, the same cache, the
+ * same refusals in the same order, so a stream and a route can never disagree about a member.
+ */
+export interface WorkspaceCheck {
+  /** The workspace the caller names, from the message and never from the token or the URL. */
+  readonly workspaceId: string
+  /** The roles that admit the caller; `ANY_WORKSPACE_MEMBER` admits every active member. */
+  readonly roles: WorkspaceRoleList
+  /**
+   * Admit the owner of a workspace pending deletion, for a read-only stream. Everyone else is still
+   * answered `workspace_not_found`.
+   *
+   * @defaultValue false
+   */
+  readonly allowPending?: boolean
+}
+
+/** A dashboard verification that also admitted the caller to a workspace. */
+export interface VerifiedWorkspaceAccessToken {
+  readonly plane: 'dashboard'
+  readonly payload: DashboardJwtPayload
+  /** The caller's membership of the workspace they were admitted to. */
+  readonly workspace: CurrentWorkspaceContext
+}
 
 /**
  * What a verification checks beyond the signature.
@@ -110,6 +143,20 @@ export interface VerifyAccessTokenOptions {
    * binding the HTTP guards enforce and this surface does not.
    */
   readonly request?: HandshakeLike
+
+  /**
+   * Also admit the caller to one workspace, resolved through the access cache the routes use, and
+   * return their membership as `workspace`. A refusal is the guard's own: `workspace_not_found`
+   * for a caller who is not an active member (and for every non-owner of a workspace pending
+   * deletion, identically), `workspace_pending_deletion` for its owner, `insufficient_workspace_role`
+   * for a role no accepted one covers, and `auth.validation` naming `workspaceId` for an id that is
+   * blank, over-long or holds a control character, ahead of any lookup.
+   *
+   * Dashboard plane only, and only with `workspaces.enabled`: anything else is a `TypeError`,
+   * because a platform token has no workspace and the feature is absent otherwise. A stream calls
+   * it at subscribe time and again on its cadence or per message; a refusal means disconnect.
+   */
+  readonly workspace?: WorkspaceCheck
 }
 
 /**
@@ -148,8 +195,9 @@ export interface VerifyAccessTokenOptions {
  * account is usable, and the definitive refusal is the one it must see first.
  *
  * **What it still does not do, and cannot.** Route authorization is the consumer's — this answers
- * who the caller is, never what they may do, so a `@Roles()` equivalent stays yours to apply on
- * every message a stream carries, not only at the handshake. Tenant binding
+ * who the caller is, and with {@link VerifyAccessTokenOptions.workspace} which workspace they belong
+ * to and in what role, never what they may do beyond that, so a `@Roles()` equivalent stays yours to
+ * apply on every message a stream carries, not only at the handshake. Tenant binding
  * (`enforceTenantBinding`) needs the request the resolver reads, which a token does not carry:
  * pass the handshake as {@link VerifyAccessTokenOptions.request}, or the binding is not applied. And nothing here holds a subscription: it answers at the moment it is called, so a stream
  * that calls it once at connect is authorized for the lifetime of the token, not of the session.
@@ -181,7 +229,11 @@ export class AuthTokenVerifierService {
     @Inject(JwtService) private readonly jwtService: JwtService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     @Inject(AuthRevocationService) private readonly revocation: AuthRevocationService,
-    @Inject(AccountStatusService) private readonly accountStatus: AccountStatusService
+    @Inject(AccountStatusService) private readonly accountStatus: AccountStatusService,
+    // Present only when `workspaces.enabled`.
+    @Inject(WorkspaceAccessService)
+    @Optional()
+    private readonly workspaceAccess: WorkspaceAccessService | null = null
   ) {}
 
   /**
@@ -214,12 +266,27 @@ export class AuthTokenVerifierService {
    */
   async verifyAccessToken(
     token: string,
+    options: VerifyAccessTokenOptions & { plane: 'dashboard'; workspace: WorkspaceCheck }
+  ): Promise<VerifiedWorkspaceAccessToken>
+  async verifyAccessToken(
+    token: string,
     options: VerifyAccessTokenOptions
-  ): Promise<VerifiedAccessToken> {
-    const { plane, requireMfa = true, checkStatus = true } = options
+  ): Promise<VerifiedAccessToken>
+  async verifyAccessToken(
+    token: string,
+    options: VerifyAccessTokenOptions
+  ): Promise<VerifiedAccessToken | VerifiedWorkspaceAccessToken> {
+    const { plane, requireMfa = true, checkStatus = true, workspace } = options
+
+    const admit =
+      workspace === undefined
+        ? undefined
+        : { check: workspace, resolve: this.workspaceResolver(plane) }
 
     if (plane === 'dashboard') {
-      return await this.verifyDashboard(token, requireMfa, checkStatus, options.request)
+      const verified = await this.verifyDashboard(token, requireMfa, checkStatus, options.request)
+      if (admit === undefined) return verified
+      return { ...verified, workspace: await admit.resolve(verified.payload, admit.check) }
     }
     if (plane === 'platform') return await this.verifyPlatform(token, requireMfa, checkStatus)
 
@@ -247,7 +314,7 @@ export class AuthTokenVerifierService {
     requireMfa: boolean,
     checkStatus: boolean,
     request: HandshakeLike | undefined
-  ): Promise<VerifiedAccessToken> {
+  ): Promise<{ readonly plane: 'dashboard'; readonly payload: DashboardJwtPayload }> {
     const payload = this.verifySignature<DashboardJwtPayload>(token)
 
     assertValidJti(payload.jti)
@@ -274,6 +341,40 @@ export class AuthTokenVerifierService {
     if (requireMfa) this.assertMfaVerified(payload)
 
     return { plane: 'dashboard', payload }
+  }
+
+  /**
+   * The function that admits a caller to a workspace, or a `TypeError` when none can: on a plane
+   * with no workspaces, or on a deployment that has not enabled them. A programmer's error.
+   *
+   * The returned function admits the caller as `WorkspaceGuard` would a route, with `auth.validation`
+   * for a malformed id and then the guard's refusals.
+   */
+  private workspaceResolver(
+    plane: AuthPlane
+  ): (payload: DashboardJwtPayload, check: WorkspaceCheck) => Promise<CurrentWorkspaceContext> {
+    if (plane !== 'dashboard') {
+      throw new TypeError('verifyAccessToken: workspace needs the dashboard plane')
+    }
+    const access = this.workspaceAccess
+    const group = this.options.workspaces
+    if (access === null || group === undefined) {
+      throw new TypeError('verifyAccessToken: workspace needs workspaces.enabled')
+    }
+    return async (payload, check) => {
+      const workspaceId = assertWorkspaceId(check.workspaceId)
+      const resolved = await access.resolveAccess({
+        tenantId: payload.tenantId,
+        workspaceId,
+        userId: payload.sub
+      })
+      return assertWorkspaceAccess(
+        resolved,
+        check.roles,
+        group.roles.hierarchy,
+        check.allowPending === true
+      )
+    }
   }
 
   /**

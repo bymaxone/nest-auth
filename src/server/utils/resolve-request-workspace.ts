@@ -35,7 +35,7 @@ function invalidWorkspaceId(message: string): never {
  * @returns The id.
  * @throws {AuthException} `auth.validation` when it is not.
  */
-function assertWorkspaceId(value: unknown): string {
+export function assertWorkspaceId(value: unknown): string {
   // A blank id is refused here, as `WorkspaceAccessService` refuses one with an error that would
   // reach the caller as a 500. The pattern needs a character, so it also refuses an empty id.
   if (

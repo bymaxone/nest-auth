@@ -26,7 +26,7 @@ import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { WorkspaceAccessService } from '../services/workspace-access.service'
 import { resolveRequestWorkspace } from '../utils/resolve-request-workspace'
-import { hasRole } from '../utils/roles.util'
+import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
 type GuardedRequest = Request & WorkspaceRequest & { user?: DashboardJwtPayload }
 
@@ -92,14 +92,12 @@ export class WorkspaceGuard implements CanActivate {
       workspaceId,
       userId: user.sub
     })
-    if (access.kind === 'denied') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
-    if (access.kind === 'pending_deletion' && !this.admitsPending(context)) {
-      throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION)
-    }
-    const { member } = access
-    if (!this.accepts(accepted, member.role)) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
-    }
+    const member = assertWorkspaceAccess(
+      access,
+      accepted,
+      this.group.roles.hierarchy,
+      this.admitsPending(context)
+    )
 
     request.workspace = { ...member }
     return true
@@ -131,14 +129,6 @@ export class WorkspaceGuard implements CanActivate {
       if (declared !== undefined) break
     }
     throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
-  }
-
-  private accepts(accepted: AcceptedRole[], role: string): boolean {
-    const { hierarchy } = this.group.roles
-    return accepted.some((required) => {
-      if (required === ANY_WORKSPACE_MEMBER) return true
-      return hasRole(role, required, hierarchy)
-    })
   }
 }
 
