@@ -7,7 +7,7 @@
     "src/server/bymax-auth.module.spec.ts": 1362,
     "src/server/config/resolved-options.spec.ts": 3362,
     "src/server/config/resolved-options.ts": 1423,
-    "src/server/conformance.spec.ts": 1343,
+    "src/server/conformance.spec.ts": 1342,
     "src/server/controllers/mfa.controller.spec.ts": 902,
     "src/server/interfaces/auth-module-options.interface.ts": 992,
     "src/server/oauth/oauth.controller.spec.ts": 1078,

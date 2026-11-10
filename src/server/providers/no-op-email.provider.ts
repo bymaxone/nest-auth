@@ -11,7 +11,8 @@ import { Injectable, Logger } from '@nestjs/common'
 import type {
   IEmailProvider,
   InviteData,
-  SessionAlertInfo
+  SessionAlertInfo,
+  WorkspaceInviteData
 } from '../interfaces/email-provider.interface'
 import { maskEmail } from '../utils/mask-email'
 
@@ -105,5 +106,15 @@ export class NoOpEmailProvider implements IEmailProvider {
     _locale?: string
   ): Promise<void> {
     this.logger.log(`sendInvitation → ${maskEmail(email)} (no-op)`)
+  }
+
+  /** @inheritdoc */
+  async sendWorkspaceInvitation(
+    _tenantId: string,
+    email: string,
+    _data: WorkspaceInviteData,
+    _locale?: string
+  ): Promise<void> {
+    this.logger.log(`sendWorkspaceInvitation → ${maskEmail(email)} (no-op)`)
   }
 }

@@ -118,9 +118,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     about 6%, inside this entry's historical band. It is a capability the consumer's interim
 //     guard cannot be deleted without, with red-checked tests behind it, which is the
 //     distinction this budget exists to force.
-//     151 KiB sits about 5% above the measured 143.74 KiB. The size includes the workspace
-//     layer: its option group with validation, the membership access service with its Lua
-//     scripts, the key builders, the guard and the lifecycle services.
+//     161 KiB sits about 5% above the measured 154.09 KiB. The size includes the workspace
+//     layer (its option group with validation, the membership access service with its Lua
+//     scripts, the key builders, the guard and the lifecycle services) and workspace invitations
+//     (their service and Redis store, the controller, three request DTOs with their schemas, the
+//     page helper and the operation rows).
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
@@ -157,7 +159,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 151 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 161 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.75 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },

@@ -40,6 +40,7 @@ import { PlatformAuthController } from '../controllers/platform-auth.controller'
 import { PlatformMfaController } from '../controllers/platform-mfa.controller'
 import { SessionController } from '../controllers/session.controller'
 import { WorkspaceController } from '../controllers/workspace.controller'
+import { WorkspaceInvitationController } from '../controllers/workspace-invitation.controller'
 import { OAuthController } from '../oauth/oauth.controller'
 import type { ResolvedOptions } from '../config/resolved-options'
 
@@ -54,7 +55,8 @@ const CONTROLLERS: Readonly<Record<string, new (...args: never[]) => object>> = 
   InvitationController,
   EmailChangeController,
   OAuthController,
-  WorkspaceController
+  WorkspaceController,
+  WorkspaceInvitationController
 }
 
 /** Everything mounted, so the fragment carries every handler this library can declare. */
@@ -68,7 +70,8 @@ const EVERYTHING: RegisteredControllers = {
   invitations: true,
   emailChange: true,
   oauth: true,
-  workspaces: true
+  workspaces: true,
+  workspaceInvitations: true
 }
 
 /** Enough resolved options for the fragment builder, which reads three fields. */

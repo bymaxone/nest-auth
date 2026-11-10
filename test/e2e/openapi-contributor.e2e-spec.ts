@@ -108,7 +108,8 @@ const EVERY_CONTROLLER = {
     invitations: true,
     emailChange: true,
     oauth: true,
-    workspaces: true
+    workspaces: true,
+    workspaceInvitations: true
   }
 }
 

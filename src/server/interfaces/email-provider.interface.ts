@@ -49,6 +49,27 @@ export interface SessionAlertInfo {
 }
 
 /**
+ * Data required to render and send a workspace invitation email.
+ */
+export interface WorkspaceInviteData {
+  /** Display name of the member who sent the invitation. */
+  inviterName: string
+  /** Name of the workspace the invitee is joining. */
+  workspaceName: string
+  /** The role the invitation grants. */
+  role: string
+  /**
+   * Raw invitation token (64 hex chars). The provider builds the accept URL; only its digest is
+   * stored, so a resend carries a new token.
+   */
+  inviteToken: string
+  /** UTC timestamp after which the invitation is no longer valid. */
+  expiresAt: Date
+  /** Whether an account already exists for the address: sign-in wording versus sign-up wording. */
+  accountExists: boolean
+}
+
+/**
  * Data required to render and send a tenant invitation email.
  */
 export interface InviteData {
@@ -302,6 +323,24 @@ export interface IEmailProvider {
     tenantId: string,
     email: string,
     inviteData: InviteData,
+    locale?: string
+  ): Promise<void>
+
+  /**
+   * Sends a workspace invitation to a prospective member.
+   *
+   * **Optional.** `controllers.workspaceInvitations` refuses to boot when it is absent, because the
+   * flow would mint tokens nobody receives.
+   *
+   * @param tenantId - The tenant the workspace lives in, so a multi-tenant provider can route it.
+   * @param email - The invitee.
+   * @param data - What the message states, and the raw token the provider embeds in its accept link.
+   * @param locale - BCP 47 locale tag for email language.
+   */
+  sendWorkspaceInvitation?(
+    tenantId: string,
+    email: string,
+    data: WorkspaceInviteData,
     locale?: string
   ): Promise<void>
 }

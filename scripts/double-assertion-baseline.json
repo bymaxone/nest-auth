@@ -52,7 +52,6 @@
     "src/server/oauth/oauth.module.spec.ts": 1,
     "src/server/oauth/oauth.service.spec.ts": 2,
     "src/server/openapi/auth-openapi-descriptions.spec.ts": 1,
-    "src/server/openapi/auth-openapi-fragment.spec.ts": 1,
     "src/server/openapi/auth-openapi.conformance.spec.ts": 1,
     "src/server/providers/common-password-checker.provider.spec.ts": 2,
     "src/server/providers/default-auth-email.provider.context.spec.ts": 1,

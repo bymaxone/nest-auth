@@ -73,4 +73,13 @@ export interface ControllerFlags {
    * `extraProviders`; the module refuses to boot without them.
    */
   workspaces?: boolean
+
+  /**
+   * Enables `WorkspaceInvitationController`: invite, list, resend, revoke and preview.
+   * **Opt-in** — `Default: false`.
+   *
+   * Requires `workspaces.enabled: true`, both workspace repository providers, and an email
+   * provider that implements `sendWorkspaceInvitation`; the module refuses to boot without them.
+   */
+  workspaceInvitations?: boolean
 }
