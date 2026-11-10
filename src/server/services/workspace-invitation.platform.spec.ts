@@ -114,8 +114,8 @@ describe('WorkspaceInvitationService', () => {
       const answer = await h.service.preview(sent(h).data.inviteToken)
 
       expect(answer).toEqual({
+        kind: 'bootstrap',
         workspaceName: 'Acme',
-        inviterName: null,
         role: 'owner',
         maskedEmail: expect.stringMatching(/^o.*@example\.com$/),
         accountExists: false
@@ -134,7 +134,7 @@ describe('WorkspaceInvitationService', () => {
       expect(await code(h.service.preview(token))).toBe(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
       h.workspaces.findById.mockResolvedValueOnce(workspaceRow())
 
-      expect((await h.service.preview(token)).inviterName).toBeNull()
+      expect(Object.keys(await h.service.preview(token))).not.toContain('inviterName')
     })
 
     it('lists no bootstrap invitation in a workspace list', async () => {

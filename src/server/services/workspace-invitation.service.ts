@@ -248,10 +248,10 @@ export class WorkspaceInvitationService {
     if (record.kind === 'bootstrap') {
       // Its workspace does not exist yet; one that exists and is not active names nothing usable.
       if (workspace !== null && workspace.status !== 'active') throw invalidToken()
-      return { workspaceName: record.workspaceName, inviterName: null, ...answer }
+      return { kind: 'bootstrap', workspaceName: record.workspaceName, ...answer }
     }
     if (workspace?.status !== 'active' || inviter === null) throw invalidToken()
-    return { workspaceName: workspace.name, inviterName: inviter.name, ...answer }
+    return { kind: 'member', workspaceName: workspace.name, inviterName: inviter.name, ...answer }
   }
 
   /**

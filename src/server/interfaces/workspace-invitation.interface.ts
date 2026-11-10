@@ -62,12 +62,10 @@ export interface WorkspaceInvitationView {
   resendCount: number
 }
 
-/** What a holder of a token may learn about it before signing in. */
-export interface WorkspaceInvitationPreview {
+/** The fields of a preview that every kind of invitation shows. */
+interface InvitationPreviewBase {
   /** The workspace the invitation is for. */
   workspaceName: string
-  /** The display name of the member who invited; `null` for a platform bootstrap invitation. */
-  inviterName: string | null
   /** The role the invitation grants. */
   role: string
   /** The invited address with its local part masked. */
@@ -75,3 +73,20 @@ export interface WorkspaceInvitationPreview {
   /** Whether an account already exists for the address. */
   accountExists: boolean
 }
+
+/** What a holder of a member invitation may learn about it before signing in. */
+export interface MemberInvitationPreview extends InvitationPreviewBase {
+  /** Discriminator, the same as the record's. */
+  kind: 'member'
+  /** The display name of the member who invited. */
+  inviterName: string
+}
+
+/** What a holder of a platform bootstrap invitation may learn about it: it has no inviter. */
+export interface BootstrapInvitationPreview extends InvitationPreviewBase {
+  /** Discriminator, the same as the record's. */
+  kind: 'bootstrap'
+}
+
+/** What a holder of a token may learn about it before signing in. */
+export type WorkspaceInvitationPreview = MemberInvitationPreview | BootstrapInvitationPreview

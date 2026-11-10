@@ -127,6 +127,7 @@ describe('workspace invitation routes (E2E)', () => {
 
       expect(res.status).toBe(204)
       expect((await preview(tokenSentTo('new.person@example.com'))).body).toEqual({
+        kind: 'member',
         workspaceName: 'Team',
         inviterName: expect.stringContaining('Person'),
         role: 'viewer',

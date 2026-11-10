@@ -551,6 +551,7 @@ describe('WorkspaceInvitationService', () => {
       const answer = await h.service.preview(sent(h).data.inviteToken)
 
       expect(answer).toEqual({
+        kind: 'member',
         workspaceName: 'Acme',
         inviterName: 'Name of owner-1',
         role: 'editor',
