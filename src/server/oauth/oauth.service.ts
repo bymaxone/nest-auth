@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto'
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import type { Request, Response } from 'express'
 
+import { isStoredOAuthState, type StoredOAuthState } from './oauth-state'
 import { OAUTH_PLUGINS } from './oauth.constants'
 import {
   BYMAX_AUTH_HOOKS,
@@ -48,6 +49,10 @@ import type {
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
+import {
+  WorkspaceInvitationAcceptService,
+  type LoadedInvitation
+} from '../services/workspace-invitation-accept.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
@@ -59,57 +64,10 @@ import { sanitizeHeaders } from '../utils/sanitize-headers'
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
 const OAUTH_STATE_TTL_SECONDS = 600
 
-/**
- * Stored payload for an OAuth state entry in Redis.
- * Keyed under `os:{sha256(state)}` — the raw state is never stored server-side.
- */
-interface StoredOAuthState {
-  /**
-   * The provider this state was minted for, compared against the provider named by the
-   * callback path before the record is used.
-   *
-   * RFC 9700 §2.1/§4.4 makes mix-up defence REQUIRED for a client that talks to more than one
-   * authorization server. Without this field the callback resolves the provider from its own
-   * URL and then consumes any structurally valid state, so an attacker able to steer an honest
-   * provider's callback to a hostile provider's path receives both the `code` and the PKCE
-   * `code_verifier` — enough to redeem the code at the honest provider. PKCE does not help:
-   * the verifier travels with the code by design.
-   *
-   * Only Google ships in-tree today, so this is defence-in-depth. It is stored anyway because
-   * the record is a shared structure and adding a field costs less now than after a second
-   * provider lands. Held byte-compatible with rust-auth.
-   */
-  provider: string
-  /** Tenant identifier passed by the caller when initiating the flow. */
-  tenantId: string
-  /**
-   * PKCE `code_verifier` (RFC 7636), held server-side for the lifetime of the
-   * authorization flow and forwarded to the provider's token endpoint on
-   * callback.
-   *
-   * Required, deliberately. `getAuthorizationUrl` writes one on every flow regardless of
-   * provider, so a record without it is corrupt or forged — and treating it as "this flow
-   * had no PKCE" would hand an attacker a downgrade: present a state record with the field
-   * stripped and the exchange proceeds with no proof the caller started the flow.
-   * `rust-auth` types the field as a plain `String`, so a record missing it fails to
-   * deserialize there; refusing it here keeps the shared record readable by exactly one rule.
-   */
-  codeVerifier: string
-}
-
-/** Narrows an unknown value to `StoredOAuthState` after `JSON.parse`. */
-function isStoredOAuthState(value: unknown): value is StoredOAuthState {
-  // Stryker disable next-line ConditionalExpression: non-object JSON values also fail the `typeof parsed['tenantId'] !== 'string'` check below, so dropping the type guard yields the same false
-  if (typeof value !== 'object' || value === null) return false
-  const v = value as Record<string, unknown>
-  // Required, like `codeVerifier` and for the same reason: a record without it is corrupt or
-  // forged, and accepting one would restore exactly the unbound state the field exists to
-  // prevent. rust-auth types it as a plain `String`, so a record missing it fails to
-  // deserialize there too.
-  if (typeof v['provider'] !== 'string') return false
-  if (typeof v['tenantId'] !== 'string') return false
-  if (typeof v['codeVerifier'] !== 'string') return false
-  return true
+/** A vetted invitation, waiting for the account its flow signs in. */
+interface PendingInvitation {
+  /** Writes the membership for `user` and spends the token; `created` is whether the flow made the account. */
+  complete(user: AuthUser, created: boolean, context: HookContext): Promise<void>
 }
 
 /**
@@ -149,7 +107,11 @@ export class OAuthService {
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
     @Inject(SessionService) private readonly sessionService: SessionService,
-    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
+    // Present only when `workspaces.enabled`; without it a flow cannot carry an invitation.
+    @Inject(WorkspaceInvitationAcceptService)
+    @Optional()
+    private readonly invitations: WorkspaceInvitationAcceptService | null = null
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -176,24 +138,28 @@ export class OAuthService {
    *   enforce tenant membership. Without the hook, OAuth sign-in is disabled.
    * @param req - Incoming Express request, read by the configured `tenantIdResolver`.
    * @param res - Express response in passthrough mode (used for the 302 redirect).
-   * @throws `AuthException(OAUTH_FAILED)` when no plugin is registered for `provider`.
+   * @param workspaceInvitation - The raw workspace invitation token the flow accepts, when it
+   *   does. Only its sha256 is stored, and the response carries `Referrer-Policy: no-referrer`
+   *   because the request URL held the token.
+   * @throws `AuthException(OAUTH_FAILED)` when no plugin is registered for `provider`, and
+   *   `AuthException(INVALID_INVITATION_TOKEN)` for a token when workspaces are not enabled.
    */
   async initiateOAuth(
     provider: string,
     tenantId: string | undefined,
     req: Request,
-    res: Response
+    res: Response,
+    workspaceInvitation?: string
   ): Promise<void> {
     // Validate and resolve early so the Redis write is never attempted for unknown providers.
     const plugin = this.resolvePlugin(provider)
 
     // The configured resolver is authoritative, exactly as it is for login, register and the
     // reset flows: a deployment that derives the tenant from the request has stated that the
-    // caller's value is not to be trusted. This was the one door that still took it verbatim —
-    // and it is the door that decides which tenant an account gets provisioned into, which is
-    // strictly more than the others were protecting. The resolved value is what goes into the
-    // state record, so the callback cannot be talked into a different one either.
+    // caller's value is not to be trusted. The resolved value is what goes into the state record,
+    // so the callback cannot be talked into a different tenant either.
     tenantId = await resolveTenantId(tenantId, req, this.options.tenantIdResolver)
+    const invitation = this.hashInvitation(workspaceInvitation)
 
     // Generate a 64-char hex nonce for CSRF protection.
     const state = generateSecureToken(32)
@@ -205,17 +171,49 @@ export class OAuthService {
     const codeVerifier = generateSecureToken(32)
     const codeChallenge = base64url(createHash('sha256').update(codeVerifier, 'utf8').digest())
 
-    const stored: StoredOAuthState = { provider, tenantId, codeVerifier }
+    const stored: StoredOAuthState = {
+      provider,
+      tenantId,
+      codeVerifier,
+      ...(invitation === undefined ? {} : { workspaceInvitation: invitation })
+    }
     await this.redis.set(stateKey, JSON.stringify(stored), OAUTH_STATE_TTL_SECONDS)
 
-    // Bind the flow to THIS browser. The `state` parameter alone proves only that somebody
-    // started a flow: an attacker can begin their own authorization, complete consent at the
-    // provider, capture the resulting callback URL without visiting it, and lure the victim
-    // there — the victim's browser then receives the attacker's session, and everything they
-    // do next lands in the attacker's account. PKCE does not help, because the verifier lives
-    // server-side and is replayed for whoever presents the state. RFC 6749 §10.12 requires
-    // this binding. `SameSite` is forced to `lax`: the callback is a cross-site top-level GET
-    // and `strict` would withhold the cookie on exactly that hop.
+    this.bindToBrowser(res, state)
+    if (invitation !== undefined) res.setHeader('Referrer-Policy', 'no-referrer')
+    res.redirect(plugin.authorizeUrl(state, codeChallenge))
+  }
+
+  /**
+   * Hashes the invitation token a flow carries, so Redis never holds the raw token.
+   *
+   * @param carried - The raw invitation value from the query string, if any.
+   * @returns Its sha256, or `undefined` when the flow carries none.
+   * @throws `AuthException(INVALID_INVITATION_TOKEN)` when workspaces are not enabled.
+   */
+  private hashInvitation(carried: string | undefined): string | undefined {
+    if (carried === undefined) return undefined
+    if (this.invitations === null)
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
+    return sha256(carried)
+  }
+
+  /**
+   * Plants the cookie that binds a flow to the browser that started it.
+   *
+   * The `state` parameter alone proves only that somebody started a flow: an attacker can begin
+   * their own authorization, complete consent at the provider, capture the resulting callback URL
+   * without visiting it, and lure the victim there — the victim's browser then receives the
+   * attacker's session. PKCE does not help, because the verifier lives server-side and is replayed
+   * for whoever presents the state. RFC 6749 §10.12 requires this binding, and it is what keeps a
+   * flow started with someone else's invitation from being finished in another browser.
+   * `SameSite` is forced to `lax`: the callback is a cross-site top-level GET and `strict` would
+   * withhold the cookie on exactly that hop.
+   *
+   * @param res - The response to set the cookie on.
+   * @param state - The raw state nonce.
+   */
+  private bindToBrowser(res: Response, state: string): void {
     res.cookie(OAUTH_STATE_COOKIE_NAME, state, {
       httpOnly: true,
       secure: this.options.secureCookies,
@@ -223,9 +221,6 @@ export class OAuthService {
       path: '/',
       maxAge: OAUTH_STATE_COOKIE_MAX_AGE_SECONDS * 1_000
     })
-
-    const authUrl = plugin.authorizeUrl(state, codeChallenge)
-    res.redirect(authUrl)
   }
 
   // ---------------------------------------------------------------------------
@@ -277,15 +272,15 @@ export class OAuthService {
     userAgent: string,
     headers: Record<string, string | string[] | undefined>
   ): Promise<AuthResult | OAuthMfaChallengeResult> {
-    // Validate provider format and resolve the plugin before consuming the CSRF state.
-    // Moving this check before getdel() prevents the state from being silently consumed
-    // for an invalid provider — a user who encounters a misconfigured provider would
-    // otherwise need to restart the entire flow.
+    // Resolve the plugin before the state is consumed, so a misconfigured provider cannot burn a
+    // state the user would otherwise have to restart the whole flow to replace.
     const plugin = this.resolvePlugin(provider)
 
-    const { tenantId, codeVerifier } = await this.consumeState(provider, state, stateCookie)
+    const record = await this.consumeState(provider, state, stateCookie)
+    const { tenantId, codeVerifier } = record
 
     const profile = await this.fetchProfile(plugin, provider, code, codeVerifier)
+    const invitation = await this.vetInvitation(record, profile)
 
     // Look up an existing user linked to this OAuth identity.
     const existingAuthUser = await this.userRepo.findByOAuthId({
@@ -297,13 +292,9 @@ export class OAuthService {
     // Strip credential fields before passing to the hook.
     const existingUser: SafeAuthUser | null = existingAuthUser ? toSafeUser(existingAuthUser) : null
 
-    // Build the hook context with properly sanitized headers.
-    //
-    // The tenant and the address travel with it. `onOAuthLogin` is the documented — and only —
-    // place a deployment can enforce tenant membership, and it was being asked to decide that
-    // without being told which tenant, or which address, the flow had resolved to. The values
-    // come from the server-side state record and the verified profile, never from the callback
-    // request.
+    // The hook is told which tenant and which address the flow resolved to: it is the only place
+    // a deployment can enforce tenant membership. Both come from the server-side state record and
+    // the verified profile, never from the callback request.
     const hookContext: HookContext = {
       plane: 'dashboard',
       tenantId,
@@ -323,11 +314,8 @@ export class OAuthService {
     }
 
     const authUser = await this.resolveAccount(
-      provider,
-      tenantId,
-      profile,
-      hookResult,
-      existingAuthUser
+      { provider, tenantId, profile, hookResult, existingAuthUser },
+      invitation
     )
 
     this.assertMaySignIn(authUser)
@@ -336,6 +324,8 @@ export class OAuthService {
       return this.issueMfaChallenge(authUser, provider, hookResult.action)
     }
 
+    const created = hookResult.action === 'create'
+    await invitation?.complete(authUser, created, { ...hookContext, userId: authUser.id })
     return this.openSession(authUser, provider, hookResult.action, hookContext, ip, userAgent)
   }
 
@@ -678,30 +668,68 @@ export class OAuthService {
   /**
    * Carries out the account strategy the `onOAuthLogin` hook chose.
    *
-   * @param provider - The provider name.
-   * @param tenantId - The tenant the flow resolved to.
-   * @param profile - The verified provider profile.
-   * @param hookResult - The hook's decision.
-   * @param existingAuthUser - The account already linked to this identity, or `null`.
+   * Under `registration: 'invitation-only'` a `create` is allowed only for a flow that carries a
+   * vetted invitation; linking and signing in an existing account are not sign-ups.
+   *
+   * @param flow - What the callback resolved: the provider, the tenant, the verified profile, the
+   *   hook's decision and the account already linked to this identity, or `null`.
+   * @param invitation - The invitation the flow carries, or `null`.
    * @returns The account the flow signs in.
-   * @throws `AuthException` for a rejected flow, a `link` with no account to link, or a
-   *   create that collides with an existing address.
+   * @throws `AuthException` for a rejected flow, a closed registration, a `link` with no account
+   *   to link, or a create that collides with an existing address.
    */
   private async resolveAccount(
-    provider: string,
-    tenantId: string,
-    profile: OAuthProfile,
-    hookResult: OAuthLoginResult,
-    existingAuthUser: AuthUser | null
+    flow: {
+      provider: string
+      tenantId: string
+      profile: OAuthProfile
+      hookResult: OAuthLoginResult
+      existingAuthUser: AuthUser | null
+    },
+    invitation: PendingInvitation | null
   ): Promise<AuthUser> {
+    const { provider, tenantId, profile, hookResult, existingAuthUser } = flow
     switch (hookResult.action) {
       case 'create':
+        if (invitation === null && this.options.registration === 'invitation-only') {
+          throw new AuthException(AUTH_ERROR_CODES.REGISTRATION_CLOSED)
+        }
         return this.createAccount(provider, tenantId, profile)
       case 'link':
         return this.linkAccount(provider, profile, existingAuthUser)
       case 'reject':
       default:
         throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+  }
+
+  /**
+   * Vets the invitation a flow was started with against the provider's profile.
+   *
+   * @param record - The consumed state record.
+   * @param profile - The provider's profile.
+   * @returns What completes the invitation once the account is known, or `null` for a flow that
+   *   carries none.
+   * @throws `AuthException(INVALID_INVITATION_TOKEN)` when workspaces are not enabled, and the
+   *   refusals of `WorkspaceInvitationAcceptService.prepareOAuth` otherwise.
+   */
+  private async vetInvitation(
+    record: StoredOAuthState,
+    profile: OAuthProfile
+  ): Promise<PendingInvitation | null> {
+    if (record.workspaceInvitation === undefined) return null
+    if (this.invitations === null)
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
+    const accepts = this.invitations
+    const loaded: LoadedInvitation = await accepts.prepareOAuth(
+      record.workspaceInvitation,
+      record.tenantId,
+      { email: profile.email, emailVerified: profile.emailVerified }
+    )
+    return {
+      complete: async (user, created, context): Promise<void> => {
+        await accepts.completeOAuth(loaded, user, created, context)
+      }
     }
   }
 
