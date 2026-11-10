@@ -47,6 +47,7 @@ import { RolesGuard } from './guards/roles.guard'
 import { TrustedOriginGuard } from './guards/trusted-origin.guard'
 import { UserStatusGuard } from './guards/user-status.guard'
 import { WorkspaceGuard } from './guards/workspace.guard'
+import { WsWorkspaceGuard } from './guards/ws-workspace.guard'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
 import { NoStoreInterceptor } from './interceptors/no-store.interceptor'
 import type { AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface'
@@ -182,7 +183,8 @@ const WORKSPACE_PROVIDERS: Provider[] = [
   MembershipService,
   WorkspaceCallerService,
   WorkspaceActionsService,
-  WorkspaceGuard
+  WorkspaceGuard,
+  WsWorkspaceGuard
 ]
 
 /**

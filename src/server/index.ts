@@ -266,6 +266,7 @@ export { RequestEncodingGuard } from './guards/request-encoding.guard'
 export { TrustedOriginGuard } from './guards/trusted-origin.guard'
 export { UserStatusGuard } from './guards/user-status.guard'
 export { WorkspaceGuard } from './guards/workspace.guard'
+export { WsWorkspaceGuard } from './guards/ws-workspace.guard'
 export { WsJwtGuard } from './guards/ws-jwt.guard'
 
 // ---------------------------------------------------------------------------

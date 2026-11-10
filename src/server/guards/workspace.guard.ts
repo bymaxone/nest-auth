@@ -13,25 +13,16 @@ import type { Request } from 'express'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
-import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
-import { ALLOW_PENDING_WORKSPACE_KEY } from '../decorators/allow-pending-workspace.decorator'
 import type { WorkspaceRequest } from '../decorators/current-workspace.decorator'
-import {
-  WORKSPACE_PERMISSION_KEY,
-  type WorkspaceAction
-} from '../decorators/workspace-permission.decorator'
-import { WORKSPACE_ROLES_KEY } from '../decorators/workspace-roles.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { WorkspaceAccessService } from '../services/workspace-access.service'
+import { admitsPendingWorkspace, declaredWorkspaceRoles } from '../utils/declared-workspace-roles'
 import { resolveRequestWorkspace } from '../utils/resolve-request-workspace'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
 type GuardedRequest = Request & WorkspaceRequest & { user?: DashboardJwtPayload }
-
-/** What a route may declare: role names and the any-member marker. */
-type AcceptedRole = string | typeof ANY_WORKSPACE_MEMBER
 
 /**
  * Authorizes a request in the workspace it names.
@@ -79,7 +70,7 @@ export class WorkspaceGuard implements CanActivate {
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const accepted = this.declaredRoles(context)
+    const accepted = declaredWorkspaceRoles(this.reflector, context, this.group.permissions)
     const request = context.switchToHttp().getRequest<GuardedRequest>()
     const user = request.user
     if (user?.type !== 'dashboard' || !hasText(user.sub) || !hasText(user.tenantId)) {
@@ -96,39 +87,11 @@ export class WorkspaceGuard implements CanActivate {
       access,
       accepted,
       this.group.roles.hierarchy,
-      this.admitsPending(context)
+      admitsPendingWorkspace(this.reflector, context)
     )
 
     request.workspace = { ...member }
     return true
-  }
-
-  private admitsPending(context: ExecutionContext): boolean {
-    return (
-      this.reflector.getAllAndOverride<boolean | undefined>(ALLOW_PENDING_WORKSPACE_KEY, [
-        context.getHandler(),
-        context.getClass()
-      ]) === true
-    )
-  }
-
-  /**
-   * The roles the route accepts: those it declares, or those configured for the action it declares.
-   * The handler's declaration replaces the class's; a target that declares both is undeclared.
-   */
-  private declaredRoles(context: ExecutionContext): AcceptedRole[] {
-    for (const target of [context.getHandler(), context.getClass()]) {
-      const roles = this.reflector.get<AcceptedRole[] | undefined>(WORKSPACE_ROLES_KEY, target)
-      const action = this.reflector.get<WorkspaceAction | undefined>(
-        WORKSPACE_PERMISSION_KEY,
-        target
-      )
-      if (roles !== undefined && action !== undefined) break
-      const declared = action === undefined ? roles : permittedRoles(this.group.permissions, action)
-      if (declared !== undefined && declared.length > 0) return [...declared]
-      if (declared !== undefined) break
-    }
-    throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
   }
 }
 
@@ -140,27 +103,4 @@ export class WorkspaceGuard implements CanActivate {
  */
 function hasText(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== ''
-}
-
-/**
- * The roles configured for an action.
- *
- * @param permissions - The resolved `workspaces.permissions`.
- * @param action - The action a route declared.
- * @returns The roles that may perform it.
- */
-function permittedRoles(
-  permissions: ResolvedWorkspaceOptions['permissions'],
-  action: WorkspaceAction
-): readonly AcceptedRole[] {
-  switch (action) {
-    case 'manageWorkspace':
-      return permissions.manageWorkspace
-    case 'deleteWorkspace':
-      return permissions.deleteWorkspace
-    case 'manageMembers':
-      return permissions.manageMembers
-    case 'viewMembers':
-      return permissions.viewMembers
-  }
 }

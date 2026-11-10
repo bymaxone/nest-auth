@@ -46,6 +46,8 @@ export interface ResolvedWorkspaceOptions {
   deletionGraceDays: number
   /** Reads the target workspace from a request, when the host supplied one. */
   resolveRequestWorkspace?: WorkspaceOptions['resolveRequestWorkspace']
+  /** Reads the target workspace from a socket message, when the host supplied one. */
+  resolveWsWorkspace?: WorkspaceOptions['resolveWsWorkspace']
 }
 
 /**
@@ -162,7 +164,7 @@ function validateWorkspaceTuning(group: WorkspaceOptions): void {
     WORKSPACE_MEMBERSHIP_CACHE_MAX_TTL_SECONDS
   )
   assertIntegerInRange('workspaces.deletionGraceDays', group.deletionGraceDays, 0, 365)
-  const { allowCreate, resolveRequestWorkspace } = group
+  const { allowCreate, resolveRequestWorkspace, resolveWsWorkspace } = group
   if (
     allowCreate !== undefined &&
     typeof allowCreate !== 'boolean' &&
@@ -172,6 +174,9 @@ function validateWorkspaceTuning(group: WorkspaceOptions): void {
   }
   if (resolveRequestWorkspace !== undefined && typeof resolveRequestWorkspace !== 'function') {
     throw new Error(`[BymaxAuthModule] workspaces.resolveRequestWorkspace must be a function.`)
+  }
+  if (resolveWsWorkspace !== undefined && typeof resolveWsWorkspace !== 'function') {
+    throw new Error(`[BymaxAuthModule] workspaces.resolveWsWorkspace must be a function.`)
   }
 }
 
@@ -246,7 +251,10 @@ export function resolveWorkspaceOptions(
     deletionGraceDays: group.deletionGraceDays ?? 14,
     ...(group.resolveRequestWorkspace === undefined
       ? {}
-      : { resolveRequestWorkspace: group.resolveRequestWorkspace })
+      : { resolveRequestWorkspace: group.resolveRequestWorkspace }),
+    ...(group.resolveWsWorkspace === undefined
+      ? {}
+      : { resolveWsWorkspace: group.resolveWsWorkspace })
   }
 }
 
