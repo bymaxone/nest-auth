@@ -324,6 +324,19 @@ describe('WorkspaceInvitationAcceptService', () => {
       expect(h.tokens.issueTokens).not.toHaveBeenCalled()
     })
 
+    it('creates no account for a bootstrap invitation whose workspace exists and is not active', async () => {
+      const h = build()
+      await seed(h, bootstrapRecord())
+      h.workspaces.findById.mockResolvedValue(workspaceRow({ status: 'pending_deletion' }))
+
+      expect(await code(h.service.acceptSignup(SIGNUP, REQUEST))).toBe(
+        AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN
+      )
+
+      expect(h.users.create).not.toHaveBeenCalled()
+      expect(h.passwords.assertAcceptable).not.toHaveBeenCalled()
+    })
+
     it('creates the workspace for a bootstrap invitation and answers the owner role', async () => {
       const h = build()
       await seed(h, bootstrapRecord())
