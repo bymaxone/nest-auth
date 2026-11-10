@@ -12,7 +12,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 
 const DTO = { email: 'new@example.com', password: 'SecureP@ss1', name: 'New User', tenantId: 't1' }
-const REQUEST = { ip: '1.2.3.4', headers: { 'user-agent': 'jest' } } as unknown as Request
+const REQUEST = { ip: '1.2.3.4', headers: { 'user-agent': 'jest' } } as Partial<Request> as Request
 
 /** An `AuthService` whose every collaborator is a mock, under the given registration mode. */
 function build(registration: 'open' | 'invitation-only'): {

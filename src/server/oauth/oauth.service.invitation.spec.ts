@@ -141,7 +141,7 @@ describe('OAuthService with workspace invitations', () => {
 
   describe('initiating a flow', () => {
     const res = { cookie: jest.fn(), redirect: jest.fn(), setHeader: jest.fn() }
-    const req = { headers: {} } as unknown as Request
+    const req = { headers: {} } as Partial<Request> as Request
 
     beforeEach(() => {
       plugin.authorizeUrl.mockImplementation(
@@ -153,7 +153,13 @@ describe('OAuthService with workspace invitations', () => {
     it('stores only the sha256 of the token in the state record, never the token', async () => {
       const service = await build()
 
-      await service.initiateOAuth('google', 'tenant-1', req, res as unknown as Response, RAW_TOKEN)
+      await service.initiateOAuth(
+        'google',
+        'tenant-1',
+        req,
+        res as Partial<Response> as Response,
+        RAW_TOKEN
+      )
 
       const [key, value] = redis.set.mock.calls[0] as [string, string]
       expect(JSON.parse(value)).toMatchObject({ workspaceInvitation: HASH })
@@ -163,7 +169,7 @@ describe('OAuthService with workspace invitations', () => {
     it('writes no invitation field when the flow carries none', async () => {
       const service = await build()
 
-      await service.initiateOAuth('google', 'tenant-1', req, res as unknown as Response)
+      await service.initiateOAuth('google', 'tenant-1', req, res as Partial<Response> as Response)
 
       const [, value] = redis.set.mock.calls[0] as [string, string]
       expect(Object.keys(JSON.parse(value) as object)).not.toContain('workspaceInvitation')
@@ -172,7 +178,13 @@ describe('OAuthService with workspace invitations', () => {
     it('answers with Referrer-Policy: no-referrer and still binds the flow to the browser', async () => {
       const service = await build()
 
-      await service.initiateOAuth('google', 'tenant-1', req, res as unknown as Response, RAW_TOKEN)
+      await service.initiateOAuth(
+        'google',
+        'tenant-1',
+        req,
+        res as Partial<Response> as Response,
+        RAW_TOKEN
+      )
 
       expect(res.setHeader).toHaveBeenCalledWith('Referrer-Policy', 'no-referrer')
       const state = (res.redirect.mock.calls[0] as [string])[0].split('state=')[1]
@@ -186,7 +198,7 @@ describe('OAuthService with workspace invitations', () => {
         'google',
         'tenant-1',
         req,
-        res as unknown as Response,
+        res as Partial<Response> as Response,
         RAW_TOKEN
       )
 
@@ -243,8 +255,20 @@ describe('OAuthService with workspace invitations', () => {
         LOADED,
         USER,
         true,
-        expect.objectContaining({ tenantId: 'tenant-1', email: PROFILE.email })
+        expect.objectContaining({ tenantId: 'tenant-1', email: PROFILE.email, userId: USER.id })
       )
+    })
+
+    it('tells the vetting when the provider did not verify the address', async () => {
+      const service = await build()
+      plugin.fetchProfile.mockResolvedValue({ ...PROFILE, emailVerified: false })
+
+      await callback(service, stored({ workspaceInvitation: HASH }))
+
+      expect(accepts.prepareOAuth).toHaveBeenCalledWith(HASH, 'tenant-1', {
+        email: PROFILE.email,
+        emailVerified: false
+      })
     })
 
     it('completes it for an existing account as one that was not created', async () => {
@@ -314,6 +338,7 @@ describe('OAuthService with workspace invitations', () => {
 
     it.each([
       ['a hash of the wrong length', { workspaceInvitation: 'abc' }],
+      ['a hash one character short', { workspaceInvitation: HASH.slice(1) }],
       ['a hash that is not a string', { workspaceInvitation: 5 }]
     ])('refuses a state record carrying %s', async (_n, extra) => {
       const service = await build()
@@ -343,8 +368,8 @@ describe('OAuthService with workspace invitations', () => {
       await service.initiateOAuth(
         'google',
         'tenant-1',
-        { headers: {} } as unknown as Request,
-        res as unknown as Response,
+        { headers: {} } as Partial<Request> as Request,
+        res as Partial<Response> as Response,
         RAW_TOKEN
       )
       await callback(service, stored({ workspaceInvitation: HASH }))

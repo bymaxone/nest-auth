@@ -44,8 +44,8 @@ describe('OAuthController workspace invitation', () => {
   })
 
   it('hands the token in the query to the service as the fifth argument', async () => {
-    const req = { headers: {} } as unknown as Request
-    const res = {} as unknown as Response
+    const req = { headers: {} } as Partial<Request> as Request
+    const res = {} as Partial<Response> as Response
 
     await controller.initiate('google', { workspaceInvitation: TOKEN }, req, res)
 

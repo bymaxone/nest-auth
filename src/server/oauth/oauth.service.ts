@@ -321,12 +321,12 @@ export class OAuthService {
     this.assertMaySignIn(authUser)
 
     if (authUser.mfaEnabled) {
-      return this.issueMfaChallenge(authUser, provider, hookResult.action)
+      return this.issueMfaChallenge(authUser, provider, hookResult)
     }
 
     const created = hookResult.action === 'create'
     await invitation?.complete(authUser, created, { ...hookContext, userId: authUser.id })
-    return this.openSession(authUser, provider, hookResult.action, hookContext, ip, userAgent)
+    return this.openSession(authUser, provider, hookResult, hookContext, ip, userAgent)
   }
 
   // ---------------------------------------------------------------------------
@@ -362,13 +362,13 @@ export class OAuthService {
    *
    * @param authUser - The account the flow resolved to.
    * @param provider - The provider name, for the log line.
-   * @param action - The strategy the hook chose, for the log line.
+   * @param hookResult - The hook's decision, whose action goes in the log line.
    * @returns The challenge the controller plants in a cookie or surfaces in the body.
    */
   private async issueMfaChallenge(
     authUser: AuthUser,
     provider: string,
-    action: OAuthLoginResult['action']
+    hookResult: OAuthLoginResult
   ): Promise<OAuthMfaChallengeResult> {
     // MFA branch: when the resolved user has MFA enabled, the OAuth flow has only
     // proven control of the OAuth provider account — not the second factor. Issuing
@@ -388,7 +388,7 @@ export class OAuthService {
       authUser.tenantId
     )
     this.logger.log(
-      `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${logSafe(authUser.id)} tenantId=${logSafe(authUser.tenantId)} action=${action}`
+      `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${logSafe(authUser.id)} tenantId=${logSafe(authUser.tenantId)} action=${hookResult.action}`
     )
     return { mfaRequired: true, mfaTempToken }
   }
@@ -399,7 +399,7 @@ export class OAuthService {
    *
    * @param authUser - The account the flow resolved to.
    * @param provider - The provider name, for the log line.
-   * @param action - The strategy the hook chose, for the log line.
+   * @param hookResult - The hook's decision, whose action goes in the log line.
    * @param hookContext - The context the hooks were given.
    * @param ip - The client address.
    * @param userAgent - The `User-Agent` header.
@@ -408,7 +408,7 @@ export class OAuthService {
   private async openSession(
     authUser: AuthUser,
     provider: string,
-    action: OAuthLoginResult['action'],
+    hookResult: OAuthLoginResult,
     hookContext: HookContext,
     ip: string,
     userAgent: string
@@ -430,7 +430,7 @@ export class OAuthService {
     }
 
     this.logger.log(
-      `handleCallback: OAuth login success provider=${provider} userId=${logSafe(safeUser.id)} tenantId=${logSafe(authUser.tenantId)} action=${action}`
+      `handleCallback: OAuth login success provider=${provider} userId=${logSafe(safeUser.id)} tenantId=${logSafe(authUser.tenantId)} action=${hookResult.action}`
     )
 
     // The same non-blocking side effects a password login runs once it has succeeded. An MFA

@@ -143,6 +143,23 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       )
     })
 
+    it('refuses an account of another tenant, writing and spending nothing', async () => {
+      const h = build()
+      await seed(h)
+      const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
+
+      const refused = h.service.completeOAuth(
+        invitation,
+        user('new', { email: EMAIL, tenantId: 't2' }),
+        false,
+        CONTEXT
+      )
+
+      expect(await code(refused)).toBe(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
+      expect(h.memberships.create).not.toHaveBeenCalled()
+      expect(await stillThere(h)).toBe(true)
+    })
+
     it('refuses an account whose address is not the invited one, writing and spending nothing', async () => {
       const h = build()
       await seed(h)
