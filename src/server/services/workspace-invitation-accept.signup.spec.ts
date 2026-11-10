@@ -82,7 +82,7 @@ describe('WorkspaceInvitationAcceptService', () => {
       return h
     }
 
-    it('creates the workspace under the pre-allocated id, owned by the caller, then spends the token', async () => {
+    it('creates the workspace under the pre-allocated id, owned by the caller, and spends the token', async () => {
       const h = await bootstrapped()
 
       const answer = await h.service.accept(CALLER, TOKEN, CONTEXT)
@@ -354,7 +354,7 @@ describe('WorkspaceInvitationAcceptService', () => {
       )
     })
 
-    it('hands the hook the account and the request, and does not wait for it or fail on it', async () => {
+    it('hands the hook the account and the request, and still answers, logging the failure, when it rejects', async () => {
       const afterInvitationAccepted = jest.fn().mockRejectedValue(new Error('hook down'))
       const h = build(false, { afterInvitationAccepted })
       await seed(h)
