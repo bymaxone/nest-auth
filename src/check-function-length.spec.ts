@@ -207,6 +207,22 @@ describe('check-function-length', () => {
       expect(run(repo({ 'src/a.spec.ts': spec })).status).toBe(0)
     })
 
+    it('keeps a test titled like an ordinal apart from the second test of that title', () => {
+      const long = (title: string, lines: number): string =>
+        `  it('${title}', () => {\n${statements(lines)}  })\n`
+      const spec = (second: number): string =>
+        `describe('Suite', () => {\n${long('same', 49)}${long('same', second)}${long('same #2', 49)}})\n`
+      const root = repo({ 'src/a.spec.ts': spec(49) })
+      run(root, '--write-baseline')
+      commitBase(root)
+
+      writeFileSync(join(root, 'src/a.spec.ts'), spec(90))
+      const result = run(root, '--base', 'HEAD')
+
+      expect(result.status).toBe(1)
+      expect(result.output).toContain('describe Suite > it same #2 grew from')
+    })
+
     it('numbers only the tests over the limit, so a short test with the same title changes nothing', () => {
       const long = (): string => `  it('same', () => {\n${statements(49)}  })\n`
       const short = "  it('same', () => {\n    work()\n  })\n"

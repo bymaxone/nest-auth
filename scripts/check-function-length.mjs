@@ -4,9 +4,8 @@
  * @layer scripts
  *
  * `AGENTS.md` caps a function or a test body at 50 lines, and the pull-request review reports a
- * newly introduced one as a blocking finding. Nothing enforced it before the review did, so the
- * same rule was broken twice in one pull request. The repository already holds offenders, so this
- * gate is red for what a change introduces and not for what is inherited.
+ * newly introduced one as a blocking finding. The repository already holds offenders, so this gate
+ * is red for what a change introduces and not for what is inherited.
  *
  * The unit is a function-like node (a declaration, a method, a constructor, an accessor, a function
  * or an arrow expression) measured from its first line to its last, signature and braces included.
@@ -130,7 +129,7 @@ function classNameOf(member) {
  * What a function-like node is called in a key, and whether it is a measured unit.
  * A container callback is named so that tests under it get distinct keys, but is not measured.
  */
-function describeNode(node) {
+function describeRaw(node) {
   const call = ts.isCallExpression(node.parent) ? node.parent : null
   const root = call === null ? null : calleeRoot(call)
   if (call !== null && root !== null && CONTAINERS.has(root)) {
@@ -151,6 +150,21 @@ function describeNode(node) {
   }
   const named = ts.isVariableDeclaration(holder) || ts.isPropertyAssignment(holder)
   return { name: named ? nameOf(holder) : '<anonymous>', measured: true }
+}
+
+/**
+ * A name made safe to sit inside a key: a `#` is escaped, so a test title cannot spell the ` #2`
+ * ordinal that tells same-named offenders apart. An ordinal is the only place an unescaped `#`
+ * appears, so a key still reads back to exactly one function.
+ */
+function escapeSegment(name) {
+  return name.replaceAll('#', '\\#')
+}
+
+/** What a function-like node is called in a key, escaped; see `describeRaw`. */
+function describeNode(node) {
+  const described = describeRaw(node)
+  return { ...described, name: escapeSegment(described.name) }
 }
 
 /**
