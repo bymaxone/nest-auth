@@ -314,6 +314,17 @@ describe('check-function-length', () => {
       expect(result.output).not.toContain(`${KEY} spans`)
     })
 
+    it('calls a numbered entry gone, not within the limit, while its namesake spans 51 lines', () => {
+      const baseline = { [KEY]: 60, [`${KEY} #2`]: 60 }
+
+      const result = run(repo({ 'src/a.ts': declaration('big', 51) }, baseline))
+
+      expect(result.output).toContain(
+        `${KEY} #2 is on the baseline but no longer exists. Remove its entry.`
+      )
+      expect(result.output).not.toContain('within the limit')
+    })
+
     it('names both sides of a rename', () => {
       const result = run(repo({ 'src/a.ts': declaration('renamed', 60) }, { [KEY]: 60 }))
 
