@@ -8,6 +8,7 @@
 
 /// <reference path="../../../test/e2e/ioredis-mock.d.ts" />
 
+import { Logger } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 import RedisMock from 'ioredis-mock'
 
@@ -363,6 +364,19 @@ describe('WorkspaceInvitationAcceptService', () => {
       await expectRefusedUnspent(h, AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
     })
 
+    it('logs, without naming anyone, that the inviter can no longer grant the role', async () => {
+      const h = build()
+      await seed(h)
+      h.memberships.find.mockResolvedValue(null)
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      await code(h.service.accept(CALLER, TOKEN, CONTEXT))
+
+      expect(warn).toHaveBeenCalledWith(
+        'workspace invitation: the inviter can no longer grant the invited role'
+      )
+    })
+
     it.each([
       ['no longer a member', null],
       [
@@ -406,6 +420,9 @@ describe('WorkspaceInvitationAcceptService', () => {
       const h = build()
       await seed(h)
       h.memberships.create.mockResolvedValue('workspace_not_found')
+      h.memberships.find.mockImplementation(async ({ userId }: { userId: string }) =>
+        userId === 'inviter' ? member('inviter', 'editor') : member('caller', 'viewer')
+      )
 
       expect(await code(h.service.accept(CALLER, TOKEN, CONTEXT))).toBe(
         AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN
@@ -574,9 +591,10 @@ describe('WorkspaceInvitationAcceptService', () => {
       expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).not.toBeNull()
     })
 
-    it('refuses a workspace that exists and is not active', async () => {
+    it('refuses a workspace that exists and is not active, even to its active owner', async () => {
       const h = await bootstrapped()
       h.workspaces.findById.mockResolvedValue(workspaceRow({ status: 'pending_deletion' }))
+      h.memberships.find.mockResolvedValue(member('caller', 'owner'))
 
       expect(await code(h.service.accept(CALLER, TOKEN, CONTEXT))).toBe(
         AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN
@@ -659,7 +677,14 @@ describe('WorkspaceInvitationAcceptService', () => {
       const h = build(false, { afterInvitationAccepted })
       await seed(h)
 
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
       await expect(h.service.acceptSignup(SIGNUP, REQUEST)).resolves.toBeDefined()
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('afterInvitationAccepted hook threw')
+      )
 
       expect(afterInvitationAccepted).toHaveBeenCalledWith(expect.objectContaining({ id: 'new' }), {
         plane: 'dashboard',
@@ -692,6 +717,15 @@ describe('WorkspaceInvitationAcceptService', () => {
       expect(h.passwords.assertAcceptable).not.toHaveBeenCalled()
       expect(h.passwords.hash).not.toHaveBeenCalled()
       expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).not.toBeNull()
+    })
+
+    it('names the password field when it judges the password', async () => {
+      const h = build()
+      await seed(h)
+
+      await h.service.acceptSignup(SIGNUP, REQUEST)
+
+      expect(h.passwords.assertAcceptable).toHaveBeenCalledWith(SIGNUP.password, 'password')
     })
 
     it('judges the password before anything is written or spent, and leaves the token usable', async () => {
