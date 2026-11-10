@@ -193,6 +193,24 @@ describe('assertStillAuthorized', () => {
     }
   )
 
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a string', 'w1'],
+    ['an array', []]
+  ])('refuses a context that is %s as validation errors, not a crash', async (_name, bad) => {
+    world('active', { role: 'owner', status: 'active' })
+
+    const error = await build()
+      .assertStillAuthorized(bad as never, ['viewer'])
+      .catch((e: unknown) => e as AuthException)
+
+    expect((error as AuthException).getResponse()).toMatchObject({
+      error: { code: AUTH_ERROR_CODES.VALIDATION, details: [{ field: 'tenantId' }] }
+    })
+    expect(repos.users.findById).not.toHaveBeenCalled()
+  })
+
   it('accepts a tenant and an actor of exactly 128 characters and refuses 129', async () => {
     world('active', { role: 'viewer', status: 'active' })
     const edge = { tenantId: 't'.repeat(128), workspaceId: 'w1', actorUserId: 'u'.repeat(128) }

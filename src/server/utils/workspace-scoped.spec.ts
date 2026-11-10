@@ -92,6 +92,11 @@ describe('workspaceScopedName', () => {
     })
   })
 
+  it('reads the replacement character when it was written, and refuses a surrogate that merely decodes to it', () => {
+    expect(decodeWorkspaceScopedName('1:a1:b3:\ufffd').parts).toEqual(['\ufffd'])
+    expect(() => decodeWorkspaceScopedName('1:a1:b3:\ud800')).toThrow(TypeError)
+  })
+
   describe('as an injective encoding', () => {
     // Every list is spelled from the pieces that break joined-string names, so a collision, if one
     // existed, would be found among a small space drawn many times over.
@@ -148,7 +153,11 @@ describe('workspaceScopedName', () => {
       ['a length that cuts a character in two', '1:é1:b'],
       ['a control character in a piece', '1:a2:b\u0001'],
       ['an empty tenant', '0:1:b'],
-      ['an empty workspace', '1:a0:']
+      ['an empty workspace', '1:a0:'],
+      [
+        'an unpaired surrogate, which a buffer would read as the replacement character',
+        '1:a1:b1:\ud800'
+      ]
     ])('refuses %s', (_name, name) => {
       expect(() => decodeWorkspaceScopedName(name)).toThrow(TypeError)
     })

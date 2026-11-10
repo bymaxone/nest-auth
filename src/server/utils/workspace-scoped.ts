@@ -55,6 +55,7 @@ export function decodeWorkspaceScopedName(name: string): {
   workspaceId: string
   parts: string[]
 } {
+  if (UNPAIRED_SURROGATE.test(name)) throw malformed(name)
   const bytes = Buffer.from(name, 'utf8')
   const pieces: string[] = []
   let at = 0

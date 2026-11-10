@@ -176,10 +176,13 @@ export class WorkspaceAccessService {
     if (this.accountStatus === null) {
       throw new TypeError('assertStillAuthorized needs the account status service')
     }
+    // A payload that came back from a queue may not be an object at all.
+    const claimed: Partial<WorkspaceJobContext> =
+      typeof context === 'object' && context !== null ? context : {}
     const ref = {
-      tenantId: assertBoundedText('tenantId', context.tenantId),
-      workspaceId: assertWorkspaceId(context.workspaceId),
-      userId: assertBoundedText('actorUserId', context.actorUserId)
+      tenantId: assertBoundedText('tenantId', claimed.tenantId),
+      workspaceId: assertWorkspaceId(claimed.workspaceId),
+      userId: assertBoundedText('actorUserId', claimed.actorUserId)
     }
     await this.accountStatus.assertDashboardAccountUsableNow({
       userId: ref.userId,
