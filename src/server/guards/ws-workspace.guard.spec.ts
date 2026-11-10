@@ -18,6 +18,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import type { AuthException } from '../errors/auth-exception'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 import { WorkspaceAccessService } from '../services/workspace-access.service'
+import { workspaceOfMessage } from '../utils/ws-message-workspace'
 
 const SECRET = 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B'
 
@@ -101,21 +102,44 @@ async function code(promise: Promise<unknown>): Promise<string | undefined> {
 }
 
 describe('WsWorkspaceGuard', () => {
-  it('admits a member with an accepted role and attaches the membership', async () => {
+  it('admits a member with an accepted role and keeps the membership with the message', async () => {
     const access = jest.fn().mockResolvedValue(member('editor'))
     const client = { data: { user: IDENTITY } as Record<string, unknown> }
+    const message = { workspaceId: 'w1' }
 
-    await expect(
-      build(access).canActivate(contextFor('edit', client, { workspaceId: 'w1' }))
-    ).resolves.toBe(true)
+    await expect(build(access).canActivate(contextFor('edit', client, message))).resolves.toBe(true)
 
-    expect(client.data['workspace']).toEqual({
+    expect(workspaceOfMessage(message)).toEqual({
       tenantId: 't1',
       workspaceId: 'w1',
       userId: 'u1',
       role: 'editor'
     })
+    expect(client.data).not.toHaveProperty('workspace')
     expect(access).toHaveBeenCalledWith({ tenantId: 't1', workspaceId: 'w1', userId: 'u1' })
+  })
+
+  // Two messages overlap on one socket: the owner-only one for A finishes last, the viewer one for B
+  // first. A slot on the connection would hold A when either handler read it afterwards; each message
+  // keeps its own.
+  it('keeps overlapping messages on one socket apart', async () => {
+    const access = jest.fn(async (ref: { workspaceId: string }) => {
+      await new Promise((resolve) => setTimeout(resolve, ref.workspaceId === 'A' ? 20 : 1))
+      return member(ref.workspaceId === 'A' ? 'owner' : 'viewer')
+    })
+    const guard = build(access)
+    const client = { data: { user: IDENTITY } }
+    const a = { workspaceId: 'A' }
+    const b = { workspaceId: 'B' }
+
+    await Promise.all([
+      guard.canActivate(contextFor('own', client, a)),
+      guard.canActivate(contextFor('read', client, b))
+    ])
+
+    expect(workspaceOfMessage(a)).toMatchObject({ role: 'owner' })
+    expect(workspaceOfMessage(b)).toMatchObject({ role: 'viewer' })
+    expect(client.data).not.toHaveProperty('workspace')
   })
 
   it('takes the tenant and the account from the verified identity, never from the message', async () => {

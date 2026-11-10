@@ -12,17 +12,17 @@ import { Reflector } from '@nestjs/core'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
-import type { CurrentWorkspaceContext } from '../decorators/current-workspace.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { WorkspaceAccessService } from '../services/workspace-access.service'
 import { admitsPendingWorkspace, declaredWorkspaceRoles } from '../utils/declared-workspace-roles'
-import { assertWorkspaceId } from '../utils/resolve-request-workspace'
+import { assertWorkspaceId, assertWorkspaceMessage } from '../utils/resolve-request-workspace'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
+import { rememberMessageWorkspace } from '../utils/ws-message-workspace'
 
 /** What `WsJwtGuard` leaves on the client: the verified identity. */
 interface WsWorkspaceClient {
-  data: { user?: { sub?: unknown; tenantId?: unknown }; workspace?: CurrentWorkspaceContext }
+  data: { user?: { sub?: unknown; tenantId?: unknown } }
 }
 
 /**
@@ -35,7 +35,8 @@ interface WsWorkspaceClient {
  * access resolution and the same refusals in the same order:
  *
  * 1. a handler that declares no roles is refused `403 auth.forbidden` before anything else;
- * 2. a connection with no verified dashboard identity is refused `401 auth.token_invalid`;
+ * 2. a connection with no verified dashboard identity is refused `401 auth.token_invalid`, and a
+ *    message that is not an object, which cannot carry a membership, `400 auth.validation`;
  * 3. the workspace is read from the message body (`data.workspaceId`, or `workspaces.resolveWsWorkspace`
  *    given the body), never from the URL, a header or the ticket, and a value that is blank,
  *    over-long or holds a control character is `400 auth.validation` naming `workspaceId`, before
@@ -45,7 +46,9 @@ interface WsWorkspaceClient {
  *    owner of a pending workspace gets `409 auth.workspace_pending_deletion` unless the handler
  *    carries `@AllowPendingWorkspace()`;
  * 5. the role is checked through `workspaces.roles.hierarchy`;
- * 6. the membership is attached to `client.data.workspace` for the handler.
+ * 6. the membership is kept with the message for `@CurrentWsWorkspace()`, never on the connection:
+ *    overlapping messages on one socket would overwrite a slot on the client, and a handler that
+ *    awaited something would act in a workspace another message was admitted to.
  *
  * Every message is judged again, through the access cache, so a member removed between two messages
  * is refused on the next one.
@@ -74,7 +77,8 @@ export class WsWorkspaceGuard implements CanActivate {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    const workspaceId = assertWorkspaceId(this.named(ws.getData<unknown>()))
+    const message = assertWorkspaceMessage(ws.getData<unknown>())
+    const workspaceId = assertWorkspaceId(this.named(message))
     const access = await this.access.resolveAccess({
       tenantId: user.tenantId,
       workspaceId,
@@ -87,14 +91,14 @@ export class WsWorkspaceGuard implements CanActivate {
       admitsPendingWorkspace(this.reflector, context)
     )
 
-    client.data.workspace = { ...member }
+    rememberMessageWorkspace(message, { ...member })
     return true
   }
 
   /** The workspace the message names, as the host's resolver or the default field reads it. */
-  private named(message: unknown): unknown {
+  private named(message: object): unknown {
     if (this.group.resolveWsWorkspace !== undefined) return this.group.resolveWsWorkspace(message)
-    return (message as { workspaceId?: unknown } | null | undefined)?.workspaceId
+    return (message as { workspaceId?: unknown }).workspaceId
   }
 }
 

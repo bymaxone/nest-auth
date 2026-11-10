@@ -13,12 +13,7 @@
 
 import type { INestApplication } from '@nestjs/common'
 import { UseFilters, UseGuards } from '@nestjs/common'
-import {
-  ConnectedSocket,
-  MessageBody,
-  SubscribeMessage,
-  WebSocketGateway
-} from '@nestjs/websockets'
+import { MessageBody, SubscribeMessage, WebSocketGateway } from '@nestjs/websockets'
 import { io } from 'socket.io-client'
 import type { Socket as ClientSocket } from 'socket.io-client'
 import request from 'supertest'
@@ -27,6 +22,8 @@ import {
   BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../../src/server/bymax-auth.constants'
+import { CurrentWsWorkspace } from '../../src/server/decorators/current-ws-workspace.decorator'
+import type { CurrentWorkspaceContext } from '../../src/server/decorators/current-workspace.decorator'
 import { WorkspaceRoles } from '../../src/server/decorators/workspace-roles.decorator'
 import { WsAuthExceptionFilter } from '../../src/server/filters/ws-auth-exception.filter'
 import { WsJwtGuard } from '../../src/server/guards/ws-jwt.guard'
@@ -49,15 +46,25 @@ class WorkspaceGateway {
   @UseGuards(WsJwtGuard, WsWorkspaceGuard)
   @WorkspaceRoles('viewer')
   @SubscribeMessage('read')
-  read(@ConnectedSocket() client: { data: { workspace?: unknown } }, @MessageBody() _m: unknown) {
-    return client.data.workspace ?? null
+  read(@CurrentWsWorkspace() workspace: CurrentWorkspaceContext, @MessageBody() _m: unknown) {
+    return workspace
   }
 
   @UseGuards(WsJwtGuard, WsWorkspaceGuard)
   @WorkspaceRoles('editor')
   @SubscribeMessage('write')
-  write(@ConnectedSocket() client: { data: { workspace?: unknown } }, @MessageBody() _m: unknown) {
-    return client.data.workspace ?? null
+  write(@CurrentWsWorkspace() workspace: CurrentWorkspaceContext, @MessageBody() _m: unknown) {
+    return workspace
+  }
+
+  // Awaits before it answers: a slot on the connection would be overwritten by the other message
+  // meanwhile, a per-message workspace is not.
+  @UseGuards(WsJwtGuard, WsWorkspaceGuard)
+  @WorkspaceRoles('viewer')
+  @SubscribeMessage('slow')
+  async slow(@CurrentWsWorkspace() workspace: CurrentWorkspaceContext, @MessageBody() _m: unknown) {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    return workspace
   }
 
   @SubscribeMessage('verify')
@@ -223,6 +230,30 @@ describe('workspace authorization on a socket and in a job (E2E)', () => {
       ok: false,
       code: 'auth.validation'
     })
+  })
+
+  it('keeps two overlapping messages on one socket in their own workspaces', async () => {
+    const first = await world('viewer')
+    const second = await world('viewer')
+    // One account, a member of both workspaces.
+    repositories.seedMember(second.id, first.member.id, 'viewer')
+    const socket: ClientSocket = io(`http://127.0.0.1:${String(port)}`, {
+      transports: ['websocket'],
+      forceNew: true,
+      reconnection: false,
+      extraHeaders: { Authorization: `Bearer ${first.member.token}` }
+    })
+    try {
+      const ask = (event: string, workspaceId: string): Promise<unknown> =>
+        new Promise((resolve) => socket.emit(event, { workspaceId }, resolve))
+
+      const [slow, fast] = await Promise.all([ask('slow', first.id), ask('read', second.id)])
+
+      expect(slow).toMatchObject({ workspaceId: first.id })
+      expect(fast).toMatchObject({ workspaceId: second.id })
+    } finally {
+      socket.disconnect()
+    }
   })
 
   it('refuses a member who was removed between two messages on the second', async () => {

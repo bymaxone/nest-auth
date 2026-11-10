@@ -485,6 +485,7 @@ export {
   AllowPendingWorkspace
 } from './decorators/allow-pending-workspace.decorator'
 export { CurrentWorkspace } from './decorators/current-workspace.decorator'
+export { CurrentWsWorkspace } from './decorators/current-ws-workspace.decorator'
 export type {
   CurrentWorkspaceContext,
   WorkspaceRequest
