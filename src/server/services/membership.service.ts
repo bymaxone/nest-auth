@@ -288,21 +288,9 @@ export class MembershipService {
     demoteFromTo: string | null,
     context: HookContext
   ): Promise<void> {
-    const { hierarchy, ownerRole } = this.group.roles
+    this.assertMayTransfer(actor, toUserId, demoteFromTo)
+    const { ownerRole } = this.group.roles
     const fromUserId = actor.userId
-    if (actor.role !== ownerRole) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
-    }
-    if (fromUserId === toUserId) throw invalid('userId', 'ownership cannot be handed to oneself')
-    if (
-      demoteFromTo !== null &&
-      (!Object.hasOwn(hierarchy, demoteFromTo) || demoteFromTo === ownerRole)
-    ) {
-      throw invalid(
-        'demoteSelfTo',
-        'demoteSelfTo must be a workspace role other than the owner role'
-      )
-    }
     const event = {
       type: 'ownership.transferred' as const,
       ...ref,
@@ -322,6 +310,79 @@ export class MembershipService {
     if (result === 'target_not_member') throw invalid('userId', 'userId must be an active member')
     await this.settle(result, ref, [fromUserId, toUserId])
     this.events.emit(event, context)
+  }
+
+  /**
+   * Refuses, from the request alone, a hand-over that cannot succeed.
+   *
+   * Everything here is decided locally and spends nothing, so a caller can run it before a costly
+   * step such as a password check: only an owner may hand ownership over, not to themselves, and
+   * the role the giver keeps must be a workspace role other than the owner role.
+   *
+   * @param actor - The member handing ownership over, with the role they hold.
+   * @param toUserId - The member who would become an owner.
+   * @param demoteFromTo - The role the giver would take, or `null` to keep both as owners.
+   * @throws {AuthException} `auth.insufficient_workspace_role` when the actor is not an owner,
+   *   `auth.validation` for a hand-over to oneself or a role the giver cannot take.
+   */
+  assertMayTransfer(actor: WorkspaceActor, toUserId: string, demoteFromTo: string | null): void {
+    const { hierarchy, ownerRole } = this.group.roles
+    if (actor.role !== ownerRole) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
+    }
+    if (actor.userId === toUserId) throw invalid('userId', 'ownership cannot be handed to oneself')
+    if (
+      demoteFromTo !== null &&
+      (!Object.hasOwn(hierarchy, demoteFromTo) || demoteFromTo === ownerRole)
+    ) {
+      throw invalid(
+        'demoteSelfTo',
+        'demoteSelfTo must be a workspace role other than the owner role'
+      )
+    }
+  }
+
+  /**
+   * Refuses a role the actor may not grant: the owner role may grant any role, every other role only
+   * a role it includes and does not itself hold.
+   *
+   * @param actorRole - The role the actor holds.
+   * @param role - The role to grant.
+   * @throws {AuthException} `auth.validation` for a role outside the hierarchy,
+   *   `auth.insufficient_workspace_role` when the actor may not grant it.
+   */
+  assertMayGrant(actorRole: string, role: string): void {
+    if (!Object.hasOwn(this.group.roles.hierarchy, role)) {
+      throw invalid('role', 'role must be one of the workspace roles')
+    }
+    if (!this.outranks(actorRole, role)) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
+    }
+  }
+
+  /**
+   * Whether the actor's role stands above another role, so they may act on an invitation or a member
+   * holding it. The same rule {@link assertMayGrant} applies, as an answer rather than a refusal.
+   *
+   * @param actorRole - The role the actor holds.
+   * @param otherRole - The role acted on.
+   */
+  mayActOn(actorRole: string, otherRole: string): boolean {
+    return this.outranks(actorRole, otherRole)
+  }
+
+  /**
+   * Reads one member of a workspace.
+   *
+   * @param ref - The workspace.
+   * @param userId - The member.
+   * @returns The membership as it now stands.
+   * @throws {AuthException} `auth.workspace_not_found` when the member does not exist.
+   */
+  async getMember(ref: WorkspaceRef, userId: string): Promise<AuthMembership> {
+    const member = await this.memberships.find({ ...ref, userId })
+    if (member === null) throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
+    return member
   }
 
   /** Reads an active member and refuses an actor who would act on a role above their own. */

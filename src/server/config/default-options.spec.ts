@@ -63,7 +63,8 @@ const EXPECTED_DEFAULTS = {
     oauth: false,
     invitations: false,
     emailChange: false,
-    workspaces: false
+    workspaces: false,
+    workspaceInvitations: false
   },
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
   redisNamespace: 'auth',

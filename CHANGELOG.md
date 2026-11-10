@@ -18,7 +18,24 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **Length bounds on user text now count Unicode code points everywhere, as the validation pipe
+  already did.** The service-side checks counted UTF-16 units, so an emoji counted twice. Four
+  checks changed: the workspace name, the workspace id, the API key label, and the password floor
+  (`password.minLength`, default 15). Only the password floor can newly refuse an existing
+  caller: a password made of characters outside the Basic Multilingual Plane that met the floor by
+  units can now be refused, **when it is set or changed** (registration, reset, change, invitation
+  acceptance). Existing hashes and logins are unaffected, because the floor is never applied at
+  login. A workspace name of exactly its bound in emoji, which the pipe accepted and the service
+  refused, is now accepted. Tokens, one-time codes and the other checks that never hold user text
+  keep counting units.
+
 ### Changed
+
+- **A validation error no longer repeats an unknown request property it cannot safely name, on every route.** The pipe every controller mounts answered a body with an unknown key by naming the key in `details[].field` and in the message, so a 1000-character key made the answer as long as the key, and a key holding a control character put that character in the answer. An unknown key over 128 code points, holding a control character, or empty is now reported once under the field `body`, however many there are; a short key is still named, and every other failure is still reported by its own name. The status, the code (`auth.validation`) and the top-level message are unchanged. **Apply to a derived backend:** a client that read the name of such a key from `details[].field` now reads `body`; the contract's `errorEnvelope` row states the rule.
+
+- **Workspace invitations.** With `controllers.workspaceInvitations: true` the library serves `POST /workspaces/:workspaceId/invitations` (invite), `GET` on the same path (list), `.../invitations/resend`, `.../invitations/revoke` and the public `POST /workspaces/invitations/preview`. The flag requires `workspaces.enabled`, both workspace repositories and an email provider that implements the new optional `sendWorkspaceInvitation`; the module refuses to start without the method. A token is 32 random bytes and only its digest is stored, so a resend mints a new one and retires the old. A member who is not the owner invites only to a role strictly below their own. An address has one live invitation per workspace; inviting it again is a resend, held to a 60-second cooldown and five resends. One member issues at most 20 invitations an hour, and a workspace holds at most `workspaces.maxPendingInvitationsPerWorkspace` pending ones. The preview answers every token it cannot honour with the same `auth.invalid_invitation_token`. The Redis keyspace gains the prefixes `winv`, `winvidx`, `winvset` and `winvrl`, specified in the wire contract with test vectors.
 
 - **A password reset with no usable proof is refused as an invalid token before its password is judged.** `POST password/reset-password` now classifies the proof first, without spending it: more than one proof, none, or one the configured `passwordReset.method` does not accept answers `auth.password_reset_token_invalid` whatever the new password is. Before, such a request with a password under the policy floor answered `auth.validation`. The password is then judged, and the proof is spent last, as before, so a refused password still does not burn a single-use proof. A caller who holds no usable proof can no longer reach the password policy, and with it the breach screen, which is an outbound query when the host wires the bundled HIBP provider.
 

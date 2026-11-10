@@ -182,4 +182,35 @@ describe('NoOpEmailProvider', () => {
       expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('invitee@example.com'))
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // sendWorkspaceInvitation
+  // ---------------------------------------------------------------------------
+
+  describe('sendWorkspaceInvitation', () => {
+    const data = {
+      inviterName: 'Alice',
+      workspaceName: 'Acme',
+      role: 'editor',
+      inviteToken: 'a'.repeat(64),
+      expiresAt: new Date('2026-05-01T00:00:00Z'),
+      accountExists: false
+    }
+
+    // Verifies that the default provider accepts the message and resolves.
+    it('should resolve without throwing', async () => {
+      await expect(
+        provider.sendWorkspaceInvitation('tenant-1', 'invitee@example.com', data)
+      ).resolves.toBeUndefined()
+    })
+
+    // Verifies the recipient is masked and the token is never written to the log.
+    it('should log the recipient masked and never the token', async () => {
+      await provider.sendWorkspaceInvitation('tenant-1', 'invitee@example.com', data)
+
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('invitee@example.com')))
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('invitee@example.com'))
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining(data.inviteToken))
+    })
+  })
 })

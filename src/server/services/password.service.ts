@@ -14,6 +14,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IPasswordBreachChecker } from '../interfaces/password-breach-checker.interface'
+import { isShorterThanCodePoints } from '../utils/code-points'
 
 // promisify picks the 3-arg overload (no options); cast to the 4-arg form we need.
 const scrypt = promisify(nodeScrypt) as (
@@ -347,7 +348,7 @@ export class PasswordService {
    * @throws {@link AuthException} with `VALIDATION` when the password is too short.
    */
   assertLongEnough(plain: string, field: string): void {
-    if (plain.length >= this.minLength) return
+    if (!isShorterThanCodePoints(plain, this.minLength)) return
 
     throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
       { field, message: `${field} must be at least ${String(this.minLength)} characters` }
