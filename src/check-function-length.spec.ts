@@ -364,19 +364,24 @@ describe('check-function-length', () => {
     it('writes every offender and nothing else, sorted, and the result passes the check', () => {
       const root = repo({
         'src/b.ts': declaration('second', 70),
-        'src/a.ts': declaration('first', 60) + declaration('fine', 40)
+        'src/a.ts':
+          declaration('first', 60) +
+          declaration('fine', 40) +
+          declaration('atTheLimit', 50) +
+          declaration('justOver', 51)
       })
 
       const written = run(root, '--write-baseline')
       const text = readFileSync(join(root, 'scripts', 'function-length-baseline.json'), 'utf8')
 
       expect(written.status).toBe(0)
-      expect(written.output).toContain('Wrote 2 baseline entries')
+      expect(written.output).toContain('Wrote 3 baseline entries')
       expect(JSON.parse(text)).toEqual({
-        functions: { 'src/a.ts::first': 60, 'src/b.ts::second': 70 }
+        functions: { 'src/a.ts::first': 60, 'src/a.ts::justOver': 51, 'src/b.ts::second': 70 }
       })
       expect(Object.keys(JSON.parse(text).functions)).toEqual([
         'src/a.ts::first',
+        'src/a.ts::justOver',
         'src/b.ts::second'
       ])
       expect(text.endsWith('}\n')).toBe(true)
