@@ -34,6 +34,7 @@ import { DEFAULT_RECOVERY_CODE_COUNT, generateRecoveryCodes } from '../utils/mfa
 import { committedSafeUser } from '../utils/mfa-safe-user'
 import { decryptMfaSecret, encryptMfaSecret } from '../utils/mfa-secret-cipher'
 import { parsePlainRecoveryCodes, parseSetupData, type MfaSetupData } from '../utils/mfa-setup-data'
+import { runDetached } from '../utils/run-detached'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -313,11 +314,9 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
-    // Atomic completion gate: GETDEL returns the stored value and deletes the key
-    // in one round-trip. Only the first concurrent caller observes a non-null
-    // value and proceeds to the DB write + email. Any racing request that arrived
-    // with the same valid TOTP code sees `null` and is treated as MFA_SETUP_REQUIRED,
-    // preventing duplicate `updateMfa` writes and duplicate enablement emails.
+    // Atomic completion gate: GETDEL returns the stored value and deletes the key in one
+    // round-trip, so only the first concurrent caller with a valid code proceeds to the DB write
+    // and the email; a racing request sees `null` and is treated as MFA_SETUP_REQUIRED.
     const consumed = await this.redis.getdel(setupKey)
     if (consumed === null) {
       this.logger.warn(
@@ -326,9 +325,8 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
 
-    // Serialized against every other MFA transition. The `getdel` above already makes the
-    // enable single-shot among concurrent verify calls; this puts it in the same queue as
-    // `disable` and the challenge splice, which write the same three fields.
+    // Serialized against every other MFA transition: the `getdel` above makes the enable
+    // single-shot, and this queues it with `disable` and the challenge splice, which write the same fields.
     await this.records.transition(context, userId, tenantId, () => ({
       mfaEnabled: true,
       mfaSecret: data.encryptedSecret,
@@ -356,20 +354,23 @@ export class MfaService {
       (provider, tenant, email) => provider.sendMfaEnabledNotification(tenant, email)
     )
 
-    // Fire-and-forget hook — errors must not roll back a completed DB operation.
     if (this.hooks.afterMfaEnabled) {
       const safeUser = committedSafeUser(context, user, true)
-      void Promise.resolve(
-        this.hooks.afterMfaEnabled(safeUser, {
-          // The plane, because the tenant cannot carry it: a platform admin is rendered with the
-          // sentinel `tenantId: ''` while a platform token has no tenant claim at all.
-          plane: context,
-          userId,
-          ip,
-          userAgent,
-          sanitizedHeaders: {}
-        })
-      ).catch(() => undefined)
+      const afterMfaEnabled = this.hooks.afterMfaEnabled.bind(this.hooks)
+      runDetached(
+        this.logger,
+        () =>
+          afterMfaEnabled(safeUser, {
+            // The plane, because the tenant cannot carry it: a platform admin is rendered with the
+            // sentinel `tenantId: ''` while a platform token has no tenant claim at all.
+            plane: context,
+            userId,
+            ip,
+            userAgent,
+            sanitizedHeaders: {}
+          }),
+        'afterMfaEnabled hook threw'
+      )
     }
   }
 

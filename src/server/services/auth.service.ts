@@ -40,6 +40,7 @@ import { normalizeEmail } from '../utils/normalize-email'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
+import { runDetached } from '../utils/run-detached'
 import { safeLogLine } from '../utils/safe-log-line'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
 import { raiseFirst, settleWrites } from '../utils/settle-writes'
@@ -311,9 +312,8 @@ export class AuthService {
 
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
-      void Promise.resolve(this.hooks.afterRegister(safeUser, context)).catch((err: unknown) => {
-        this.logger.error(`afterRegister hook threw: ${describeChannelStatus(err)}`)
-      })
+      const afterRegister = this.hooks.afterRegister.bind(this.hooks)
+      runDetached(this.logger, () => afterRegister(safeUser, context), 'afterRegister hook threw')
     }
 
     return result
@@ -507,9 +507,8 @@ export class AuthService {
       this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
     })
     if (this.hooks?.afterLogin) {
-      void Promise.resolve(this.hooks.afterLogin(safeUser, context)).catch((err: unknown) => {
-        this.logger.error(`afterLogin hook threw: ${describeChannelStatus(err)}`)
-      })
+      const afterLogin = this.hooks.afterLogin.bind(this.hooks)
+      runDetached(this.logger, () => afterLogin(safeUser, context), 'afterLogin hook threw')
     }
 
     return result
@@ -992,11 +991,9 @@ export class AuthService {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
     }
 
-    // MFA-enabled users must complete a TOTP challenge before a full session
-    // is issued. Throwing here forces the consumer to handle the branch
-    // explicitly (typically by issuing a `mfaTempToken` and redirecting to
-    // the MFA challenge page) rather than silently shipping a token with
-    // `mfaVerified: false` that would 401 every subsequent request.
+    // MFA-enabled users must complete a TOTP challenge before a full session is issued. Throwing
+    // makes the consumer handle the branch (typically with a `mfaTempToken` and the challenge
+    // page) rather than ship a token with `mfaVerified: false` that would 401 every request.
     if (user.mfaEnabled) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
@@ -1024,17 +1021,19 @@ export class AuthService {
         this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
       })
     if (this.hooks?.afterLogin) {
-      void Promise.resolve(
-        this.hooks.afterLogin(safeUser, {
-          plane: 'dashboard',
-          userId: safeUser.id,
-          ip,
-          userAgent,
-          sanitizedHeaders: {}
-        })
-      ).catch((err: unknown) => {
-        this.logger.error(`afterLogin hook threw: ${describeChannelStatus(err)}`)
-      })
+      const afterLogin = this.hooks.afterLogin.bind(this.hooks)
+      runDetached(
+        this.logger,
+        () =>
+          afterLogin(safeUser, {
+            plane: 'dashboard',
+            userId: safeUser.id,
+            ip,
+            userAgent,
+            sanitizedHeaders: {}
+          }),
+        'afterLogin hook threw'
+      )
     }
 
     return result
@@ -1095,14 +1094,13 @@ export class AuthService {
     )
 
     if (this.hooks?.afterEmailVerified) {
-      void Promise.resolve(
-        this.hooks.afterEmailVerified(toSafeUser(user), {
-          ...createEmptyHookContext(),
-          plane: 'dashboard'
-        })
-      ).catch((err: unknown) => {
-        this.logger.error(`afterEmailVerified hook threw: ${describeChannelStatus(err)}`)
-      })
+      const afterEmailVerified = this.hooks.afterEmailVerified.bind(this.hooks)
+      runDetached(
+        this.logger,
+        () =>
+          afterEmailVerified(toSafeUser(user), { ...createEmptyHookContext(), plane: 'dashboard' }),
+        'afterEmailVerified hook threw'
+      )
     }
   }
 
