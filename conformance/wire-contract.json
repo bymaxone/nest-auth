@@ -1830,5 +1830,165 @@
       "registration": "`registration: 'invitation-only'` closes the self sign-up paths. POST register answers 403 auth.registration_closed before anything else is read or run, and the OAuth `create` action answers it unless the flow carries an invitation that passed the checks in `oauthAccept`. Signing in an existing account, linking an identity and every accept route are unaffected. Startup refuses the mode when `workspaces.enabled` and `invitations.enabled` are both false, naming both, since no account could ever be created.",
       "afterAcceptedHook": "The host's after-acceptance hook runs when an acceptance CREATED the account: on accept-signup, on an OAuth acceptance whose flow created the account, and on the tenant invitation's accept. It does not run on the signed-in accept, nor on an OAuth acceptance that signed in an account that already existed. It is detached: neither a rejection nor a synchronous throw changes the answer, because the account, the membership, the spend and the session are already done. A failing hook is logged without its message."
     }
+  },
+  "workspaceScopedName": {
+    "$comment": [
+      "Names scoped to a workspace: the keys, rooms and prefixes a host builds for storage, cache,",
+      "sockets and queues. Shared by both libraries because the same name must come out of either.",
+      "",
+      "name = concatenation, for the tenant, the workspace and then every part in order, of",
+      "`<byte length>:<text>`, where the length is the number of UTF-8 bytes of the text in canonical",
+      "decimal (no leading zero, `0` for the empty text). A length-prefixed piece is self-delimiting,",
+      "so no text can move a boundary: two different argument lists never produce one name.",
+      "",
+      "Refused (TypeError in nest-auth, an error in the sibling): a piece holding a C0 control",
+      "(U+0000 to U+001F) or DEL (U+007F), because several storage backends reject or mangle them;",
+      "an unpaired surrogate, which has no UTF-8 form so two different strings would write the same",
+      "bytes; an empty tenant or workspace. An empty part is allowed and is a piece of its own."
+    ],
+    "vectors": [
+        {
+              "case": "tenant, workspace and one part",
+              "args": [
+                    "t1",
+                    "w1",
+                    "room"
+              ],
+              "name": "2:t12:w14:room"
+        },
+        {
+              "case": "no part",
+              "args": [
+                    "t1",
+                    "w1"
+              ],
+              "name": "2:t12:w1"
+        },
+        {
+              "case": "an empty part is a piece of its own",
+              "args": [
+                    "t1",
+                    "w1",
+                    ""
+              ],
+              "name": "2:t12:w10:"
+        },
+        {
+              "case": "a colon and digits inside a part",
+              "args": [
+                    "t1",
+                    "w1",
+                    "2:ab"
+              ],
+              "name": "2:t12:w14:2:ab"
+        },
+        {
+              "case": "the same text split differently is a different name, first split",
+              "args": [
+                    "t1",
+                    "w1",
+                    "a",
+                    "1:b"
+              ],
+              "name": "2:t12:w11:a3:1:b"
+        },
+        {
+              "case": "the same text split differently is a different name, second split",
+              "args": [
+                    "t1",
+                    "w1",
+                    "a:1",
+                    "b"
+              ],
+              "name": "2:t12:w13:a:11:b"
+        },
+        {
+              "case": "a slash is encoded, not interpreted",
+              "args": [
+                    "t1",
+                    "w1",
+                    "files/a.png"
+              ],
+              "name": "2:t12:w111:files/a.png"
+        },
+        {
+              "case": "the length counts UTF-8 bytes: e-acute is 2, an emoji is 4",
+              "args": [
+                    "t1",
+                    "w1",
+                    "\u00e9",
+                    "\ud83d\ude00"
+              ],
+              "name": "2:t12:w12:\u00e94:\ud83d\ude00"
+        },
+        {
+              "case": "a tenant that looks like a length prefix",
+              "args": [
+                    "1:a",
+                    "w1"
+              ],
+              "name": "3:1:a2:w1"
+        },
+        {
+              "case": "NUL in a part",
+              "args": [
+                    "t1",
+                    "w1",
+                    "a\u0000b"
+              ],
+              "refused": "control character"
+        },
+        {
+              "case": "a tab in a part",
+              "args": [
+                    "t1",
+                    "w1",
+                    "a\tb"
+              ],
+              "refused": "control character"
+        },
+        {
+              "case": "DEL in a part",
+              "args": [
+                    "t1",
+                    "w1",
+                    "a\u007fb"
+              ],
+              "refused": "control character"
+        },
+        {
+              "case": "a newline in the tenant",
+              "args": [
+                    "t\n1",
+                    "w1"
+              ],
+              "refused": "control character"
+        },
+        {
+              "case": "an empty tenant",
+              "args": [
+                    "",
+                    "w1"
+              ],
+              "refused": "empty tenant"
+        },
+        {
+              "case": "an empty workspace",
+              "args": [
+                    "t1",
+                    ""
+              ],
+              "refused": "empty workspace"
+        },
+        {
+              "case": "an unpaired surrogate in a part",
+              "args": [
+                    "t1",
+                    "w1",
+                    "\ud800"
+              ],
+              "refused": "unpaired surrogate"
+        }
+  ]
   }
 }

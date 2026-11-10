@@ -487,6 +487,7 @@ export type {
   WorkspaceRequest
 } from './decorators/current-workspace.decorator'
 export { WorkspaceAccessService } from './services/workspace-access.service'
+export { decodeWorkspaceScopedName, workspaceScopedName } from './utils/workspace-scoped'
 export { MembershipService } from './services/membership.service'
 export { WorkspaceCallerService } from './services/workspace-caller.service'
 export { WorkspaceActionsService } from './services/workspace-actions.service'
