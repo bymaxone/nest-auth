@@ -778,6 +778,9 @@ export class BymaxAuthModule {
         // The workspace access service is public surface: a host that changes memberships outside
         // the library calls its invalidation methods.
         ...(includeWorkspaces ? WORKSPACE_PROVIDERS : []),
+        // The invitation service is public surface too: a platform bootstrap invitation has no
+        // route, so the host's own admin code issues and withdraws it through this service.
+        ...(includeWorkspaceInvitations ? [WorkspaceInvitationService] : []),
         // WsTicketService also stands on its own as public surface: single-use ticket
         // handshakes are the credential a realtime transport is meant to use, and a consumer
         // cannot mint one without injecting this service.

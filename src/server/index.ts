@@ -492,6 +492,20 @@ export { WorkspaceCallerService } from './services/workspace-caller.service'
 export { WorkspaceActionsService } from './services/workspace-actions.service'
 export type { MyWorkspaces } from './services/membership.service'
 export { WorkspaceService } from './services/workspace.service'
+export { WorkspaceInvitationService } from './services/workspace-invitation.service'
+export type {
+  AcceptedInvitation,
+  AcceptedSignup,
+  SignupRequest
+} from './services/workspace-invitation-accept.service'
+export type {
+  BootstrapInvitationRecord,
+  MemberInvitationRecord,
+  StoredWorkspaceInvitation,
+  WorkspaceInvitationPreview,
+  WorkspaceInvitationView
+} from './interfaces/workspace-invitation.interface'
+export type { WorkspaceInviteData } from './interfaces/email-provider.interface'
 export type {
   FinalizeResult,
   ScheduledDeletion,
