@@ -187,7 +187,8 @@ export class OAuthController {
    * before reaching the service layer.
    *
    * @param provider - Provider name (e.g. `'google'`). Must match a registered plugin.
-   * @param query - Validated query parameters (contains `tenantId`).
+   * @param query - Validated query parameters (`tenantId`, and the `workspaceInvitation` token
+   *   the sign-in accepts, when it does).
    * @param req - Incoming Express request — the configured `tenantIdResolver` reads it.
    * @param res - Express response object (used to issue the 302 redirect).
    */
@@ -200,7 +201,13 @@ export class OAuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ): Promise<void> {
-    await this.oauthService.initiateOAuth(provider, query.tenantId, req, res)
+    await this.oauthService.initiateOAuth(
+      provider,
+      query.tenantId,
+      req,
+      res,
+      query.workspaceInvitation
+    )
   }
 
   // ---------------------------------------------------------------------------

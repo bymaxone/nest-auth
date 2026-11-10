@@ -31,7 +31,9 @@ const OPTIONS = {
 }
 
 /** The service with a hook that fails the way `fail` says, and the account it creates. */
-async function serviceWith(afterInvitationAccepted: () => unknown): Promise<InvitationService> {
+async function serviceWith(
+  afterInvitationAccepted: (() => unknown) | null
+): Promise<InvitationService> {
   const stored = JSON.stringify({
     email: 'invited@example.com',
     role: 'member',
@@ -54,7 +56,10 @@ async function serviceWith(afterInvitationAccepted: () => unknown): Promise<Invi
         }
       },
       { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: {} },
-      { provide: BYMAX_AUTH_HOOKS, useValue: { afterInvitationAccepted } },
+      {
+        provide: BYMAX_AUTH_HOOKS,
+        useValue: afterInvitationAccepted === null ? null : { afterInvitationAccepted }
+      },
       {
         provide: PasswordService,
         useValue: {
@@ -112,5 +117,14 @@ describe('InvitationService afterInvitationAccepted hook', () => {
     expect(logged).toHaveBeenCalledWith(
       expect.stringContaining('afterInvitationAccepted hook threw')
     )
+  })
+
+  it('answers the acceptance without logging a failure when there is no hooks container', async () => {
+    const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    const service = await serviceWith(null)
+
+    await expect(accept(service)).resolves.toBe(RESULT)
+
+    expect(logged).not.toHaveBeenCalled()
   })
 })

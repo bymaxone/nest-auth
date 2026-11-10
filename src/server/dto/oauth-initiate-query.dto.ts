@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator'
+import { IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength } from 'class-validator'
 
 import { NO_CONTROL_CHARACTERS } from './no-control-characters'
 
@@ -28,4 +28,16 @@ export class OAuthInitiateQueryDto {
   @MaxLength(128)
   @Matches(NO_CONTROL_CHARACTERS, { message: 'tenantId must not contain control characters' })
   tenantId?: string
+  /**
+   * The workspace invitation token this sign-in accepts.
+   *
+   * Exactly 64 characters, like the token an invitation message carries. Only its sha256 is
+   * stored in the state record, and the start response sends `Referrer-Policy: no-referrer`
+   * because this query string holds the token.
+   */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @Length(64, 64)
+  workspaceInvitation?: string
 }

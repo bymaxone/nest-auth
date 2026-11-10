@@ -102,9 +102,8 @@ describe('OAuthController', () => {
   // ---------------------------------------------------------------------------
 
   describe('initiate()', () => {
-    // Verifies the happy path: initiateOAuth is called with the correct provider, the tenantId
-    // from the query DTO, the request (which the configured resolver reads, and which decides
-    // the tenant when there is one), and the response object.
+    // Verifies the happy path: initiateOAuth gets the provider, the DTO's tenantId, the request
+    // (read by the configured resolver), the response, and no invitation when the query has none.
     it('should call oauthService.initiateOAuth with provider, tenantId, req and res', async () => {
       mockOAuthService.initiateOAuth.mockResolvedValue(undefined)
       const mockRes = { redirect: jest.fn() } as unknown as Response
@@ -117,7 +116,8 @@ describe('OAuthController', () => {
         'google',
         'tenant-abc',
         mockReq,
-        mockRes
+        mockRes,
+        undefined
       )
     })
 

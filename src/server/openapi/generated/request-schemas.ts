@@ -401,6 +401,11 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
         "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
         "maxLength": 128,
         "minLength": 1
+      },
+      "workspaceInvitation": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
       }
     }
   },

@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto'
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import type { Request, Response } from 'express'
 
+import { isStoredOAuthState, type StoredOAuthState } from './oauth-state'
 import { OAUTH_PLUGINS } from './oauth.constants'
 import {
   BYMAX_AUTH_HOOKS,
@@ -37,9 +38,9 @@ import {
 import { generateSecureToken, sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type { HookContext, IAuthHooks, OAuthLoginResult } from '../interfaces/auth-hooks.interface'
 import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
-import type { OAuthProviderPlugin } from '../interfaces/oauth-provider.interface'
+import type { OAuthProfile, OAuthProviderPlugin } from '../interfaces/oauth-provider.interface'
 import type {
   AuthUser,
   IUserRepository,
@@ -48,6 +49,10 @@ import type {
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
+import {
+  WorkspaceInvitationAcceptService,
+  type LoadedInvitation
+} from '../services/workspace-invitation-accept.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
@@ -59,57 +64,10 @@ import { sanitizeHeaders } from '../utils/sanitize-headers'
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
 const OAUTH_STATE_TTL_SECONDS = 600
 
-/**
- * Stored payload for an OAuth state entry in Redis.
- * Keyed under `os:{sha256(state)}` — the raw state is never stored server-side.
- */
-interface StoredOAuthState {
-  /**
-   * The provider this state was minted for, compared against the provider named by the
-   * callback path before the record is used.
-   *
-   * RFC 9700 §2.1/§4.4 makes mix-up defence REQUIRED for a client that talks to more than one
-   * authorization server. Without this field the callback resolves the provider from its own
-   * URL and then consumes any structurally valid state, so an attacker able to steer an honest
-   * provider's callback to a hostile provider's path receives both the `code` and the PKCE
-   * `code_verifier` — enough to redeem the code at the honest provider. PKCE does not help:
-   * the verifier travels with the code by design.
-   *
-   * Only Google ships in-tree today, so this is defence-in-depth. It is stored anyway because
-   * the record is a shared structure and adding a field costs less now than after a second
-   * provider lands. Held byte-compatible with rust-auth.
-   */
-  provider: string
-  /** Tenant identifier passed by the caller when initiating the flow. */
-  tenantId: string
-  /**
-   * PKCE `code_verifier` (RFC 7636), held server-side for the lifetime of the
-   * authorization flow and forwarded to the provider's token endpoint on
-   * callback.
-   *
-   * Required, deliberately. `getAuthorizationUrl` writes one on every flow regardless of
-   * provider, so a record without it is corrupt or forged — and treating it as "this flow
-   * had no PKCE" would hand an attacker a downgrade: present a state record with the field
-   * stripped and the exchange proceeds with no proof the caller started the flow.
-   * `rust-auth` types the field as a plain `String`, so a record missing it fails to
-   * deserialize there; refusing it here keeps the shared record readable by exactly one rule.
-   */
-  codeVerifier: string
-}
-
-/** Narrows an unknown value to `StoredOAuthState` after `JSON.parse`. */
-function isStoredOAuthState(value: unknown): value is StoredOAuthState {
-  // Stryker disable next-line ConditionalExpression: non-object JSON values also fail the `typeof parsed['tenantId'] !== 'string'` check below, so dropping the type guard yields the same false
-  if (typeof value !== 'object' || value === null) return false
-  const v = value as Record<string, unknown>
-  // Required, like `codeVerifier` and for the same reason: a record without it is corrupt or
-  // forged, and accepting one would restore exactly the unbound state the field exists to
-  // prevent. rust-auth types it as a plain `String`, so a record missing it fails to
-  // deserialize there too.
-  if (typeof v['provider'] !== 'string') return false
-  if (typeof v['tenantId'] !== 'string') return false
-  if (typeof v['codeVerifier'] !== 'string') return false
-  return true
+/** A vetted invitation, waiting for the account its flow signs in. */
+interface PendingInvitation {
+  /** Writes the membership for `user` and spends the token; `created` is whether the flow made the account. */
+  complete(user: AuthUser, created: boolean, context: HookContext): Promise<void>
 }
 
 /**
@@ -149,7 +107,11 @@ export class OAuthService {
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
     @Inject(SessionService) private readonly sessionService: SessionService,
-    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
+    // Present only when `workspaces.enabled`; without it a flow cannot carry an invitation.
+    @Inject(WorkspaceInvitationAcceptService)
+    @Optional()
+    private readonly invitations: WorkspaceInvitationAcceptService | null = null
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -176,24 +138,28 @@ export class OAuthService {
    *   enforce tenant membership. Without the hook, OAuth sign-in is disabled.
    * @param req - Incoming Express request, read by the configured `tenantIdResolver`.
    * @param res - Express response in passthrough mode (used for the 302 redirect).
-   * @throws `AuthException(OAUTH_FAILED)` when no plugin is registered for `provider`.
+   * @param workspaceInvitation - The raw workspace invitation token the flow accepts, when it
+   *   does. Only its sha256 is stored, and the response carries `Referrer-Policy: no-referrer`
+   *   because the request URL held the token.
+   * @throws `AuthException(OAUTH_FAILED)` when no plugin is registered for `provider`, and
+   *   `AuthException(INVALID_INVITATION_TOKEN)` for a token when workspaces are not enabled.
    */
   async initiateOAuth(
     provider: string,
     tenantId: string | undefined,
     req: Request,
-    res: Response
+    res: Response,
+    workspaceInvitation?: string
   ): Promise<void> {
     // Validate and resolve early so the Redis write is never attempted for unknown providers.
     const plugin = this.resolvePlugin(provider)
 
     // The configured resolver is authoritative, exactly as it is for login, register and the
     // reset flows: a deployment that derives the tenant from the request has stated that the
-    // caller's value is not to be trusted. This was the one door that still took it verbatim —
-    // and it is the door that decides which tenant an account gets provisioned into, which is
-    // strictly more than the others were protecting. The resolved value is what goes into the
-    // state record, so the callback cannot be talked into a different one either.
+    // caller's value is not to be trusted. The resolved value is what goes into the state record,
+    // so the callback cannot be talked into a different tenant either.
     tenantId = await resolveTenantId(tenantId, req, this.options.tenantIdResolver)
+    const invitation = this.hashInvitation(workspaceInvitation)
 
     // Generate a 64-char hex nonce for CSRF protection.
     const state = generateSecureToken(32)
@@ -205,17 +171,49 @@ export class OAuthService {
     const codeVerifier = generateSecureToken(32)
     const codeChallenge = base64url(createHash('sha256').update(codeVerifier, 'utf8').digest())
 
-    const stored: StoredOAuthState = { provider, tenantId, codeVerifier }
+    const stored: StoredOAuthState = {
+      provider,
+      tenantId,
+      codeVerifier,
+      ...(invitation === undefined ? {} : { workspaceInvitation: invitation })
+    }
     await this.redis.set(stateKey, JSON.stringify(stored), OAUTH_STATE_TTL_SECONDS)
 
-    // Bind the flow to THIS browser. The `state` parameter alone proves only that somebody
-    // started a flow: an attacker can begin their own authorization, complete consent at the
-    // provider, capture the resulting callback URL without visiting it, and lure the victim
-    // there — the victim's browser then receives the attacker's session, and everything they
-    // do next lands in the attacker's account. PKCE does not help, because the verifier lives
-    // server-side and is replayed for whoever presents the state. RFC 6749 §10.12 requires
-    // this binding. `SameSite` is forced to `lax`: the callback is a cross-site top-level GET
-    // and `strict` would withhold the cookie on exactly that hop.
+    this.bindToBrowser(res, state)
+    if (invitation !== undefined) res.setHeader('Referrer-Policy', 'no-referrer')
+    res.redirect(plugin.authorizeUrl(state, codeChallenge))
+  }
+
+  /**
+   * Hashes the invitation token a flow carries, so Redis never holds the raw token.
+   *
+   * @param carried - The raw invitation value from the query string, if any.
+   * @returns Its sha256, or `undefined` when the flow carries none.
+   * @throws `AuthException(INVALID_INVITATION_TOKEN)` when workspaces are not enabled.
+   */
+  private hashInvitation(carried: string | undefined): string | undefined {
+    if (carried === undefined) return undefined
+    if (this.invitations === null)
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
+    return sha256(carried)
+  }
+
+  /**
+   * Plants the cookie that binds a flow to the browser that started it.
+   *
+   * The `state` parameter alone proves only that somebody started a flow: an attacker can begin
+   * their own authorization, complete consent at the provider, capture the resulting callback URL
+   * without visiting it, and lure the victim there — the victim's browser then receives the
+   * attacker's session. PKCE does not help, because the verifier lives server-side and is replayed
+   * for whoever presents the state. RFC 6749 §10.12 requires this binding, and it is what keeps a
+   * flow started with someone else's invitation from being finished in another browser.
+   * `SameSite` is forced to `lax`: the callback is a cross-site top-level GET and `strict` would
+   * withhold the cookie on exactly that hop.
+   *
+   * @param res - The response to set the cookie on.
+   * @param state - The raw state nonce.
+   */
+  private bindToBrowser(res: Response, state: string): void {
     res.cookie(OAUTH_STATE_COOKIE_NAME, state, {
       httpOnly: true,
       secure: this.options.secureCookies,
@@ -223,9 +221,6 @@ export class OAuthService {
       path: '/',
       maxAge: OAUTH_STATE_COOKIE_MAX_AGE_SECONDS * 1_000
     })
-
-    const authUrl = plugin.authorizeUrl(state, codeChallenge)
-    res.redirect(authUrl)
   }
 
   // ---------------------------------------------------------------------------
@@ -277,12 +272,204 @@ export class OAuthService {
     userAgent: string,
     headers: Record<string, string | string[] | undefined>
   ): Promise<AuthResult | OAuthMfaChallengeResult> {
-    // Validate provider format and resolve the plugin before consuming the CSRF state.
-    // Moving this check before getdel() prevents the state from being silently consumed
-    // for an invalid provider — a user who encounters a misconfigured provider would
-    // otherwise need to restart the entire flow.
+    // Resolve the plugin before the state is consumed, so a misconfigured provider cannot burn a
+    // state the user would otherwise have to restart the whole flow to replace.
     const plugin = this.resolvePlugin(provider)
 
+    const record = await this.consumeState(provider, state, stateCookie)
+    const { tenantId, codeVerifier } = record
+
+    const profile = await this.fetchProfile(plugin, provider, code, codeVerifier)
+    const invitation = await this.vetInvitation(record, profile)
+
+    // Look up an existing user linked to this OAuth identity.
+    const existingAuthUser = await this.userRepo.findByOAuthId({
+      provider,
+      providerId: profile.providerId,
+      tenantId
+    })
+
+    // Strip credential fields before passing to the hook.
+    const existingUser: SafeAuthUser | null = existingAuthUser ? toSafeUser(existingAuthUser) : null
+
+    // The hook is told which tenant and which address the flow resolved to: it is the only place
+    // a deployment can enforce tenant membership. Both come from the server-side state record and
+    // the verified profile, never from the callback request.
+    const hookContext: HookContext = {
+      plane: 'dashboard',
+      tenantId,
+      email: profile.email,
+      ip,
+      userAgent,
+      sanitizedHeaders: sanitizeHeaders(headers)
+    }
+
+    // Run the onOAuthLogin hook — required for account resolution strategy.
+    // Null hooks or a missing onOAuthLogin method both result in OAUTH_FAILED,
+    // preventing unauthenticated OAuth logins on unconfigured installations.
+    const hookResult = await this.hooks?.onOAuthLogin?.(profile, existingUser, hookContext)
+
+    if (!hookResult) {
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+
+    const authUser = await this.resolveAccount(
+      { provider, tenantId, profile, hookResult, existingAuthUser },
+      invitation
+    )
+
+    this.assertMaySignIn(authUser)
+
+    if (authUser.mfaEnabled) {
+      return this.issueMfaChallenge(authUser, provider, hookResult)
+    }
+
+    const created = hookResult.action === 'create'
+    await invitation?.complete(authUser, created, { ...hookContext, userId: authUser.id })
+    return this.openSession(authUser, provider, hookResult, hookContext, ip, userAgent)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Refuses an account that may not sign in: a blocked status, or an unverified address where the
+   * deployment requires one.
+   *
+   * @param authUser - The account the flow resolved to.
+   * @throws `AuthException` for a blocked status or an unverified address.
+   */
+  private assertMaySignIn(authUser: AuthUser): void {
+    // Status gate. Every credential flow in this library runs it — password login, the MFA
+    // challenge, both password-reset steps, the platform login — so a BANNED or SUSPENDED account
+    // holding a linked provider identity cannot sign back in. Ban is the primary account kill
+    // switch; a flow that ignores it makes it advisory. Run before the MFA branch so a blocked
+    // account cannot even obtain a temp token. `rust-auth` gates the same point.
+    assertNotBlocked(authUser.status, this.options.blockedStatuses)
+
+    // Email-verification gate, on the same footing as password login: when a deployment
+    // requires a verified address, an OAuth identity does not substitute for one. The `create`
+    // branch records what the provider actually asserted, so an unverified provider profile
+    // stays unverified here rather than being promoted by the act of signing in.
+    if (this.options.emailVerification.required && !authUser.emailVerified) {
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+    }
+  }
+
+  /**
+   * Issues the MFA temp token for an account that has a second factor.
+   *
+   * @param authUser - The account the flow resolved to.
+   * @param provider - The provider name, for the log line.
+   * @param hookResult - The hook's decision, whose action goes in the log line.
+   * @returns The challenge the controller plants in a cookie or surfaces in the body.
+   */
+  private async issueMfaChallenge(
+    authUser: AuthUser,
+    provider: string,
+    hookResult: OAuthLoginResult
+  ): Promise<OAuthMfaChallengeResult> {
+    // MFA branch: when the resolved user has MFA enabled, the OAuth flow has only
+    // proven control of the OAuth provider account — not the second factor. Issuing
+    // a session with `mfaVerified: false` would be rejected on every request by the
+    // global `MfaRequiredGuard`, leaving the user locked out. Instead, we issue a
+    // short-lived MFA temp token via TokenManagerService (the same path the
+    // password-login flow uses) and let the controller plant it in a cookie or
+    // surface it in the response body. The user completes `/auth/mfa/challenge`
+    // to obtain real session tokens. No `MfaService` dependency is required —
+    // `issueMfaTempToken` lives on `TokenManagerService`, which is always
+    // registered.
+    // OAuth is dashboard-only; bind the tenant so the challenge resolves this account
+    // tenant-scoped rather than by `sub` alone.
+    const mfaTempToken = await this.tokenManager.issueMfaTempToken(
+      authUser.id,
+      'dashboard',
+      authUser.tenantId
+    )
+    this.logger.log(
+      `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${logSafe(authUser.id)} tenantId=${logSafe(authUser.tenantId)} action=${hookResult.action}`
+    )
+    return { mfaRequired: true, mfaTempToken }
+  }
+
+  /**
+   * Issues the tokens and the tracked session of a completed sign-in, then runs the non-blocking
+   * side effects of a login.
+   *
+   * @param authUser - The account the flow resolved to.
+   * @param provider - The provider name, for the log line.
+   * @param hookResult - The hook's decision, whose action goes in the log line.
+   * @param hookContext - The context the hooks were given.
+   * @param ip - The client address.
+   * @param userAgent - The `User-Agent` header.
+   * @returns The auth result.
+   */
+  private async openSession(
+    authUser: AuthUser,
+    provider: string,
+    hookResult: OAuthLoginResult,
+    hookContext: HookContext,
+    ip: string,
+    userAgent: string
+  ): Promise<AuthResult> {
+    // Strip credentials before token issuance — prevents passwordHash / mfaSecret
+    // from flowing into the AuthResult.user field that is serialized in the response.
+    const safeUser = toSafeUser(authUser)
+    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
+
+    // Create a tracked session if session management is enabled.
+    if (this.options.sessions.enabled) {
+      await this.sessionService.createSession({
+        userId: safeUser.id,
+        tenantId: safeUser.tenantId,
+        rawRefreshToken: result.rawRefreshToken,
+        ip,
+        userAgent
+      })
+    }
+
+    this.logger.log(
+      `handleCallback: OAuth login success provider=${provider} userId=${logSafe(safeUser.id)} tenantId=${logSafe(authUser.tenantId)} action=${hookResult.action}`
+    )
+
+    // The same non-blocking side effects a password login runs once it has succeeded. An MFA
+    // account reaches them from the challenge completion instead, so this is only the path that
+    // issued a session.
+    runDetached(
+      this.logger,
+      () => this.userRepo.updateLastLogin({ id: safeUser.id, tenantId: safeUser.tenantId }),
+      'oauth: updateLastLogin failed'
+    )
+    if (this.hooks?.afterLogin) {
+      const afterLogin = this.hooks.afterLogin.bind(this.hooks)
+      runDetached(
+        this.logger,
+        () => afterLogin(safeUser, { ...hookContext, userId: safeUser.id }),
+        'oauth: afterLogin hook threw'
+      )
+    }
+    return result
+  }
+
+  /**
+   * Validates and spends the `state` of a callback.
+   *
+   * The state must be bound to this browser by the `oauth_state` cookie, must exist (and is
+   * deleted as it is read), must parse, and must name the provider the callback names.
+   *
+   * @param provider - The provider named by the callback path.
+   * @param state - The `state` query value.
+   * @param stateCookie - The `oauth_state` cookie value, or `undefined` when none was sent.
+   * @returns The stored record of the flow.
+   * @throws `AuthException(OAUTH_FAILED)` for a state that is unbound, missing, unparseable,
+   *   malformed or minted for another provider.
+   */
+  private async consumeState(
+    provider: string,
+    state: string,
+    stateCookie: string | undefined
+  ): Promise<StoredOAuthState> {
     // Bind the callback to the browser that started the flow (RFC 6749 §10.12). A `state`
     // that merely exists in Redis proves only that *somebody* started a flow: an attacker can
     // run their own authorization to the point of holding a valid `?code=…&state=…` URL, never
@@ -297,6 +484,35 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
+    const stored = await this.readState(provider, state)
+
+    // Mix-up defence (RFC 9700 §2.1/§4.4). `provider` here comes from the callback's own URL
+    // path; the record says which provider the flow was actually started with. A mismatch means
+    // this state was minted for somebody else, and consuming it would forward the `code` and
+    // the PKCE `code_verifier` to a provider the user never authorized — which is exactly what
+    // lets a hostile provider redeem an honest one's code.
+    //
+    // A plain comparison, deliberately, unlike the state-cookie binding above: this is not a
+    // secret. Both sides are provider names drawn from the registered plugins, and the
+    // callback's own value is a URL path segment the caller supplied. There is nothing here for
+    // a timing side channel to reveal, and a constant-time compare would only imply otherwise.
+    if (stored.provider !== provider) {
+      this.logger.warn(`handleCallback: OAuth state provider mismatch provider=${provider}`)
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+
+    return stored
+  }
+
+  /**
+   * Reads and deletes the state record of a flow, in one step so it can be used once.
+   *
+   * @param provider - The provider named by the callback path, for the log lines.
+   * @param state - The `state` query value.
+   * @returns The stored record.
+   * @throws `AuthException(OAUTH_FAILED)` for a state that is missing, unparseable or malformed.
+   */
+  private async readState(provider: string, state: string): Promise<StoredOAuthState> {
     // Atomically read and delete the CSRF state — single-use enforcement.
     const stateKey = `os:${sha256(state)}`
     const rawState = await this.redis.getdel(stateKey)
@@ -322,46 +538,35 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
-    // Mix-up defence (RFC 9700 §2.1/§4.4). `provider` here comes from the callback's own URL
-    // path; the record says which provider the flow was actually started with. A mismatch means
-    // this state was minted for somebody else, and consuming it would forward the `code` and
-    // the PKCE `code_verifier` to a provider the user never authorized — which is exactly what
-    // lets a hostile provider redeem an honest one's code.
-    //
-    // A plain comparison, deliberately, unlike the state-cookie binding above: this is not a
-    // secret. Both sides are provider names drawn from the registered plugins, and the
-    // callback's own value is a URL path segment the caller supplied. There is nothing here for
-    // a timing side channel to reveal, and a constant-time compare would only imply otherwise.
-    if (parsedState.provider !== provider) {
-      this.logger.warn(`handleCallback: OAuth state provider mismatch provider=${provider}`)
-      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-    }
+    return parsedState
+  }
 
-    const { tenantId, codeVerifier } = parsedState
-
-    // Exchange code and fetch profile — wrap in try/catch for observability.
-    //
-    // The access token stays INSIDE the `try`. It was hoisted out for one reason — so the catch
-    // could name it in a redaction list — and that list is gone, because nothing the plugin wrote
-    // is published any more. Left hoisted, its `''` initialiser would be a value no test can
-    // observe, which is a mutation survivor and, more plainly, a variable whose scope no longer
-    // matches its use.
-    let profile: Awaited<ReturnType<typeof plugin.fetchProfile>>
+  /**
+   * Exchanges the authorization code and fetches the provider's profile.
+   *
+   * @param plugin - The provider plugin.
+   * @param provider - Its name, for the log line.
+   * @param code - The authorization code.
+   * @param codeVerifier - The PKCE verifier stored with the state.
+   * @returns The normalized profile.
+   * @throws `AuthException(OAUTH_FAILED)` when the exchange or the fetch fails.
+   */
+  private async fetchProfile(
+    plugin: OAuthProviderPlugin,
+    provider: string,
+    code: string,
+    codeVerifier: string
+  ): Promise<OAuthProfile> {
     try {
       const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
-      profile = await plugin.fetchProfile(tokenResponse.access_token)
+      return await plugin.fetchProfile(tokenResponse.access_token)
     } catch (err: unknown) {
       // Nothing the plugin wrote is published. This path holds a LIVE ACCESS TOKEN: the plugin
       // received `code`, `codeVerifier` and `accessToken`, and an HTTP client attaching its
       // request config to the error is the ordinary case rather than an exotic one — axios does
-      // it by default.
-      //
-      // Naming the three values was the previous shape, and the comment justifying it conceded
-      // the defect in its own second sentence: redaction is a substring match, so it holds for a
-      // value the plugin echoed as given and not for one it re-encoded. A token in a base64 or
-      // URL-encoded request body is not present as written, so no list finds it — the same
-      // measurement that took the mail channel's text out of these lines. There is nothing to
-      // name because nothing the plugin authored comes through.
+      // it by default. Redaction is a substring match, so it cannot find a token the plugin
+      // re-encoded (in a base64 or URL-encoded request body); there is nothing to name because
+      // nothing the plugin authored comes through.
       //
       // A plugin that wants its own diagnostics logged in full can log them itself, where the
       // operator knows the audience.
@@ -371,195 +576,162 @@ export class OAuthService {
       )
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
-
-    // Look up an existing user linked to this OAuth identity.
-    const existingAuthUser = await this.userRepo.findByOAuthId({
-      provider,
-      providerId: profile.providerId,
-      tenantId
-    })
-
-    // Strip credential fields before passing to the hook.
-    const existingUser: SafeAuthUser | null = existingAuthUser ? toSafeUser(existingAuthUser) : null
-
-    // Build the hook context with properly sanitized headers.
-    //
-    // The tenant and the address travel with it. `onOAuthLogin` is the documented — and only —
-    // place a deployment can enforce tenant membership, and it was being asked to decide that
-    // without being told which tenant, or which address, the flow had resolved to. The values
-    // come from the server-side state record and the verified profile, never from the callback
-    // request.
-    const hookContext: HookContext = {
-      plane: 'dashboard',
-      tenantId,
-      email: profile.email,
-      ip,
-      userAgent,
-      sanitizedHeaders: sanitizeHeaders(headers)
-    }
-
-    // Run the onOAuthLogin hook — required for account resolution strategy.
-    // Null hooks or a missing onOAuthLogin method both result in OAUTH_FAILED,
-    // preventing unauthenticated OAuth logins on unconfigured installations.
-    const hookResult = await this.hooks?.onOAuthLogin?.(profile, existingUser, hookContext)
-
-    if (!hookResult) {
-      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-    }
-
-    let authUser: AuthUser
-    switch (hookResult.action) {
-      case 'create': {
-        // `String.prototype.split` always returns at least one element on a
-        // non-empty input (which `@IsEmail` has already validated), so the
-        // `?? profile.email` defence-in-depth branch is not expected at runtime.
-        /* istanbul ignore next -- defensive fallback: split('@')[0] is always defined for a validated email */
-        const derivedName = profile.name ?? profile.email.split('@')[0] ?? profile.email
-
-        // An account may already own this address without being linked to this OAuth identity
-        // — a local registration, or a link to a different provider. `findByOAuthId` above does
-        // not see it, so creating would violate the repository's uniqueness constraint and
-        // surface as an opaque 500. It is a conflict, and the caller can act on it (sign in and
-        // link instead), so it is reported as one. rust-auth answers the same 409
-        // `auth.oauth_email_mismatch` for the same collision.
-        //
-        // A concurrent create between this check and the insert still reaches the repository.
-        // Nothing portable can be done about that here — `IUserRepository` is host-implemented
-        // and its errors are untyped — so the check closes the deterministic case and leaves
-        // the race to the constraint.
-        if (await this.userRepo.findByEmail({ email: profile.email, tenantId })) {
-          this.logger.warn(
-            `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${logSafe(tenantId)}`
-          )
-          throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
-        }
-
-        authUser = await this.userRepo.createWithOAuth({
-          email: profile.email,
-          name: derivedName,
-          tenantId,
-          // What the provider actually asserted, not a convenient constant. An account created
-          // from an unverified address belongs to whoever controls the OAuth account, not to
-          // whoever controls the mailbox; marking it verified would make the consumer's
-          // "this email is proven" invariant false from the first login.
-          emailVerified: profile.emailVerified,
-          oauthProvider: provider,
-          oauthProviderId: profile.providerId
-        })
-        break
-      }
-
-      case 'link': {
-        if (!existingAuthUser) {
-          // Hook returned 'link' but there is no existing user — treat as OAuth failure.
-          throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-        }
-        await this.userRepo.linkOAuth({
-          id: existingAuthUser.id,
-          tenantId: existingAuthUser.tenantId,
-          provider,
-          providerId: profile.providerId
-        })
-        // Re-fetch by primary key (more direct than findByOAuthId — id is already known).
-        const linked = await this.userRepo.findById({
-          id: existingAuthUser.id,
-          tenantId: existingAuthUser.tenantId
-        })
-        if (!linked) {
-          throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-        }
-        authUser = linked
-        break
-      }
-
-      case 'reject':
-      default: {
-        throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
-      }
-    }
-
-    // Status gate. Every credential flow in this library runs it — password login, the MFA
-    // challenge, both password-reset steps, the platform login — and OAuth was the one that
-    // did not, so a BANNED or SUSPENDED account holding a linked provider identity walked
-    // straight back in. Ban is the primary account kill switch; a flow that ignores it makes
-    // it advisory. Run before the MFA branch so a blocked account cannot even obtain a temp
-    // token. `rust-auth` gates the same point.
-    assertNotBlocked(authUser.status, this.options.blockedStatuses)
-
-    // Email-verification gate, on the same footing as password login: when a deployment
-    // requires a verified address, an OAuth identity does not substitute for one. The `create`
-    // branch above records what the provider actually asserted, so an unverified provider
-    // profile stays unverified here rather than being promoted by the act of signing in.
-    if (this.options.emailVerification.required && !authUser.emailVerified) {
-      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
-    }
-
-    // MFA branch: when the resolved user has MFA enabled, the OAuth flow has only
-    // proven control of the OAuth provider account — not the second factor. Issuing
-    // a session with `mfaVerified: false` would be rejected on every request by the
-    // global `MfaRequiredGuard`, leaving the user locked out. Instead, we issue a
-    // short-lived MFA temp token via TokenManagerService (the same path the
-    // password-login flow uses) and let the controller plant it in a cookie or
-    // surface it in the response body. The user completes `/auth/mfa/challenge`
-    // to obtain real session tokens. No `MfaService` dependency is required —
-    // `issueMfaTempToken` lives on `TokenManagerService`, which is always
-    // registered.
-    if (authUser.mfaEnabled) {
-      // OAuth is dashboard-only; bind the tenant so the challenge resolves this account
-      // tenant-scoped rather than by `sub` alone.
-      const mfaTempToken = await this.tokenManager.issueMfaTempToken(
-        authUser.id,
-        'dashboard',
-        authUser.tenantId
-      )
-      this.logger.log(
-        `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${logSafe(authUser.id)} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
-      )
-      return { mfaRequired: true, mfaTempToken }
-    }
-
-    // Strip credentials before token issuance — prevents passwordHash / mfaSecret
-    // from flowing into the AuthResult.user field that is serialized in the response.
-    const safeUser = toSafeUser(authUser)
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
-
-    // Create a tracked session if session management is enabled.
-    if (this.options.sessions.enabled) {
-      await this.sessionService.createSession({
-        userId: safeUser.id,
-        tenantId: safeUser.tenantId,
-        rawRefreshToken: result.rawRefreshToken,
-        ip,
-        userAgent
-      })
-    }
-
-    this.logger.log(
-      `handleCallback: OAuth login success provider=${provider} userId=${logSafe(safeUser.id)} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
-    )
-
-    // The same non-blocking side effects a password login runs once it has succeeded. An MFA
-    // account reaches them from the challenge completion instead, so this is only the path that
-    // issued a session.
-    runDetached(
-      this.logger,
-      () => this.userRepo.updateLastLogin({ id: safeUser.id, tenantId: safeUser.tenantId }),
-      'oauth: updateLastLogin failed'
-    )
-    if (this.hooks?.afterLogin) {
-      const afterLogin = this.hooks.afterLogin.bind(this.hooks)
-      runDetached(
-        this.logger,
-        () => afterLogin(safeUser, { ...hookContext, userId: safeUser.id }),
-        'oauth: afterLogin hook threw'
-      )
-    }
-    return result
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
+  /**
+   * Provisions a new account from a verified OAuth profile.
+   *
+   * @param provider - The provider name.
+   * @param tenantId - The tenant the flow resolved to.
+   * @param profile - The provider's profile.
+   * @returns The created account.
+   * @throws `AuthException(OAUTH_EMAIL_MISMATCH)` when the address already belongs to an account.
+   */
+  private async createAccount(
+    provider: string,
+    tenantId: string,
+    profile: OAuthProfile
+  ): Promise<AuthUser> {
+    // `String.prototype.split` always returns at least one element on a
+    // non-empty input (which `@IsEmail` has already validated), so the
+    // `?? profile.email` defence-in-depth branch is not expected at runtime.
+    /* istanbul ignore next -- defensive fallback: split('@')[0] is always defined for a validated email */
+    const derivedName = profile.name ?? profile.email.split('@')[0] ?? profile.email
+
+    // An account may already own this address without being linked to this OAuth identity
+    // — a local registration, or a link to a different provider. `findByOAuthId` above does
+    // not see it, so creating would violate the repository's uniqueness constraint and
+    // surface as an opaque 500. It is a conflict, and the caller can act on it (sign in and
+    // link instead), so it is reported as one. rust-auth answers the same 409
+    // `auth.oauth_email_mismatch` for the same collision.
+    //
+    // A concurrent create between this check and the insert still reaches the repository.
+    // Nothing portable can be done about that here — `IUserRepository` is host-implemented
+    // and its errors are untyped — so the check closes the deterministic case and leaves
+    // the race to the constraint.
+    if (await this.userRepo.findByEmail({ email: profile.email, tenantId })) {
+      this.logger.warn(
+        `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${logSafe(tenantId)}`
+      )
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
+    }
+
+    return this.userRepo.createWithOAuth({
+      email: profile.email,
+      name: derivedName,
+      tenantId,
+      // What the provider actually asserted, not a convenient constant. An account created
+      // from an unverified address belongs to whoever controls the OAuth account, not to
+      // whoever controls the mailbox; marking it verified would make the consumer's
+      // "this email is proven" invariant false from the first login.
+      emailVerified: profile.emailVerified,
+      oauthProvider: provider,
+      oauthProviderId: profile.providerId
+    })
+  }
+
+  /**
+   * Links the OAuth identity to the account the flow already found.
+   *
+   * @param provider - The provider name.
+   * @param profile - The provider's profile.
+   * @param existingAuthUser - The account to link, or `null` when there is none.
+   * @returns The account re-read after linking.
+   * @throws `AuthException(OAUTH_FAILED)` when there is no account to link or it cannot be re-read.
+   */
+  private async linkAccount(
+    provider: string,
+    profile: OAuthProfile,
+    existingAuthUser: AuthUser | null
+  ): Promise<AuthUser> {
+    if (!existingAuthUser) {
+      // Hook returned 'link' but there is no existing user — treat as OAuth failure.
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+    await this.userRepo.linkOAuth({
+      id: existingAuthUser.id,
+      tenantId: existingAuthUser.tenantId,
+      provider,
+      providerId: profile.providerId
+    })
+    // Re-fetch by primary key (more direct than findByOAuthId — id is already known).
+    const linked = await this.userRepo.findById({
+      id: existingAuthUser.id,
+      tenantId: existingAuthUser.tenantId
+    })
+    if (!linked) {
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+    return linked
+  }
+
+  /**
+   * Carries out the account strategy the `onOAuthLogin` hook chose.
+   *
+   * Under `registration: 'invitation-only'` a `create` is allowed only for a flow that carries a
+   * vetted invitation; linking and signing in an existing account are not sign-ups.
+   *
+   * @param flow - What the callback resolved: the provider, the tenant, the verified profile, the
+   *   hook's decision and the account already linked to this identity, or `null`.
+   * @param invitation - The invitation the flow carries, or `null`.
+   * @returns The account the flow signs in.
+   * @throws `AuthException` for a rejected flow, a closed registration, a `link` with no account
+   *   to link, or a create that collides with an existing address.
+   */
+  private async resolveAccount(
+    flow: {
+      provider: string
+      tenantId: string
+      profile: OAuthProfile
+      hookResult: OAuthLoginResult
+      existingAuthUser: AuthUser | null
+    },
+    invitation: PendingInvitation | null
+  ): Promise<AuthUser> {
+    const { provider, tenantId, profile, hookResult, existingAuthUser } = flow
+    switch (hookResult.action) {
+      case 'create':
+        if (invitation === null && this.options.registration === 'invitation-only') {
+          throw new AuthException(AUTH_ERROR_CODES.REGISTRATION_CLOSED)
+        }
+        return this.createAccount(provider, tenantId, profile)
+      case 'link':
+        return this.linkAccount(provider, profile, existingAuthUser)
+      case 'reject':
+      default:
+        throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+  }
+
+  /**
+   * Vets the invitation a flow was started with against the provider's profile.
+   *
+   * @param record - The consumed state record.
+   * @param profile - The provider's profile.
+   * @returns What completes the invitation once the account is known, or `null` for a flow that
+   *   carries none.
+   * @throws `AuthException(INVALID_INVITATION_TOKEN)` when workspaces are not enabled, and the
+   *   refusals of `WorkspaceInvitationAcceptService.prepareOAuth` otherwise.
+   */
+  private async vetInvitation(
+    record: StoredOAuthState,
+    profile: OAuthProfile
+  ): Promise<PendingInvitation | null> {
+    if (record.workspaceInvitation === undefined) return null
+    if (this.invitations === null)
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
+    const accepts = this.invitations
+    const loaded: LoadedInvitation = await accepts.prepareOAuth(
+      record.workspaceInvitation,
+      record.tenantId,
+      { email: profile.email, emailVerified: profile.emailVerified }
+    )
+    return {
+      complete: async (user, created, context): Promise<void> => {
+        await accepts.completeOAuth(loaded, user, created, context)
+      }
+    }
+  }
 
   /**
    * Resolves a plugin by name or throws `OAUTH_FAILED` when not found.

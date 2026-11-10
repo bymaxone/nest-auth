@@ -208,6 +208,12 @@ export class AuthService {
     dto: { email: string; password: string; name: string; tenantId?: string },
     req: Request
   ): Promise<AuthResult> {
+    // An invitation-only deployment creates accounts only through an invitation, so the password
+    // sign-up refuses before it resolves a tenant, runs a hook or touches the repository.
+    if (this.options.registration === 'invitation-only') {
+      throw new AuthException(AUTH_ERROR_CODES.REGISTRATION_CLOSED)
+    }
+
     const tenantId = await this.resolveTenantId(dto.tenantId, req)
     const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
@@ -222,16 +228,9 @@ export class AuthService {
     const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
 
     /**
-     * Privileged fields the `beforeRegister` hook may set, held SEPARATELY from `dto`.
-     *
-     * They used to be merged into `dto` and read back off it, which made a `role` the hook chose
-     * indistinguishable from one the CALLER sent. Through the shipped controller that was not
-     * reachable — `createAuthValidationPipe()` sets `whitelist` and `forbidNonWhitelisted`, so
-     * `{"role":"ADMIN"}` in the body is a 400 — but `AuthService` is exported precisely so a host
-     * can write its own registration route, and the moment one calls `register(req.body, req)`
-     * the only control standing between an unauthenticated caller and `role: 'ADMIN'` lived in a
-     * different file, on a decorator that host is free not to use. A privilege boundary that
-     * depends on a collaborator's configuration is not a boundary.
+     * Privileged fields the `beforeRegister` hook may set, held apart from `dto` so a `role` the
+     * hook chose is never confused with one the caller sent. `AuthService` is exported for hosts
+     * that write their own route, and this boundary must not depend on the pipe in front of it.
      */
     let hookOverrides: { role?: string; status?: string; emailVerified?: boolean } = {}
 
