@@ -30,7 +30,8 @@ import type { AuthMembership } from '../interfaces/membership-repository.interfa
 import type { BootstrapInvitationRecord } from '../interfaces/workspace-invitation.interface'
 
 /**
- * Makes every collaborator a signup touches note its name, in the order they are called.
+ * Makes every collaborator a signup writes through, and the store's spend of the token, note their
+ * names in the order they are called.
  *
  * @param h - The harness.
  * @returns The list the names are appended to.
@@ -52,6 +53,11 @@ function recordSignupOrder(h: Harness): string[] {
   h.access.invalidateMembership.mockImplementation(note('cache', undefined))
   h.tokens.issueTokens.mockImplementation(note('tokens', tokens))
   h.sessions.createSession.mockImplementation(note('session', 'sid'))
+  const remove = h.store.remove.bind(h.store)
+  jest.spyOn(h.store, 'remove').mockImplementation(async (...args) => {
+    order.push('spend')
+    return remove(...args)
+  })
   return order
 }
 
@@ -302,6 +308,7 @@ describe('WorkspaceInvitationAcceptService', () => {
         'hash',
         'account',
         'member',
+        'spend',
         'cache',
         'tokens',
         'session'
