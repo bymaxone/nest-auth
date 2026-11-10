@@ -29,6 +29,32 @@ import type { AuthException } from '../errors/auth-exception'
 import type { AuthMembership } from '../interfaces/membership-repository.interface'
 import type { BootstrapInvitationRecord } from '../interfaces/workspace-invitation.interface'
 
+/**
+ * Makes every collaborator a signup touches note its name, in the order they are called.
+ *
+ * @param h - The harness.
+ * @returns The list the names are appended to.
+ */
+function recordSignupOrder(h: Harness): string[] {
+  const order: string[] = []
+  const note =
+    <T>(name: string, result: T) =>
+    async (): Promise<T> => (order.push(name), result)
+  const tokens = { user: { id: 'new' }, accessToken: 'a', rawRefreshToken: 'r' }
+  h.users.findByEmail.mockImplementation(note('lookup', null))
+  h.passwords.assertAcceptable.mockImplementation(note('policy', undefined))
+  h.passwords.hash.mockImplementation(note('hash', 'hash'))
+  h.users.create.mockImplementation(async (d: { email: string; name: string }) => {
+    order.push('account')
+    return user('new', { email: d.email, name: d.name })
+  })
+  h.memberships.create.mockImplementation(note('member', 'ok'))
+  h.access.invalidateMembership.mockImplementation(note('cache', undefined))
+  h.tokens.issueTokens.mockImplementation(note('tokens', tokens))
+  h.sessions.createSession.mockImplementation(note('session', 'sid'))
+  return order
+}
+
 describe('WorkspaceInvitationAcceptService', () => {
   beforeEach(() => {
     jest.spyOn(Date, 'now').mockReturnValue(NOW)
@@ -266,27 +292,9 @@ describe('WorkspaceInvitationAcceptService', () => {
     it('creates a verified account, joins it, spends the token and signs it in, in that order', async () => {
       const h = build(true)
       await seed(h)
-      const order: string[] = []
-      h.users.findByEmail.mockImplementation(async () => (order.push('lookup'), null))
-      h.passwords.assertAcceptable.mockImplementation(async () => void order.push('policy'))
-      h.passwords.hash.mockImplementation(async () => (order.push('hash'), 'hash'))
-      h.users.create.mockImplementation(
-        async (d: { email: string; name: string }) => (
-          order.push('account'),
-          user('new', { email: d.email, name: d.name })
-        )
-      )
-      h.memberships.create.mockImplementation(async () => (order.push('member'), 'ok'))
-      h.access.invalidateMembership.mockImplementation(async () => void order.push('cache'))
-      h.tokens.issueTokens.mockImplementation(
-        async () => (
-          order.push('tokens'),
-          { user: { id: 'new' }, accessToken: 'a', rawRefreshToken: 'r' }
-        )
-      )
-      h.sessions.createSession.mockImplementation(async () => (order.push('session'), 'sid'))
+      const order = recordSignupOrder(h)
 
-      const answer = await h.service.acceptSignup(SIGNUP, REQUEST)
+      await h.service.acceptSignup(SIGNUP, REQUEST)
 
       expect(order).toEqual([
         'lookup',
@@ -298,6 +306,14 @@ describe('WorkspaceInvitationAcceptService', () => {
         'tokens',
         'session'
       ])
+    })
+
+    it('answers where the account joined, with the session, and creates it verified and without a role', async () => {
+      const h = build(true)
+      await seed(h)
+
+      const answer = await h.service.acceptSignup(SIGNUP, REQUEST)
+
       expect(answer.accepted).toEqual({ workspaceId: 'w1', role: 'viewer' })
       expect(answer.result).toMatchObject({ accessToken: 'a' })
       expect(h.users.create).toHaveBeenCalledWith({
@@ -309,6 +325,14 @@ describe('WorkspaceInvitationAcceptService', () => {
       })
       expect(Object.keys(h.users.create.mock.calls[0]?.[0] as object)).not.toContain('role')
       expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).toBeNull()
+    })
+
+    it('opens the session and issues the tokens for the new account and the request', async () => {
+      const h = build(true)
+      await seed(h)
+
+      await h.service.acceptSignup(SIGNUP, REQUEST)
+
       expect(h.sessions.createSession).toHaveBeenCalledWith({
         userId: 'new',
         tenantId: 't1',
