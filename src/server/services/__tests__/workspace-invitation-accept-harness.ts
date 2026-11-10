@@ -34,11 +34,23 @@ import type {
 import type { IWorkspaceRepository } from '../../interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../../redis/auth-redis.service'
 
+/** The instant the clock is fixed at, so timestamps and lifetimes are exact. */
 export const NOW = Date.parse('2026-01-10T12:00:00.000Z')
+
+/** A raw invitation token: 64 characters, as the issuing side mints them. */
 export const TOKEN = 'a'.repeat(64)
+
+/** The address every record in these specs invites. */
 export const EMAIL = 'invitee@example.com'
+
 let port = 45_000
 
+/**
+ * An account.
+ *
+ * @param id - Its id; the address defaults to `{id}@example.com`.
+ * @param overrides - Fields to change.
+ */
 export function user(id: string, overrides: Partial<AuthUser> = {}): AuthUser {
   return {
     id,
@@ -56,6 +68,13 @@ export function user(id: string, overrides: Partial<AuthUser> = {}): AuthUser {
   }
 }
 
+/**
+ * A membership of the workspace every record names.
+ *
+ * @param userId - The member.
+ * @param role - The role they hold.
+ * @param status - Their status; active by default.
+ */
 export function member(
   userId: string,
   role: string,
@@ -72,6 +91,11 @@ export function member(
   }
 }
 
+/**
+ * A member invitation record for `EMAIL`, issued by `inviter` as a viewer.
+ *
+ * @param overrides - Fields to change.
+ */
 export function memberRecord(
   overrides: Partial<MemberInvitationRecord> = {}
 ): MemberInvitationRecord {
@@ -87,6 +111,11 @@ export function memberRecord(
   }
 }
 
+/**
+ * A platform bootstrap record for `EMAIL`, for a workspace named Acme.
+ *
+ * @param overrides - Fields to change.
+ */
 export function bootstrapRecord(
   overrides: Partial<BootstrapInvitationRecord> = {}
 ): BootstrapInvitationRecord {
@@ -102,59 +131,89 @@ export function bootstrapRecord(
   }
 }
 
+/** The service under test, its real store, and every stubbed collaborator. */
 export interface Harness {
   service: WorkspaceInvitationAcceptService
   store: WorkspaceInvitationStore
   users: { findById: jest.Mock; findByEmail: jest.Mock; create: jest.Mock }
   workspaces: { findById: jest.Mock; createWithOwner: jest.Mock }
-  memberships: { find: jest.Mock; create: jest.Mock }
+  memberships: { find: jest.Mock; create: jest.Mock; countOwned: jest.Mock }
   access: { invalidateMembership: jest.Mock }
   events: { emit: jest.Mock }
   passwords: { assertAcceptable: jest.Mock; hash: jest.Mock }
   tokens: { issueTokens: jest.Mock }
   sessions: { createSession: jest.Mock }
-  hooks: { afterInvitationAccepted?: jest.Mock }
+  hooks: { afterInvitationAccepted?: jest.Mock; beforeWorkspaceCreate?: jest.Mock }
 }
 
-export function build(sessionsEnabled = false, hooks: Harness['hooks'] = {}): Harness {
-  const options = workspaceOptions()
+/** The stubbed repositories: an inviter who is an editor, and no one else a member. */
+function stubRepositories(): Pick<Harness, 'users' | 'workspaces' | 'memberships'> {
+  return {
+    users: {
+      findById: jest.fn(async ({ id }: { id: string }) =>
+        id === 'caller' ? user('caller', { email: EMAIL }) : user(id)
+      ),
+      findByEmail: jest.fn().mockResolvedValue(null),
+      create: jest.fn(async (data: { email: string; name: string }) =>
+        user('new', { email: data.email, name: data.name })
+      )
+    },
+    workspaces: {
+      findById: jest.fn().mockResolvedValue(workspaceRow()),
+      createWithOwner: jest.fn().mockResolvedValue({ status: 'created', workspace: workspaceRow() })
+    },
+    memberships: {
+      find: jest.fn(async ({ userId }: { userId: string }) =>
+        userId === 'inviter' ? member('inviter', 'editor') : null
+      ),
+      create: jest.fn().mockResolvedValue('ok'),
+      countOwned: jest.fn().mockResolvedValue(0)
+    }
+  }
+}
+
+/** The stubbed collaborators that are not repositories. */
+function stubCollaborators(): Pick<
+  Harness,
+  'access' | 'events' | 'passwords' | 'tokens' | 'sessions'
+> {
+  return {
+    access: { invalidateMembership: jest.fn().mockResolvedValue(undefined) },
+    events: { emit: jest.fn() },
+    passwords: {
+      assertAcceptable: jest.fn().mockResolvedValue(undefined),
+      hash: jest.fn().mockResolvedValue('hash')
+    },
+    tokens: {
+      issueTokens: jest
+        .fn()
+        .mockResolvedValue({ user: { id: 'new' }, accessToken: 'a', rawRefreshToken: 'r' })
+    },
+    sessions: { createSession: jest.fn().mockResolvedValue('sid') }
+  }
+}
+
+/**
+ * The service over an in-memory Redis and stubbed collaborators.
+ *
+ * @param sessionsEnabled - Whether sessions are on.
+ * @param hooks - The host hooks to give the service.
+ * @param workspaces - Workspace settings to add or override.
+ */
+export function build(
+  sessionsEnabled = false,
+  hooks: Harness['hooks'] = {},
+  workspaces: Parameters<typeof workspaceOptions>[0] = {}
+): Harness {
+  const options = workspaceOptions(workspaces)
   Object.assign(options.sessions, { enabled: sessionsEnabled })
   const redis = new AuthRedisService(
     new RedisMock({ port: (port += 1) }) as Partial<Redis> as Redis,
     options
   )
   const store = new WorkspaceInvitationStore(redis, options)
-  const users = {
-    findById: jest.fn(async ({ id }: { id: string }) =>
-      id === 'caller' ? user('caller', { email: EMAIL }) : user(id)
-    ),
-    findByEmail: jest.fn().mockResolvedValue(null),
-    create: jest.fn(async (data: { email: string; name: string }) =>
-      user('new', { email: data.email, name: data.name })
-    )
-  }
-  const workspaces = {
-    findById: jest.fn().mockResolvedValue(workspaceRow()),
-    createWithOwner: jest.fn().mockResolvedValue({ status: 'created', workspace: workspaceRow() })
-  }
-  const memberships = {
-    find: jest.fn(async ({ userId }: { userId: string }) =>
-      userId === 'inviter' ? member('inviter', 'editor') : null
-    ),
-    create: jest.fn().mockResolvedValue('ok')
-  }
-  const access = { invalidateMembership: jest.fn().mockResolvedValue(undefined) }
-  const events = { emit: jest.fn() }
-  const passwords = {
-    assertAcceptable: jest.fn().mockResolvedValue(undefined),
-    hash: jest.fn().mockResolvedValue('hash')
-  }
-  const tokens = {
-    issueTokens: jest
-      .fn()
-      .mockResolvedValue({ user: { id: 'new' }, accessToken: 'a', rawRefreshToken: 'r' })
-  }
-  const sessions = { createSession: jest.fn().mockResolvedValue('sid') }
+  const repositories = stubRepositories()
+  const others = stubCollaborators()
   const ceiling = new MembershipService(
     {} as Partial<IMembershipRepository> as IMembershipRepository,
     {} as never,
@@ -164,30 +223,18 @@ export function build(sessionsEnabled = false, hooks: Harness['hooks'] = {}): Ha
   const service = new WorkspaceInvitationAcceptService(
     store,
     ceiling,
-    access as Partial<WorkspaceAccessService> as WorkspaceAccessService,
-    events as Partial<WorkspaceEventsService> as WorkspaceEventsService,
-    passwords as Partial<PasswordService> as PasswordService,
-    tokens as Partial<TokenManagerService> as TokenManagerService,
-    sessions as Partial<SessionService> as SessionService,
-    users as Partial<IUserRepository> as IUserRepository,
-    workspaces as Partial<IWorkspaceRepository> as IWorkspaceRepository,
-    memberships as Partial<IMembershipRepository> as IMembershipRepository,
+    others.access as Partial<WorkspaceAccessService> as WorkspaceAccessService,
+    others.events as Partial<WorkspaceEventsService> as WorkspaceEventsService,
+    others.passwords as Partial<PasswordService> as PasswordService,
+    others.tokens as Partial<TokenManagerService> as TokenManagerService,
+    others.sessions as Partial<SessionService> as SessionService,
+    repositories.users as Partial<IUserRepository> as IUserRepository,
+    repositories.workspaces as Partial<IWorkspaceRepository> as IWorkspaceRepository,
+    repositories.memberships as Partial<IMembershipRepository> as IMembershipRepository,
     hooks as Partial<IAuthHooks> as IAuthHooks,
     options
   )
-  return {
-    service,
-    store,
-    users,
-    workspaces,
-    memberships,
-    access,
-    events,
-    passwords,
-    tokens,
-    sessions,
-    hooks
-  }
+  return { service, store, ...repositories, ...others, hooks }
 }
 
 /** Publishes a record under `TOKEN` the way the issuing side does. */
@@ -207,6 +254,11 @@ export async function seed(
   if (outcome !== 'published') throw new Error('seed failed')
 }
 
+/**
+ * The error code a promise rejects with, or `undefined` when it resolves.
+ *
+ * @param promise - The call under test.
+ */
 export async function code(promise: Promise<unknown>): Promise<string | undefined> {
   try {
     await promise
@@ -216,6 +268,9 @@ export async function code(promise: Promise<unknown>): Promise<string | undefine
   return undefined
 }
 
+/** The verified token of the signed-in caller. */
 export const CALLER = { sub: 'caller', tenantId: 't1' }
+/** The request facts a signup acceptance receives. */
 export const REQUEST = { ip: '203.0.113.7', userAgent: 'jest', headers: { 'user-agent': 'jest' } }
+/** A signup body for the invitation seeded under `TOKEN`. */
 export const SIGNUP = { token: TOKEN, name: 'Ada Lovelace', password: 'correct horse battery' }

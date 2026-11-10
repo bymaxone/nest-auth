@@ -16,10 +16,20 @@ import { MembershipService } from '../membership.service'
 import type { WorkspaceAccessService } from '../workspace-access.service'
 import type { WorkspaceEventsService } from '../workspace-events.service'
 
+/** The refusal text for an owner role kept after a hand-over. */
 export const DEMOTE_MESSAGE = 'demoteSelfTo must be a workspace role other than the owner role'
+/** The owner acting on the workspace. */
 export const OWNER: WorkspaceActor = { userId: 'owner-1', role: 'owner' }
+/** An editor acting on the workspace. */
 export const EDITOR: WorkspaceActor = { userId: 'editor-1', role: 'editor' }
 
+/**
+ * A membership of the workspace.
+ *
+ * @param userId - The member.
+ * @param role - The role they hold.
+ * @param status - Their status; active by default.
+ */
 export function member(
   userId: string,
   role: string,
@@ -36,6 +46,7 @@ export function member(
   }
 }
 
+/** The service over stubbed repositories, cache and events. */
 export interface Harness {
   service: MembershipService
   memberships: Record<string, jest.Mock>
@@ -43,6 +54,11 @@ export interface Harness {
   events: { emit: jest.Mock }
 }
 
+/**
+ * The service over stubbed repositories, cache and events.
+ *
+ * @param withLastActive - Whether the repository supports the last-active workspace.
+ */
 export function build(withLastActive = true): Harness {
   const memberships: Record<string, jest.Mock> = {
     find: jest.fn(),

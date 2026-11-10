@@ -26,12 +26,22 @@ import type { WorkspaceEventsService } from '../workspace-events.service'
 import { WorkspaceInvitationService } from '../workspace-invitation.service'
 import { WorkspaceInvitationStore } from '../workspace-invitation.store'
 
+/** The instant `Date.now` is held at, so timestamps and lifetimes are exact. */
 export const NOW = Date.parse('2026-01-10T12:00:00.000Z')
+/** The owner of the workspace, as the guard resolves them. */
 export const OWNER: WorkspaceActor = { userId: 'owner-1', role: 'owner' }
+/** An editor of the workspace, as the guard resolves them. */
 export const EDITOR: WorkspaceActor = { userId: 'editor-1', role: 'editor' }
+/** The resend cooldown, in milliseconds. */
 export const COOLDOWN_MS = 60_000
 let port = 43_000
 
+/**
+ * An account.
+ *
+ * @param id - Its id; the address defaults to `{id}@example.com`.
+ * @param overrides - Fields to change.
+ */
 export function user(id: string, overrides: Partial<AuthUser> = {}): AuthUser {
   return {
     id,
@@ -49,6 +59,12 @@ export function user(id: string, overrides: Partial<AuthUser> = {}): AuthUser {
   }
 }
 
+/**
+ * A membership of the workspace.
+ *
+ * @param userId - The member.
+ * @param status - Their status.
+ */
 export function membership(userId: string, status: AuthMembership['status']): AuthMembership {
   return {
     ...WORKSPACE_REF,
@@ -61,6 +77,7 @@ export function membership(userId: string, status: AuthMembership['status']): Au
   }
 }
 
+/** The service under test, its real store, and every stubbed collaborator. */
 export interface Harness {
   service: WorkspaceInvitationService
   store: WorkspaceInvitationStore
@@ -72,6 +89,11 @@ export interface Harness {
   events: { emit: jest.Mock }
 }
 
+/**
+ * The service over an in-memory Redis and stubbed collaborators.
+ *
+ * @param extra - Workspace settings to add or override.
+ */
 export function build(extra: Parameters<typeof workspaceOptions>[0] = {}): Harness {
   const options = workspaceOptions(extra)
   const redis = new AuthRedisService(
@@ -107,6 +129,11 @@ export function build(extra: Parameters<typeof workspaceOptions>[0] = {}): Harne
   return { service, store, redis, users, workspaces, memberships, email, events }
 }
 
+/**
+ * The error code a promise rejects with, or `undefined` when it resolves.
+ *
+ * @param promise - The call under test.
+ */
 export async function code(promise: Promise<unknown>): Promise<string | undefined> {
   try {
     await promise
@@ -118,6 +145,12 @@ export async function code(promise: Promise<unknown>): Promise<string | undefine
   return undefined
 }
 
+/**
+ * One message the provider was asked to send.
+ *
+ * @param h - The harness.
+ * @param call - Which call, from zero.
+ */
 export function sent(h: Harness, call = 0): { to: string; data: WorkspaceInviteData } {
   const args = h.email.sendWorkspaceInvitation.mock.calls[call] as [
     string,

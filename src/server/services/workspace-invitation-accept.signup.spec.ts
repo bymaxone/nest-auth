@@ -25,6 +25,7 @@ import {
 import type { Harness } from './__tests__/workspace-invitation-accept-harness'
 import { CONTEXT, WORKSPACE_REF, workspaceRow } from './__tests__/workspace-service-harness'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import type { AuthException } from '../errors/auth-exception'
 import type { AuthMembership } from '../interfaces/membership-repository.interface'
 import type { BootstrapInvitationRecord } from '../interfaces/workspace-invitation.interface'
 
@@ -39,9 +40,11 @@ describe('WorkspaceInvitationAcceptService', () => {
 
   describe('accept of a bootstrap invitation', () => {
     async function bootstrapped(
-      overrides: Partial<BootstrapInvitationRecord> = {}
+      overrides: Partial<BootstrapInvitationRecord> = {},
+      hooks: Harness['hooks'] = {},
+      workspaces: Parameters<typeof build>[2] = {}
     ): Promise<Harness> {
-      const h = build()
+      const h = build(false, hooks, workspaces)
       await seed(h, bootstrapRecord(overrides))
       h.workspaces.findById.mockResolvedValue(null)
       return h
@@ -139,6 +142,116 @@ describe('WorkspaceInvitationAcceptService', () => {
       )
     })
 
+    it('refuses an account already at the owner cap, before the hook or the write, and keeps the token', async () => {
+      const beforeWorkspaceCreate = jest.fn().mockResolvedValue({ allowed: true })
+      const h = await bootstrapped({}, { beforeWorkspaceCreate }, { maxWorkspacesPerUser: 2 })
+      h.memberships.countOwned.mockResolvedValue(2)
+
+      expect(await code(h.service.accept(CALLER, TOKEN, CONTEXT))).toBe(
+        AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED
+      )
+
+      expect(h.memberships.countOwned).toHaveBeenCalledWith({
+        tenantId: 't1',
+        userId: 'caller',
+        ownerRole: 'owner'
+      })
+      expect(beforeWorkspaceCreate).not.toHaveBeenCalled()
+      expect(h.workspaces.createWithOwner).not.toHaveBeenCalled()
+      expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).not.toBeNull()
+    })
+
+    it('creates the workspace for an account one place under the cap', async () => {
+      const h = await bootstrapped({}, {}, { maxWorkspacesPerUser: 2 })
+      h.memberships.countOwned.mockResolvedValue(1)
+
+      expect(await h.service.accept(CALLER, TOKEN, CONTEXT)).toEqual({
+        workspaceId: 'w1',
+        role: 'owner'
+      })
+    })
+
+    it('does not count owned workspaces when there is no cap', async () => {
+      const h = await bootstrapped()
+
+      await h.service.accept(CALLER, TOKEN, CONTEXT)
+
+      expect(h.memberships.countOwned).not.toHaveBeenCalled()
+    })
+
+    it('asks the host before creating, with the account, the name and the request, and creates when allowed', async () => {
+      const beforeWorkspaceCreate = jest.fn().mockResolvedValue({ allowed: true })
+      const h = await bootstrapped({}, { beforeWorkspaceCreate })
+
+      await h.service.accept(CALLER, TOKEN, CONTEXT)
+
+      const [asked, data, context] = beforeWorkspaceCreate.mock.calls[0] as [
+        { id: string },
+        { name: string },
+        unknown
+      ]
+      expect(asked.id).toBe('caller')
+      expect(Object.keys(asked)).not.toContain('passwordHash')
+      expect(data).toEqual({ name: 'Acme' })
+      expect(context).toBe(CONTEXT)
+      expect(h.workspaces.createWithOwner).toHaveBeenCalledTimes(1)
+    })
+
+    it('answers the host refusal as the create route does, and keeps the token', async () => {
+      const beforeWorkspaceCreate = jest
+        .fn()
+        .mockResolvedValue({ allowed: false, reason: 'plan limit' })
+      const h = await bootstrapped({}, { beforeWorkspaceCreate })
+
+      const error = await h.service.accept(CALLER, TOKEN, CONTEXT).catch((e: AuthException) => e)
+
+      const body = (error as AuthException).getResponse() as {
+        error: { code: string; details: unknown }
+      }
+      expect(body.error.code).toBe(AUTH_ERROR_CODES.FORBIDDEN)
+      expect(body.error.details).toEqual([{ field: 'name', message: 'plan limit' }])
+      expect(h.workspaces.createWithOwner).not.toHaveBeenCalled()
+      expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).not.toBeNull()
+    })
+
+    it('gives a host refusal with no reason a message of its own', async () => {
+      const h = await bootstrapped(
+        {},
+        { beforeWorkspaceCreate: jest.fn().mockResolvedValue({ allowed: false }) }
+      )
+
+      const error = await h.service.accept(CALLER, TOKEN, CONTEXT).catch((e: AuthException) => e)
+
+      expect(
+        ((error as AuthException).getResponse() as { error: { details: unknown } }).error.details
+      ).toEqual([{ field: 'name', message: 'Workspace creation was refused' }])
+    })
+
+    it('does not apply the self-serve switch, which the platform has already decided', async () => {
+      const h = await bootstrapped({}, {}, { allowCreate: false })
+
+      expect(await h.service.accept(CALLER, TOKEN, CONTEXT)).toEqual({
+        workspaceId: 'w1',
+        role: 'owner'
+      })
+    })
+
+    it('does not ask the cap or the host again for a workspace an earlier attempt created', async () => {
+      const beforeWorkspaceCreate = jest.fn().mockResolvedValue({ allowed: false })
+      const h = await bootstrapped({}, { beforeWorkspaceCreate }, { maxWorkspacesPerUser: 1 })
+      h.workspaces.findById.mockResolvedValue(workspaceRow())
+      h.memberships.find.mockResolvedValue(member('caller', 'owner'))
+      h.memberships.countOwned.mockResolvedValue(1)
+
+      expect(await h.service.accept(CALLER, TOKEN, CONTEXT)).toEqual({
+        workspaceId: 'w1',
+        role: 'owner'
+      })
+
+      expect(beforeWorkspaceCreate).not.toHaveBeenCalled()
+      expect(h.memberships.countOwned).not.toHaveBeenCalled()
+    })
+
     it('refuses a record whose role is not the owner role', async () => {
       const h = await bootstrapped({ role: 'viewer' })
 
@@ -232,6 +345,22 @@ describe('WorkspaceInvitationAcceptService', () => {
         userAgent: 'jest',
         sanitizedHeaders: { 'user-agent': 'jest' }
       })
+    })
+
+    it('does not fail a signup that completed when the hook throws synchronously', async () => {
+      const afterInvitationAccepted = jest.fn(() => {
+        throw new Error('hook broke')
+      })
+      const h = build(false, { afterInvitationAccepted })
+      await seed(h)
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await expect(h.service.acceptSignup(SIGNUP, REQUEST)).resolves.toBeDefined()
+
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('afterInvitationAccepted hook threw')
+      )
+      expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).toBeNull()
     })
 
     it('makes no session when sessions are off, and needs no hook', async () => {

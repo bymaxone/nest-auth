@@ -44,9 +44,9 @@ import type {
   WorkspaceRef
 } from '../interfaces/workspace-repository.interface'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeChannelStatus } from '../utils/describe-error'
 import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
+import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
 /** What a signed-in acceptance answers: where the caller now belongs, and as what. */
@@ -276,7 +276,7 @@ export class WorkspaceInvitationAcceptService {
   ): Promise<AcceptedInvitation> {
     const { record } = loaded
     const ref = refOf(record)
-    const role = await this.join(record, user)
+    const role = await this.join(record, user, context)
     const spent = await this.store.remove(ref, record.email, loaded.key)
     await this.access.invalidateMembership({ ...ref, userId: user.id })
     this.events.emit(
@@ -300,10 +300,14 @@ export class WorkspaceInvitationAcceptService {
    *
    * @returns The role the account holds there.
    */
-  private async join(record: StoredWorkspaceInvitation, user: AuthUser): Promise<string> {
+  private async join(
+    record: StoredWorkspaceInvitation,
+    user: AuthUser,
+    context: HookContext
+  ): Promise<string> {
     const ref = refOf(record)
     const at = new Date(Date.now()).toISOString()
-    if (record.kind === 'bootstrap') return this.createOwned(record, user, at)
+    if (record.kind === 'bootstrap') return this.createOwned(record, user, at, context)
     const created = await this.memberships.create({
       ...ref,
       userId: user.id,
@@ -333,7 +337,8 @@ export class WorkspaceInvitationAcceptService {
   private async createOwned(
     record: BootstrapInvitationRecord,
     user: AuthUser,
-    at: string
+    at: string,
+    context: HookContext
   ): Promise<string> {
     const ref = refOf(record)
     const existing = await this.workspaces.findById(ref)
@@ -345,6 +350,7 @@ export class WorkspaceInvitationAcceptService {
       if (member?.status !== 'active' || member.role !== record.role) throw invalidToken()
       return record.role
     }
+    await this.assertMayOwnAnother(record, user, context)
     const created = await this.workspaces.createWithOwner({
       ...ref,
       name: record.workspaceName,
@@ -357,6 +363,44 @@ export class WorkspaceInvitationAcceptService {
       throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED)
     }
     return record.role
+  }
+
+  /**
+   * Applies to a bootstrap acceptance what the create route applies to a workspace the account
+   * creates itself, except the self-serve switch: the owner cap, then the host's
+   * `beforeWorkspaceCreate`. The platform has already decided that this account may own a
+   * workspace, but the host's plan or quota may have changed since, and the acceptance can land
+   * days after the invitation. A refusal does not spend the token.
+   *
+   * @throws {AuthException} `auth.workspace_limit_reached` at the cap, `auth.forbidden` naming
+   *   `name` with the hook's reason when the hook refuses.
+   */
+  private async assertMayOwnAnother(
+    record: BootstrapInvitationRecord,
+    user: AuthUser,
+    context: HookContext
+  ): Promise<void> {
+    const { maxWorkspacesPerUser } = this.group
+    if (maxWorkspacesPerUser > 0) {
+      const owned = await this.memberships.countOwned({
+        tenantId: record.tenantId,
+        userId: user.id,
+        ownerRole: record.role
+      })
+      if (owned >= maxWorkspacesPerUser) {
+        throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED)
+      }
+    }
+    const verdict = await this.hooks.beforeWorkspaceCreate?.(
+      toSafeUser(user),
+      { name: record.workspaceName },
+      context
+    )
+    if (verdict !== undefined && !verdict.allowed) {
+      throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN, [
+        { field: 'name', message: verdict.reason ?? 'Workspace creation was refused' }
+      ])
+    }
   }
 
   /** Issues the new account's session as a sign-in does, and fires the host's hook. */
@@ -375,13 +419,11 @@ export class WorkspaceInvitationAcceptService {
         userAgent: request.userAgent
       })
     }
-    if (this.hooks.afterInvitationAccepted) {
-      void Promise.resolve(this.hooks.afterInvitationAccepted(user, context)).catch(
-        (err: unknown) => {
-          this.logger.error(`afterInvitationAccepted hook threw: ${describeChannelStatus(err)}`)
-        }
-      )
-    }
+    runDetached(
+      this.logger,
+      () => this.hooks.afterInvitationAccepted?.(user, context),
+      'afterInvitationAccepted hook threw'
+    )
     return result
   }
 }
