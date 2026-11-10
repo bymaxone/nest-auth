@@ -20,7 +20,8 @@ const EVERYTHING: RegisteredControllers = {
   invitations: true,
   emailChange: true,
   oauth: true,
-  workspaces: true
+  workspaces: true,
+  workspaceInvitations: true
 }
 
 function optionsFor(tokenDelivery: ResolvedOptions['tokenDelivery']): ResolvedOptions {
@@ -47,7 +48,9 @@ describe('the prose the fragment contributes', () => {
       'WorkspaceController.list',
       'WorkspaceController.members',
       'WorkspaceController.scheduleDeletion',
-      'WorkspaceController.transferOwnership'
+      'WorkspaceController.transferOwnership',
+      'WorkspaceInvitationController.invite',
+      'WorkspaceInvitationController.preview'
     ])
   })
 

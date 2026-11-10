@@ -7,8 +7,10 @@ import { ValidationPipe } from '@nestjs/common'
 import type { ArgumentMetadata, ValidationError, ValidationPipeOptions } from '@nestjs/common'
 import { plainToInstance } from 'class-transformer'
 
+import { NO_CONTROL_CHARACTERS } from '../dto/no-control-characters'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { exceedsCodePoints } from '../utils/code-points'
 
 /** One rejected request field, as it serializes under `error.details`. */
 export interface AuthFieldError {
@@ -16,6 +18,26 @@ export interface AuthFieldError {
   field: string
   /** Human-readable reason the field was rejected. */
   message: string
+}
+
+/** The longest unknown property name a response will repeat, in code points. */
+export const MAX_REPORTED_KEY_CODE_POINTS = 128
+
+/** What an unknown property that is not repeated is reported as. */
+const UNNAMEABLE_KEY: AuthFieldError = {
+  field: 'body',
+  message: 'the request body has a property that is not accepted'
+}
+
+/**
+ * Whether an unknown property name may be repeated in a response: not over
+ * {@link MAX_REPORTED_KEY_CODE_POINTS} code points and free of control characters.
+ */
+function isNameable(property: string): boolean {
+  return (
+    !exceedsCodePoints(property, MAX_REPORTED_KEY_CODE_POINTS) &&
+    NO_CONTROL_CHARACTERS.test(property)
+  )
 }
 
 /**
@@ -37,6 +59,13 @@ function flattenValidationErrors(
 
   for (const error of errors) {
     const path = parentPath === '' ? error.property : `${parentPath}.${error.property}`
+
+    // An unknown property is named by the caller, so its name would carry the caller's bytes into
+    // the answer. One that is too long or holds a control character is reported once, under `body`.
+    if (error.constraints?.['whitelistValidation'] !== undefined && !isNameable(error.property)) {
+      flattened.push(UNNAMEABLE_KEY)
+      continue
+    }
 
     for (const message of Object.values(error.constraints ?? {})) {
       flattened.push({ field: path, message })
@@ -95,7 +124,14 @@ export function createAuthValidationPipe(options: ValidationPipeOptions = {}): V
     whitelist: true,
     forbidNonWhitelisted: true,
     ...options,
-    exceptionFactory: (errors: ValidationError[]) =>
-      new AuthException(AUTH_ERROR_CODES.VALIDATION, flattenValidationErrors(errors))
+    exceptionFactory: (errors: ValidationError[]): AuthException => {
+      const entries = flattenValidationErrors(errors)
+      // Entries are distinct objects except the shared one that stands for every unnameable property,
+      // so keeping the first of each keeps that one once.
+      return new AuthException(
+        AUTH_ERROR_CODES.VALIDATION,
+        entries.filter((entry, at) => entries.indexOf(entry) === at)
+      )
+    }
   })
 }

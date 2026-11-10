@@ -8,6 +8,7 @@
 import { Test } from '@nestjs/testing'
 
 import {
+  BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_REDIS_CLIENT,
   BYMAX_AUTH_USER_REPOSITORY,
@@ -15,10 +16,12 @@ import {
 } from './bymax-auth.constants'
 import { BymaxAuthModule } from './bymax-auth.module'
 import { WorkspaceController } from './controllers/workspace.controller'
+import { WorkspaceInvitationController } from './controllers/workspace-invitation.controller'
 import type { BymaxAuthModuleOptions } from './interfaces/auth-module-options.interface'
 import { WorkspaceGuard } from './guards/workspace.guard'
 import { MembershipService } from './services/membership.service'
 import { WorkspaceAccessService } from './services/workspace-access.service'
+import { WorkspaceInvitationService } from './services/workspace-invitation.service'
 import { WorkspaceEventsService } from './services/workspace-events.service'
 import { WorkspaceService } from './services/workspace.service'
 
@@ -145,5 +148,43 @@ describe('BymaxAuthModule — workspace controller', () => {
       '[BymaxAuthModule] controllers.workspaces: true requires workspaces.enabled: true ' +
         'and both workspace repository providers in extraProviders.'
     )
+  })
+})
+
+describe('BymaxAuthModule — workspace invitations', () => {
+  const REPOSITORIES = [WORKSPACE_REPOSITORY, MEMBERSHIP_REPOSITORY]
+
+  it('mounts the controller and its service only when it is switched on', async () => {
+    const on = await compile(WORKSPACES, REPOSITORIES, {
+      workspaces: true,
+      workspaceInvitations: true
+    })
+    const off = await compile(WORKSPACES, REPOSITORIES, { workspaces: true })
+
+    expect(on.get(WorkspaceInvitationController, { strict: false })).toBeInstanceOf(
+      WorkspaceInvitationController
+    )
+    expect(on.get(WorkspaceInvitationService, { strict: false })).toBeInstanceOf(
+      WorkspaceInvitationService
+    )
+    expect(() => off.get(WorkspaceInvitationController, { strict: false })).toThrow()
+    expect(() => off.get(WorkspaceInvitationService, { strict: false })).toThrow()
+  })
+
+  it('refuses to boot with the controller switched on and the feature off', async () => {
+    await expect(compile(OPTIONS, [], { workspaceInvitations: true })).rejects.toThrow(
+      '[BymaxAuthModule] controllers.workspaceInvitations: true requires workspaces.enabled: true ' +
+        'and both workspace repository providers in extraProviders.'
+    )
+  })
+
+  it('refuses to start when the email provider cannot deliver a workspace invitation', async () => {
+    const module = await compile(
+      WORKSPACES,
+      [...REPOSITORIES, { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: {} }],
+      { workspaces: true, workspaceInvitations: true }
+    )
+
+    await expect(module.init()).rejects.toThrow('sendWorkspaceInvitation')
   })
 })

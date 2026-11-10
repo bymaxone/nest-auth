@@ -167,6 +167,27 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
       "email"
     ]
   },
+  "InviteToWorkspaceDto": {
+    "type": "object",
+    "properties": {
+      "email": {
+        "type": "string",
+        "maxLength": 255,
+        "minLength": 1,
+        "format": "email"
+      },
+      "role": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "maxLength": 64,
+        "minLength": 1
+      }
+    },
+    "required": [
+      "email",
+      "role"
+    ]
+  },
   "LoginDto": {
     "type": "object",
     "properties": {
@@ -364,6 +385,19 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
     "required": [
       "email",
       "password"
+    ]
+  },
+  "PreviewWorkspaceInvitationDto": {
+    "type": "object",
+    "properties": {
+      "token": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      }
+    },
+    "required": [
+      "token"
     ]
   },
   "RefreshTokenBodyDto": {
@@ -596,6 +630,20 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
     "required": [
       "email",
       "otp"
+    ]
+  },
+  "WorkspaceInvitationEmailDto": {
+    "type": "object",
+    "properties": {
+      "email": {
+        "type": "string",
+        "maxLength": 255,
+        "minLength": 1,
+        "format": "email"
+      }
+    },
+    "required": [
+      "email"
     ]
   },
   "WorkspacePageQueryDto": {

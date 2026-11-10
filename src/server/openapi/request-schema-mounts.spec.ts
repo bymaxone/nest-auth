@@ -27,7 +27,8 @@ const FLAG_OF: Readonly<Record<string, keyof RegisteredControllers>> = {
   OAuthController: 'oauth',
   InvitationController: 'invitations',
   EmailChangeController: 'emailChange',
-  WorkspaceController: 'workspaces'
+  WorkspaceController: 'workspaces',
+  WorkspaceInvitationController: 'workspaceInvitations'
 }
 
 /** The DTO class names a controller's handlers take as a request body, in route-metadata order. */

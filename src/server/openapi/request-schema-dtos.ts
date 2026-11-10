@@ -19,6 +19,7 @@ import { ConfirmEmailChangeDto } from '../dto/confirm-email-change.dto'
 import { CreateInvitationDto } from '../dto/create-invitation.dto'
 import { CreateWorkspaceDto } from '../dto/create-workspace.dto'
 import { ForgotPasswordDto } from '../dto/forgot-password.dto'
+import { InviteToWorkspaceDto } from '../dto/invite-to-workspace.dto'
 import { LoginDto } from '../dto/login.dto'
 import { MemberRouteParamsDto } from '../dto/member-route-params.dto'
 import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
@@ -29,6 +30,7 @@ import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { OAuthCallbackQueryDto } from '../dto/oauth-callback-query.dto'
 import { OAuthInitiateQueryDto } from '../dto/oauth-initiate-query.dto'
 import { PlatformLoginDto } from '../dto/platform-login.dto'
+import { PreviewWorkspaceInvitationDto } from '../dto/preview-workspace-invitation.dto'
 import { RefreshTokenBodyDto } from '../dto/refresh-token-body.dto'
 import { RegisterDto } from '../dto/register.dto'
 import { RenameWorkspaceDto } from '../dto/rename-workspace.dto'
@@ -40,6 +42,7 @@ import { ScheduleWorkspaceDeletionDto } from '../dto/schedule-workspace-deletion
 import { TransferOwnershipDto } from '../dto/transfer-ownership.dto'
 import { VerifyEmailDto } from '../dto/verify-email.dto'
 import { VerifyOtpDto } from '../dto/verify-otp.dto'
+import { WorkspaceInvitationEmailDto } from '../dto/workspace-invitation-email.dto'
 import { WorkspacePageQueryDto } from '../dto/workspace-page-query.dto'
 
 /** Every DTO whose request body the library documents. */
@@ -52,6 +55,7 @@ export const REQUEST_SCHEMA_DTOS: readonly DtoClass[] = [
   CreateInvitationDto,
   CreateWorkspaceDto,
   ForgotPasswordDto,
+  InviteToWorkspaceDto,
   LoginDto,
   MemberRouteParamsDto,
   MfaChallengeDto,
@@ -62,6 +66,7 @@ export const REQUEST_SCHEMA_DTOS: readonly DtoClass[] = [
   OAuthCallbackQueryDto,
   OAuthInitiateQueryDto,
   PlatformLoginDto,
+  PreviewWorkspaceInvitationDto,
   RefreshTokenBodyDto,
   RegisterDto,
   RenameWorkspaceDto,
@@ -73,5 +78,6 @@ export const REQUEST_SCHEMA_DTOS: readonly DtoClass[] = [
   TransferOwnershipDto,
   VerifyEmailDto,
   VerifyOtpDto,
+  WorkspaceInvitationEmailDto,
   WorkspacePageQueryDto
 ]

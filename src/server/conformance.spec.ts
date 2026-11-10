@@ -44,6 +44,7 @@ import { AuthException } from './errors/auth-exception'
 import { apiKeyDigest, formatApiKey, generateApiKeySecret, parseApiKey } from './crypto/api-key'
 import { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
 import { PasswordService } from './services/password.service'
+import { WORKSPACE_PREFIX_SOURCES } from './__tests__/workspace-prefix-sources'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
 
@@ -144,7 +145,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = '25e4de5a77ad188a29902e3199938864a19a64951062aa7ab36065cd07dfbee4'
+const CONTRACT_SHA256 = '6e95f1af37ea516e92f09e7cdae6f22e5ace201105112a48782c2898771a4caf'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -371,9 +372,7 @@ describe('cross-implementation conformance', () => {
       mfaTempTokenMarker: 'services/token-manager.service.ts',
       userStatus: 'services/account-status.service.ts',
       userEmailVerified: 'services/account-status.service.ts',
-      workspaceVersion: 'constants/workspace-keys.ts',
-      membershipVersion: 'constants/workspace-keys.ts',
-      membershipCache: 'constants/workspace-keys.ts'
+      ...WORKSPACE_PREFIX_SOURCES
     }
 
     // Verifies each contract prefix is the one the code actually writes. A rename that lands on

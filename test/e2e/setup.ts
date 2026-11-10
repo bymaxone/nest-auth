@@ -35,6 +35,7 @@ import type { BymaxAuthModuleOptions } from '../../src/server/interfaces/auth-mo
 import type {
   IEmailProvider,
   InviteData,
+  WorkspaceInviteData,
   SessionAlertInfo
 } from '../../src/server/interfaces/email-provider.interface'
 import type {
@@ -378,6 +379,18 @@ export interface MockEmailProvider extends IEmailProvider {
 }
 
 /**
+ * The captured message of a workspace invitation. The token is in the body because a workspace
+ * test has to redeem or preview it.
+ */
+function workspaceInvitationMail(email: string, data: WorkspaceInviteData): CapturedEmail {
+  return {
+    to: email,
+    subject: `Invitation to ${data.workspaceName}`,
+    html: `<p>${data.accountExists ? 'signin' : 'signup'} ${data.role} ${data.inviteToken}</p>`
+  }
+}
+
+/**
  * Builds a fresh {@link MockEmailProvider}.
  */
 export function createMockEmailProvider(): MockEmailProvider {
@@ -420,6 +433,10 @@ export function createMockEmailProvider(): MockEmailProvider {
 
     async sendInvitation(_tenantId: string, email: string, _data: InviteData): Promise<void> {
       send({ to: email, subject: 'Invitation', html: '<p>invite</p>' })
+    },
+
+    async sendWorkspaceInvitation(_t: string, to: string, d: WorkspaceInviteData): Promise<void> {
+      send(workspaceInvitationMail(to, d))
     }
   }
 

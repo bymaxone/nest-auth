@@ -50,5 +50,10 @@ export const REQUEST_SCHEMAS_BY_CONTROLLER: Readonly<
     'ScheduleWorkspaceDeletionDto',
     'ChangeMemberRoleDto',
     'TransferOwnershipDto'
+  ],
+  workspaceInvitations: [
+    'InviteToWorkspaceDto',
+    'WorkspaceInvitationEmailDto',
+    'PreviewWorkspaceInvitationDto'
   ]
 }
