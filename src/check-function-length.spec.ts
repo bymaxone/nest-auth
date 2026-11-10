@@ -19,6 +19,22 @@ interface Result {
 
 const roots: string[] = []
 
+/** A segment of a key, as the format specifies them: a kind first, then its strings. */
+type Segment = string[]
+
+/**
+ * The key the baseline holds for a function, written out from the format's definition and not by
+ * the script: `[path, ...segments]`, with a trailing ordinal from 2.
+ */
+function keyOf(path: string, segments: Segment[], ordinal = 1): string {
+  return JSON.stringify(ordinal === 1 ? [path, ...segments] : [path, ...segments, ordinal])
+}
+
+/** A top-level function `name` in `src/a.ts`. */
+function fnKey(name: string, ordinal = 1): string {
+  return keyOf('src/a.ts', [['fn', name]], ordinal)
+}
+
 /** `lines` lines of statements, for the inside of a body. */
 function statements(lines: number): string {
   return '  work()\n'.repeat(lines)
@@ -207,13 +223,20 @@ describe('check-function-length', () => {
       expect(run(repo({ 'src/a.spec.ts': spec })).status).toBe(0)
     })
 
-    it('refuses a tracked path that contains the key delimiter', () => {
-      const result = run(repo({ 'src/x.ts::it y.ts': declaration('f', 51) }))
+    it('keeps a tracked path that spells the delimiter apart from a title that does', () => {
+      const test = `it('foo.ts::g', () => {\n${statements(49)}})\n`
+      const root = repo({
+        'src/a.spec.ts': test,
+        'src/a.spec.ts::it foo.ts': declaration('g', 51)
+      })
 
-      expect(result.status).not.toBe(0)
-      expect(result.output).toContain(
-        "src/x.ts::it y.ts: a tracked path containing '::' cannot be told apart"
-      )
+      run(root, '--write-baseline')
+      const baseline = JSON.parse(
+        readFileSync(join(root, 'scripts', 'function-length-baseline.json'), 'utf8')
+      ) as { functions: Record<string, number> }
+
+      expect(Object.keys(baseline.functions)).toHaveLength(2)
+      expect(run(root).status).toBe(0)
     })
 
     it('does not let a suite title spell the path of nested suites', () => {
@@ -274,9 +297,10 @@ describe('check-function-length', () => {
       ) as { functions: Record<string, number> }
       writeFileSync(join(root, 'src/a.spec.ts'), spec(short + long() + short + long() + short))
 
+      const suite = ['container', 'describe', 'Suite']
       expect(Object.keys(baseline.functions)).toEqual([
-        'src/a.spec.ts::describe Suite > it same',
-        'src/a.spec.ts::describe Suite > it same #2'
+        keyOf('src/a.spec.ts', [suite, ['test', 'it', 'same']]),
+        keyOf('src/a.spec.ts', [suite, ['test', 'it', 'same']], 2)
       ])
       expect(run(root).status).toBe(0)
     })
@@ -318,7 +342,8 @@ describe('check-function-length', () => {
   })
 
   describe('against the baseline', () => {
-    const KEY = 'src/a.ts::big'
+    const KEY = fnKey('big')
+    const NAME = 'src/a.ts::big'
 
     it('passes a function at its recorded length', () => {
       expect(run(repo({ 'src/a.ts': declaration('big', 60) }, { [KEY]: 60 })).status).toBe(0)
@@ -329,7 +354,7 @@ describe('check-function-length', () => {
 
       expect(result.status).toBe(1)
       expect(result.output).toContain(
-        `${KEY} grew from 60 to 61 lines. A baselined function may only shrink.`
+        `${NAME} grew from 60 to 61 lines. A baselined function may only shrink.`
       )
     })
 
@@ -345,7 +370,7 @@ describe('check-function-length', () => {
 
       expect(result.status).toBe(1)
       expect(result.output).toContain(
-        `${KEY} now spans 50 lines, within the limit. Remove its entry.`
+        `${NAME} now spans 50 lines, within the limit. Remove its entry.`
       )
     })
 
@@ -354,28 +379,36 @@ describe('check-function-length', () => {
 
       expect(result.status).toBe(1)
       expect(result.output).toContain(
-        `${KEY} is on the baseline but no longer exists. Remove its entry.`
+        `${NAME} is on the baseline but no longer exists. Remove its entry.`
       )
     })
 
     it('removes the entry of a numbered offender that is gone while its namesake stays', () => {
-      const baseline = { [KEY]: 60, [`${KEY} #2`]: 60 }
+      const baseline = { [KEY]: 60, [fnKey('big', 2)]: 60 }
 
       const result = run(repo({ 'src/a.ts': declaration('big', 60) }, baseline))
 
       expect(result.output).toContain(
-        `${KEY} #2 is on the baseline but no longer exists. Remove its entry.`
+        `${NAME} #2 is on the baseline but no longer exists. Remove its entry.`
       )
-      expect(result.output).not.toContain(`${KEY} spans`)
+      expect(result.output).not.toContain(`${NAME} spans`)
+    })
+
+    it('says a numbered entry is within the limit when its name no longer has two offenders', () => {
+      const baseline = { [fnKey('big')]: 60, [fnKey('big', 2)]: 60 }
+
+      const result = run(repo({ 'src/a.ts': declaration('big', 40) }, baseline))
+
+      expect(result.output).toContain(`src/a.ts::big #2 now spans 40 lines, within the limit.`)
     })
 
     it('calls a numbered entry gone, not within the limit, while its namesake spans 51 lines', () => {
-      const baseline = { [KEY]: 60, [`${KEY} #2`]: 60 }
+      const baseline = { [KEY]: 60, [fnKey('big', 2)]: 60 }
 
       const result = run(repo({ 'src/a.ts': declaration('big', 51) }, baseline))
 
       expect(result.output).toContain(
-        `${KEY} #2 is on the baseline but no longer exists. Remove its entry.`
+        `${NAME} #2 is on the baseline but no longer exists. Remove its entry.`
       )
       expect(result.output).not.toContain('within the limit')
     })
@@ -440,7 +473,13 @@ describe('check-function-length', () => {
     })
 
     it('reports growth of the inner function against both baseline entries', () => {
-      const baseline = { 'src/a.ts::outer': 59, 'src/a.ts::outer > run': 52 }
+      const baseline = {
+        [fnKey('outer')]: 59,
+        [keyOf('src/a.ts', [
+          ['fn', 'outer'],
+          ['fn', 'run']
+        ])]: 52
+      }
 
       const result = run(repo({ 'src/a.ts': nested(53) }, baseline))
 
@@ -451,10 +490,89 @@ describe('check-function-length', () => {
   })
 
   describe('against a base revision', () => {
+    it('refuses a baseline key that is not a structured key, naming it', () => {
+      const result = run(repo({ 'src/a.ts': declaration('big', 60) }, { 'src/a.ts::big': 60 }))
+
+      expect(result.status).not.toBe(0)
+      expect(result.output).toContain('src/a.ts::big is not a function key')
+    })
+
+    describe('whose baseline predates structured keys', () => {
+      /** A repository whose base commit holds `files` and a baseline in the earlier string format. */
+      function legacyBase(files: Record<string, string>, legacy: Record<string, number>): string {
+        const root = repo(files, legacy)
+        commitBase(root)
+        return root
+      }
+
+      it('reads the base from its sources, so an unchanged entry passes', () => {
+        const root = legacyBase({ 'src/a.ts': declaration('big', 60) }, { 'src/a.ts::big': 60 })
+        writeBaseline(root, { [fnKey('big')]: 60 })
+
+        expect(run(root, '--base', 'HEAD').status).toBe(0)
+      })
+
+      it('still refuses an entry raised above the base and one the base did not have', () => {
+        const root = legacyBase({ 'src/a.ts': declaration('big', 60) }, { 'src/a.ts::big': 60 })
+        writeFileSync(join(root, 'src/a.ts'), declaration('big', 70) + declaration('other', 60))
+        writeBaseline(root, { [fnKey('big')]: 70, [fnKey('other')]: 60 })
+
+        const result = run(root, '--base', 'HEAD')
+
+        expect(result.output).toContain(
+          'src/a.ts::big is recorded at 70 lines, above 60 on the base revision'
+        )
+        expect(result.output).toContain(
+          'src/a.ts::other is on the baseline but the base revision does not have it'
+        )
+      })
+
+      it('does not take a file added since the base for part of the base', () => {
+        const root = legacyBase({ 'src/a.ts': declaration('big', 60) }, { 'src/a.ts::big': 60 })
+        writeFileSync(join(root, 'src/b.ts'), declaration('added', 60))
+        spawnSync('git', ['add', '-A'], { cwd: root })
+        writeBaseline(root, {
+          [fnKey('big')]: 60,
+          [keyOf('src/b.ts', [['fn', 'added']])]: 60
+        })
+
+        const result = run(root, '--base', 'HEAD')
+
+        expect(result.output).toContain(
+          'src/b.ts::added is on the baseline but the base revision does not have it'
+        )
+      })
+
+      it('does not admit a new test whose title spells the ordinal of an old one', () => {
+        const test = (title: string): string => `it('${title}', () => {\n${statements(60)}})\n`
+        const root = legacyBase(
+          { 'src/a.spec.ts': test('x') + test('x') },
+          { 'src/a.spec.ts::it x': 62, 'src/a.spec.ts::it x #2': 62 }
+        )
+        writeFileSync(join(root, 'src/a.spec.ts'), test('x') + test('x') + test('x #2'))
+        run(root, '--write-baseline')
+
+        const result = run(root, '--base', 'HEAD')
+
+        expect(result.status).toBe(1)
+        expect(result.output).toContain('the base revision does not have it')
+      })
+
+      it('keeps passing a title the earlier format escaped', () => {
+        const root = legacyBase(
+          { 'src/a.spec.ts': `it('foo#bar', () => {\n${statements(60)}})\n` },
+          { 'src/a.spec.ts::it foo\\#bar': 62 }
+        )
+        run(root, '--write-baseline')
+
+        expect(run(root, '--base', 'HEAD').status).toBe(0)
+      })
+    })
+
     it('refuses a baseline entry the base did not have', () => {
       const root = repo({ 'src/a.ts': declaration('big', 60) })
       commitBase(root)
-      writeBaseline(root, { 'src/a.ts::big': 60 })
+      writeBaseline(root, { [fnKey('big')]: 60 })
 
       const result = run(root, '--base', 'HEAD')
 
@@ -463,9 +581,9 @@ describe('check-function-length', () => {
     })
 
     it('refuses a baseline entry raised above the base', () => {
-      const root = repo({ 'src/a.ts': declaration('big', 70) }, { 'src/a.ts::big': 60 })
+      const root = repo({ 'src/a.ts': declaration('big', 70) }, { [fnKey('big')]: 60 })
       commitBase(root)
-      writeBaseline(root, { 'src/a.ts::big': 70 })
+      writeBaseline(root, { [fnKey('big')]: 70 })
 
       const result = run(root, '--base', 'HEAD')
 
@@ -475,7 +593,7 @@ describe('check-function-length', () => {
     })
 
     it('accepts an entry kept or lowered, imposes nothing when the base has no baseline, and fails on an unknown revision', () => {
-      const root = repo({ 'src/a.ts': declaration('big', 60) }, { 'src/a.ts::big': 60 })
+      const root = repo({ 'src/a.ts': declaration('big', 60) }, { [fnKey('big')]: 60 })
       commitBase(root)
 
       expect(run(root, '--base', 'HEAD').status).toBe(0)
@@ -512,12 +630,16 @@ describe('check-function-length', () => {
       expect(written.status).toBe(0)
       expect(written.output).toContain('Wrote 3 baseline entries')
       expect(JSON.parse(text)).toEqual({
-        functions: { 'src/a.ts::first': 60, 'src/a.ts::justOver': 51, 'src/b.ts::second': 70 }
+        functions: {
+          [fnKey('first')]: 60,
+          [fnKey('justOver')]: 51,
+          [keyOf('src/b.ts', [['fn', 'second']])]: 70
+        }
       })
       expect(Object.keys(JSON.parse(text).functions)).toEqual([
-        'src/a.ts::first',
-        'src/a.ts::justOver',
-        'src/b.ts::second'
+        fnKey('first'),
+        fnKey('justOver'),
+        keyOf('src/b.ts', [['fn', 'second']])
       ])
       expect(text.endsWith('}\n')).toBe(true)
       expect(run(root).status).toBe(0)
@@ -566,5 +688,99 @@ describe('check-function-length', () => {
       expect(result.status).toBe(0)
       expect(readFileSync(scratch, 'utf8')).toBe(committed)
     })
+  })
+})
+
+/** Runs `source` as an ES module that can import the key module, and parses what it prints. */
+function runKeyModule(source: string): unknown {
+  const keyModule = resolve(__dirname, '..', 'scripts', 'function-length-key.mjs')
+  const result = spawnSync(
+    process.execPath,
+    ['--input-type=module', '-e', `import * as k from ${JSON.stringify(keyModule)}\n${source}`],
+    { encoding: 'utf8' }
+  )
+  if (result.status !== 0) throw new Error(result.stderr)
+  return JSON.parse(result.stdout)
+}
+
+describe('the function key', () => {
+  // The property that makes the gate's identity safe: every key reads back as exactly the
+  // value it was built from, so two different values can never share a key. Free text is drawn from
+  // the pieces that have broken string-joined keys: both separators, an ordinal, a placeholder, the
+  // escape character, quotes and brackets.
+  it('reads back as what was encoded, for random values spelled with every delimiter', () => {
+    const outcome = runKeyModule(`
+      let seed = 20260711
+      const next = () => {
+        seed = (seed + 0x6d2b79f5) | 0
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+      }
+      const pick = (list) => list[Math.floor(next() * list.length)]
+      const pieces = ['a', 'b', '::', ' > ', ' #2', '#', '<dynamic>', '<anonymous>', String.fromCharCode(92), '"', '[', ']', ',', 'é', ' ', '']
+      const text = () => Array.from({ length: Math.floor(next() * 3) }, () => pick(pieces)).join('')
+      const arity = { fn: 1, member: 2, ctor: 1, anon: 0, test: 2, 'dynamic-test': 1, container: 2, 'dynamic-container': 1 }
+      const segment = () => {
+        const kind = pick(Object.keys(arity))
+        return [kind, ...Array.from({ length: arity[kind] }, text)]
+      }
+      const seen = new Map()
+      const failures = []
+      for (let i = 0; i < 20000; i++) {
+        const value = {
+          path: text(),
+          segments: Array.from({ length: 1 + Math.floor(next() * 3) }, segment),
+          ordinal: next() < 0.3 ? 2 + Math.floor(next() * 3) : 1
+        }
+        const key = k.encodeKey(value.path, value.segments, value.ordinal)
+        const canonical = JSON.stringify(value)
+        if (JSON.stringify(k.decodeKey(key)) !== canonical) failures.push(['round trip', canonical])
+        if (seen.has(key) && seen.get(key) !== canonical) failures.push(['collision', canonical])
+        seen.set(key, canonical)
+      }
+      console.log(JSON.stringify({ failures, distinct: seen.size }))
+    `) as { failures: unknown[]; distinct: number }
+
+    expect(outcome.failures).toEqual([])
+    expect(outcome.distinct).toBeGreaterThan(5000)
+  })
+
+  it.each([
+    ['text that is not JSON', 'src/a.ts::big'],
+    ['a JSON string', '"fn"'],
+    ['a segment that is a string', '["src/a.ts","fn"]'],
+    ['JSON that is not an array', '{"a":1}'],
+    ['a path that is not a string', '[1,["fn","big"]]'],
+    ['no segment at all', '["src/a.ts"]'],
+    ['an empty segment', '["src/a.ts",[]]'],
+    ['a segment of an unknown kind', '["src/a.ts",["nope","big"]]'],
+    ['a segment with the wrong number of strings', '["src/a.ts",["fn"]]'],
+    ['a segment holding a number', '["src/a.ts",["fn",1]]'],
+    ['an explicit ordinal of 1', '["src/a.ts",["fn","big"],1]'],
+    ['a fractional ordinal', '["src/a.ts",["fn","big"],2.5]'],
+    ['spacing the serialization would not write', '["src/a.ts", ["fn","big"]]']
+  ])('refuses %s', (_name, key) => {
+    const message = runKeyModule(
+      `try { k.decodeKey(${JSON.stringify(key)}); console.log('null') } catch (e) { console.log(JSON.stringify(e.message)) }`
+    )
+
+    expect(message).toBe(`${key} is not a function key`)
+  })
+
+  it('shows a key as file::outer > inner #2', () => {
+    const shown = runKeyModule(`
+      console.log(JSON.stringify([
+        k.displayKey(k.encodeKey('src/a.ts', [['fn', 'outer'], ['member', 'Box', 'run']], 2)),
+        k.displayKey(k.encodeKey('src/a.ts', [['ctor', '<class>'], ['anon']])),
+        k.displayKey(k.encodeKey('t.ts', [['container', 'describe', 'S'], ['dynamic-test', 'it']]))
+      ]))
+    `)
+
+    expect(shown).toEqual([
+      'src/a.ts::outer > Box.run #2',
+      'src/a.ts::<class>.constructor > <anonymous>',
+      't.ts::describe S > it <dynamic>'
+    ])
   })
 })
