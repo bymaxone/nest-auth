@@ -165,6 +165,15 @@ describe('check-function-length', () => {
       ['it.only', `it.only('does it', () => {\n${statements(49)}})\n`, 'it does it'],
       ['it.skip', `it.skip('does it', () => {\n${statements(49)}})\n`, 'it does it'],
       ['it.each', `it.each([1, 2])('does %s', () => {\n${statements(49)}})\n`, 'it does %s'],
+      ['it.concurrent', `it.concurrent('does it', () => {\n${statements(49)}})\n`, 'it does it'],
+      ['xit', `xit('does it', () => {\n${statements(49)}})\n`, 'xit does it'],
+      ['fit', `fit('does it', () => {\n${statements(49)}})\n`, 'fit does it'],
+      ['xtest', `xtest('does it', () => {\n${statements(49)}})\n`, 'xtest does it'],
+      [
+        'an it.each template table',
+        `it.each\`\n  a | b\n  ${'${1}'} | ${'${2}'}\n\`('does it', () => {\n${statements(49)}})\n`,
+        'it does it'
+      ],
       ['a test with a dynamic title', `it(title, () => {\n${statements(49)}})\n`, 'it <dynamic>']
     ])('measures the body of %s', (_name, text, name) => {
       const spec = `describe('Suite', () => {\n${text}})\n`
@@ -187,10 +196,59 @@ describe('check-function-length', () => {
         callback('afterAll', 60),
         `describe.each([1])('each %s', () => {\n${statements(60)}})\n`,
         `context('ctx', () => {\n${statements(60)}})\n`,
-        `suite('suite', () => {\n${statements(60)}})\n`
+        `suite('suite', () => {\n${statements(60)}})\n`,
+        `describe.each\`\n  a | b\n  ${'${1}'} | ${'${2}'}\n\`('table', () => {\n${statements(60)}})\n`,
+        `xdescribe('skipped', () => {\n${statements(60)}})\n`,
+        `fdescribe('focused', () => {\n${statements(60)}})\n`,
+        `describe.only('only', () => {\n${statements(60)}})\n`,
+        `describe.skip('skip', () => {\n${statements(60)}})\n`
       ].join('')
 
       expect(run(repo({ 'src/a.spec.ts': spec })).status).toBe(0)
+    })
+
+    it('numbers only the tests over the limit, so a short test with the same title changes nothing', () => {
+      const long = (): string => `  it('same', () => {\n${statements(49)}  })\n`
+      const short = "  it('same', () => {\n    work()\n  })\n"
+      const spec = (body: string): string => `describe('Suite', () => {\n${body}})\n`
+      const root = repo({ 'src/a.spec.ts': spec(long() + short + long()) })
+
+      run(root, '--write-baseline')
+      const baseline = JSON.parse(
+        readFileSync(join(root, 'scripts', 'function-length-baseline.json'), 'utf8')
+      ) as { functions: Record<string, number> }
+      writeFileSync(join(root, 'src/a.spec.ts'), spec(short + long() + short + long() + short))
+
+      expect(Object.keys(baseline.functions)).toEqual([
+        'src/a.spec.ts::describe Suite > it same',
+        'src/a.spec.ts::describe Suite > it same #2'
+      ])
+      expect(run(root).status).toBe(0)
+    })
+
+    it('does not rename a baselined function when a small function is added before it', () => {
+      const big = `  return [2].map((v) => {\n${statements(55)}  })\n`
+      const before = `function f() {\n  [1].map((v) => v)\n${big}}\n`
+      const root = repo({ 'src/a.ts': before })
+      run(root, '--write-baseline')
+
+      writeFileSync(
+        join(root, 'src/a.ts'),
+        `function f() {\n  [0].map((v) => v)\n  [1].map((v) => v)\n${big}}\n`
+      )
+
+      expect(run(root).output).toContain('src/a.ts::f grew from')
+      expect(run(root).output).not.toContain('<anonymous> #')
+    })
+
+    it('keys a class property arrow with its class, so two classes with one member name differ', () => {
+      const member = (cls: string): string =>
+        `class ${cls} {\n  run = () => {\n${statements(49)}  }\n}\n`
+
+      const result = run(repo({ 'src/a.ts': member('A') + member('B') }))
+
+      expect(result.output).toContain('src/a.ts::A.run spans 51 lines')
+      expect(result.output).toContain('src/a.ts::B.run spans 51 lines')
     })
 
     it('numbers two tests with one title', () => {
@@ -243,6 +301,17 @@ describe('check-function-length', () => {
       expect(result.output).toContain(
         `${KEY} is on the baseline but no longer exists. Remove its entry.`
       )
+    })
+
+    it('removes the entry of a numbered offender that is gone while its namesake stays', () => {
+      const baseline = { [KEY]: 60, [`${KEY} #2`]: 60 }
+
+      const result = run(repo({ 'src/a.ts': declaration('big', 60) }, baseline))
+
+      expect(result.output).toContain(
+        `${KEY} #2 is on the baseline but no longer exists. Remove its entry.`
+      )
+      expect(result.output).not.toContain(`${KEY} spans`)
     })
 
     it('names both sides of a rename', () => {

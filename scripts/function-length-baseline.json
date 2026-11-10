@@ -13,7 +13,7 @@
     "src/nextjs/createSilentRefreshHandler.ts::createSilentRefreshHandler > <anonymous>": 63,
     "src/nextjs/internal/proxyHandlers.ts::handleProtectedRoute": 53,
     "src/react/AuthProvider.tsx::AuthProvider": 301,
-    "src/react/AuthProvider.tsx::AuthProvider > <anonymous> #7": 51,
+    "src/react/AuthProvider.tsx::AuthProvider > <anonymous>": 51,
     "src/server/bymax-auth.module.ts::BymaxAuthModule.registerAsync": 546,
     "src/server/bymax-auth.module.ts::BymaxAuthModule.registerAsync > useFactory": 134,
     "src/server/config/resolved-options.ts::resolveOptions": 158,

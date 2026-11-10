@@ -57,6 +57,8 @@ const SOURCE_EXTENSION = /\.(?:ts|tsx)$/
 /** Callbacks that group tests or run around them: containers, never units. */
 const CONTAINERS = new Set([
   'describe',
+  'xdescribe',
+  'fdescribe',
   'context',
   'suite',
   'beforeAll',
@@ -66,7 +68,7 @@ const CONTAINERS = new Set([
 ])
 
 /** Callbacks that are a test body. */
-const TESTS = new Set(['it', 'test'])
+const TESTS = new Set(['it', 'xit', 'fit', 'test', 'xtest'])
 
 /** Reads `--name value` from the arguments, or returns the fallback. */
 function option(name, fallback) {
@@ -74,11 +76,21 @@ function option(name, fallback) {
   return index === -1 ? fallback : (process.argv[index + 1] ?? fallback)
 }
 
-/** The identifier at the root of a call's callee: `it` for `it.each(table)(name, fn)`. */
+/**
+ * The identifier at the root of a call's callee: `it` for `it.each(table)(name, fn)`, for
+ * `it.each\`table\`(name, fn)` and for `it.only(name, fn)`.
+ */
 function calleeRoot(call) {
   let callee = call.expression
-  while (ts.isCallExpression(callee)) callee = callee.expression
-  while (ts.isPropertyAccessExpression(callee)) callee = callee.expression
+  for (;;) {
+    if (ts.isCallExpression(callee) || ts.isPropertyAccessExpression(callee)) {
+      callee = callee.expression
+    } else if (ts.isTaggedTemplateExpression(callee)) {
+      callee = callee.tag
+    } else {
+      break
+    }
+  }
   return ts.isIdentifier(callee) ? callee.text : null
 }
 
@@ -134,43 +146,64 @@ function describeNode(node) {
   if (ts.isConstructorDeclaration(node))
     return { name: `${classNameOf(node)}.constructor`, measured: true }
   const holder = node.parent
-  const named =
-    ts.isVariableDeclaration(holder) ||
-    ts.isPropertyAssignment(holder) ||
-    ts.isPropertyDeclaration(holder)
+  if (ts.isPropertyDeclaration(holder)) {
+    return { name: `${classNameOf(holder)}.${nameOf(holder)}`, measured: true }
+  }
+  const named = ts.isVariableDeclaration(holder) || ts.isPropertyAssignment(holder)
   return { name: named ? nameOf(holder) : '<anonymous>', measured: true }
 }
 
 /**
- * Every measured function in a source text: its key, its length, and the keys of the measured
- * functions that contain it, nearest first.
+ * Every measured function in a source text, in document order: its qualified name, its length, and
+ * the position of the measured function that contains it, or -1.
  */
-function measure(path, text) {
+function collect(path, text) {
   const kind = path.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, kind)
   const found = []
-  const seen = new Map()
-  const visit = (node, names, owners) => {
+  const visit = (node, names, container) => {
     let nextNames = names
-    let nextOwners = owners
+    let nextContainer = container
     if (isFunctionLike(node)) {
       const { name, measured } = describeNode(node)
       nextNames = [...names, name]
       if (measured) {
-        const base = `${path}::${nextNames.join(' > ')}`
-        const count = (seen.get(base) ?? 0) + 1
-        seen.set(base, count)
-        const key = count === 1 ? base : `${base} #${count}`
         const start = file.getLineAndCharacterOfPosition(node.getStart()).line
         const end = file.getLineAndCharacterOfPosition(node.getEnd()).line
-        found.push({ key, lines: end - start + 1, owners })
-        nextOwners = [key, ...owners]
+        found.push({ base: `${path}::${nextNames.join(' > ')}`, lines: end - start + 1, container })
+        nextContainer = found.length - 1
       }
     }
-    ts.forEachChild(node, (child) => visit(child, nextNames, nextOwners))
+    ts.forEachChild(node, (child) => visit(child, nextNames, nextContainer))
   }
-  visit(file, [], [])
+  visit(file, [], -1)
   return found
+}
+
+/**
+ * The offenders of a source text, keyed, and the longest span of every qualified name.
+ *
+ * Only offenders are numbered when they share a name, in document order, so a small function added
+ * or removed beside them never renames one: a key changes only when another function over the limit
+ * with the same name appears or goes before it.
+ */
+function measure(path, text) {
+  const found = collect(path, text)
+  const seen = new Map()
+  const keys = found.map((entry) => {
+    if (entry.lines <= MAX_LINES) return null
+    const count = (seen.get(entry.base) ?? 0) + 1
+    seen.set(entry.base, count)
+    return count === 1 ? entry.base : `${entry.base} #${count}`
+  })
+  const offenders = []
+  for (const [index, entry] of found.entries()) {
+    if (keys[index] === null) continue
+    const owners = []
+    for (let up = entry.container; up !== -1; up = found[up].container) owners.push(keys[up])
+    offenders.push({ key: keys[index], lines: entry.lines, owners })
+  }
+  return { offenders, longest: found }
 }
 
 /** Paths of the tracked files in scope, relative to the root. */
@@ -181,15 +214,23 @@ function trackedSources(root) {
     .filter((p) => SCOPE.test(p) && SOURCE_EXTENSION.test(p) && !GENERATED.test(p))
 }
 
-/** Every measured function in the tracked sources, by key. */
+/** The qualified name of a key: the key without the number that tells same-named offenders apart. */
+function baseOf(key) {
+  return key.replace(/ #\d+$/, '')
+}
+
+/** Every offender in the tracked sources by key, and the longest span of each qualified name. */
 function functionsIn(root) {
-  const table = new Map()
+  const offenders = new Map()
+  const longest = new Map()
   for (const path of trackedSources(root)) {
-    for (const entry of measure(path, readFileSync(join(root, path), 'utf8'))) {
-      table.set(entry.key, entry)
+    const result = measure(path, readFileSync(join(root, path), 'utf8'))
+    for (const entry of result.offenders) offenders.set(entry.key, entry)
+    for (const { base, lines } of result.longest) {
+      longest.set(base, Math.max(lines, longest.get(base) ?? 0))
     }
   }
-  return table
+  return { offenders, longest }
 }
 
 /** Reads the baseline's `functions` table from JSON text as a map, failing loudly on one that is not. */
@@ -257,8 +298,7 @@ function containerNote(owners, offenders) {
 }
 
 /** Compares the functions found with the baseline and returns one message per problem. */
-function problemsOf(functions, baseline) {
-  const offenders = new Map([...functions].filter(([, entry]) => entry.lines > MAX_LINES))
+function problemsOf({ offenders, longest }, baseline) {
   const stale = [...baseline.keys()].filter((key) => !offenders.has(key))
   const fresh = [...offenders.keys()].filter((key) => !baseline.has(key))
   const problems = []
@@ -285,16 +325,16 @@ function problemsOf(functions, baseline) {
     }
   }
   for (const key of stale) {
-    const now = functions.get(key)
+    const now = longest.get(baseOf(key))
     const renamedTo = fresh.filter((name) => fileOf(name) === fileOf(key))
     const hint =
       renamedTo.length === 0
         ? ''
         : ` If it was renamed, the new offender is ${renamedTo.map((name) => `\`${name}\``).join(', ')}.`
     problems.push(
-      now === undefined
+      now === undefined || now > MAX_LINES
         ? `${key} is on the baseline but no longer exists. Remove its entry.${hint}`
-        : `${key} now spans ${now.lines} lines, within the limit. Remove its entry.`
+        : `${key} now spans ${now} lines, within the limit. Remove its entry.`
     )
   }
   return problems
@@ -306,8 +346,7 @@ const baselinePath = resolve(
 )
 
 if (process.argv.includes('--write-baseline')) {
-  const entries = [...functionsIn(root)]
-    .filter(([, entry]) => entry.lines > MAX_LINES)
+  const entries = [...functionsIn(root).offenders]
     .map(([key, entry]) => [key, entry.lines])
     .sort(([a], [b]) => a.localeCompare(b))
   writeFileSync(
