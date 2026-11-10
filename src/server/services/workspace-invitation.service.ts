@@ -118,7 +118,7 @@ export class WorkspaceInvitationService {
    * @param context - Request metadata for the hook.
    * @throws {AuthException} `auth.validation` for a role outside the hierarchy,
    *   `auth.insufficient_workspace_role` above the actor's ceiling, `auth.already_member` for an
-   *   active member, `auth.too_many_requests` at a limit or when the address changed under the
+   *   address that already has a membership, in any status, `auth.too_many_requests` at a limit or when the address changed under the
    *   call, `auth.workspace_not_found` when the workspace is gone.
    */
   async invite(
