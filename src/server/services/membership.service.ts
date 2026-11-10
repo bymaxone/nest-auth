@@ -289,6 +289,7 @@ export class MembershipService {
     context: HookContext
   ): Promise<void> {
     this.assertMayTransfer(actor, toUserId, demoteFromTo)
+    await this.assertTransferTarget(ref, toUserId)
     const { ownerRole } = this.group.roles
     const fromUserId = actor.userId
     const event = {
@@ -310,6 +311,22 @@ export class MembershipService {
     if (result === 'target_not_member') throw invalid('userId', 'userId must be an active member')
     await this.settle(result, ref, [fromUserId, toUserId])
     this.events.emit(event, context)
+  }
+
+  /**
+   * Refuses a hand-over to a member who is not ACTIVE in this workspace: a suspended member is a
+   * member, but ownership is not theirs to receive.
+   *
+   * It is a read, so a caller can run it before a costly step; the repository still decides the same
+   * thing in the write's own transaction.
+   *
+   * @param ref - The workspace.
+   * @param toUserId - The member who would become an owner.
+   * @throws {AuthException} `auth.validation` naming `userId` for a member who is absent or not active.
+   */
+  async assertTransferTarget(ref: WorkspaceRef, toUserId: string): Promise<void> {
+    const target = await this.memberships.find({ ...ref, userId: toUserId })
+    if (target?.status !== 'active') throw invalid('userId', 'userId must be an active member')
   }
 
   /**

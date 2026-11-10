@@ -25,6 +25,7 @@ import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { hasRole } from '../utils/roles.util'
+import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
 /**
@@ -780,20 +781,19 @@ export class InvitationService {
       `acceptInvitation: invitation accepted userId=${logSafe(safeUser.id)} tenantId=${logSafe(invitation.tenantId)} role=${logSafe(invitation.role)}`
     )
 
-    // afterInvitationAccepted — fire-and-forget; errors must not propagate.
-    if (this.hooks?.afterInvitationAccepted) {
-      void Promise.resolve(
-        this.hooks.afterInvitationAccepted(safeUser, {
+    // afterInvitationAccepted is fire-and-forget: the account, the spend and the session are done.
+    runDetached(
+      this.logger,
+      () =>
+        this.hooks?.afterInvitationAccepted?.(safeUser, {
           // Invitations are a dashboard concept; the platform plane has no invite flow.
           plane: 'dashboard',
           ip,
           userAgent,
           sanitizedHeaders: sanitizeHeaders(headers)
-        })
-      ).catch((err: unknown) => {
-        this.logger.error(`afterInvitationAccepted hook threw: ${describeChannelStatus(err)}`)
-      })
-    }
+        }),
+      'afterInvitationAccepted hook threw'
+    )
 
     return result
   }

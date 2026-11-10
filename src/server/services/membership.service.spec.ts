@@ -5,93 +5,30 @@
  * @layer Test
  */
 
-import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
-import type { AuthException } from '../errors/auth-exception'
-import type {
-  AuthMembership,
-  IMembershipRepository
-} from '../interfaces/membership-repository.interface'
+import {
+  DEMOTE_MESSAGE,
+  EDITOR,
+  OWNER,
+  build,
+  code,
+  detailsOf,
+  member
+} from './__tests__/membership-service-harness'
 import {
   CONTEXT,
   NOW,
   WORKSPACE_REF,
   optionsWithoutWorkspaces,
-  workspaceOptions,
   workspaceRow
 } from './__tests__/workspace-service-harness'
-import type { WorkspaceActor } from '../interfaces/acting-member.interface'
 import { MembershipService } from './membership.service'
 import type { WorkspaceAccessService } from './workspace-access.service'
 import type { WorkspaceEventsService } from './workspace-events.service'
-
-const DEMOTE_MESSAGE = 'demoteSelfTo must be a workspace role other than the owner role'
-const OWNER: WorkspaceActor = { userId: 'owner-1', role: 'owner' }
-const EDITOR: WorkspaceActor = { userId: 'editor-1', role: 'editor' }
-
-function member(
-  userId: string,
-  role: string,
-  status: AuthMembership['status'] = 'active'
-): AuthMembership {
-  return {
-    ...WORKSPACE_REF,
-    userId,
-    role,
-    status,
-    invitedByUserId: null,
-    createdAt: new Date(0),
-    updatedAt: new Date(0)
-  }
-}
-
-interface Harness {
-  service: MembershipService
-  memberships: Record<string, jest.Mock>
-  access: { invalidateMembership: jest.Mock }
-  events: { emit: jest.Mock }
-}
-
-function build(withLastActive = true): Harness {
-  const memberships: Record<string, jest.Mock> = {
-    find: jest.fn(),
-    listForUser: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
-    listForWorkspace: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
-    listSoleOwned: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
-    changeRole: jest.fn().mockResolvedValue('ok'),
-    remove: jest.fn().mockResolvedValue('ok'),
-    transferOwnership: jest.fn().mockResolvedValue('ok'),
-    ...(withLastActive ? { getLastActiveWorkspaceId: jest.fn().mockResolvedValue('w9') } : {})
-  }
-  const access = { invalidateMembership: jest.fn().mockResolvedValue(undefined) }
-  const events = { emit: jest.fn() }
-  const service = new MembershipService(
-    memberships as Partial<IMembershipRepository> as IMembershipRepository,
-    access as Partial<WorkspaceAccessService> as WorkspaceAccessService,
-    events as Partial<WorkspaceEventsService> as WorkspaceEventsService,
-    workspaceOptions()
-  )
-  return { service, memberships, access, events }
-}
-
-/** The error code an operation fails with, or `'ok'`. */
-async function code(promise: Promise<unknown>): Promise<string> {
-  try {
-    await promise
-  } catch (error) {
-    return ((error as AuthException).getResponse() as { error: { code: string } }).error.code
-  }
-  return 'ok'
-}
-
-/** The `details` an operation's validation error carries, or `undefined` when it does not fail. */
-async function detailsOf(promise: Promise<unknown>): Promise<unknown> {
-  try {
-    await promise
-  } catch (error) {
-    return ((error as AuthException).getResponse() as { error: { details: unknown } }).error.details
-  }
-  return undefined
-}
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import type {
+  AuthMembership,
+  IMembershipRepository
+} from '../interfaces/membership-repository.interface'
 
 describe('MembershipService', () => {
   beforeEach(() => {
@@ -544,55 +481,6 @@ describe('MembershipService', () => {
     })
   })
 
-  describe('assertMayGrant', () => {
-    it('lets the owner grant every role, its own included', () => {
-      const { service } = build()
-
-      for (const role of ['owner', 'editor', 'viewer']) {
-        expect(() => service.assertMayGrant('owner', role)).not.toThrow()
-      }
-    })
-
-    it('lets another role grant only a role strictly below its own', async () => {
-      const { service } = build()
-
-      expect(() => service.assertMayGrant('editor', 'viewer')).not.toThrow()
-      const refused: Array<[string, string]> = [
-        ['editor', 'editor'],
-        ['editor', 'owner'],
-        ['viewer', 'editor']
-      ]
-      for (const [actor, role] of refused) {
-        expect(await code(Promise.resolve().then(() => service.assertMayGrant(actor, role)))).toBe(
-          AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE
-        )
-      }
-    })
-
-    it('refuses a role outside the hierarchy with a validation error naming it', async () => {
-      const { service } = build()
-      const refuse = (role: string): Promise<void> =>
-        Promise.resolve().then(() => service.assertMayGrant('owner', role))
-
-      expect(await code(refuse('ghost'))).toBe(AUTH_ERROR_CODES.VALIDATION)
-      expect(await detailsOf(refuse('ghost'))).toEqual([
-        { field: 'role', message: 'role must be one of the workspace roles' }
-      ])
-      expect(await code(refuse('constructor'))).toBe(AUTH_ERROR_CODES.VALIDATION)
-    })
-  })
-
-  describe('mayActOn', () => {
-    it('answers for the owner on every role and for others only on a role strictly below', () => {
-      const { service } = build()
-
-      expect(service.mayActOn('owner', 'owner')).toBe(true)
-      expect(service.mayActOn('editor', 'viewer')).toBe(true)
-      expect(service.mayActOn('editor', 'editor')).toBe(false)
-      expect(service.mayActOn('editor', 'owner')).toBe(false)
-    })
-  })
-
   describe('assertMayTransfer', () => {
     // The local check the transfer route runs before it spends a password check: it must refuse
     // the same requests transferOwnership refuses, and touch nothing.
@@ -655,6 +543,7 @@ describe('MembershipService', () => {
   describe('transferOwnership', () => {
     it.each(['editor', 'viewer'])('refuses a transfer by a %s, before any write', async (role) => {
       const { service, memberships, access, events } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
 
       await expect(
         code(
@@ -668,6 +557,7 @@ describe('MembershipService', () => {
 
     it("hands ownership over atomically, ends both members' access, then reports it", async () => {
       const { service, memberships, access, events } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
 
       await service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', 'editor', CONTEXT)
 
@@ -696,6 +586,7 @@ describe('MembershipService', () => {
 
     it('keeps both as owners when no demotion is asked', async () => {
       const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
 
       await service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', null, CONTEXT)
 
@@ -718,6 +609,7 @@ describe('MembershipService', () => {
       ]
     ])('refuses a transfer %s', async (_name, from, to, demote, field, message) => {
       const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
 
       const result = service.transferOwnership(
         WORKSPACE_REF,
@@ -740,6 +632,7 @@ describe('MembershipService', () => {
 
     it('refuses a target who is not an active member, without bumping or reporting', async () => {
       const { service, memberships, access, events } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
       memberships['transferOwnership']?.mockResolvedValue('target_not_member')
 
       const result = service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', null, CONTEXT)
@@ -761,6 +654,7 @@ describe('MembershipService', () => {
       ['last_owner', AUTH_ERROR_CODES.LAST_OWNER]
     ])('maps %s to %s', async (result, expected) => {
       const { service, memberships } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
       memberships['transferOwnership']?.mockResolvedValue(result)
 
       await expect(

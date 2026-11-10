@@ -111,6 +111,6 @@ describe('buildAuthOpenApiFragment request schemas', () => {
 
     expect(schemas).not.toHaveProperty('OAuthInitiateQueryDto')
     expect(schemas).not.toHaveProperty('OAuthCallbackQueryDto')
-    expect(Object.keys(schemas)).toHaveLength(28)
+    expect(Object.keys(schemas)).toHaveLength(30)
   })
 })

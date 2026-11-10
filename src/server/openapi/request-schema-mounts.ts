@@ -54,6 +54,8 @@ export const REQUEST_SCHEMAS_BY_CONTROLLER: Readonly<
   workspaceInvitations: [
     'InviteToWorkspaceDto',
     'WorkspaceInvitationEmailDto',
-    'PreviewWorkspaceInvitationDto'
+    'PreviewWorkspaceInvitationDto',
+    'AcceptWorkspaceInvitationDto',
+    'AcceptWorkspaceInvitationSignupDto'
   ]
 }

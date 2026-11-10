@@ -5,6 +5,7 @@
  * @layer Test
  */
 
+import { Inject, Injectable } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import {
@@ -186,5 +187,52 @@ describe('BymaxAuthModule — workspace invitations', () => {
     )
 
     await expect(module.init()).rejects.toThrow('sendWorkspaceInvitation')
+  })
+
+  it('exports the invitation service to a host module, which calls the platform invitations through it', async () => {
+    @Injectable()
+    class HostAdmin {
+      constructor(
+        @Inject(WorkspaceInvitationService) readonly invitations: WorkspaceInvitationService
+      ) {}
+    }
+    const module = await Test.createTestingModule({
+      imports: [
+        BymaxAuthModule.registerAsync({
+          useFactory: () => WORKSPACES,
+          controllers: { workspaces: true, workspaceInvitations: true },
+          extraProviders: [...BASE, ...REPOSITORIES]
+        })
+      ],
+      providers: [HostAdmin]
+    }).compile()
+
+    const host = module.get(HostAdmin)
+
+    expect(host.invitations).toBeInstanceOf(WorkspaceInvitationService)
+    expect(typeof host.invitations.inviteAsPlatform).toBe('function')
+    expect(typeof host.invitations.revokeAsPlatform).toBe('function')
+  })
+
+  it('does not export the invitation service when the feature is off', async () => {
+    @Injectable()
+    class HostAdmin {
+      constructor(
+        @Inject(WorkspaceInvitationService) readonly invitations: WorkspaceInvitationService
+      ) {}
+    }
+
+    await expect(
+      Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => WORKSPACES,
+            controllers: { workspaces: true },
+            extraProviders: [...BASE, ...REPOSITORIES]
+          })
+        ],
+        providers: [HostAdmin]
+      }).compile()
+    ).rejects.toThrow()
   })
 })

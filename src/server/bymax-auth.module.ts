@@ -89,6 +89,7 @@ import { WorkspaceAccessService } from './services/workspace-access.service'
 import { WorkspaceActionsService } from './services/workspace-actions.service'
 import { WorkspaceCallerService } from './services/workspace-caller.service'
 import { WorkspaceEventsService } from './services/workspace-events.service'
+import { WorkspaceInvitationAcceptService } from './services/workspace-invitation-accept.service'
 import { WorkspaceInvitationService } from './services/workspace-invitation.service'
 import { WorkspaceInvitationStore } from './services/workspace-invitation.store'
 import { WorkspaceService } from './services/workspace.service'
@@ -484,7 +485,7 @@ export class BymaxAuthModule {
     const includeWorkspaces = hasProviderToken(extraProviders, BYMAX_AUTH_WORKSPACE_REPOSITORY)
     const workspaceProviders: Provider[] = includeWorkspaces ? WORKSPACE_PROVIDERS : []
     const workspaceInvitationProviders: Provider[] = includeWorkspaceInvitations
-      ? [WorkspaceInvitationStore, WorkspaceInvitationService]
+      ? [WorkspaceInvitationStore, WorkspaceInvitationService, WorkspaceInvitationAcceptService]
       : []
 
     // Fallback email provider — only registered when the consumer has not supplied one.
@@ -777,6 +778,9 @@ export class BymaxAuthModule {
         // The workspace access service is public surface: a host that changes memberships outside
         // the library calls its invalidation methods.
         ...(includeWorkspaces ? WORKSPACE_PROVIDERS : []),
+        // The invitation service is public surface too: a platform bootstrap invitation has no
+        // route, so the host's own admin code issues and withdraws it through this service.
+        ...(includeWorkspaceInvitations ? [WorkspaceInvitationService] : []),
         // WsTicketService also stands on its own as public surface: single-use ticket
         // handshakes are the credential a realtime transport is meant to use, and a consumer
         // cannot mint one without injecting this service.

@@ -149,6 +149,8 @@ export function createMockUserRepository(): MockUserRepository {
     },
 
     async create(data: CreateUserData): Promise<AuthUser> {
+      // A database refuses a second row for one address in one tenant; so does this repository.
+      if (emailIndex.has(emailKey(data.email, data.tenantId))) throw new Error('unique violation')
       const id = `user-${nextId++}`
       const user: AuthUser = {
         id,

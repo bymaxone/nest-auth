@@ -60,6 +60,11 @@ export type WorkspaceAuditEvent =
       role: string
       /** The user the acceptance added to the workspace. */
       userId: string
+      /**
+       * Set, on the hook event only, when the invitation record could not be spent as expected
+       * because a revoke or a resend had already moved it. The membership exists either way.
+       */
+      lostConsumeRace?: true
     })
   | (WorkspaceAuditBase & {
       type: 'member.role_changed'

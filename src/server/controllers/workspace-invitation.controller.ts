@@ -15,12 +15,13 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
   UseInterceptors,
   UsePipes
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
-import type { Request } from 'express'
+import type { Request, Response } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
@@ -29,6 +30,8 @@ import { CurrentWorkspace } from '../decorators/current-workspace.decorator'
 import type { CurrentWorkspaceContext } from '../decorators/current-workspace.decorator'
 import { Public } from '../decorators/public.decorator'
 import { WorkspacePermission } from '../decorators/workspace-permission.decorator'
+import { AcceptWorkspaceInvitationSignupDto } from '../dto/accept-workspace-invitation-signup.dto'
+import { AcceptWorkspaceInvitationDto } from '../dto/accept-workspace-invitation.dto'
 import { InviteToWorkspaceDto } from '../dto/invite-to-workspace.dto'
 import { PreviewWorkspaceInvitationDto } from '../dto/preview-workspace-invitation.dto'
 import { WorkspaceInvitationEmailDto } from '../dto/workspace-invitation-email.dto'
@@ -44,7 +47,16 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { WorkspaceInvitationPreview } from '../interfaces/workspace-invitation.interface'
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
+import type {
+  BearerAuthResponse,
+  BothAuthResponse,
+  CookieAuthResponse
+} from '../services/token-delivery.service'
+import { TokenDeliveryService } from '../services/token-delivery.service'
+import { WorkspaceInvitationAcceptService } from '../services/workspace-invitation-accept.service'
+import type { AcceptedInvitation } from '../services/workspace-invitation-accept.service'
 import { WorkspaceInvitationService } from '../services/workspace-invitation.service'
+import { resolveClientAddress } from '../utils/client-address'
 import { dashboardHookContext } from '../utils/request-hook-context'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
 
@@ -68,7 +80,10 @@ import type { InvitationPage } from '../utils/workspace-invitation-page'
 @UsePipes(createAuthValidationPipe())
 export class WorkspaceInvitationController {
   constructor(
-    @Inject(WorkspaceInvitationService) private readonly invitations: WorkspaceInvitationService
+    @Inject(WorkspaceInvitationService) private readonly invitations: WorkspaceInvitationService,
+    @Inject(WorkspaceInvitationAcceptService)
+    private readonly accepts: WorkspaceInvitationAcceptService,
+    @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService
   ) {}
 
   /**
@@ -190,6 +205,59 @@ export class WorkspaceInvitationController {
   @Post('invitations/preview')
   async preview(@Body() dto: PreviewWorkspaceInvitationDto): Promise<WorkspaceInvitationPreview> {
     return this.invitations.preview(dto.token)
+  }
+
+  /**
+   * Accepts an invitation as the signed-in account it was addressed to.
+   *
+   * @param user - Verified JWT payload from the access token.
+   * @param dto - The token.
+   * @param req - Incoming request, for the hook context.
+   * @returns The workspace the caller joined and the role they hold there.
+   * @throws {AuthException} `auth.invalid_invitation_token` for any token that cannot be honoured;
+   *   `auth.invitation_email_mismatch` or `auth.email_not_verified` for a caller the invitation
+   *   is not addressed to, with the token left unspent.
+   */
+  @UseGuards(JwtAuthGuard, UserStatusGuard)
+  @Throttle(AUTH_THROTTLE_CONFIGS.workspaceInvitationAccept)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceInvitationAccept)
+  @HttpCode(HttpStatus.OK)
+  @Post('invitations/accept')
+  async accept(
+    @CurrentUser() user: DashboardJwtPayload,
+    @Body() dto: AcceptWorkspaceInvitationDto,
+    @Req() req: Request
+  ): Promise<AcceptedInvitation> {
+    return this.accepts.accept(user, dto.token, dashboardHookContext(req, user))
+  }
+
+  /**
+   * Accepts an invitation by creating the account it was addressed to, and signs that account in.
+   *
+   * @param dto - The token and the new account's name and password.
+   * @param req - Incoming request, for the session and the hook.
+   * @param res - Response, for the cookies the delivery mode sets.
+   * @returns The session in the configured delivery mode, with the workspace joined and the role.
+   * @throws {AuthException} `auth.invalid_invitation_token`; `auth.email_already_exists` when the
+   *   address already has an account, which then accepts by signing in; and the password policy.
+   */
+  @Public()
+  @Throttle(AUTH_THROTTLE_CONFIGS.workspaceInvitationAcceptSignup)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceInvitationAcceptSignup)
+  @HttpCode(HttpStatus.CREATED)
+  @Post('invitations/accept-signup')
+  async acceptSignup(
+    @Body() dto: AcceptWorkspaceInvitationSignupDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response
+  ): Promise<(CookieAuthResponse | BearerAuthResponse | BothAuthResponse) & AcceptedInvitation> {
+    const request = {
+      ip: resolveClientAddress(req),
+      userAgent: String(req.headers['user-agent'] ?? ''),
+      headers: req.headers as Record<string, string | string[] | undefined>
+    }
+    const { result, accepted } = await this.accepts.acceptSignup(dto, request)
+    return { ...this.tokenDelivery.deliverAuthResponse(res, result, req), ...accepted }
   }
 }
 

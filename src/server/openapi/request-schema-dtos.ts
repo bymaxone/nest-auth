@@ -12,6 +12,8 @@
  */
 import type { DtoClass } from './derive-request-schemas'
 import { AcceptInvitationDto } from '../dto/accept-invitation.dto'
+import { AcceptWorkspaceInvitationSignupDto } from '../dto/accept-workspace-invitation-signup.dto'
+import { AcceptWorkspaceInvitationDto } from '../dto/accept-workspace-invitation.dto'
 import { ChangeEmailDto } from '../dto/change-email.dto'
 import { ChangeMemberRoleDto } from '../dto/change-member-role.dto'
 import { ChangePasswordDto } from '../dto/change-password.dto'
@@ -48,6 +50,8 @@ import { WorkspacePageQueryDto } from '../dto/workspace-page-query.dto'
 /** Every DTO whose request body the library documents. */
 export const REQUEST_SCHEMA_DTOS: readonly DtoClass[] = [
   AcceptInvitationDto,
+  AcceptWorkspaceInvitationDto,
+  AcceptWorkspaceInvitationSignupDto,
   ChangeEmailDto,
   ChangeMemberRoleDto,
   ChangePasswordDto,

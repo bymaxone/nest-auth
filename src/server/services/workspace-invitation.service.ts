@@ -5,6 +5,8 @@
  * @layer Service
  */
 
+import { randomUUID } from 'node:crypto'
+
 import { Inject, Injectable } from '@nestjs/common'
 
 import { MembershipService } from './membership.service'
@@ -49,6 +51,7 @@ import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { pageInvitations } from '../utils/workspace-invitation-page'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
+import { normalizeWorkspaceName } from '../utils/workspace-name'
 
 /** A live invitation and the key it is stored under. */
 interface LiveInvitation {
@@ -115,7 +118,7 @@ export class WorkspaceInvitationService {
    * @param context - Request metadata for the hook.
    * @throws {AuthException} `auth.validation` for a role outside the hierarchy,
    *   `auth.insufficient_workspace_role` above the actor's ceiling, `auth.already_member` for an
-   *   active member, `auth.too_many_requests` at a limit or when the address changed under the
+   *   address that already has a membership, in any status, `auth.too_many_requests` at a limit or when the address changed under the
    *   call, `auth.workspace_not_found` when the workspace is gone.
    */
   async invite(
@@ -230,22 +233,110 @@ export class WorkspaceInvitationService {
    */
   async preview(token: string): Promise<WorkspaceInvitationPreview> {
     const record = await this.store.readByHash(sha256(token))
-    const probe = record ?? STAND_IN
+    const probe = lookupOf(record)
     const [workspace, inviter, account] = await Promise.all([
       this.workspaces.findById({ tenantId: probe.tenantId, workspaceId: probe.workspaceId }),
       this.users.findById({ id: probe.inviterUserId, tenantId: probe.tenantId }),
       this.users.findByEmail({ email: probe.email, tenantId: probe.tenantId })
     ])
-    if (record === null || workspace?.status !== 'active' || inviter === null) {
-      throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
-    }
-    return {
-      workspaceName: workspace.name,
-      inviterName: inviter.name,
+    if (record === null) throw invalidToken()
+    const answer = {
       role: record.role,
       maskedEmail: maskEmail(record.email),
       accountExists: account !== null
     }
+    if (record.kind === 'bootstrap') {
+      // Its workspace does not exist yet; one that exists and is not active names nothing usable.
+      if (workspace !== null && workspace.status !== 'active') throw invalidToken()
+      return { kind: 'bootstrap', workspaceName: record.workspaceName, ...answer }
+    }
+    if (workspace?.status !== 'active' || inviter === null) throw invalidToken()
+    return { kind: 'member', workspaceName: workspace.name, inviterName: inviter.name, ...answer }
+  }
+
+  /**
+   * Invites an address to own a workspace that does not exist yet, on behalf of the platform.
+   *
+   * There is no route for it: the platform plane's authorization is the host's. The workspace and
+   * its owner membership are created when the invitation is accepted, under the id returned here.
+   * Each call is its own invitation to its own workspace; nothing is replaced.
+   *
+   * @param params - The tenant, the invitee, the workspace's name, and the inviter's display name
+   *   for the message (it is not stored).
+   * @param context - Request metadata for the hook.
+   * @returns The id the workspace will be created with.
+   * @throws {AuthException} `auth.validation` for an unusable workspace name.
+   */
+  async inviteAsPlatform(
+    params: { tenantId: string; email: string; workspaceName: string; inviterName: string },
+    context: HookContext
+  ): Promise<{ workspaceId: string }> {
+    const email = normalizeEmail(params.email)
+    const workspaceName = normalizeWorkspaceName(params.workspaceName)
+    const ref = { tenantId: params.tenantId, workspaceId: randomUUID() }
+    const token = generateSecureToken(32)
+    const ttl = this.group.invitationTtlSeconds
+    const record: StoredWorkspaceInvitation = {
+      kind: 'bootstrap',
+      email,
+      role: this.group.roles.ownerRole,
+      ...ref,
+      createdAt: new Date(Date.now()).toISOString(),
+      resendCount: 0,
+      workspaceName
+    }
+    const outcome = await this.store.publish(ref, email, invitationKey(token), record, ttl, 0, null)
+    // The id is fresh, so nothing can already hold its index.
+    if (outcome !== 'published') throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
+    const account = await this.users.findByEmail({ email, tenantId: ref.tenantId })
+    await this.deliver(
+      ref,
+      email,
+      workspaceName,
+      params.inviterName,
+      record,
+      token,
+      account !== null,
+      ttl
+    )
+    this.events.emit(
+      {
+        type: 'member.invited',
+        ...ref,
+        actorUserId: null,
+        email,
+        role: record.role,
+        at: record.createdAt
+      },
+      context
+    )
+    return { workspaceId: ref.workspaceId }
+  }
+
+  /**
+   * Withdraws a platform bootstrap invitation. An address with none, or with an ordinary member
+   * invitation, is answered like a success and changes nothing.
+   *
+   * @param ref - The workspace id `inviteAsPlatform` returned.
+   * @param rawEmail - The invitee.
+   * @param context - Request metadata for the hook.
+   */
+  async revokeAsPlatform(ref: WorkspaceRef, rawEmail: string, context: HookContext): Promise<void> {
+    const email = normalizeEmail(rawEmail)
+    const indexed = await this.store.readByEmail(ref, email)
+    if (indexed?.record?.kind !== 'bootstrap') return
+    await this.store.remove(ref, email, indexed.key)
+    this.events.emit(
+      {
+        type: 'invitation.revoked',
+        ...ref,
+        actorUserId: null,
+        email,
+        role: indexed.record.role,
+        at: new Date(Date.now()).toISOString()
+      },
+      context
+    )
   }
 
   /** Counts one invitation against the inviter's hour, refusing the twenty-first. */
@@ -270,12 +361,13 @@ export class WorkspaceInvitationService {
     }
   }
 
-  /** Refuses an address that already belongs to the workspace; returns its account, if any. */
+  /** Refuses an address that already has a membership of the workspace; returns its account. */
   private async assertNotMember(ref: WorkspaceRef, email: string): Promise<AuthUser | null> {
     const account = await this.users.findByEmail({ email, tenantId: ref.tenantId })
     if (account === null) return null
     const member = await this.memberships.find({ ...ref, userId: account.id })
-    if (member?.status === 'active') throw new AuthException(AUTH_ERROR_CODES.ALREADY_MEMBER)
+    // A suspended member is still a member: an invitation cannot reinstate one.
+    if (member !== null) throw new AuthException(AUTH_ERROR_CODES.ALREADY_MEMBER)
     return account
   }
 
@@ -290,6 +382,7 @@ export class WorkspaceInvitationService {
     const key = invitationKey(token)
     const ttl = this.group.invitationTtlSeconds
     const record: StoredWorkspaceInvitation = {
+      kind: 'member',
       email,
       role,
       tenantId: ref.tenantId,
@@ -303,7 +396,16 @@ export class WorkspaceInvitationService {
     const outcome = await this.store.publish(ref, email, key, record, ttl, limit, plan.expected)
     if (outcome !== 'published') throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
 
-    await this.deliver(ref, email, workspace, inviter, record, token, plan.account !== null, ttl)
+    await this.deliver(
+      ref,
+      email,
+      workspace.name,
+      inviter.name,
+      record,
+      token,
+      plan.account !== null,
+      ttl
+    )
     this.events.emit(
       {
         type: live === null ? 'member.invited' : 'invitation.resent',
@@ -321,8 +423,8 @@ export class WorkspaceInvitationService {
   private async deliver(
     ref: WorkspaceRef,
     email: string,
-    workspace: AuthWorkspace,
-    inviter: AuthUser,
+    workspaceName: string,
+    inviterName: string,
     record: StoredWorkspaceInvitation,
     token: string,
     accountExists: boolean,
@@ -330,8 +432,8 @@ export class WorkspaceInvitationService {
   ): Promise<void> {
     try {
       await this.email.sendWorkspaceInvitation?.(ref.tenantId, email, {
-        inviterName: inviter.name,
-        workspaceName: workspace.name,
+        inviterName,
+        workspaceName,
         role: record.role,
         inviteToken: token,
         expiresAt: new Date(Date.parse(record.createdAt) + ttl * 1_000),
@@ -371,4 +473,23 @@ const STAND_IN = {
   tenantId: '',
   workspaceId: '',
   inviterUserId: ''
+}
+
+/**
+ * The values a preview looks up for a record: its own, with the stand-in inviter where the record
+ * has none, so every token costs the same three reads.
+ */
+function lookupOf(record: StoredWorkspaceInvitation | null): typeof STAND_IN {
+  if (record === null) return STAND_IN
+  return {
+    email: record.email,
+    tenantId: record.tenantId,
+    workspaceId: record.workspaceId,
+    inviterUserId: record.kind === 'member' ? record.inviterUserId : STAND_IN.inviterUserId
+  }
+}
+
+/** The one answer for a token that cannot be previewed. */
+function invalidToken(): AuthException {
+  return new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
 }

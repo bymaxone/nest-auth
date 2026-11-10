@@ -17,6 +17,7 @@ import {
 import type { StoredWorkspaceInvitation } from '../interfaces/workspace-invitation.interface'
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { isStoredWorkspaceName } from '../utils/workspace-name'
 
 /** A pending invitation with the key it is stored under and the seconds it has left. */
 export interface PendingInvitation {
@@ -144,11 +145,14 @@ export class WorkspaceInvitationStore {
    * @param ref - The workspace.
    * @param email - The invitee, normalized.
    * @param key - The record key.
+   * @returns Whether the index still named this record. `false` means another writer had already
+   *   moved or deleted it; the record's own key is gone either way.
    */
-  async remove(ref: WorkspaceRef, email: string, key: string): Promise<void> {
+  async remove(ref: WorkspaceRef, email: string, key: string): Promise<boolean> {
     await this.redis.del(key)
     await this.redis.srem(this.setKey(ref), key)
-    await this.redis.eval(RELEASE_INDEX_SCRIPT, [this.indexKey(ref, email)], [key])
+    const released = await this.redis.eval(RELEASE_INDEX_SCRIPT, [this.indexKey(ref, email)], [key])
+    return released === 1
   }
 
   /**
@@ -193,20 +197,30 @@ export class WorkspaceInvitationStore {
  * Narrows parsed JSON to a record, so a foreign value under the key reads as absent. A non-object
  * has none of the fields, and `null` throws at the destructuring: both are treated as absent, the
  * throw through `readKey`'s catch. Do not add a `typeof` or `null` branch here; it changes no answer.
+ *
+ * The two kinds are exclusive: a member record has an inviter and no workspace name, a bootstrap
+ * record has a workspace name and no inviter, and any other combination is not a record.
  */
 function parseRecord(value: unknown): StoredWorkspaceInvitation | null {
-  const { email, role, tenantId, workspaceId, inviterUserId, createdAt, resendCount } =
-    value as Record<string, unknown>
+  const fields = value as Record<string, unknown>
+  const { kind, email, role, tenantId, workspaceId, createdAt, resendCount } = fields
+  const { inviterUserId, workspaceName } = fields
   if (
     typeof email !== 'string' ||
     typeof role !== 'string' ||
     typeof tenantId !== 'string' ||
     typeof workspaceId !== 'string' ||
-    typeof inviterUserId !== 'string' ||
     typeof createdAt !== 'string' ||
     typeof resendCount !== 'number'
   ) {
     return null
   }
-  return { email, role, tenantId, workspaceId, inviterUserId, createdAt, resendCount }
+  const base = { email, role, tenantId, workspaceId, createdAt, resendCount }
+  if (kind === 'member' && typeof inviterUserId === 'string' && workspaceName === undefined) {
+    return { kind, ...base, inviterUserId }
+  }
+  if (kind === 'bootstrap' && inviterUserId === undefined && isStoredWorkspaceName(workspaceName)) {
+    return { kind, ...base, workspaceName }
+  }
+  return null
 }

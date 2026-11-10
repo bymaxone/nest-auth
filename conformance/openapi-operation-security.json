@@ -79,6 +79,8 @@
     "POST /workspaces/:workspaceId/schedule-deletion": "access",
     "POST /workspaces/:workspaceId/switch": "access",
     "POST /workspaces/:workspaceId/transfer-ownership": "access",
+    "POST /workspaces/invitations/accept": "access",
+    "POST /workspaces/invitations/accept-signup": "none",
     "POST /workspaces/invitations/preview": "none",
     "POST /ws-ticket": "access"
   }

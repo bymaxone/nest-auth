@@ -38,6 +38,44 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
       "token"
     ]
   },
+  "AcceptWorkspaceInvitationDto": {
+    "type": "object",
+    "properties": {
+      "token": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      }
+    },
+    "required": [
+      "token"
+    ]
+  },
+  "AcceptWorkspaceInvitationSignupDto": {
+    "type": "object",
+    "properties": {
+      "token": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "name": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 100
+      },
+      "password": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "name",
+      "password",
+      "token"
+    ]
+  },
   "ChangeEmailDto": {
     "type": "object",
     "properties": {

@@ -13,14 +13,18 @@ import RedisMock from 'ioredis-mock'
 import { WORKSPACE_REF, workspaceOptions } from './__tests__/workspace-service-harness'
 import { WorkspaceInvitationStore } from './workspace-invitation.store'
 import { invitationIndexKey, invitationSetKey } from '../constants/workspace-invitation-keys'
-import type { StoredWorkspaceInvitation } from '../interfaces/workspace-invitation.interface'
+import type {
+  MemberInvitationRecord,
+  StoredWorkspaceInvitation
+} from '../interfaces/workspace-invitation.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 
 let port = 44_000
 const EMAIL = 'a@example.com'
 
-function record(overrides: Partial<StoredWorkspaceInvitation> = {}): StoredWorkspaceInvitation {
+function record(overrides: Partial<MemberInvitationRecord> = {}): MemberInvitationRecord {
   return {
+    kind: 'member',
     email: EMAIL,
     role: 'viewer',
     tenantId: 't1',
@@ -187,6 +191,59 @@ describe('WorkspaceInvitationStore', () => {
     if (raw !== null) await redis.set('winv:h1', raw)
 
     expect(await store.readByHash('h1')).toBeNull()
+  })
+
+  describe('record kinds', () => {
+    const bootstrap = {
+      kind: 'bootstrap',
+      email: EMAIL,
+      role: 'owner',
+      tenantId: 't1',
+      workspaceId: 'w1',
+      createdAt: '2026-01-10T12:00:00.000Z',
+      resendCount: 0,
+      workspaceName: 'Acme'
+    }
+
+    it('reads a bootstrap record, and keeps its kind', async () => {
+      const { store, redis } = build()
+      await redis.set('winv:h1', JSON.stringify(bootstrap))
+
+      expect(await store.readByHash('h1')).toEqual(bootstrap)
+    })
+
+    it.each([
+      ['a member record with a workspace name', { ...record(), workspaceName: 'Acme' }],
+      ['a member record with no inviter', { ...record(), inviterUserId: undefined }],
+      ['a member record whose inviter is not a string', { ...record(), inviterUserId: 7 }],
+      ['a bootstrap record with an inviter', { ...bootstrap, inviterUserId: 'u1' }],
+      ['a bootstrap record with no name', { ...bootstrap, workspaceName: undefined }],
+      ['a bootstrap record whose name is blank', { ...bootstrap, workspaceName: '   ' }],
+      ['a bootstrap record whose name is not trimmed', { ...bootstrap, workspaceName: ' Acme' }],
+      [
+        'a bootstrap record whose name has a control character',
+        { ...bootstrap, workspaceName: 'A\u0007b' }
+      ],
+      [
+        'a bootstrap record whose name is over 120 code points',
+        { ...bootstrap, workspaceName: 'x'.repeat(121) }
+      ],
+      ['a record with no kind', { ...record(), kind: undefined }],
+      ['a record of another kind', { ...record(), kind: 'platform' }]
+    ])('reads %s as no record', async (_name, value) => {
+      const { store, redis } = build()
+      await redis.set('winv:h1', JSON.stringify(value))
+
+      expect(await store.readByHash('h1')).toBeNull()
+    })
+
+    it('accepts a bootstrap name of exactly 120 code points', async () => {
+      const { store, redis } = build()
+      const name = '\u{1F600}'.repeat(120)
+      await redis.set('winv:h1', JSON.stringify({ ...bootstrap, workspaceName: name }))
+
+      expect((await store.readByHash('h1'))?.kind).toBe('bootstrap')
+    })
   })
 
   it.each(['email', 'role', 'tenantId', 'workspaceId', 'inviterUserId', 'createdAt'])(

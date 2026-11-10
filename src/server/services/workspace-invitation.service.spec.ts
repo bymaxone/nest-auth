@@ -6,11 +6,18 @@
  * @layer Test
  */
 
-/// <reference path="../../../test/e2e/ioredis-mock.d.ts" />
-
-import type { Redis } from 'ioredis'
-import RedisMock from 'ioredis-mock'
-
+import {
+  COOLDOWN_MS,
+  EDITOR,
+  NOW,
+  OWNER,
+  build,
+  code,
+  membership,
+  sent,
+  user
+} from './__tests__/workspace-invitation-harness'
+import type { Harness } from './__tests__/workspace-invitation-harness'
 import {
   CONTEXT,
   WORKSPACE_REF,
@@ -21,121 +28,16 @@ import {
 import { MembershipService } from './membership.service'
 import type { WorkspaceEventsService } from './workspace-events.service'
 import { WorkspaceInvitationService } from './workspace-invitation.service'
-import { WorkspaceInvitationStore } from './workspace-invitation.store'
 import { invitationKey } from '../constants/workspace-invitation-keys'
 import { sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
-import type { AuthException } from '../errors/auth-exception'
-import type { WorkspaceActor } from '../interfaces/acting-member.interface'
-import type { IEmailProvider, WorkspaceInviteData } from '../interfaces/email-provider.interface'
+import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type {
   AuthMembership,
   IMembershipRepository
 } from '../interfaces/membership-repository.interface'
-import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
+import type { IUserRepository } from '../interfaces/user-repository.interface'
 import type { IWorkspaceRepository } from '../interfaces/workspace-repository.interface'
-import { AuthRedisService } from '../redis/auth-redis.service'
-
-const NOW = Date.parse('2026-01-10T12:00:00.000Z')
-const OWNER: WorkspaceActor = { userId: 'owner-1', role: 'owner' }
-const EDITOR: WorkspaceActor = { userId: 'editor-1', role: 'editor' }
-const COOLDOWN_MS = 60_000
-let port = 43_000
-
-function user(id: string, overrides: Partial<AuthUser> = {}): AuthUser {
-  return {
-    id,
-    email: `${id}@example.com`,
-    name: `Name of ${id}`,
-    passwordHash: null,
-    role: 'member',
-    status: 'active',
-    tenantId: 't1',
-    emailVerified: true,
-    mfaEnabled: false,
-    lastLoginAt: null,
-    createdAt: new Date(0),
-    ...overrides
-  }
-}
-
-function membership(userId: string, status: AuthMembership['status']): AuthMembership {
-  return {
-    ...WORKSPACE_REF,
-    userId,
-    role: 'viewer',
-    status,
-    invitedByUserId: null,
-    createdAt: new Date(0),
-    updatedAt: new Date(0)
-  }
-}
-
-interface Harness {
-  service: WorkspaceInvitationService
-  store: WorkspaceInvitationStore
-  redis: AuthRedisService
-  users: { findById: jest.Mock; findByEmail: jest.Mock }
-  workspaces: { findById: jest.Mock }
-  memberships: { find: jest.Mock }
-  email: { sendWorkspaceInvitation: jest.Mock }
-  events: { emit: jest.Mock }
-}
-
-function build(extra: Parameters<typeof workspaceOptions>[0] = {}): Harness {
-  const options = workspaceOptions(extra)
-  const redis = new AuthRedisService(
-    new RedisMock({ port: (port += 1) }) as Partial<Redis> as Redis,
-    options
-  )
-  const store = new WorkspaceInvitationStore(redis, options)
-  const users = {
-    findById: jest.fn(async ({ id }: { id: string }) => user(id)),
-    findByEmail: jest.fn().mockResolvedValue(null)
-  }
-  const workspaces = { findById: jest.fn().mockResolvedValue(workspaceRow()) }
-  const memberships = { find: jest.fn().mockResolvedValue(null) }
-  const email = { sendWorkspaceInvitation: jest.fn().mockResolvedValue(undefined) }
-  const events = { emit: jest.fn() }
-  const ceiling = new MembershipService(
-    {} as Partial<IMembershipRepository> as IMembershipRepository,
-    {} as never,
-    {} as never,
-    options
-  )
-  const service = new WorkspaceInvitationService(
-    store,
-    redis,
-    ceiling,
-    events as Partial<WorkspaceEventsService> as WorkspaceEventsService,
-    users as Partial<IUserRepository> as IUserRepository,
-    workspaces as Partial<IWorkspaceRepository> as IWorkspaceRepository,
-    memberships as Partial<IMembershipRepository> as IMembershipRepository,
-    email as Partial<IEmailProvider> as IEmailProvider,
-    options
-  )
-  return { service, store, redis, users, workspaces, memberships, email, events }
-}
-
-async function code(promise: Promise<unknown>): Promise<string | undefined> {
-  try {
-    await promise
-  } catch (error) {
-    return (error as AuthException).getResponse
-      ? ((error as AuthException).getResponse() as { error: { code: string } }).error.code
-      : undefined
-  }
-  return undefined
-}
-
-function sent(h: Harness, call = 0): { to: string; data: WorkspaceInviteData } {
-  const args = h.email.sendWorkspaceInvitation.mock.calls[call] as [
-    string,
-    string,
-    WorkspaceInviteData
-  ]
-  return { to: args[1], data: args[2] }
-}
 
 describe('WorkspaceInvitationService', () => {
   beforeEach(() => {
@@ -164,6 +66,7 @@ describe('WorkspaceInvitationService', () => {
         accountExists: true
       })
       expect(await h.store.readByHash(sha256(data.inviteToken))).toEqual({
+        kind: 'member',
         email: 'new@example.com',
         role: 'editor',
         tenantId: 't1',
@@ -238,17 +141,27 @@ describe('WorkspaceInvitationService', () => {
       expect(h.email.sendWorkspaceInvitation).not.toHaveBeenCalled()
     })
 
-    it('invites an address whose membership is not active, and one with no membership', async () => {
+    it('refuses an address whose membership is suspended, as it does an active one', async () => {
       const h = build()
       h.users.findByEmail.mockResolvedValue(user('u9'))
-      h.memberships.find.mockResolvedValueOnce(
+      h.memberships.find.mockResolvedValue(
         membership('u9', 'suspended' as AuthMembership['status'])
       )
 
-      await h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT)
-      await h.service.invite(WORKSPACE_REF, OWNER, 'b@example.com', 'viewer', CONTEXT)
+      expect(
+        await code(h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT))
+      ).toBe(AUTH_ERROR_CODES.ALREADY_MEMBER)
 
-      expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(2)
+      expect(h.email.sendWorkspaceInvitation).not.toHaveBeenCalled()
+    })
+
+    it('invites an address that has an account but no membership', async () => {
+      const h = build()
+      h.users.findByEmail.mockResolvedValue(user('u9'))
+
+      await h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT)
+
+      expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(1)
     })
 
     it('looks the member up in this workspace by the account the address belongs to', async () => {
@@ -369,6 +282,25 @@ describe('WorkspaceInvitationService', () => {
       expect(h.email.sendWorkspaceInvitation).toHaveBeenCalledTimes(1)
       const loser = outcomes.indexOf(AUTH_ERROR_CODES.TOO_MANY_REQUESTS) === 0 ? 'a' : 'b'
       expect(await h.store.readByEmail(WORKSPACE_REF, `${loser}@example.com`)).toBeNull()
+    })
+
+    it('counts an invitation over an index whose record is gone as a first one for the cap', async () => {
+      const h = build({ maxPendingInvitationsPerWorkspace: 1 })
+      await h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT)
+      await h.service
+        .invite(WORKSPACE_REF, OWNER, 'b@example.com', 'viewer', CONTEXT)
+        .catch(() => undefined)
+      const first = sent(h).data.inviteToken
+      await h.redis.del(invitationKey(first))
+
+      await h.service.invite(WORKSPACE_REF, OWNER, 'a@example.com', 'viewer', CONTEXT)
+
+      const record = (await h.store.readByEmail(WORKSPACE_REF, 'a@example.com'))?.record
+      expect(record?.resendCount).toBe(0)
+      expect(await h.store.pending(WORKSPACE_REF)).toHaveLength(1)
+      expect(
+        await code(h.service.invite(WORKSPACE_REF, OWNER, 'c@example.com', 'viewer', CONTEXT))
+      ).toBe(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
     })
 
     it('does not count a replacement against the cap', async () => {
@@ -629,6 +561,7 @@ describe('WorkspaceInvitationService', () => {
       const answer = await h.service.preview(sent(h).data.inviteToken)
 
       expect(answer).toEqual({
+        kind: 'member',
         workspaceName: 'Acme',
         inviterName: 'Name of owner-1',
         role: 'editor',

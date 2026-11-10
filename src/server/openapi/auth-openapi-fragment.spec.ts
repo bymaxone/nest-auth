@@ -194,6 +194,8 @@ describe('buildAuthOpenApiFragment', () => {
       'WorkspaceInvitationController.resend': ACCESS,
       'WorkspaceInvitationController.revoke': ACCESS,
       'WorkspaceInvitationController.preview': PUBLIC,
+      'WorkspaceInvitationController.accept': ACCESS,
+      'WorkspaceInvitationController.acceptSignup': PUBLIC,
       'InvitationController.invite': ACCESS,
       'InvitationController.revoke': ACCESS,
       'InvitationController.accept': PUBLIC,
