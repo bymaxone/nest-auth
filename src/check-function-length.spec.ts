@@ -207,6 +207,36 @@ describe('check-function-length', () => {
       expect(run(repo({ 'src/a.spec.ts': spec })).status).toBe(0)
     })
 
+    it('does not let a suite title spell the path of nested suites', () => {
+      const test = (lines: number): string => `it('case', () => {\n${statements(lines)}})\n`
+      const nested = (lines: number): string =>
+        `describe('outer', () => {\ndescribe('inner', () => {\n${test(lines)}})\n})\n`
+      const spelled = `describe('outer > describe inner', () => {\n${test(49)}})\n`
+      const root = repo({ 'src/a.spec.ts': nested(49) })
+      run(root, '--write-baseline')
+      commitBase(root)
+
+      writeFileSync(join(root, 'src/a.spec.ts'), nested(5) + spelled)
+      const result = run(root, '--base', 'HEAD')
+
+      expect(result.status).toBe(1)
+      expect(result.output).toContain('over the 50-line limit')
+    })
+
+    it('does not let a title spell the placeholder of a dynamic title', () => {
+      const dynamic = `it(title, () => {\n${statements(49)}})\n`
+      const literal = `it('<dynamic>', () => {\n${statements(49)}})\n`
+      const root = repo({ 'src/a.spec.ts': dynamic })
+      run(root, '--write-baseline')
+      commitBase(root)
+
+      writeFileSync(join(root, 'src/a.spec.ts'), `it(title, () => {})\n${literal}`)
+      const result = run(root, '--base', 'HEAD')
+
+      expect(result.status).toBe(1)
+      expect(result.output).toContain('over the 50-line limit')
+    })
+
     it('keeps a test titled like an ordinal apart from the second test of that title', () => {
       const long = (title: string, lines: number): string =>
         `  it('${title}', () => {\n${statements(lines)}  })\n`

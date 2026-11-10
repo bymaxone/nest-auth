@@ -93,12 +93,23 @@ function calleeRoot(call) {
   return ts.isIdentifier(callee) ? callee.text : null
 }
 
+/**
+ * A test title made safe to sit inside a key: `#` and `>` are escaped. The ` > ` between path
+ * segments, the ` #2` ordinal and the `<dynamic>` placeholder are then the only places those
+ * characters appear unescaped in a title segment, so no title can spell one of them and make two
+ * functions share a key. A member or class name cannot: an identifier holds neither, and a quoted or
+ * computed name carries its quotes or brackets into the key.
+ */
+function escapeSegment(text) {
+  return text.replace(/[#>]/g, '\\$&')
+}
+
 /** The first argument of a call as text when it is a plain string, else a placeholder. */
 function titleOf(call) {
   const first = call.arguments[0]
   const plain =
     first !== undefined && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first))
-  return plain ? first.text : '<dynamic>'
+  return plain ? escapeSegment(first.text) : '<dynamic>'
 }
 
 /** The name a property or variable declaration gives its value. */
@@ -129,7 +140,7 @@ function classNameOf(member) {
  * What a function-like node is called in a key, and whether it is a measured unit.
  * A container callback is named so that tests under it get distinct keys, but is not measured.
  */
-function describeRaw(node) {
+function describeNode(node) {
   const call = ts.isCallExpression(node.parent) ? node.parent : null
   const root = call === null ? null : calleeRoot(call)
   if (call !== null && root !== null && CONTAINERS.has(root)) {
@@ -150,21 +161,6 @@ function describeRaw(node) {
   }
   const named = ts.isVariableDeclaration(holder) || ts.isPropertyAssignment(holder)
   return { name: named ? nameOf(holder) : '<anonymous>', measured: true }
-}
-
-/**
- * A name made safe to sit inside a key: a `#` is escaped, so a test title cannot spell the ` #2`
- * ordinal that tells same-named offenders apart. An ordinal is the only place an unescaped `#`
- * appears, so a key still reads back to exactly one function.
- */
-function escapeSegment(name) {
-  return name.replaceAll('#', '\\#')
-}
-
-/** What a function-like node is called in a key, escaped; see `describeRaw`. */
-function describeNode(node) {
-  const described = describeRaw(node)
-  return { ...described, name: escapeSegment(described.name) }
 }
 
 /**
