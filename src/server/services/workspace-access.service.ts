@@ -5,13 +5,14 @@
  * @layer Service
  */
 
-import { Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import {
   BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
+import { AccountStatusService } from './account-status.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
 import {
@@ -25,15 +26,23 @@ import {
   membershipVersionKey,
   workspaceVersionKey
 } from '../constants/workspace-keys'
+import { NO_CONTROL_CHARACTERS } from '../dto/no-control-characters'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import type {
   IMembershipRepository,
   MembershipRef
 } from '../interfaces/membership-repository.interface'
+import type { WorkspaceJobContext } from '../interfaces/workspace-job-context.interface'
+import type { WorkspaceRoleList } from '../interfaces/workspace-options.interface'
 import type {
   IWorkspaceRepository,
   WorkspaceRef
 } from '../interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { exceedsCodePoints } from '../utils/code-points'
+import { assertWorkspaceId } from '../utils/resolve-request-workspace'
+import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
 /** An active member of an active workspace, as the access check resolves it. */
 export interface ResolvedWorkspaceMember extends MembershipRef {
@@ -88,7 +97,10 @@ export class WorkspaceAccessService {
     private readonly workspaceRepo: IWorkspaceRepository,
     @Inject(BYMAX_AUTH_MEMBERSHIP_REPOSITORY)
     private readonly membershipRepo: IMembershipRepository,
-    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
+    @Inject(AccountStatusService)
+    @Optional()
+    private readonly accountStatus: AccountStatusService | null = null
   ) {
     if (options.workspaces === undefined) {
       throw new Error('[BymaxAuthModule] WorkspaceAccessService needs workspaces.enabled.')
@@ -132,6 +144,53 @@ export class WorkspaceAccessService {
       await this.fillCache(ref, cached, access.member.role, ttl)
     }
     return access
+  }
+
+  /**
+   * Answers whether an account may act in a workspace NOW, for work that runs apart from a request.
+   *
+   * A queued job can run long after the request that enqueued it, so its contract is "authorized at
+   * this moment" and nothing cached may answer it. The workspace, the membership and the account
+   * are all read from the repositories, never from the access cache or the status cache, and the
+   * decision is the one a route's guard makes: the same refusals in the same order, with
+   * `workspace_not_found` for anyone who is not an active member (and for every non-owner of a
+   * workspace pending deletion). The account is judged first: a banned or deleted actor is refused
+   * with that status's own code, which is the incident case where a queued job must not act. The
+   * cost is three repository reads per call. The repositories must read from the primary.
+   *
+   * @param context - What was stamped at enqueue time.
+   * @param roles - The roles that may perform the job's work.
+   * @param options - `allowPending` admits the owner of a workspace pending deletion.
+   * @returns The member, with the role they hold now.
+   * @throws {AuthException} `auth.validation` naming the field for a malformed context, the
+   *   status's own code or `auth.token_invalid` for an account that is blocked or gone, then
+   *   `auth.workspace_not_found`, `auth.workspace_pending_deletion` or
+   *   `auth.insufficient_workspace_role`.
+   * @throws {TypeError} When the service was built without the account status service.
+   */
+  async assertStillAuthorized(
+    context: WorkspaceJobContext,
+    roles: WorkspaceRoleList,
+    options: { allowPending?: boolean } = {}
+  ): Promise<ResolvedWorkspaceMember> {
+    if (this.accountStatus === null) {
+      throw new TypeError('assertStillAuthorized needs the account status service')
+    }
+    const ref = {
+      tenantId: assertBoundedText('tenantId', context.tenantId),
+      workspaceId: assertWorkspaceId(context.workspaceId),
+      userId: assertBoundedText('actorUserId', context.actorUserId)
+    }
+    await this.accountStatus.assertDashboardAccountUsableNow({
+      userId: ref.userId,
+      tenantId: ref.tenantId
+    })
+    return assertWorkspaceAccess(
+      await this.readRepositories(ref),
+      roles,
+      this.group.roles.hierarchy,
+      options.allowPending === true
+    )
   }
 
   /**
@@ -279,4 +338,30 @@ function parseEntry(entry: unknown): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Requires a field of a job's context to be a non-blank string of bounded length without control
+ * characters, as the path parameter of a request is.
+ *
+ * @param field - The field's name, for the error.
+ * @param value - What the context holds.
+ * @returns The value.
+ * @throws {AuthException} `auth.validation` naming the field.
+ */
+function assertBoundedText(field: string, value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    value.trim() === '' ||
+    exceedsCodePoints(value, 128) ||
+    !NO_CONTROL_CHARACTERS.test(value)
+  ) {
+    throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+      {
+        field,
+        message: `${field} must be 1 to 128 characters, not blank, with no control characters`
+      }
+    ])
+  }
+  return value
 }
