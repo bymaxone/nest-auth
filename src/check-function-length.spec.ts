@@ -753,6 +753,7 @@ describe('the function key', () => {
     ['JSON that is not an array', '{"a":1}'],
     ['a path that is not a string', '[1,["fn","big"]]'],
     ['no segment at all', '["src/a.ts"]'],
+    ['an empty segment', '["src/a.ts",[]]'],
     ['a segment of an unknown kind', '["src/a.ts",["nope","big"]]'],
     ['a segment with the wrong number of strings', '["src/a.ts",["fn"]]'],
     ['a segment holding a number', '["src/a.ts",["fn",1]]'],

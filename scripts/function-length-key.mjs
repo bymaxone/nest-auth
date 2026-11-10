@@ -63,7 +63,8 @@ export function decodeKey(key) {
       (segment) =>
         Array.isArray(segment) &&
         segment.every((part) => typeof part === 'string') &&
-        segment.length === (ARITY.get(segment[0]) ?? -1) + 1
+        ARITY.has(segment[0]) &&
+        segment.length === ARITY.get(segment[0]) + 1
     ) &&
     Number.isInteger(ordinal) &&
     ordinal >= 1
