@@ -330,22 +330,56 @@ export class OAuthService {
       existingAuthUser
     )
 
+    this.assertMaySignIn(authUser)
+
+    if (authUser.mfaEnabled) {
+      return this.issueMfaChallenge(authUser, provider, hookResult.action)
+    }
+
+    return this.openSession(authUser, provider, hookResult.action, hookContext, ip, userAgent)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Refuses an account that may not sign in: a blocked status, or an unverified address where the
+   * deployment requires one.
+   *
+   * @param authUser - The account the flow resolved to.
+   * @throws `AuthException` for a blocked status or an unverified address.
+   */
+  private assertMaySignIn(authUser: AuthUser): void {
     // Status gate. Every credential flow in this library runs it — password login, the MFA
-    // challenge, both password-reset steps, the platform login — and OAuth was the one that
-    // did not, so a BANNED or SUSPENDED account holding a linked provider identity walked
-    // straight back in. Ban is the primary account kill switch; a flow that ignores it makes
-    // it advisory. Run before the MFA branch so a blocked account cannot even obtain a temp
-    // token. `rust-auth` gates the same point.
+    // challenge, both password-reset steps, the platform login — so a BANNED or SUSPENDED account
+    // holding a linked provider identity cannot sign back in. Ban is the primary account kill
+    // switch; a flow that ignores it makes it advisory. Run before the MFA branch so a blocked
+    // account cannot even obtain a temp token. `rust-auth` gates the same point.
     assertNotBlocked(authUser.status, this.options.blockedStatuses)
 
     // Email-verification gate, on the same footing as password login: when a deployment
     // requires a verified address, an OAuth identity does not substitute for one. The `create`
-    // branch above records what the provider actually asserted, so an unverified provider
-    // profile stays unverified here rather than being promoted by the act of signing in.
+    // branch records what the provider actually asserted, so an unverified provider profile
+    // stays unverified here rather than being promoted by the act of signing in.
     if (this.options.emailVerification.required && !authUser.emailVerified) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
     }
+  }
 
+  /**
+   * Issues the MFA temp token for an account that has a second factor.
+   *
+   * @param authUser - The account the flow resolved to.
+   * @param provider - The provider name, for the log line.
+   * @param action - The strategy the hook chose, for the log line.
+   * @returns The challenge the controller plants in a cookie or surfaces in the body.
+   */
+  private async issueMfaChallenge(
+    authUser: AuthUser,
+    provider: string,
+    action: OAuthLoginResult['action']
+  ): Promise<OAuthMfaChallengeResult> {
     // MFA branch: when the resolved user has MFA enabled, the OAuth flow has only
     // proven control of the OAuth provider account — not the second factor. Issuing
     // a session with `mfaVerified: false` would be rejected on every request by the
@@ -356,20 +390,39 @@ export class OAuthService {
     // to obtain real session tokens. No `MfaService` dependency is required —
     // `issueMfaTempToken` lives on `TokenManagerService`, which is always
     // registered.
-    if (authUser.mfaEnabled) {
-      // OAuth is dashboard-only; bind the tenant so the challenge resolves this account
-      // tenant-scoped rather than by `sub` alone.
-      const mfaTempToken = await this.tokenManager.issueMfaTempToken(
-        authUser.id,
-        'dashboard',
-        authUser.tenantId
-      )
-      this.logger.log(
-        `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${logSafe(authUser.id)} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
-      )
-      return { mfaRequired: true, mfaTempToken }
-    }
+    // OAuth is dashboard-only; bind the tenant so the challenge resolves this account
+    // tenant-scoped rather than by `sub` alone.
+    const mfaTempToken = await this.tokenManager.issueMfaTempToken(
+      authUser.id,
+      'dashboard',
+      authUser.tenantId
+    )
+    this.logger.log(
+      `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${logSafe(authUser.id)} tenantId=${logSafe(authUser.tenantId)} action=${action}`
+    )
+    return { mfaRequired: true, mfaTempToken }
+  }
 
+  /**
+   * Issues the tokens and the tracked session of a completed sign-in, then runs the non-blocking
+   * side effects of a login.
+   *
+   * @param authUser - The account the flow resolved to.
+   * @param provider - The provider name, for the log line.
+   * @param action - The strategy the hook chose, for the log line.
+   * @param hookContext - The context the hooks were given.
+   * @param ip - The client address.
+   * @param userAgent - The `User-Agent` header.
+   * @returns The auth result.
+   */
+  private async openSession(
+    authUser: AuthUser,
+    provider: string,
+    action: OAuthLoginResult['action'],
+    hookContext: HookContext,
+    ip: string,
+    userAgent: string
+  ): Promise<AuthResult> {
     // Strip credentials before token issuance — prevents passwordHash / mfaSecret
     // from flowing into the AuthResult.user field that is serialized in the response.
     const safeUser = toSafeUser(authUser)
@@ -387,7 +440,7 @@ export class OAuthService {
     }
 
     this.logger.log(
-      `handleCallback: OAuth login success provider=${provider} userId=${logSafe(safeUser.id)} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
+      `handleCallback: OAuth login success provider=${provider} userId=${logSafe(safeUser.id)} tenantId=${logSafe(authUser.tenantId)} action=${action}`
     )
 
     // The same non-blocking side effects a password login runs once it has succeeded. An MFA
@@ -408,10 +461,6 @@ export class OAuthService {
     }
     return result
   }
-
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
 
   /**
    * Validates and spends the `state` of a callback.

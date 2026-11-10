@@ -24,7 +24,7 @@
     "src/server/guards/jwt-platform.guard.ts::JwtPlatformGuard.canActivate": 52,
     "src/server/guards/ws-jwt.guard.ts::WsJwtGuard.canActivate": 73,
     "src/server/oauth/oauth.controller.ts::OAuthController.callback": 109,
-    "src/server/oauth/oauth.service.ts::OAuthService.handleCallback": 140,
+    "src/server/oauth/oauth.service.ts::OAuthService.handleCallback": 70,
     "src/server/openapi/auth-openapi-fragment.spec.ts::describe buildAuthOpenApiFragment > it pins the credential of every operation it can mount": 99,
     "src/server/openapi/auth-openapi-fragment.ts::describe": 56,
     "src/server/openapi/auth-openapi-fragment.ts::describeTwoCredentials": 51,
