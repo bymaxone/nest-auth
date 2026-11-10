@@ -108,6 +108,7 @@ export interface RegisteredControllers {
   emailChange: boolean
   oauth: boolean
   workspaces: boolean
+  workspaceInvitations: boolean
 }
 
 /** One OpenAPI object, copied into the document and never interpreted. */
@@ -295,7 +296,20 @@ export const OPERATIONS: Readonly<
     'WorkspaceController.create': 'access',
     'WorkspaceController.rename': 'access',
     'WorkspaceController.scheduleDeletion': 'access',
-    'WorkspaceController.restore': 'access'
+    'WorkspaceController.restore': 'access',
+    'WorkspaceController.changeRole': 'access',
+    'WorkspaceController.removeMember': 'access',
+    'WorkspaceController.leave': 'access',
+    'WorkspaceController.transferOwnership': 'access'
+  },
+  workspaceInvitations: {
+    'WorkspaceInvitationController.invite': 'access',
+    'WorkspaceInvitationController.list': 'access',
+    'WorkspaceInvitationController.resend': 'access',
+    'WorkspaceInvitationController.revoke': 'access',
+    // Public: the holder has a token, not a session. Every token that cannot be previewed gets the
+    // same answer.
+    'WorkspaceInvitationController.preview': 'none'
   }
 }
 
@@ -343,6 +357,25 @@ const OPERATION_DESCRIPTIONS = new Map<string, string>([
     "Schedules the workspace for deletion and ends every member's access at once. The caller is " +
       're-proved: by the account password in the request body, or, for an account with no ' +
       'password, by a recent sign-in. It is a POST because a body on DELETE has no defined semantics.'
+  ],
+  [
+    'WorkspaceController.transferOwnership',
+    'Hands ownership to another active member. Only an owner may do it. The caller is re-proved: by ' +
+      'the account password in the request body, or, for an account with no password, by a recent ' +
+      'sign-in. The caller is checked as the owner before the password is looked at.'
+  ],
+  [
+    'WorkspaceInvitationController.invite',
+    'Invites an address to the workspace, or resends to one already invited. The answer is 204 ' +
+      'whether or not the address has an account. An address that already belongs to the ' +
+      'workspace is refused with 409, and a non-owner may invite only to a role strictly below ' +
+      'their own.'
+  ],
+  [
+    'WorkspaceInvitationController.preview',
+    'Tells a token holder what the token is for, without signing in. A token that never ' +
+      'existed, expired, was used, or names a workspace that is gone is answered with the same ' +
+      'error.'
   ],
   [
     'WorkspaceController.members',

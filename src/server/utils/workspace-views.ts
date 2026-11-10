@@ -98,6 +98,22 @@ export function toMyWorkspacesResponse(page: MyWorkspaces): MyWorkspacesResponse
 }
 
 /**
+ * Shapes one member of a workspace.
+ *
+ * @param member - The membership as the port returned it.
+ * @returns The wire shape.
+ */
+export function toMemberView(member: AuthMembership): MemberView {
+  return {
+    userId: member.userId,
+    role: member.role,
+    status: member.status,
+    invitedByUserId: member.invitedByUserId,
+    createdAt: member.createdAt.toISOString()
+  }
+}
+
+/**
  * Shapes a page of a workspace's members.
  *
  * @param page - What the service returned.
@@ -108,13 +124,7 @@ export function toMembersResponse(page: {
   nextCursor: string | null
 }): MembersResponse {
   return {
-    items: page.items.map((member) => ({
-      userId: member.userId,
-      role: member.role,
-      status: member.status,
-      invitedByUserId: member.invitedByUserId,
-      createdAt: member.createdAt.toISOString()
-    })),
+    items: page.items.map(toMemberView),
     nextCursor: page.nextCursor
   }
 }
