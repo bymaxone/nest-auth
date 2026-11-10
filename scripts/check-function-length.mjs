@@ -18,7 +18,9 @@
  * contains it. Growing it therefore moves two baseline entries, and the failure says so, so the
  * two are not read as two offenders.
  *
- * The baseline maps `file::qualified name` to a line count, and is kept honest from both sides:
+ * The baseline maps a function's key to a line count, and is kept honest from both sides. A key is
+ * a structured value serialized as JSON (see `function-length-key.mjs`), so no title or path can
+ * make two functions share one; messages show it as `file::outer > inner #2`:
  *
  * - a function over the limit that is not on the baseline fails (a new offender);
  * - a baselined function that grew fails (the baseline cannot widen);
@@ -40,6 +42,8 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
 import ts from 'typescript'
+
+import { decodeKey, displayKey, encodeKey } from './function-length-key.mjs'
 
 /** The longest a function or a test body may be, in lines. */
 const MAX_LINES = 50
@@ -93,23 +97,12 @@ function calleeRoot(call) {
   return ts.isIdentifier(callee) ? callee.text : null
 }
 
-/**
- * A test title made safe to sit inside a key: `\`, `#` and `>` are escaped. The ` > ` between path
- * segments, the ` #2` ordinal and the `<dynamic>` placeholder are then the only places those
- * characters appear unescaped in a title segment, so no title can spell one of them and make two
- * functions share a key. A member or class name cannot: an identifier holds neither, and a quoted or
- * computed name carries its quotes or brackets into the key.
- */
-function escapeSegment(text) {
-  return text.replace(/[\\#>]/g, '\\$&')
-}
-
-/** The first argument of a call as text when it is a plain string, else a placeholder. */
+/** The first argument of a call as text when it is a plain string, else `null`. */
 function titleOf(call) {
   const first = call.arguments[0]
   const plain =
     first !== undefined && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first))
-  return plain ? escapeSegment(first.text) : '<dynamic>'
+  return plain ? first.text : null
 }
 
 /** The name a property or variable declaration gives its value. */
@@ -143,29 +136,30 @@ function classNameOf(member) {
 function describeNode(node) {
   const call = ts.isCallExpression(node.parent) ? node.parent : null
   const root = call === null ? null : calleeRoot(call)
-  if (call !== null && root !== null && CONTAINERS.has(root)) {
-    return { name: `${root} ${titleOf(call)}`, measured: false }
+  if (call !== null && root !== null && (CONTAINERS.has(root) || TESTS.has(root))) {
+    const title = titleOf(call)
+    const kind = CONTAINERS.has(root) ? 'container' : 'test'
+    const segment = title === null ? [`dynamic-${kind}`, root] : [kind, root, title]
+    return { segment, measured: kind === 'test' }
   }
-  if (call !== null && root !== null && TESTS.has(root)) {
-    return { name: `${root} ${titleOf(call)}`, measured: true }
-  }
-  if (ts.isFunctionDeclaration(node)) return { name: nameOf(node), measured: true }
+  if (ts.isFunctionDeclaration(node)) return { segment: ['fn', nameOf(node)], measured: true }
   if (ts.isMethodDeclaration(node) || ts.isGetAccessor(node) || ts.isSetAccessor(node)) {
-    return { name: `${classNameOf(node)}.${nameOf(node)}`, measured: true }
+    return { segment: ['member', classNameOf(node), nameOf(node)], measured: true }
   }
-  if (ts.isConstructorDeclaration(node))
-    return { name: `${classNameOf(node)}.constructor`, measured: true }
+  if (ts.isConstructorDeclaration(node)) {
+    return { segment: ['ctor', classNameOf(node)], measured: true }
+  }
   const holder = node.parent
   if (ts.isPropertyDeclaration(holder)) {
-    return { name: `${classNameOf(holder)}.${nameOf(holder)}`, measured: true }
+    return { segment: ['member', classNameOf(holder), nameOf(holder)], measured: true }
   }
   const named = ts.isVariableDeclaration(holder) || ts.isPropertyAssignment(holder)
-  return { name: named ? nameOf(holder) : '<anonymous>', measured: true }
+  return { segment: named ? ['fn', nameOf(holder)] : ['anon'], measured: true }
 }
 
 /**
- * Every measured function in a source text, in document order: its qualified name, its length, and
- * the position of the measured function that contains it, or -1.
+ * Every measured function in a source text, in document order: its path and segments, its length,
+ * and the position of the measured function that contains it, or -1.
  */
 function collect(path, text) {
   const kind = path.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
@@ -175,12 +169,12 @@ function collect(path, text) {
     let nextNames = names
     let nextContainer = container
     if (isFunctionLike(node)) {
-      const { name, measured } = describeNode(node)
-      nextNames = [...names, name]
+      const { segment, measured } = describeNode(node)
+      nextNames = [...names, segment]
       if (measured) {
         const start = file.getLineAndCharacterOfPosition(node.getStart()).line
         const end = file.getLineAndCharacterOfPosition(node.getEnd()).line
-        found.push({ base: `${path}::${nextNames.join(' > ')}`, lines: end - start + 1, container })
+        found.push({ path, segments: nextNames, lines: end - start + 1, container })
         nextContainer = found.length - 1
       }
     }
@@ -198,13 +192,16 @@ function collect(path, text) {
  * with the same name appears or goes before it.
  */
 function measure(path, text) {
-  const found = collect(path, text)
+  const found = collect(path, text).map((entry) => ({
+    ...entry,
+    base: encodeKey(entry.path, entry.segments)
+  }))
   const seen = new Map()
   const keys = found.map((entry) => {
     if (entry.lines <= MAX_LINES) return null
     const count = (seen.get(entry.base) ?? 0) + 1
     seen.set(entry.base, count)
-    return count === 1 ? entry.base : `${entry.base} #${count}`
+    return encodeKey(entry.path, entry.segments, count)
   })
   const offenders = []
   for (const [index, entry] of found.entries()) {
@@ -226,7 +223,8 @@ function trackedSources(root) {
 
 /** The qualified name of a key: the key without the number that tells same-named offenders apart. */
 function baseOf(key) {
-  return key.replace(/ #\d+$/, '')
+  const { path, segments } = decodeKey(key)
+  return encodeKey(path, segments)
 }
 
 /** Every offender in the tracked sources by key, and the longest span of each qualified name. */
@@ -234,11 +232,6 @@ function functionsIn(root) {
   const offenders = new Map()
   const longest = new Map()
   for (const path of trackedSources(root)) {
-    if (path.includes('::')) {
-      throw new Error(
-        `${path}: a tracked path containing '::' cannot be told apart from a function name in a key. Rename the file.`
-      )
-    }
     const result = measure(path, readFileSync(join(root, path), 'utf8'))
     for (const entry of result.offenders) offenders.set(entry.key, entry)
     for (const { base, lines } of result.longest) {
@@ -248,11 +241,16 @@ function functionsIn(root) {
   return { offenders, longest }
 }
 
-/** Reads the baseline's `functions` table from JSON text as a map, failing loudly on one that is not. */
+/**
+ * Reads the baseline's `functions` table from JSON text as a map, failing loudly on one that is not.
+ *
+ * @param {string} text - The file's text.
+ * @param {string} path - Where it came from, for the message.
+ */
 function parseBaseline(text, path) {
   const functions = JSON.parse(text)?.functions
   if (functions === null || typeof functions !== 'object' || Array.isArray(functions)) {
-    throw new Error(`${path}: expected { "functions": { "<file>::<name>": <lines> } }`)
+    throw new Error(`${path}: expected { "functions": { "<function key>": <lines> } }`)
   }
   const table = new Map(Object.entries(functions))
   for (const [key, lines] of table) {
@@ -284,17 +282,34 @@ function baselineAt(root, ref, path) {
   return parseBaseline(execFileSync('git', ['show', spec], { cwd: root, encoding: 'utf8' }), spec)
 }
 
-/** Problems with how the baseline differs from the base revision's: it may only lose or lower entries. */
+/** Whether a string is a structured key. */
+function isKey(key) {
+  try {
+    decodeKey(key)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Problems with how the baseline differs from the base revision's: it may only lose or lower
+ * entries. A base whose keys are not structured is compared by the readable form of each key, which
+ * is what such a key is.
+ */
 function widening(baseline, base) {
+  const legacy = [...base.keys()].some((key) => !isKey(key))
   const problems = []
   for (const [key, lines] of baseline) {
-    const inBase = base.get(key)
+    const inBase = base.get(legacy ? displayKey(key) : key)
     if (inBase === undefined) {
       problems.push(
-        `${key} is on the baseline but the base revision does not have it. A new offender is split, not listed.`
+        `${displayKey(key)} is on the baseline but the base revision does not have it. A new offender is split, not listed.`
       )
     } else if (lines > inBase) {
-      problems.push(`${key} is recorded at ${lines} lines, above ${inBase} on the base revision.`)
+      problems.push(
+        `${displayKey(key)} is recorded at ${lines} lines, above ${inBase} on the base revision.`
+      )
     }
   }
   return problems
@@ -302,14 +317,19 @@ function widening(baseline, base) {
 
 /** The file part of a key. */
 function fileOf(key) {
-  return key.slice(0, key.indexOf('::'))
+  return decodeKey(key).path
+}
+
+/** Keys as a person reads them, for a list in a message. */
+function shown(keys) {
+  return keys.map((key) => `\`${displayKey(key)}\``)
 }
 
 /** A note naming the containing functions that are offenders too, whose entries move with this one. */
 function containerNote(owners, offenders) {
   const containing = owners.filter((owner) => offenders.has(owner))
   if (containing.length === 0) return ''
-  return ` It is also counted inside ${containing.map((owner) => `\`${owner}\``).join(' and ')}, so that entry moves with it: this is one change, not two offenders.`
+  return ` It is also counted inside ${shown(containing).join(' and ')}, so that entry moves with it: this is one change, not two offenders.`
 }
 
 /** Compares the functions found with the baseline and returns one message per problem. */
@@ -320,22 +340,23 @@ function problemsOf({ offenders, longest }, baseline) {
   for (const [key, entry] of offenders) {
     const recorded = baseline.get(key)
     const note = containerNote(entry.owners, offenders)
+    const name = displayKey(key)
     if (recorded === undefined) {
       const renamed = stale.filter((old) => fileOf(old) === fileOf(key))
       const hint =
         renamed.length === 0
           ? ''
-          : ` If it was renamed, its old entry ${renamed.map((old) => `\`${old}\``).join(', ')} is the stale one below.`
+          : ` If it was renamed, its old entry ${shown(renamed).join(', ')} is the stale one below.`
       problems.push(
-        `${key} spans ${entry.lines} lines, over the ${MAX_LINES}-line limit. Split it.${hint}${note}`
+        `${name} spans ${entry.lines} lines, over the ${MAX_LINES}-line limit. Split it.${hint}${note}`
       )
     } else if (entry.lines > recorded) {
       problems.push(
-        `${key} grew from ${recorded} to ${entry.lines} lines. A baselined function may only shrink.${note}`
+        `${name} grew from ${recorded} to ${entry.lines} lines. A baselined function may only shrink.${note}`
       )
     } else if (entry.lines < recorded) {
       problems.push(
-        `${key} now spans ${entry.lines} lines. Lower its baseline entry from ${recorded} to ${entry.lines}.${note}`
+        `${name} now spans ${entry.lines} lines. Lower its baseline entry from ${recorded} to ${entry.lines}.${note}`
       )
     }
   }
@@ -345,11 +366,11 @@ function problemsOf({ offenders, longest }, baseline) {
     const hint =
       renamedTo.length === 0
         ? ''
-        : ` If it was renamed, the new offender is ${renamedTo.map((name) => `\`${name}\``).join(', ')}.`
+        : ` If it was renamed, the new offender is ${shown(renamedTo).join(', ')}.`
     problems.push(
       now === undefined || now > MAX_LINES
-        ? `${key} is on the baseline but no longer exists. Remove its entry.${hint}`
-        : `${key} now spans ${now} lines, within the limit. Remove its entry.`
+        ? `${displayKey(key)} is on the baseline but no longer exists. Remove its entry.${hint}`
+        : `${displayKey(key)} now spans ${now} lines, within the limit. Remove its entry.`
     )
   }
   return problems
@@ -363,7 +384,7 @@ const baselinePath = resolve(
 if (process.argv.includes('--write-baseline')) {
   const entries = [...functionsIn(root).offenders]
     .map(([key, entry]) => [key, entry.lines])
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => displayKey(a).localeCompare(displayKey(b)) || a.localeCompare(b))
   writeFileSync(
     baselinePath,
     `${JSON.stringify({ functions: Object.fromEntries(entries) }, null, 2)}\n`
