@@ -76,6 +76,11 @@ pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build
 every PR and push to `main`. Run `pnpm format` to auto-fix. The pre-commit hook only formats
 _staged_ files, so untouched files can still drift; this gate catches that.
 
+`node scripts/check-function-length.mjs` (also `pnpm check:function-length`) fails a function or a test
+body over 50 lines that is not on `scripts/function-length-baseline.json`, a baseline that can only
+shrink and is written by `--write-baseline`, never by hand. The unit is the function's full span, as
+the review measures it; a `describe` callback is a container and is not counted.
+
 ### Mutation testing (before tagging a release)
 
 Line coverage is 100%, but mutation testing is the real gate against weak tests.

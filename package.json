@@ -79,6 +79,7 @@
     "check:exports": "node scripts/check-exports.mjs",
     "check:file-length": "node scripts/check-file-length.mjs",
     "check:double-assertions": "node scripts/check-double-assertions.mjs",
+    "check:function-length": "node scripts/check-function-length.mjs",
     "mutate:tables": "node scripts/mutate-const-tables.mjs -- pnpm exec jest --config jest.mutants.config.ts --findRelatedTests {file} --coverage=false --silent --bail=1",
     "check:published": "node scripts/check-published-surface.mjs",
     "check:runtime": "node scripts/check-consumer-runtime.mjs",
