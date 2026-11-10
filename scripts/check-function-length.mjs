@@ -213,12 +213,35 @@ function measure(path, text) {
   return { offenders, longest: found }
 }
 
-/** Paths of the tracked files in scope, relative to the root. */
-function trackedSources(root) {
-  const listing = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
+/**
+ * The tracked files in scope with their text: the working tree, or the tree of a revision.
+ *
+ * @param {string} root - The repository root.
+ * @param {string | undefined} ref - A revision to read instead of the working tree.
+ */
+function sourcesOf(root, ref) {
+  const listing =
+    ref === undefined
+      ? execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
+      : execFileSync('git', ['ls-tree', '-r', '-z', '--name-only', ref], {
+          cwd: root,
+          encoding: 'utf8',
+          maxBuffer: 1 << 28
+        })
   return listing
     .split('\0')
     .filter((p) => SCOPE.test(p) && SOURCE_EXTENSION.test(p) && !GENERATED.test(p))
+    .map((path) => ({
+      path,
+      text:
+        ref === undefined
+          ? readFileSync(join(root, path), 'utf8')
+          : execFileSync('git', ['show', `${ref}:${path}`], {
+              cwd: root,
+              encoding: 'utf8',
+              maxBuffer: 1 << 28
+            })
+    }))
 }
 
 /** The qualified name of a key: the key without the number that tells same-named offenders apart. */
@@ -227,12 +250,17 @@ function baseOf(key) {
   return encodeKey(path, segments)
 }
 
-/** Every offender in the tracked sources by key, and the longest span of each qualified name. */
-function functionsIn(root) {
+/**
+ * Every offender in the tracked sources by key, and the longest span of each qualified name.
+ *
+ * @param {string} root - The repository root.
+ * @param {string | undefined} ref - A revision to read instead of the working tree.
+ */
+function functionsIn(root, ref) {
   const offenders = new Map()
   const longest = new Map()
-  for (const path of trackedSources(root)) {
-    const result = measure(path, readFileSync(join(root, path), 'utf8'))
+  for (const { path, text } of sourcesOf(root, ref)) {
+    const result = measure(path, text)
     for (const entry of result.offenders) offenders.set(entry.key, entry)
     for (const { base, lines } of result.longest) {
       longest.set(base, Math.max(lines, longest.get(base) ?? 0))
@@ -279,7 +307,15 @@ function baselineAt(root, ref, path) {
   } catch {
     return null
   }
-  return parseBaseline(execFileSync('git', ['show', spec], { cwd: root, encoding: 'utf8' }), spec)
+  const table = parseBaseline(
+    execFileSync('git', ['show', spec], { cwd: root, encoding: 'utf8' }),
+    spec
+  )
+  if ([...table.keys()].every(isKey)) return table
+  // A baseline in an earlier key format cannot be compared by key. A gate that passed on that
+  // revision held every offender on it, so its offenders, measured the way this script measures
+  // them, are the table it would have written.
+  return new Map([...functionsIn(root, ref).offenders].map(([key, entry]) => [key, entry.lines]))
 }
 
 /** Whether a string is a structured key. */
@@ -292,16 +328,11 @@ function isKey(key) {
   }
 }
 
-/**
- * Problems with how the baseline differs from the base revision's: it may only lose or lower
- * entries. A base whose keys are not structured is compared by the readable form of each key, which
- * is what such a key is.
- */
+/** Problems with how the baseline differs from the base revision's: it may only lose or lower entries. */
 function widening(baseline, base) {
-  const legacy = [...base.keys()].some((key) => !isKey(key))
   const problems = []
   for (const [key, lines] of baseline) {
-    const inBase = base.get(legacy ? displayKey(key) : key)
+    const inBase = base.get(key)
     if (inBase === undefined) {
       problems.push(
         `${displayKey(key)} is on the baseline but the base revision does not have it. A new offender is split, not listed.`

@@ -498,19 +498,23 @@ describe('check-function-length', () => {
     })
 
     describe('whose baseline predates structured keys', () => {
-      const legacy = { 'src/a.ts::big': 60 }
-
-      it('compares by the readable form of each key: a kept entry passes', () => {
-        const root = repo({ 'src/a.ts': declaration('big', 60) }, legacy)
+      /** A repository whose base commit holds `files` and a baseline in the earlier string format. */
+      function legacyBase(files: Record<string, string>, legacy: Record<string, number>): string {
+        const root = repo(files, legacy)
         commitBase(root)
+        return root
+      }
+
+      it('reads the base from its sources, so an unchanged entry passes', () => {
+        const root = legacyBase({ 'src/a.ts': declaration('big', 60) }, { 'src/a.ts::big': 60 })
         writeBaseline(root, { [fnKey('big')]: 60 })
 
         expect(run(root, '--base', 'HEAD').status).toBe(0)
       })
 
       it('still refuses an entry raised above the base and one the base did not have', () => {
-        const root = repo({ 'src/a.ts': declaration('big', 70) + declaration('other', 60) }, legacy)
-        commitBase(root)
+        const root = legacyBase({ 'src/a.ts': declaration('big', 60) }, { 'src/a.ts::big': 60 })
+        writeFileSync(join(root, 'src/a.ts'), declaration('big', 70) + declaration('other', 60))
         writeBaseline(root, { [fnKey('big')]: 70, [fnKey('other')]: 60 })
 
         const result = run(root, '--base', 'HEAD')
@@ -521,6 +525,47 @@ describe('check-function-length', () => {
         expect(result.output).toContain(
           'src/a.ts::other is on the baseline but the base revision does not have it'
         )
+      })
+
+      it('does not take a file added since the base for part of the base', () => {
+        const root = legacyBase({ 'src/a.ts': declaration('big', 60) }, { 'src/a.ts::big': 60 })
+        writeFileSync(join(root, 'src/b.ts'), declaration('added', 60))
+        spawnSync('git', ['add', '-A'], { cwd: root })
+        writeBaseline(root, {
+          [fnKey('big')]: 60,
+          [keyOf('src/b.ts', [['fn', 'added']])]: 60
+        })
+
+        const result = run(root, '--base', 'HEAD')
+
+        expect(result.output).toContain(
+          'src/b.ts::added is on the baseline but the base revision does not have it'
+        )
+      })
+
+      it('does not admit a new test whose title spells the ordinal of an old one', () => {
+        const test = (title: string): string => `it('${title}', () => {\n${statements(60)}})\n`
+        const root = legacyBase(
+          { 'src/a.spec.ts': test('x') + test('x') },
+          { 'src/a.spec.ts::it x': 62, 'src/a.spec.ts::it x #2': 62 }
+        )
+        writeFileSync(join(root, 'src/a.spec.ts'), test('x') + test('x') + test('x #2'))
+        run(root, '--write-baseline')
+
+        const result = run(root, '--base', 'HEAD')
+
+        expect(result.status).toBe(1)
+        expect(result.output).toContain('the base revision does not have it')
+      })
+
+      it('keeps passing a title the earlier format escaped', () => {
+        const root = legacyBase(
+          { 'src/a.spec.ts': `it('foo#bar', () => {\n${statements(60)}})\n` },
+          { 'src/a.spec.ts::it foo\\#bar': 62 }
+        )
+        run(root, '--write-baseline')
+
+        expect(run(root, '--base', 'HEAD').status).toBe(0)
       })
     })
 
