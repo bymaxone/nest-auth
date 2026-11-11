@@ -185,7 +185,7 @@ structured values; new double assertions through `unknown` are gated against a b
 option group moved out of the two largest option files; the contract-parity workflow compares the
 request schemas and the operation security table with rust-auth, each under its own tracking issue;
 `minimatch` (GHSA-g3hv-75wg-m249) is resolved for the development tooling, with `glob` 10 mapped to 13; a platform-MFA e2e no longer depends on the wall-clock TOTP
-window; development and CI dependency bumps.
+window; a snapshot pins every `description` and `summary` the OpenAPI fragment publishes (the invite and preview descriptions were the only unpinned ones); the mutation inventory has an exempt list of the specs that execute no source; development and CI dependency bumps.
 
 ## [1.4.22] - 2026-11-08
 

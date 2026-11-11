@@ -1,0 +1,42 @@
+[
+  {
+    "file": "src/check-double-assertions.spec.ts",
+    "reason": "Runs scripts/check-double-assertions.mjs as a child process over a temporary tree; it imports no module from src, so there is no mutated source for the run to judge."
+  },
+  {
+    "file": "src/check-file-length.spec.ts",
+    "reason": "Runs scripts/check-file-length.mjs as a child process over a temporary tree; it imports no module from src."
+  },
+  {
+    "file": "src/check-function-length.spec.ts",
+    "reason": "Runs scripts/check-function-length.mjs as a child process over a temporary tree; it imports no module from src."
+  },
+  {
+    "file": "src/mutate-const-tables.spec.ts",
+    "reason": "Runs scripts/mutate-const-tables.mjs as a child process against a throwaway git repository; it imports no module from src."
+  },
+  {
+    "file": "src/server/agent-docs.spec.ts",
+    "reason": "Reads AGENTS.md and the docs as text and checks their rules; it imports only node modules and executes no source under src."
+  },
+  {
+    "file": "src/server/conformance-workspace-client-types.spec.ts",
+    "reason": "A compile-time identity check between the server views and the shared client types; it has no runtime import of source for a mutant to change."
+  },
+  {
+    "file": "src/server/detached-hooks.scan.spec.ts",
+    "reason": "Parses the service sources with the TypeScript compiler as text; it imports only node modules and typescript and executes no source under src."
+  },
+  {
+    "file": "src/server/services/lockout-reads.spec.ts",
+    "reason": "Parses the service sources with the TypeScript compiler as text; it imports only node modules and typescript and executes no source under src, so the related-test lookup is right to leave it out."
+  },
+  {
+    "file": "src/shared/__tests__/route-interpolation.spec.ts",
+    "reason": "Scans the source files as text for hand-filled route placeholders; it imports only node modules and executes no source under src."
+  },
+  {
+    "file": "src/nextjs/__tests__/documentedProxyExport.spec.ts",
+    "reason": "Reads README.md and createAuthProxy.ts as text and checks the proxy export form they show; it imports only node modules and executes no source under src."
+  }
+]

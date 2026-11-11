@@ -31,6 +31,21 @@ function optionsFor(tokenDelivery: ResolvedOptions['tokenDelivery']): ResolvedOp
   } as unknown as ResolvedOptions
 }
 
+/** Every `description` and `summary` string under `value`, keyed by where it sits, in key order. */
+function proseOf(value: unknown, path = ''): Record<string, string> {
+  if (typeof value !== 'object' || value === null) return {}
+  const found: Record<string, string> = {}
+  for (const [key, child] of Object.entries(value)) {
+    const here = path === '' ? key : `${path}.${key}`
+    if ((key === 'description' || key === 'summary') && typeof child === 'string') {
+      found[here] = child
+    } else {
+      Object.assign(found, proseOf(child, here))
+    }
+  }
+  return found
+}
+
 describe('the prose the fragment contributes', () => {
   // The map is deliberate, not a habit: a description restating what `security` already says is
   // noise in a rendered document, and nest-core drops a contributed one only where the consumer
@@ -95,5 +110,20 @@ describe('the prose the fragment contributes', () => {
         'the account password in the request body, or, for an account with no password, by a recent ' +
         'sign-in. The caller is checked as the owner before the password is looked at.'
     )
+  })
+
+  // Scenario: every `description` and `summary` the fragment publishes, for each token delivery.
+  // Expected: the text equals the committed snapshot, string for string. Why: a string no test
+  // asserts can be emptied or reworded with every test passing, so every published string is
+  // pinned here; a deliberate change to the prose updates the snapshot, and the diff is reviewed.
+  it('publishes the prose recorded in the snapshot, for every token delivery', () => {
+    const published = Object.fromEntries(
+      (['cookie', 'bearer', 'both'] as const).map((delivery) => [
+        delivery,
+        proseOf(buildAuthOpenApiFragment(optionsFor(delivery), EVERYTHING))
+      ])
+    )
+
+    expect(published).toMatchSnapshot()
   })
 })
