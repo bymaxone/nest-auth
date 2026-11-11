@@ -17,6 +17,7 @@ import { WorkspaceDeniedEventsService } from './services/workspace-denied-events
 import type { WorkspaceEventsService } from './services/workspace-events.service'
 import { AUTH_ERROR_CODES } from './errors/auth-error-codes'
 import { AuthException } from './errors/auth-exception'
+import { WorkspaceAccessRefusal } from './errors/workspace-access-refusal'
 
 interface AccessDeniedContract {
   hmacKeyDerivation: { vectors: { derivedKeyHex: string }[] }
@@ -103,7 +104,7 @@ describe('access.denied keys', () => {
       surface: 'http' as const
     }
     const refuse = (): never => {
-      throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
+      throw new WorkspaceAccessRefusal(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND, 'not_member')
     }
 
     expect(() => service.admit(ref, refuse)).toThrow(AuthException)

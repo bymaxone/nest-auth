@@ -104,9 +104,11 @@ export type WorkspaceAuditEvent =
       /**
        * Why the decision refused, for the host to tell two incidents apart: an account probing
        * workspaces it does not belong to (`not_member`) and a member reaching above its role
-       * (`insufficient_role`). `not_member` also covers a workspace that does not exist, because the
-       * resolution does not tell the two apart; `pending_deletion` is the owner of a workspace
-       * pending deletion on a surface that does not admit it.
+       * (`insufficient_role`). `not_member` also covers a workspace that does not exist, because
+       * the resolution does not tell the two apart. `pending_deletion` is any active member of a
+       * workspace pending deletion on a surface that does not admit it: the owner, and also a
+       * non-owner, who is answered `auth.workspace_not_found` like a stranger, so `code` and
+       * `reason` differ exactly where the caller is not told.
        */
       reason: 'not_member' | 'insufficient_role' | 'pending_deletion'
       /**

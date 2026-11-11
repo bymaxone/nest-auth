@@ -12,6 +12,9 @@ import type { WorkspaceEventsService } from './workspace-events.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { WorkspaceAccessRefusal } from '../errors/workspace-access-refusal'
+import type { WorkspaceRefusalReason } from '../errors/workspace-access-refusal'
+import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 import type { AuthRedisService } from '../redis/auth-redis.service'
 
 const REF = { tenantId: 't1', userId: 'u1', workspaceId: 'w1', surface: 'http' as const }
@@ -75,9 +78,14 @@ function build(group: { max: number; windowSeconds: number } | undefined = undef
 /** Lets the detached emission finish. */
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
-function refuse(code: (typeof AUTH_ERROR_CODES)[keyof typeof AUTH_ERROR_CODES]): () => never {
+function refuse(
+  code: ConstructorParameters<
+    typeof WorkspaceAccessRefusal
+  >[0] = AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND,
+  reason: WorkspaceRefusalReason = 'not_member'
+): () => never {
   return () => {
-    throw new AuthException(code)
+    throw new WorkspaceAccessRefusal(code, reason)
   }
 }
 
@@ -85,9 +93,7 @@ async function deny(
   service: WorkspaceDeniedEventsService,
   ref: Parameters<WorkspaceDeniedEventsService['admit']>[0] = REF
 ): Promise<void> {
-  expect(() => service.admit(ref, refuse(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND))).toThrow(
-    AuthException
-  )
+  expect(() => service.admit(ref, refuse())).toThrow(AuthException)
   await settle()
 }
 
@@ -130,7 +136,14 @@ describe('WorkspaceDeniedEventsService', () => {
       reason: 'not_member',
       suppressedCount: 0
     })
-    expect(emit.mock.calls[0]?.[1]).toMatchObject({ userId: 'u1', tenantId: 't1' })
+    expect(emit.mock.calls[0]?.[1]).toEqual({
+      userId: 'u1',
+      tenantId: 't1',
+      plane: 'dashboard',
+      ip: '',
+      userAgent: '',
+      sanitizedHeaders: {}
+    })
   })
 
   it('rethrows the very exception the decision raised', () => {
@@ -148,13 +161,48 @@ describe('WorkspaceDeniedEventsService', () => {
     [AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND, 'not_member'],
     [AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION, 'pending_deletion'],
     [AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE, 'insufficient_role']
-  ])('emits the %s refusal under its own code and the reason %s', async (code, reason) => {
+  ] as const)('emits the %s refusal under its own code and the reason %s', async (code, reason) => {
     const { service, emit } = build()
 
-    expect(() => service.admit(REF, refuse(code))).toThrow(AuthException)
+    expect(() => service.admit(REF, refuse(code, reason))).toThrow(AuthException)
     await settle()
 
     expect(emit.mock.calls[0]?.[0]).toMatchObject({ code, reason })
+  })
+
+  // The host is told what the caller is not: a non-owner member of a workspace pending deletion is
+  // answered not found, like a stranger, and the event says why.
+  it('reports pending_deletion under the not-found code for a non-owner, from the real decision', async () => {
+    const { service, emit } = build()
+    const decide = (): unknown =>
+      assertWorkspaceAccess(
+        { kind: 'denied', pendingDeletion: true },
+        ['viewer'],
+        { viewer: [] },
+        false
+      )
+
+    expect(() => service.admit(REF, decide)).toThrow(AuthException)
+    await settle()
+
+    expect(emit.mock.calls[0]?.[0]).toMatchObject({
+      code: AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND,
+      reason: 'pending_deletion'
+    })
+  })
+
+  it('reports a stranger of the same workspace as not_member under the same code', async () => {
+    const { service, emit } = build()
+    const decide = (): unknown =>
+      assertWorkspaceAccess({ kind: 'denied' }, ['viewer'], { viewer: [] }, false)
+
+    expect(() => service.admit(REF, decide)).toThrow(AuthException)
+    await settle()
+
+    expect(emit.mock.calls[0]?.[0]).toMatchObject({
+      code: AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND,
+      reason: 'not_member'
+    })
   })
 
   it('does not emit for an error that is not a refusal of access', async () => {
@@ -173,7 +221,11 @@ describe('WorkspaceDeniedEventsService', () => {
   it('does not emit for an auth error that is not a refusal of workspace access', async () => {
     const { service, emit } = build()
 
-    expect(() => service.admit(REF, refuse(AUTH_ERROR_CODES.TOKEN_INVALID))).toThrow(AuthException)
+    expect(() =>
+      service.admit(REF, () => {
+        throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+      })
+    ).toThrow(AuthException)
     await settle()
 
     expect(emit).not.toHaveBeenCalled()
@@ -301,6 +353,25 @@ describe('WorkspaceDeniedEventsService', () => {
     }
   })
 
+  it('warns again at exactly the end of the window and not a moment before', async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate'] })
+    try {
+      const { service, redis } = build({ max: 3, windowSeconds: 60 })
+      redis.fail = true
+
+      await deny(service)
+      jest.advanceTimersByTime(59_999)
+      await deny(service)
+      expect(warn).toHaveBeenCalledTimes(1)
+      jest.advanceTimersByTime(1)
+      await deny(service)
+
+      expect(warn).toHaveBeenCalledTimes(2)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   it('answers the same when the hook throws, and does not wait for it', async () => {
     const { service, emit } = build()
     emit.mockImplementation(() => {
@@ -308,6 +379,10 @@ describe('WorkspaceDeniedEventsService', () => {
     })
 
     await expect(deny(service)).resolves.toBeUndefined()
+
+    expect(jest.mocked(Logger.prototype.error)).toHaveBeenCalledWith(
+      expect.stringMatching(/^access\.denied was not reported: /)
+    )
   })
 
   it('survives a failure while reading the suppressed count', async () => {

@@ -12,8 +12,7 @@ import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { userSubject } from '../constants/user-subject'
 import { hmacSha256 } from '../crypto/secure-token'
-import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
-import { AuthException } from '../errors/auth-exception'
+import { WorkspaceAccessRefusal } from '../errors/workspace-access-refusal'
 import type { WorkspaceAuditEvent } from '../interfaces/workspace-audit.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { runDetached } from '../utils/run-detached'
@@ -21,21 +20,7 @@ import { runDetached } from '../utils/run-detached'
 /** How long a suppressed count is kept: it must outlive any window, which is capped at one hour. */
 const SUPPRESSED_COUNT_TTL_SECONDS = 86_400
 
-/** The refusals of a workspace access decision, which are the only ones this reports. */
-const ACCESS_REFUSALS: ReadonlySet<string> = new Set([
-  AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND,
-  AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION,
-  AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE
-])
-
 type DeniedEvent = Extract<WorkspaceAuditEvent, { type: 'access.denied' }>
-
-/** What each public refusal means to the host, which the caller's answer does not say. */
-const REASON_BY_CODE: Readonly<Record<DeniedEvent['code'], DeniedEvent['reason']>> = {
-  'auth.workspace_not_found': 'not_member',
-  'auth.workspace_pending_deletion': 'pending_deletion',
-  'auth.insufficient_workspace_role': 'insufficient_role'
-}
 
 /** Who was refused, where, and in which workspace. */
 export interface DeniedAccess {
@@ -95,15 +80,14 @@ export class WorkspaceDeniedEventsService {
     try {
       return decide()
     } catch (error) {
-      const code = refusalCode(error)
-      if (code !== undefined) {
-        runDetached(this.logger, () => this.report(denied, code), 'access.denied was not reported')
+      if (error instanceof WorkspaceAccessRefusal) {
+        runDetached(this.logger, () => this.report(denied, error), 'access.denied was not reported')
       }
       throw error
     }
   }
 
-  private async report(denied: DeniedAccess, code: DeniedEvent['code']): Promise<void> {
+  private async report(denied: DeniedAccess, refusal: WorkspaceAccessRefusal): Promise<void> {
     const limits = this.limits
     const digest = hmacSha256(
       userSubject('dashboard', denied.userId, denied.tenantId),
@@ -133,8 +117,8 @@ export class WorkspaceDeniedEventsService {
         actorUserId: denied.userId,
         userId: denied.userId,
         surface: denied.surface,
-        code,
-        reason: REASON_BY_CODE[code],
+        code: refusal.refusalCode,
+        reason: refusal.reason,
         suppressedCount,
         at: new Date().toISOString()
       },
@@ -157,11 +141,4 @@ export class WorkspaceDeniedEventsService {
       'access.denied events are not being emitted: the counter store is unavailable. The access decision is unaffected.'
     )
   }
-}
-
-/** The public code of an access refusal, or `undefined` for anything else. */
-function refusalCode(error: unknown): DeniedEvent['code'] | undefined {
-  if (!(error instanceof AuthException)) return undefined
-  const { code } = (error.getResponse() as { error: { code: string } }).error
-  return ACCESS_REFUSALS.has(code) ? (code as DeniedEvent['code']) : undefined
 }
