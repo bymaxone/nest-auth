@@ -233,6 +233,7 @@ describe('WorkspaceProvider across an account change', () => {
     expect(foreign(seen, 'bob')).toEqual([])
     expect(result.current.session.user?.id).toBe('bob')
     expect(result.current.workspaces.memberships).toEqual([W2])
+    expect(client.listWorkspaces).toHaveBeenCalledTimes(2)
   })
 
   it('reloads the list once the session confirms the same account after a broadcast', async () => {

@@ -99,6 +99,15 @@ describe('useWorkspaces', () => {
       })
     })
 
+    it('loads the list once, and only once, when the caller is signed in', async () => {
+      const client = signedIn()
+      mount(client)
+      await settle()
+      await settle()
+
+      expect(client.listWorkspaces).toHaveBeenCalledTimes(1)
+    })
+
     it('stays idle and makes no request for a caller who is not signed in', async () => {
       const client = signedIn()
       client.getMe.mockRejectedValue(new AuthClientError('no', 401))
@@ -634,6 +643,7 @@ describe('useWorkspaces', () => {
       await settle()
 
       expect(signedOut.listWorkspaces).not.toHaveBeenCalled()
+      expect(signedOut.getMe).toHaveBeenCalledTimes(1)
     })
 
     it('makes no request in a tab whose session is not known yet when it hears a switch', async () => {
