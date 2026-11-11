@@ -169,21 +169,19 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 //
-// THE ENTRY-FILE LINES MOVED DOWN, and that is the one thing to know about them now. The four
-// non-server entries used to be built with `emitDecoratorMetadata` inherited from the server's
-// tsconfig, which makes tsup's swc plugin switch esbuild's `keepNames` on: every function was
-// followed by a top-level `__name(...)` call (32 in client, 8 in react, 94 in nextjs, 3 in shared).
-// A bundler must keep a top-level call, so importing anything from an entry shipped the whole
-// entry. They now build with `tsconfig.build.web.json`; the calls are gone, the declaration files
-// are byte-identical, and the entries shrank: shared 4.75 -> 4.59 KiB, client 3.91 -> 3.63, react
-// 1.82 -> 1.72, nextjs 8.85 -> 8.29. The entry-file budgets below are those measurements plus about
-// 5%, a deliberate recalibration of the SECONDARY bound.
+// WHAT THE TWO KINDS OF LINE MEAN. The consumer lines are the budget that counts: they measure what a
+// frontend ships for a minimal import, so a feature a frontend can leave unimported gets a line of its
+// own when it lands and is never added to these. `client auth surface` (createAuthClient) and `react
+// auth surface` (AuthProvider, useSession) carry 4.25 and 2.5 KiB. The entry-file lines are a
+// secondary bound on the published files, calibrated to the measured size plus about 5%, so growth
+// that no surface imports cannot accumulate unnoticed.
 //
-// THE CONSUMER LINES are the real budget. `client auth surface` (createAuthClient) and `react auth
-// surface` (AuthProvider, useSession) keep the budgets the entry files used to carry, 4.25 and 2.5
-// KiB, which they now meet with a wide margin because they measure what is shipped and not the
-// whole file. A feature that a frontend can leave unimported gets its own line when it lands; it is
-// not added to these.
+// WHY THE SURFACES CAN BE TRUSTED. A consumer's bundler can only drop what it can prove unused, and a
+// top-level `__name(...)` call, which esbuild's `keepNames` adds after every function, cannot be
+// proven unused. tsup turns `keepNames` on whenever the tsconfig has `emitDecoratorMetadata`, so the
+// shared, client, react and nextjs entries build with `tsconfig.build.web.json`, which does not, and
+// `treeShakingProblems()` below fails the build if any of them holds such a call, because the surface
+// lines alone have enough headroom to hide the loss.
 const BUDGETS = [
   { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 169 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.8 * 1024 },
@@ -293,26 +291,48 @@ for (const { name, from, exports: names, brotli: limit } of SURFACES) {
 }
 
 /**
- * The error classes the browser-facing entries export. A consumer's minifier may rename functions and
- * classes now that no `keepNames` wrapper pins them, so each class must set `this.name` itself, and
- * that has to hold in a MINIFIED CONSUMER BUNDLE, which is what is run here. A class added to those
- * entries without being listed fails the check, so a new one cannot skip it.
+ * The error classes the browser-facing entries export. No `keepNames` wrapper pins their names, so a
+ * consumer's minifier may rename the class, and each one must set `this.name` itself. That has to
+ * hold in a MINIFIED CONSUMER BUNDLE, which is what is run here. A class in those entries that
+ * extends another class and is not listed fails the check, so a new one cannot skip it.
  */
 const ERROR_CLASSES = [
   { name: 'AuthClientError', from: 'dist/shared/index.mjs', args: ['message', 500] }
 ]
 
+/** The published entries a browser bundles. */
+const BROWSER_ENTRIES = ['shared', 'client', 'react', 'nextjs']
+
+/** @returns {string[]} The browser entries that a bundler cannot tree-shake, empty when none. */
+function treeShakingProblems() {
+  const problems = []
+  for (const entry of BROWSER_ENTRIES) {
+    for (const extension of ['mjs', 'cjs']) {
+      const file = `dist/${entry}/index.${extension}`
+      const wrappers = readFileSync(resolve(ROOT, file), 'utf8').split('__name(').length - 1
+      if (wrappers > 0) {
+        problems.push(
+          `${file} holds ${wrappers} top-level __name( call(s), which a bundler must keep: build it with tsconfig.build.web.json`
+        )
+      }
+    }
+  }
+  return problems
+}
+
 /** @returns {Promise<string[]>} What is wrong with the error classes, empty when nothing is. */
 async function errorClassProblems() {
   const problems = []
-  for (const entry of ['shared', 'client', 'react', 'nextjs']) {
+  for (const entry of BROWSER_ENTRIES) {
     const text = readFileSync(resolve(ROOT, `dist/${entry}/index.mjs`), 'utf8')
     for (const [, declared, assigned] of text.matchAll(
-      /(?:\bclass (\w+)|\b(\w+) = class(?: \w+)?) extends \w*Error\b/g
+      /(?:\bclass (\w+)|\b(\w+) = class(?: \w+)?) extends [\w.]+/g
     )) {
       const className = declared ?? assigned
       if (!ERROR_CLASSES.some((c) => c.name === className)) {
-        problems.push(`${className} (dist/${entry}) extends Error and is not in ERROR_CLASSES`)
+        problems.push(
+          `${className} (dist/${entry}) extends another class and is not in ERROR_CLASSES`
+        )
       }
     }
   }
@@ -330,7 +350,7 @@ async function errorClassProblems() {
   return problems
 }
 
-const nameProblems = await errorClassProblems()
+const nameProblems = [...treeShakingProblems(), ...(await errorClassProblems())]
 
 const pad = (s, n) => String(s).padEnd(n)
 const padL = (s, n) => String(s).padStart(n)
@@ -355,11 +375,11 @@ printRows('Entry file (published, as built)', rows)
 console.log('')
 
 if (nameProblems.length > 0) {
-  for (const problem of nameProblems) console.error(`Error class check: ${problem}`)
+  for (const problem of nameProblems) console.error(`Build check: ${problem}`)
   failed += nameProblems.length
 }
 
 if (failed > 0) {
-  console.error(`${failed} problem(s): a size budget was exceeded or an error class check failed.`)
+  console.error(`${failed} problem(s): a size budget was exceeded or a build check failed.`)
   process.exit(1)
 }
