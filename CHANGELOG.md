@@ -18,6 +18,83 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-11
+
+A patch release for workspaces: it adds the way to remove an account's memberships before the host deletes
+the account, fixes a wrong-account list in a tab that hears a broadcast, makes the shared contract valid for
+a strict parser, and measures the frontend bundle. **One required port method is added: read the first
+note below.**
+
+### Apply to a derived backend
+
+- **`IMembershipRepository` gains a REQUIRED method, `removeAllForUser`: every implementer must add
+  it.** It removes every membership of an account, in every membership status (active or suspended)
+  and in every workspace status, in one transaction, persisting one `member.removed` audit row per
+  removal, and answers the removed `{ workspaceId, role }` list. In the same transaction it applies the
+  last-owner rule: when the account is the only active owner of a workspace that is not
+  `pending_deletion` or `deleted`, it removes nothing, writes no audit row and answers `{ result:
+'last_owner', workspaceIds }`. It is required, not optional, because `listForUser` lists only the
+  active memberships of active workspaces, so a fallback built on it would silently leave the suspended
+  memberships and the memberships in other workspaces behind. A host that does not enable workspaces
+  implements nothing.
+- **Call `MembershipService.removeAllForUser(tenantId, userId, actorUserId, context)` before you
+  delete or anonymise a user.** The library never deletes a user, and until now the membership rows of
+  a deleted user stayed behind: they still showed in `listForWorkspace`, a deleted owner still counted,
+  and a workspace whose only owner was deleted was never seen as orphaned. The call refuses with `409
+auth.last_owner` and `details.workspaces` (`{ id, name, status }`, at most 100) while the account is
+  the only owner of an active or suspended workspace, so you can transfer ownership or schedule the
+  workspace's deletion first. A workspace pending deletion does not block, because no one can finalize
+  it before its grace period ends: the owner's membership there is removed, the workspace can no longer
+  be restored, and your finalize job deletes it when the grace period ends. If a cache bump fails after
+  the commit it throws `MembershipBumpFailedError` with `removed` and `failed`; repeating the call
+  removes nothing, so drop the access of each `failed` entry with
+  `WorkspaceAccessService.invalidateMembership`.
+- **The shared wire contract is at version 4, and its bytes changed.** The new section
+  `workspaceAccountRemoval` holds the rules and the blocking vectors, and the `workspaceScopedName`
+  refusal vector for an unpaired surrogate now carries `unpairedSurrogateCodeUnits: [55296]` (one more
+  final part, built from those UTF-16 code units) instead of a lone surrogate escape, which a parser
+  that builds well-formed strings, `serde_json` among them, rejects, so the sibling library lost the
+  whole file. Every string in `conformance/` is now held to well-formed Unicode by a test. The
+  contract's sha256 is `1e4c38e1741c21e639e4099cd33ece9b04518cf69699fb39fd9d5b9d37352edd`; a copy kept
+  by another library is refreshed from `conformance/wire-contract.json`, and a library that reads the
+  vector builds the lone surrogate itself.
+- **`AUTH_WORKSPACE_ROUTES` is exported from `./shared`,** as the README and the specification already
+  said it was; before, it was reachable only as `AUTH_ROUTES.workspaces`.
+- **A frontend that uses no workspace ships less.** `createAuthClient` imports its own route groups
+  instead of the aggregate `AUTH_ROUTES`, which kept every route family, the 16 workspace routes among
+  them, in the bundle. Measured with the same minified, tree-shaken minimal import: `createAuthClient`
+  is **3.12 KiB** brotli, against 3.45 KiB in 1.5.0 and **3.57 KiB in 1.4.22**. The 1.5.0 note that
+  said "from 3.82 to 3.45" was wrong about the starting point: 1.4.22 measures 3.57, so the 1.4.22 to
+  1.5.0 change is 3.57 to 3.45, and `AuthProvider` plus `useSession` 1.26 to 1.13 KiB stands.
+
+### Added
+
+- **`MembershipService.removeAllForUser` and `MembershipBumpFailedError`,** described above, with the
+  port method `IMembershipRepository.removeAllForUser` and its types (`RemoveAllMembershipsParams`,
+  `RemoveAllMembershipsResult`, `RemovedMembership`, `AccountRemovalAudit`).
+- **A "Deleting an account" section in the README** and §22.3a in the technical specification.
+
+### Fixed
+
+- **A tab whose session still named the previous account no longer shows the new account's workspaces
+  after a broadcast.** After another tab changed the signed-in account, the tab reloaded the list with
+  the browser's cookie, which already belonged to the new account, and showed it under the old
+  identity until the session revalidated. A broadcast now revalidates the session first and reloads the
+  list only when the account is unchanged; when it changed, the account change loads the new account's
+  list. A signed-out tab still makes no request. A revalidation that fails with an error other than an
+  expired session ends the tab's session view, as every revalidation of the auth provider already does.
+- **The shared contract can be read by a strict parser:** see the contract note above.
+- **The README states where a workspace invitation token travels:** in a POST body on the API routes;
+  the one use of a query string is the OAuth sign-in start, `GET /oauth/:provider?workspaceInvitation=`,
+  which stores only the token's sha256 and answers with `Referrer-Policy: no-referrer`.
+
+### Maintenance
+
+Repository tooling; nothing changes for a host. The weekly cold mutation job runs as four shards of two
+workers each on the shared sharded workflow, after a run at four workers lost its runner twice; the
+size budgets of the two auth surfaces are tightened to the measured size plus about 5% (client 3.3 KiB,
+react 1.2 KiB) and the react workspace surface and entry are 2.5 and 3.6 KiB.
+
 ## [1.5.0] - 2026-11-11
 
 **Workspaces.** One identity can now hold a role in each of many workspaces inside a tenant,
@@ -4831,7 +4908,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/bymaxone/nest-auth/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/bymaxone/nest-auth/compare/v1.4.22...v1.5.0
 [1.4.22]: https://github.com/bymaxone/nest-auth/compare/v1.4.21...v1.4.22
 [1.4.21]: https://github.com/bymaxone/nest-auth/compare/v1.4.20...v1.4.21
