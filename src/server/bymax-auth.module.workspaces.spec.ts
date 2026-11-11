@@ -241,8 +241,8 @@ describe('BymaxAuthModule — invitation-only registration', () => {
   const INVITATION_ONLY: BymaxAuthModuleOptions = { ...WORKSPACES, registration: 'invitation-only' }
   const REPOSITORIES = [WORKSPACE_REPOSITORY, MEMBERSHIP_REPOSITORY]
 
-  // The configuration QA found: the workspace layer is on and the workspace controller is mounted,
-  // but there is no invitation controller, so no account could ever be created.
+  // The workspace layer is on and the workspace controller is mounted, but no invitation controller
+  // is, so no account could ever be created.
   it('refuses to boot with workspaces on and no invitation controller mounted', async () => {
     await expect(compile(INVITATION_ONLY, REPOSITORIES, { workspaces: true })).rejects.toThrow(
       'leaves no way to create an account'

@@ -21,8 +21,8 @@ function resolved(
 }
 
 describe('assertInvitationControllers', () => {
-  // The configuration QA found: workspaces are enabled, which the old check took for a way in, but
-  // no invitation controller is mounted and OAuth acceptance rides on the workspace one.
+  // Enabling the workspace layer is no way in by itself: with no invitation controller mounted, and
+  // OAuth acceptance riding on the workspace one, no account could be created.
   it('refuses invitation-only with workspaces enabled and no invitation controller', () => {
     expect(() =>
       assertInvitationControllers(resolved('invitation-only', { workspaces: true }), false, false)
