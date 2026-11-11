@@ -113,10 +113,9 @@ describe('the prose the fragment contributes', () => {
   })
 
   // Scenario: every `description` and `summary` the fragment publishes, for each token delivery.
-  // Expected: the text equals the committed snapshot, string for string. Why: a string nobody
-  // asserts can be emptied or reworded with every test passing, and one assertion per string is
-  // how the two invitation descriptions went unpinned; review the snapshot diff when the prose
-  // changes on purpose.
+  // Expected: the text equals the committed snapshot, string for string. Why: a string no test
+  // asserts can be emptied or reworded with every test passing, so every published string is
+  // pinned here; a deliberate change to the prose updates the snapshot, and the diff is reviewed.
   it('publishes the prose recorded in the snapshot, for every token delivery', () => {
     const published = Object.fromEntries(
       (['cookie', 'bearer', 'both'] as const).map((delivery) => [
