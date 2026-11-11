@@ -33,8 +33,14 @@ jobs:
   full:
     uses: bymaxone/.github/.github/workflows/mutation-full.yml@v1
     with:
-      # A cold run measured 110 to 180 minutes or more on hosted runners, and the spread is the
-      # runner, not the code. Generous on purpose — nothing blocks on this job, so an over-wide
-      # ceiling costs only the minutes it uses, while an under-tight one costs the whole run and
-      # leaves the week without a measured baseline.
-      timeout-minutes: 300
+      # Two workers, not the config's four. Two runs at four workers ended with the runner lost
+      # after 2.5 and 3.3 hours, and a worker measured up to about 5.5 GiB locally against 16 GB on
+      # the hosted runner. Passed here and not written into stryker.config.json, which the per-push
+      # incremental job and local runs share; `pnpm run` appends the arguments to the script's last
+      # command, `stryker run`.
+      full-command: pnpm mutation:full --concurrency 2
+      # Two workers took 2.9 and 4.4 hours locally for the same work. The ceiling stays under
+      # GitHub's 6 hour job limit. Nothing blocks on this job, so a wide ceiling costs only the
+      # minutes it uses, while a tight one costs the whole run and leaves the week without a
+      # measured baseline.
+      timeout-minutes: 355
