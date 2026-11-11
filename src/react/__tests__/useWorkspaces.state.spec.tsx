@@ -159,6 +159,38 @@ describe('WorkspaceProvider state', () => {
       expect(result.current.status).toBe('ready')
     })
 
+    it('reports loading, not the earlier error, while a revalidated session reloads', async () => {
+      const client = signedIn()
+      client.listWorkspaces.mockRejectedValueOnce(new AuthClientError('down', 503))
+      const { result } = mountAuth(client)
+      await settle()
+      expect(result.current.workspaces.status).toBe('error')
+      let finishList: (value: List) => void = () => undefined
+      client.listWorkspaces.mockImplementationOnce(
+        () => new Promise((resolve) => (finishList = resolve))
+      )
+      let finishLogin: (value: { user: typeof MOCK_USER; accessToken: string }) => void = () =>
+        undefined
+      client.login.mockImplementationOnce(() => new Promise((resolve) => (finishLogin = resolve)))
+      let signIn: Promise<unknown> = Promise.resolve()
+      await act(async () => {
+        signIn = result.current.auth.login('a@b.c', 'pw')
+        await Promise.resolve()
+      })
+
+      await act(async () => {
+        finishLogin({ user: MOCK_USER, accessToken: '' })
+        await signIn
+      })
+
+      expect(result.current.workspaces.status).toBe('loading')
+      await act(async () => {
+        finishList({ items: [W1, W2], nextCursor: null, lastActiveWorkspaceId: 'w2' })
+        await Promise.resolve()
+      })
+      expect(result.current.workspaces.status).toBe('ready')
+    })
+
     it('keeps the list in view while a revalidated session reloads it', async () => {
       const client = signedIn()
       const { result } = mountAuth(client)
@@ -257,5 +289,168 @@ describe('WorkspaceProvider state', () => {
     })
 
     expect(FakeChannel.posted).toEqual([{ type: 'workspaces-changed' }])
+  })
+
+  describe('the account the workspaces belong to', () => {
+    // Another tab can sign in as someone else: the session stays 'authenticated' and only the user
+    // changes, so the list of the first account must not be shown under the second.
+    it('reloads, and forgets the chosen workspace, when the signed-in account changes', async () => {
+      const client = signedIn()
+      const { result } = mountAuth(client)
+      await settle()
+      await act(async () => {
+        await result.current.workspaces.switchWorkspace('w1')
+      })
+      client.getMe.mockResolvedValue({ ...MOCK_USER, id: 'bob' })
+      client.listWorkspaces.mockResolvedValue({
+        items: [W2],
+        nextCursor: null,
+        lastActiveWorkspaceId: 'w2'
+      })
+
+      await act(async () => {
+        await result.current.session.refresh()
+      })
+      await settle()
+
+      expect(client.listWorkspaces).toHaveBeenCalledTimes(2)
+      expect(result.current.workspaces.memberships).toEqual([W2])
+      expect(result.current.workspaces.activeWorkspace).toEqual(W2)
+    })
+
+    it('does not reload for the same account revalidating', async () => {
+      const client = signedIn()
+      const { result } = mountAuth(client)
+      await settle()
+
+      await act(async () => {
+        await result.current.session.refresh()
+      })
+      await settle()
+
+      expect(client.listWorkspaces).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows nothing of the first account while the second account loads', async () => {
+      const client = signedIn()
+      const { result } = mountAuth(client)
+      await settle()
+      let finish: (value: List) => void = () => undefined
+      client.getMe.mockResolvedValue({ ...MOCK_USER, id: 'bob' })
+      client.listWorkspaces.mockImplementationOnce(
+        () => new Promise((resolve) => (finish = resolve))
+      )
+
+      await act(async () => {
+        await result.current.session.refresh()
+      })
+
+      expect(result.current.workspaces.status).toBe('loading')
+      expect(result.current.workspaces.memberships).toEqual([])
+      expect(result.current.workspaces.activeWorkspace).toBeNull()
+      await act(async () => {
+        finish({ items: [W2], nextCursor: null, lastActiveWorkspaceId: 'w2' })
+        await Promise.resolve()
+      })
+      expect(result.current.workspaces.memberships).toEqual([W2])
+    })
+
+    it('treats the first load for another account as a new session, with no change notice', async () => {
+      const onWorkspaceChanged = jest.fn()
+      const client = signedIn()
+      const { result } = mountAuth(client, { onWorkspaceChanged })
+      await settle()
+      let finish: (value: List) => void = () => undefined
+      client.getMe.mockResolvedValue({ ...MOCK_USER, id: 'bob' })
+      client.listWorkspaces.mockImplementationOnce(
+        () => new Promise((resolve) => (finish = resolve))
+      )
+
+      await act(async () => {
+        await result.current.session.refresh()
+      })
+      expect(result.current.workspaces.status).toBe('loading')
+      await act(async () => {
+        finish({ items: [W1, W2], nextCursor: null, lastActiveWorkspaceId: 'w1' })
+        await Promise.resolve()
+      })
+
+      expect(result.current.workspaces.activeWorkspace).toEqual(W1)
+      expect(onWorkspaceChanged).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('a newer load', () => {
+    it('aborts the older one, which then follows no page and sets no state', async () => {
+      const client = signedIn()
+      const { result } = mount(client)
+      await settle()
+      let finishOlder: (value: List) => void = () => undefined
+      let olderSignal: AbortSignal | undefined
+      client.listWorkspaces.mockImplementationOnce((_page, init) => {
+        olderSignal = init?.signal
+        return new Promise((resolve) => (finishOlder = resolve))
+      })
+      let older: Promise<void> = Promise.resolve()
+      await act(async () => {
+        older = result.current.refresh()
+        await Promise.resolve()
+      })
+      client.listWorkspaces.mockResolvedValue({
+        items: [W1],
+        nextCursor: null,
+        lastActiveWorkspaceId: 'w1'
+      })
+
+      await act(async () => {
+        await result.current.refresh()
+      })
+      expect(olderSignal?.aborted).toBe(true)
+      await act(async () => {
+        finishOlder({ items: [W2], nextCursor: 'more', lastActiveWorkspaceId: 'w2' })
+        await older
+      })
+
+      expect(client.listWorkspaces).toHaveBeenCalledTimes(3)
+      expect(result.current.memberships).toEqual([W1])
+    })
+  })
+
+  describe('unmounting', () => {
+    it('stops following pages and sets no state when the provider goes away mid-load', async () => {
+      const client = signedIn()
+      let finish: (value: List) => void = () => undefined
+      client.listWorkspaces.mockImplementationOnce(
+        () => new Promise((resolve) => (finish = resolve))
+      )
+      const { unmount } = mountAuth(client)
+      await settle()
+      expect(client.listWorkspaces).toHaveBeenCalledTimes(1)
+
+      unmount()
+      await act(async () => {
+        finish({ items: [W1], nextCursor: 'more', lastActiveWorkspaceId: 'w1' })
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(client.listWorkspaces).toHaveBeenCalledTimes(1)
+    })
+
+    it('passes a signal to the list call and aborts it on unmount', async () => {
+      const client = signedIn()
+      let seen: AbortSignal | undefined
+      client.listWorkspaces.mockImplementationOnce((_page, init) => {
+        seen = init?.signal
+        return new Promise(() => undefined)
+      })
+      const { unmount } = mountAuth(client)
+      await settle()
+      expect(seen?.aborted).toBe(false)
+
+      unmount()
+
+      expect(seen?.aborted).toBe(true)
+    })
   })
 })

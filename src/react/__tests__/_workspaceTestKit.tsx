@@ -34,7 +34,7 @@ export type WorkspaceMocks = {
       nextCursor: string | null
       lastActiveWorkspaceId: string | null
     }>,
-    [({ cursor?: string } | undefined)?]
+    [({ cursor?: string } | undefined)?, ({ signal?: AbortSignal } | undefined)?]
   >
   switchWorkspace: jest.Mock<Promise<void>, [string]>
 }

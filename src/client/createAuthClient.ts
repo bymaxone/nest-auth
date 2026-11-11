@@ -13,6 +13,7 @@
 import {
   AUTH_ROUTES,
   type AuthErrorResponse,
+  trimSlashes,
   AuthClientError,
   type AuthUserClient,
   type LoginResult,
@@ -188,38 +189,6 @@ export interface AuthClient {
    * for the mutual-exclusivity rule.
    */
   resetPassword(input: ResetPasswordInput): Promise<void>
-}
-
-/**
- * Strip leading and trailing `/` characters without a regular expression.
- *
- * The obvious `replace(/^\/+|\/+$/g, '')` is quadratic on a run of slashes — the `$`-anchored
- * alternative backtracks over every prefix of the run — which CodeQL flags as a polynomial
- * ReDoS. The input here is deployment configuration rather than anything a caller sends, so it
- * was never reachable in practice; a scan cannot know that, and neither can the next reader.
- * A pair of scans is linear and says what it does.
- *
- * @param value - The string to trim.
- * @param leading - Whether to trim the leading run too. `baseUrl` keeps its leading slash
- *   because a root-relative base (`/api`) is a legitimate value.
- * @returns `value` with the requested runs of `/` removed.
- */
-function trimSlashes(value: string, leading: boolean): string {
-  let start = 0
-  let end = value.length
-  // Stryker disable ConditionalExpression,EqualityOperator
-  // Both bounds are equivalent to `true` here, and both comparisons are equivalent one step
-  // looser: the character test is what actually stops each loop, because an index past either
-  // end reads `undefined`, which is never `'/'`. Verified by running all four mutants against
-  // '', '/', '//', '///', '/a/', 'a', '/api/' and '////a////' in both `leading` modes — every
-  // one returns what the guarded form returns. The bounds stay because a loop whose only
-  // terminator is an out-of-range read is a worse thing to leave for the next reader.
-  if (leading) {
-    while (start < end && value[start] === '/') start += 1
-  }
-  while (end > start && value[end - 1] === '/') end -= 1
-  // Stryker restore ConditionalExpression,EqualityOperator
-  return value.slice(start, end)
 }
 
 /**

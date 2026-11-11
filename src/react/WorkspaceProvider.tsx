@@ -55,15 +55,16 @@ export function WorkspaceProvider({
   useEffect(() => {
     optionsRef.current = options
   })
-  const { loaded, setLoaded, clientRef, refresh } = useWorkspaceList(client, ctx.status)
+  const identity = ctx.user === null ? null : JSON.stringify([ctx.user.tenantId, ctx.user.id])
+  const { loaded, setLoaded, clientRef, refresh } = useWorkspaceList(client, ctx.status, identity)
   const activeId = options.activeWorkspaceId ?? chosen ?? loaded.lastActiveWorkspaceId
   const activeWorkspace = useMemo(
     () => loaded.items.find((item) => item.workspace.id === activeId) ?? null,
     [loaded.items, activeId]
   )
   useEffect(() => {
-    if (loaded.status === 'idle') setChosen(null)
-  }, [loaded.status])
+    setChosen(null)
+  }, [identity])
   useChangeNotice(loaded.status, activeWorkspace, optionsRef)
   const channelRef = useWorkspaceChannel(refresh)
   const hasWorkspaceRole = useRoleHint(activeWorkspace, loaded.items, optionsRef)

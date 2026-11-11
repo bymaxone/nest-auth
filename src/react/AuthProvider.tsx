@@ -306,6 +306,11 @@ export function AuthProvider({
   useEffect(() => {
     // Stryker disable next-line BooleanLiteral: `isInitial` is only read via `!isInitial && wasAuthenticated`; at this mount call site wasAuthenticated is structurally false, so true vs false is unobservable
     void revalidate(true)
+    // A result still on its way when the provider unmounts is dropped, so it neither updates a dead
+    // provider nor calls `onSessionExpired` after the host has gone.
+    return (): void => {
+      sessionGenerationRef.current = {}
+    }
   }, [revalidate])
 
   // Background revalidation loop.
@@ -337,16 +342,11 @@ export function AuthProvider({
           ...(options?.tenantId !== undefined ? { tenantId: options.tenantId } : {})
         })
         if ('mfaRequired' in result) {
-          // MFA gate — roll status back to `unauthenticated` so guards
-          // checking `status === 'authenticated'` continue to deny
-          // access while the challenge is pending. Consumers rendering
-          // a spinner via `isLoading` see that flip back to `false`
-          // here, which is the intended signal to prompt for the OTP.
-          //
-          // NOTE: the thrown error from a subsequent `mfaChallenge` is
-          // not intercepted here — that call is on the `AuthClient`
-          // directly and is expected to route through the caller's
-          // component-local error state.
+          // MFA gate: roll status back to `unauthenticated` so guards checking
+          // `status === 'authenticated'` keep denying access while the challenge is pending;
+          // `isLoading` flips back to `false`, which is the signal to prompt for the OTP. An error
+          // from a later `mfaChallenge` is not intercepted here: that call goes through the
+          // `AuthClient` directly and is the caller's component-local error state.
           //
           // The generation moves here for the same reason it moves on logout: this IS a
           // deliberate transition, and a `getMe()` issued before it answers for the session

@@ -16,12 +16,12 @@ import { cache } from 'react'
 import {
   AUTH_ROUTES,
   fillRoute,
+  trimSlashes,
   type WorkspaceAccessClient,
   AuthClientError
 } from '@bymax-one/nest-auth/shared'
 
 import { assertValidApiBase } from './buildRefreshUrl'
-import { trimTrailingSlash } from './routeHandlerUtils'
 
 /** What {@link createWorkspaceAccessReader} needs to reach the API. */
 export interface WorkspaceAccessReaderConfig {
@@ -85,7 +85,7 @@ export function createWorkspaceAccessReader(
   config: WorkspaceAccessReaderConfig
 ): (workspaceId: string) => Promise<WorkspaceAccessClient | null> {
   assertValidApiBase(config.apiBase, 'createWorkspaceAccessReader')
-  const base = `${trimTrailingSlash(config.apiBase)}/${(config.routePrefix ?? 'auth').replace(/^\/+|\/+$/g, '')}`
+  const base = `${trimSlashes(config.apiBase)}/${trimSlashes(config.routePrefix ?? 'auth')}`
   const send = config.fetch ?? fetch
 
   return cache(async (workspaceId: string): Promise<WorkspaceAccessClient | null> => {

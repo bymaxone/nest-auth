@@ -117,6 +117,12 @@ describe('createWorkspaceAccessReader', () => {
       'https://api.example.test/identity'
     ],
     [
+      'several trailing slashes on the base',
+      'https://api.example.test///',
+      'auth',
+      'https://api.example.test/auth'
+    ],
+    [
       'a prefix with a slash inside',
       'https://api.example.test',
       'a/b',
@@ -164,6 +170,26 @@ describe('createWorkspaceAccessReader', () => {
     const { read } = build(() => reply(200, body))
 
     await expect(read('w1')).resolves.toEqual(body)
+  })
+
+  // A pattern that backtracks quadratically on a long run of slashes takes seconds here.
+  it('trims a long run of slashes from the prefix in linear time', async () => {
+    jest.mocked(cookies).mockResolvedValue(cookieJar(''))
+    const send = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>(() =>
+      Promise.resolve(reply(200))
+    )
+    const hostile = `a${'/'.repeat(80_000)}b`
+    const started = performance.now()
+
+    const read = createWorkspaceAccessReader({
+      apiBase: 'https://api.example.test',
+      routePrefix: hostile,
+      fetch: send
+    })
+    await read('w1')
+
+    expect(performance.now() - started).toBeLessThan(500)
+    expect(send.mock.calls[0]?.[0]).toBe(`https://api.example.test/${hostile}/workspaces/w1/access`)
   })
 
   it.each([403, 404, 409])(

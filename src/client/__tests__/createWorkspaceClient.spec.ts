@@ -293,6 +293,42 @@ describe('workspace calls of the typed client', () => {
     })
   })
 
+  describe('the signal of a read', () => {
+    it("hands the caller's signal to the fetch, and none when there is none", async () => {
+      const inits: Array<RequestInit | undefined> = []
+      const authFetch = jest.fn<ReturnType<AuthFetch>, Parameters<AuthFetch>>((_input, init) => {
+        inits.push(init)
+        return Promise.resolve(json(200, { items: [], nextCursor: null })())
+      })
+      const client = createWorkspaceClient({ baseUrl: BASE, authFetch })
+      const controller = new AbortController()
+
+      await client.listWorkspaces(undefined, { signal: controller.signal })
+      await client.listWorkspaces()
+      await client.listWorkspaces({ limit: 1 }, {})
+      await client.listWorkspaceMembers('w1')
+
+      expect(inits[0]?.signal).toBe(controller.signal)
+      expect(inits.slice(1).map((init) => init?.signal)).toEqual([null, null, null])
+    })
+
+    it('cancels the request when the signal aborts, through the real fetch wrapper', async () => {
+      jest.spyOn(globalThis, 'fetch').mockImplementation(
+        (_input, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+          })
+      )
+      const client = createWorkspaceClient({ baseUrl: BASE })
+      const controller = new AbortController()
+
+      const pending = client.listWorkspaces(undefined, { signal: controller.signal })
+      controller.abort()
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    })
+  })
+
   describe('what lands in a path', () => {
     it.each([
       ['a/b', 'a%2Fb'],

@@ -39,7 +39,8 @@ export type {
   InviteToWorkspaceInput,
   TransferOwnershipInput,
   WorkspaceClientMethods,
-  WorkspaceReauth
+  WorkspaceReauth,
+  WorkspaceRequestInit
 } from './createWorkspaceClient'
 
 // ---------------------------------------------------------------------------

@@ -58,10 +58,22 @@ export interface AcceptInvitationSignupInput {
   password: string
 }
 
+/** What a read can be given besides its parameters. */
+export interface WorkspaceRequestInit {
+  /** Aborts the request when it aborts. */
+  signal?: AbortSignal
+}
+
 /** The workspace calls of the typed client. */
 export interface WorkspaceClientMethods {
-  /** Lists the caller's own workspaces, and the one they last switched to. */
-  listWorkspaces(page?: WorkspacePageParams): Promise<WorkspaceListResult>
+  /**
+   * Lists the caller's own workspaces, and the one they last switched to. An aborted `signal` cancels
+   * the request.
+   */
+  listWorkspaces(
+    page?: WorkspacePageParams,
+    init?: WorkspaceRequestInit
+  ): Promise<WorkspaceListResult>
   /** Reads a workspace and the caller's role in it. */
   getWorkspaceAccess(workspaceId: string): Promise<WorkspaceAccessClient>
   /** Records a workspace as the caller's last active one. No token changes. */
@@ -123,7 +135,7 @@ function paged(path: string, page: WorkspacePageParams | undefined): string {
 
 /** The two requests every call is made of: one that reads a JSON answer, one that expects none. */
 interface Requests {
-  json: <T>(method: string, path: string, body?: unknown) => Promise<T>
+  json: <T>(method: string, path: string, body?: unknown, signal?: AbortSignal) => Promise<T>
   none: (method: string, path: string, body?: unknown) => Promise<void>
 }
 
@@ -148,7 +160,8 @@ function workspaceCalls({
   | 'restoreWorkspace'
 > {
   return {
-    listWorkspaces: async (page) => json('GET', paged(ROUTES.list, page)),
+    listWorkspaces: async (page, init) =>
+      json('GET', paged(ROUTES.list, page), undefined, init?.signal),
     getWorkspaceAccess: async (id) => json('GET', inWorkspace(ROUTES.access, id)),
     switchWorkspace: async (id) => none('POST', inWorkspace(ROUTES.switch, id), {}),
     createWorkspace: async (name) => json('POST', ROUTES.list, { name }),
@@ -234,13 +247,18 @@ function invitationCalls({
  */
 export function createWorkspaceClient(config: AuthClientConfig): WorkspaceClientMethods {
   const { authFetch, url } = resolveTransport(config)
-  const send = (method: string, path: string, body?: unknown): Promise<Response> =>
+  const send = (
+    method: string,
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal
+  ): Promise<Response> =>
     // JSON.stringify answers `undefined` for no body and drops a key whose value is `undefined`, so an
     // absent option is an absent key on the wire.
-    authFetch(url(path), { method, body: JSON.stringify(body) })
+    authFetch(url(path), { method, body: JSON.stringify(body), signal: signal ?? null })
   const requests: Requests = {
-    json: async <T>(method: string, path: string, body?: unknown) =>
-      parseJsonOrThrow<T>(await send(method, path, body)),
+    json: async <T>(method: string, path: string, body?: unknown, signal?: AbortSignal) =>
+      parseJsonOrThrow<T>(await send(method, path, body, signal)),
     none: async (method, path, body) => expectNoContent(await send(method, path, body))
   }
   return { ...workspaceCalls(requests), ...memberCalls(requests), ...invitationCalls(requests) }

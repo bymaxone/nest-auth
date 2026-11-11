@@ -94,7 +94,9 @@ describe('useWorkspaces', () => {
       expect(result.current.memberships).toEqual([W1, W2])
       expect(result.current.lastActiveWorkspaceId).toBe('w2')
       expect(client.listWorkspaces).toHaveBeenCalledTimes(1)
-      expect(client.listWorkspaces).toHaveBeenCalledWith(undefined)
+      expect(client.listWorkspaces).toHaveBeenCalledWith(undefined, {
+        signal: expect.any(AbortSignal)
+      })
     })
 
     it('stays idle and makes no request for a caller who is not signed in', async () => {
@@ -116,7 +118,10 @@ describe('useWorkspaces', () => {
       await settle()
       await settle()
 
-      expect(client.listWorkspaces.mock.calls).toEqual([[undefined], [{ cursor: 'c2' }]])
+      expect(client.listWorkspaces.mock.calls).toEqual([
+        [undefined, { signal: expect.any(AbortSignal) }],
+        [{ cursor: 'c2' }, { signal: expect.any(AbortSignal) }]
+      ])
       expect(result.current.memberships).toEqual([W1, W2])
       expect(result.current.lastActiveWorkspaceId).toBe('w1')
     })

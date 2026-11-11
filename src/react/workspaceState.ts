@@ -54,13 +54,22 @@ export type WorkspaceProviderClient = Pick<
   'listWorkspaces' | 'switchWorkspace'
 >
 
-/** Follows the cursors of the caller's workspaces to the end, or to {@link MAX_PAGES}. */
-async function loadAll(client: WorkspaceProviderClient): Promise<Omit<Loaded, 'status'>> {
+/**
+ * Follows the cursors of the caller's workspaces to the end, or to {@link MAX_PAGES}, and stops at the
+ * next page once `signal` aborts.
+ */
+async function loadAll(
+  client: WorkspaceProviderClient,
+  signal: AbortSignal
+): Promise<Omit<Loaded, 'status'>> {
   const items: WorkspaceAccessClient[] = []
   let lastActiveWorkspaceId: string | null = null
   let cursor: string | undefined
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const result = await client.listWorkspaces(cursor === undefined ? undefined : { cursor })
+    const result = await client.listWorkspaces(cursor === undefined ? undefined : { cursor }, {
+      signal
+    })
+    if (signal.aborted) break
     if (page === 0) lastActiveWorkspaceId = result.lastActiveWorkspaceId
     items.push(...result.items)
     if (result.nextCursor === null) break
@@ -87,18 +96,54 @@ function callHost(name: string, run: (() => void) | undefined): void {
 }
 
 /**
+ * Builds the reload: it aborts a load still on its way, starts one with its own controller, and sets
+ * the state only if that controller was not aborted. Does nothing unless the session is signed in.
+ *
+ * @param clientRef - The current workspace client.
+ * @param statusRef - The current session status.
+ * @param setLoaded - Sets the loaded list.
+ * @param controllerRef - Holds the controller of the load in flight, so an effect can abort it.
+ * @returns The reload.
+ */
+function useReload(
+  clientRef: RefObject<WorkspaceProviderClient>,
+  statusRef: RefObject<AuthStatus>,
+  setLoaded: Dispatch<SetStateAction<Loaded>>,
+  controllerRef: RefObject<AbortController | null>
+): () => Promise<void> {
+  // Stryker disable ArrayDeclaration: the dependencies are refs and a state setter, which are stable, so any constant array re-creates the callback exactly as often as `[]`
+  return useCallback(async (): Promise<void> => {
+    if (statusRef.current !== 'authenticated') return
+    controllerRef.current?.abort()
+    const controller = new AbortController()
+    controllerRef.current = controller
+    try {
+      const result = await loadAll(clientRef.current, controller.signal)
+      if (!controller.signal.aborted) setLoaded({ status: 'ready', ...result })
+    } catch {
+      if (!controller.signal.aborted) setLoaded({ ...IDLE, status: 'error' })
+    }
+  }, [clientRef, statusRef, setLoaded, controllerRef])
+  // Stryker restore ArrayDeclaration
+}
+
+/**
  * Loads the caller's workspaces once the session is known to be signed in, and empties them when it
- * ends. A load that finishes after the session changed is ignored, and a reload requested while the
- * session is not signed in does nothing, so a tab that hears a broadcast while signed out makes no
- * request.
+ * ends or the account changes. A load is aborted when the provider unmounts, when the session or the
+ * account changes and when a newer load starts, and an aborted load sets no state and follows no
+ * further page. A reload requested while the session is not signed in does nothing, so a tab that
+ * hears a broadcast while signed out makes no request.
  *
  * @param client - The workspace client.
  * @param authStatus - The session status the auth provider owns.
+ * @param identity - Who is signed in, as tenant and user together, or `null`: the workspaces belong
+ *   to an account, so a different one is a new session even while the status stays signed in.
  * @returns The loaded list, its setter, and the reload.
  */
 export function useWorkspaceList(
   client: WorkspaceProviderClient,
-  authStatus: AuthStatus
+  authStatus: AuthStatus,
+  identity: string | null
 ): {
   loaded: Loaded
   setLoaded: Dispatch<SetStateAction<Loaded>>
@@ -108,7 +153,8 @@ export function useWorkspaceList(
   const [loaded, setLoaded] = useState<Loaded>(IDLE)
   const clientRef = useRef(client)
   const statusRef = useRef(authStatus)
-  const generationRef = useRef<object>({})
+  const identityRef = useRef(identity)
+  const controllerRef = useRef<AbortController | null>(null)
 
   // Kept current in an effect, declared before every effect that reads them, so a load never runs
   // against the client or the session status of an earlier render.
@@ -117,37 +163,31 @@ export function useWorkspaceList(
     statusRef.current = authStatus
   })
 
-  // Stryker disable ArrayDeclaration: any constant array is as stable as `[]`, and no render can tell them apart
-  const refresh = useCallback(async (): Promise<void> => {
-    if (statusRef.current !== 'authenticated') return
-    const generation = generationRef.current
-    try {
-      const result = await loadAll(clientRef.current)
-      if (generationRef.current === generation) setLoaded({ status: 'ready', ...result })
-    } catch {
-      if (generationRef.current === generation) setLoaded({ ...IDLE, status: 'error' })
-    }
-  }, [])
-  // Stryker restore ArrayDeclaration
+  const refresh = useReload(clientRef, statusRef, setLoaded, controllerRef)
 
   useEffect(() => {
-    generationRef.current = {}
+    const otherAccount = identityRef.current !== identity
+    identityRef.current = identity
     if (authStatus === 'authenticated') {
       setLoaded((current) =>
-        current.status === 'ready' ? current : { ...IDLE, status: 'loading' }
+        current.status === 'ready' && !otherAccount ? current : { ...IDLE, status: 'loading' }
       )
       void refresh()
     } else if (authStatus === 'unauthenticated') {
       setLoaded(IDLE)
     }
-  }, [authStatus, refresh])
+    return (): void => {
+      controllerRef.current?.abort()
+    }
+  }, [authStatus, identity, refresh])
 
   return { loaded, setLoaded, clientRef, refresh }
 }
 
 /**
  * Tells the host, through `onWorkspaceChanged`, when the active workspace changes after the first
- * load. A list that empties (sign-out) starts the next load as a first one.
+ * load. A list that starts loading, on a first sign-in, after a sign-out or for another account, makes
+ * the load that follows a first one.
  *
  * @param status - Where the list stands.
  * @param active - The active workspace.
@@ -162,7 +202,7 @@ export function useChangeNotice(
     null
   )
   useEffect(() => {
-    if (status === 'idle') previousRef.current = null
+    if (status === 'loading') previousRef.current = null
     if (status !== 'ready') return
     const previous = previousRef.current
     previousRef.current = { id: active?.workspace.id ?? null, value: active }
