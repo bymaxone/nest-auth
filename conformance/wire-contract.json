@@ -15,7 +15,12 @@
     "",
     "`version` names the contract a RELEASE of nest-auth ships. It moves once per release that",
     "changes the contract, never once per change: an edit to a version no release has shipped yet",
-    "stays inside that version, and rust-auth reads it the same way."
+    "stays inside that version, and rust-auth reads it the same way.",
+    "",
+    "Every string in this file, key or value, must be well-formed Unicode, because a parser that builds",
+    "well-formed strings (serde_json is one) rejects a lone surrogate escape and loses the whole file.",
+    "A case that needs an ill-formed string states it as UTF-16 code units beside its `case`, for",
+    "example `unpairedSurrogateCodeUnits: [55296]`, and each library's test builds the string itself."
   ],
   "version": 4,
   "hmacKeyDerivation": {
@@ -1848,7 +1853,10 @@
       "Refused (TypeError in nest-auth, an error in the sibling): a piece holding a C0 control",
       "(U+0000 to U+001F) or DEL (U+007F), because several storage backends reject or mangle them;",
       "an unpaired surrogate, which has no UTF-8 form so two different strings would write the same",
-      "bytes; an empty tenant or workspace. An empty part is allowed and is a piece of its own."
+      "bytes; an empty tenant or workspace. An empty part is allowed and is a piece of its own.",
+      "",
+      "A vector with `unpairedSurrogateCodeUnits` is one more final part, built from those UTF-16 code",
+      "units, because the JSON text itself must stay well-formed."
     ],
     "vectors": [
         {
@@ -1988,8 +1996,10 @@
               "case": "an unpaired surrogate in a part",
               "args": [
                     "t1",
-                    "w1",
-                    "\ud800"
+                    "w1"
+              ],
+              "unpairedSurrogateCodeUnits": [
+                    55296
               ],
               "refused": "unpaired surrogate"
         }
