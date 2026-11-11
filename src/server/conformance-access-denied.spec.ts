@@ -131,8 +131,8 @@ describe('access.denied keys', () => {
     )
   })
 
-  // Verifies the pinned accounts name distinct keys, including the two whose ids differ only by
-  // where a delimiter falls.
+  // Verifies the pinned accounts name distinct keys. The pair whose ids join to the same text,
+  // (a, b:c) and (a:b, c), is driven against the service in its own spec.
   it('keeps every pinned account on its own keys', () => {
     const keys = VECTORS.flatMap((v) => [v.windowKey, v.suppressedKey])
 
