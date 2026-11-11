@@ -1593,7 +1593,7 @@ workspaces only), so it is one call on the membership port, `removeAllForUser`, 
 in one transaction together with the audit rows.
 
 - **It refuses while the account is the only owner of an active or suspended workspace:** `409
-auth.last_owner` with `details.workspaces` (`{ id, name, status }`, at most 100), and nothing is
+auth.last_owner` with `details.workspaces` (`{ id, name, status }`, at most 100; `{ id }` alone for one the repository found during the write), and nothing is
   removed. Transfer ownership or schedule the workspace's deletion first.
 - **A workspace pending deletion does not block.** No one can finalize a pending deletion before
   its grace period ends, so an owner who scheduled one would otherwise be unable to delete their own
