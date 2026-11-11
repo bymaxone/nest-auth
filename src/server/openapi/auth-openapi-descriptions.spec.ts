@@ -96,4 +96,23 @@ describe('the prose the fragment contributes', () => {
         'sign-in. The caller is checked as the owner before the password is looked at.'
     )
   })
+
+  // Scenario: the two invitation operations. Expected: invite says its answer does not depend on
+  // whether the address has an account, and preview says every unusable token gets the same error.
+  // Why: neither fits in a security requirement.
+  it('says what the invite answer and the preview refusal do not reveal', () => {
+    const operations = buildAuthOpenApiFragment(optionsFor('bearer'), EVERYTHING).operations
+
+    expect(operations['WorkspaceInvitationController.invite']?.['description']).toBe(
+      'Invites an address to the workspace, or resends to one already invited. The answer is 204 ' +
+        'whether or not the address has an account. An address that already belongs to the ' +
+        'workspace is refused with 409, and a non-owner may invite only to a role strictly below ' +
+        'their own.'
+    )
+    expect(operations['WorkspaceInvitationController.preview']?.['description']).toBe(
+      'Tells a token holder what the token is for, without signing in. A token that never ' +
+        'existed, expired, was used, or names a workspace that is gone is answered with the same ' +
+        'error.'
+    )
+  })
 })
