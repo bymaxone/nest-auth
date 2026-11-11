@@ -333,9 +333,9 @@ describe('workspace authorization on a socket and in a job (E2E)', () => {
         workspaceId: id,
         userId: stranger.id,
         code: 'auth.workspace_not_found',
+        reason: 'not_member',
         suppressedCount: 0
       })
-      expect(denied[0]).not.toHaveProperty('reason')
     })
 
     it('reports a refused route, and nothing for an allowed or a malformed request', async () => {

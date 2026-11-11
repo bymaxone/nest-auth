@@ -30,6 +30,13 @@ const ACCESS_REFUSALS: ReadonlySet<string> = new Set([
 
 type DeniedEvent = Extract<WorkspaceAuditEvent, { type: 'access.denied' }>
 
+/** What each public refusal means to the host, which the caller's answer does not say. */
+const REASON_BY_CODE: Readonly<Record<DeniedEvent['code'], DeniedEvent['reason']>> = {
+  'auth.workspace_not_found': 'not_member',
+  'auth.workspace_pending_deletion': 'pending_deletion',
+  'auth.insufficient_workspace_role': 'insufficient_role'
+}
+
 /** Who was refused, where, and in which workspace. */
 export interface DeniedAccess {
   /** The tenant, from the verified token. */
@@ -127,6 +134,7 @@ export class WorkspaceDeniedEventsService {
         userId: denied.userId,
         surface: denied.surface,
         code,
+        reason: REASON_BY_CODE[code],
         suppressedCount,
         at: new Date().toISOString()
       },

@@ -94,14 +94,21 @@ export type WorkspaceAuditEvent =
       /** The surface that refused: a route, a stream's verification or a socket message. */
       surface: 'http' | 'verifier' | 'ws'
       /**
-       * The code the caller was answered with, never the internal reason: a caller who is not a
-       * member and one asking after a workspace that does not exist are told the same thing, and
-       * the event does not tell the host more than the caller was told.
+       * The code the caller was answered with. The host receives the event and the caller never
+       * does, so it also gets {@link reason}, which the answer deliberately does not carry.
        */
       code:
         | 'auth.workspace_not_found'
         | 'auth.workspace_pending_deletion'
         | 'auth.insufficient_workspace_role'
+      /**
+       * Why the decision refused, for the host to tell two incidents apart: an account probing
+       * workspaces it does not belong to (`not_member`) and a member reaching above its role
+       * (`insufficient_role`). `not_member` also covers a workspace that does not exist, because the
+       * resolution does not tell the two apart; `pending_deletion` is the owner of a workspace
+       * pending deletion on a surface that does not admit it.
+       */
+      reason: 'not_member' | 'insufficient_role' | 'pending_deletion'
       /**
        * Denials since the last event for this account that were counted and not emitted, because
        * the account exceeded `workspaces.accessDeniedEvents.max` inside a window. Zero when none.

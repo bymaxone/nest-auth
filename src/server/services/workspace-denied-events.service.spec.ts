@@ -127,9 +127,9 @@ describe('WorkspaceDeniedEventsService', () => {
       userId: 'u1',
       surface: 'http',
       code: AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND,
+      reason: 'not_member',
       suppressedCount: 0
     })
-    expect(emit.mock.calls[0]?.[0]).not.toHaveProperty('reason')
     expect(emit.mock.calls[0]?.[1]).toMatchObject({ userId: 'u1', tenantId: 't1' })
   })
 
@@ -145,16 +145,16 @@ describe('WorkspaceDeniedEventsService', () => {
   })
 
   it.each([
-    AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND,
-    AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION,
-    AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE
-  ])('emits the %s refusal under its own code', async (code) => {
+    [AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND, 'not_member'],
+    [AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION, 'pending_deletion'],
+    [AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE, 'insufficient_role']
+  ])('emits the %s refusal under its own code and the reason %s', async (code, reason) => {
     const { service, emit } = build()
 
     expect(() => service.admit(REF, refuse(code))).toThrow(AuthException)
     await settle()
 
-    expect(emit.mock.calls[0]?.[0]).toMatchObject({ code })
+    expect(emit.mock.calls[0]?.[0]).toMatchObject({ code, reason })
   })
 
   it('does not emit for an error that is not a refusal of access', async () => {
