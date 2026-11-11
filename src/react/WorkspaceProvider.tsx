@@ -6,7 +6,7 @@
  * makes no workspace request, and a bundler drops all of it from that host's build.
  */
 
-import React, { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import React, { useContext, useEffect, useMemo, useRef, type ReactNode } from 'react'
 
 import { AuthContext } from './context'
 import {
@@ -50,27 +50,27 @@ export function WorkspaceProvider({
       'WorkspaceProvider must be rendered within an <AuthProvider> — it follows the session the provider owns.'
     )
   }
-  const [chosen, setChosen] = useState<string | null>(null)
   const optionsRef = useRef(options)
   useEffect(() => {
     optionsRef.current = options
   })
   const identity = ctx.user === null ? null : JSON.stringify([ctx.user.tenantId, ctx.user.id])
-  const { loaded, setLoaded, clientRef, refresh } = useWorkspaceList(client, ctx.status, identity)
-  const activeId = options.activeWorkspaceId ?? chosen ?? loaded.lastActiveWorkspaceId
+  const { loaded, setLoaded, clientRef, identityRef, refresh } = useWorkspaceList(
+    client,
+    ctx.status,
+    identity
+  )
+  const activeId = options.activeWorkspaceId ?? loaded.chosen ?? loaded.lastActiveWorkspaceId
   const activeWorkspace = useMemo(
     () => loaded.items.find((item) => item.workspace.id === activeId) ?? null,
     [loaded.items, activeId]
   )
-  useEffect(() => {
-    setChosen(null)
-  }, [identity])
   useChangeNotice(loaded.status, activeWorkspace, optionsRef)
   const channelRef = useWorkspaceChannel(refresh)
   const hasWorkspaceRole = useRoleHint(activeWorkspace, loaded.items, optionsRef)
   const handleWorkspaceError = useRefusalHandler(activeId, optionsRef, refresh)
 
-  const switchWorkspace = useSwitch(clientRef, setChosen, setLoaded, channelRef)
+  const switchWorkspace = useSwitch(clientRef, identityRef, setLoaded, channelRef)
 
   const value = useMemo<WorkspacesContextValue>(
     () => ({

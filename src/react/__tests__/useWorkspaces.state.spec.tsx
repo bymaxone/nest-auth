@@ -318,6 +318,82 @@ describe('WorkspaceProvider state', () => {
       expect(result.current.workspaces.activeWorkspace).toEqual(W2)
     })
 
+    // The reset runs in an effect, so the render in which the account changes must already read as
+    // empty: no render may pair one account's workspaces with another account.
+    it("never renders the first account's workspaces under the second account", async () => {
+      const client = signedIn()
+      client.logout.mockResolvedValue(undefined)
+      const renders: Array<{ user: string | undefined; ids: string[]; active: string | null }> = []
+      const wrapper = ({ children }: { children: ReactNode }): ReactNode => (
+        <AuthProvider client={client}>
+          <WorkspaceProvider client={client}>{children}</WorkspaceProvider>
+        </AuthProvider>
+      )
+      const { result } = renderHook(
+        () => {
+          const value = { workspaces: useWorkspaces(), session: useSession() }
+          renders.push({
+            user: value.session.user?.id,
+            ids: value.workspaces.memberships.map((m) => m.workspace.id),
+            active: value.workspaces.activeWorkspace?.workspace.id ?? null
+          })
+          return value
+        },
+        { wrapper }
+      )
+      await settle()
+      client.getMe.mockResolvedValue({ ...MOCK_USER, id: 'bob' })
+      client.listWorkspaces.mockResolvedValue({
+        items: [W2],
+        nextCursor: null,
+        lastActiveWorkspaceId: 'w2'
+      })
+
+      await act(async () => {
+        await result.current.session.refresh()
+      })
+      await settle()
+
+      const underBob = renders.filter((render) => render.user === 'bob')
+      expect(underBob.length).toBeGreaterThan(0)
+      expect(underBob.flatMap((render) => render.ids).filter((id) => id === 'w1')).toEqual([])
+      expect(underBob[0]?.ids).toEqual([])
+      expect(underBob[0]?.active).toBeNull()
+    })
+
+    it('ignores a switch that resolves after the account changed', async () => {
+      const client = signedIn()
+      const { result } = mountAuth(client)
+      await settle()
+      let finishSwitch: () => void = () => undefined
+      client.switchWorkspace.mockImplementationOnce(
+        () => new Promise((resolve) => (finishSwitch = () => resolve(undefined)))
+      )
+      let switching: Promise<void> = Promise.resolve()
+      await act(async () => {
+        switching = result.current.workspaces.switchWorkspace('w1')
+        await Promise.resolve()
+      })
+      client.getMe.mockResolvedValue({ ...MOCK_USER, id: 'bob' })
+      client.listWorkspaces.mockResolvedValue({
+        items: [W2],
+        nextCursor: null,
+        lastActiveWorkspaceId: 'w2'
+      })
+      await act(async () => {
+        await result.current.session.refresh()
+      })
+      await settle()
+
+      await act(async () => {
+        finishSwitch()
+        await switching
+      })
+
+      expect(result.current.workspaces.lastActiveWorkspaceId).toBe('w2')
+      expect(result.current.workspaces.activeWorkspace).toEqual(W2)
+    })
+
     it('does not reload for the same account revalidating', async () => {
       const client = signedIn()
       const { result } = mountAuth(client)
