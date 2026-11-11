@@ -31,6 +31,21 @@ function optionsFor(tokenDelivery: ResolvedOptions['tokenDelivery']): ResolvedOp
   } as unknown as ResolvedOptions
 }
 
+/** Every `description` and `summary` string under `value`, keyed by where it sits, in key order. */
+function proseOf(value: unknown, path = ''): Record<string, string> {
+  if (typeof value !== 'object' || value === null) return {}
+  const found: Record<string, string> = {}
+  for (const [key, child] of Object.entries(value)) {
+    const here = path === '' ? key : `${path}.${key}`
+    if ((key === 'description' || key === 'summary') && typeof child === 'string') {
+      found[here] = child
+    } else {
+      Object.assign(found, proseOf(child, here))
+    }
+  }
+  return found
+}
+
 describe('the prose the fragment contributes', () => {
   // The map is deliberate, not a habit: a description restating what `security` already says is
   // noise in a rendered document, and nest-core drops a contributed one only where the consumer
@@ -97,22 +112,19 @@ describe('the prose the fragment contributes', () => {
     )
   })
 
-  // Scenario: the two invitation operations. Expected: invite says its answer does not depend on
-  // whether the address has an account, and preview says every unusable token gets the same error.
-  // Why: neither fits in a security requirement.
-  it('says what the invite answer and the preview refusal do not reveal', () => {
-    const operations = buildAuthOpenApiFragment(optionsFor('bearer'), EVERYTHING).operations
+  // Scenario: every `description` and `summary` the fragment publishes, for each token delivery.
+  // Expected: the text equals the committed snapshot, string for string. Why: a string nobody
+  // asserts can be emptied or reworded with every test passing, and one assertion per string is
+  // how the two invitation descriptions went unpinned; review the snapshot diff when the prose
+  // changes on purpose.
+  it('publishes the prose recorded in the snapshot, for every token delivery', () => {
+    const published = Object.fromEntries(
+      (['cookie', 'bearer', 'both'] as const).map((delivery) => [
+        delivery,
+        proseOf(buildAuthOpenApiFragment(optionsFor(delivery), EVERYTHING))
+      ])
+    )
 
-    expect(operations['WorkspaceInvitationController.invite']?.['description']).toBe(
-      'Invites an address to the workspace, or resends to one already invited. The answer is 204 ' +
-        'whether or not the address has an account. An address that already belongs to the ' +
-        'workspace is refused with 409, and a non-owner may invite only to a role strictly below ' +
-        'their own.'
-    )
-    expect(operations['WorkspaceInvitationController.preview']?.['description']).toBe(
-      'Tells a token holder what the token is for, without signing in. A token that never ' +
-        'existed, expired, was used, or names a workspace that is gone is answered with the same ' +
-        'error.'
-    )
+    expect(published).toMatchSnapshot()
   })
 })
