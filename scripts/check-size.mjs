@@ -175,8 +175,12 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // BUDGETS IN FORCE. The `SURFACES` lines are the budget that counts: `client auth surface`
 // (createAuthClient) and `react auth surface` (AuthProvider, useSession) carry 4.25 and 2.5 KiB, and a
 // feature a frontend can leave unimported gets a line of its own when it lands instead of being added
-// to these. The `BUDGETS` lines are calibrated to the measured size plus about 5%. The per-subpath
-// notes above are point-in-time calibration records; the two arrays below hold the budgets.
+// to these. The `BUDGETS` lines are calibrated to the measured size plus about 4 to 5%: the client,
+// react and nextjs entries measure 4.41, 3.17 and 9.11 KiB against 4.6, 3.3 and 9.5, because each
+// entry file holds the whole workspace surface (the workspace client, the provider and its hooks, the
+// access reader and the landing hint), which a frontend that imports none of it never ships. The
+// per-subpath notes above are point-in-time calibration records; the two arrays below hold the
+// budgets.
 //
 // WHY THE SURFACES CAN BE TRUSTED. A consumer's bundler can only drop what it can prove unused, and a
 // top-level `__name(...)` call, which `keepNames` adds after every function, cannot be proven unused.
