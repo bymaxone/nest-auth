@@ -1518,10 +1518,10 @@ Opt-in (`workspaces.enabled: true`). Two ports, provided in `extraProviders` und
 boot with `controllers.workspaces` and without them. Both are declared in
 `src/server/interfaces/` and every call carries the tenant and the workspace.
 
-| Port                    | Methods                                                                                                                         |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `IWorkspaceRepository`  | `createWithOwner`, `findById`, `rename`, `updateStatus`                                                                         |
-| `IMembershipRepository` | `find`, `listForUser`, `listForWorkspace`, `create`, `changeRole`, `remove`, `transferOwnership`, `countOwned`, `listSoleOwned` |
+| Port                    | Methods                                                                                                                                             |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IWorkspaceRepository`  | `createWithOwner`, `findById`, `rename`, `updateStatus`                                                                                             |
+| `IMembershipRepository` | `find`, `listForUser`, `listForWorkspace`, `create`, `changeRole`, `remove`, `removeAllForUser`, `transferOwnership`, `countOwned`, `listSoleOwned` |
 
 A workspace has the status `active`, `pending_deletion`, `suspended` or `deleted`. The writes that
 must not race answer a guarded result (`MemberChangeResult` adds `actor_changed`;
@@ -4381,6 +4381,19 @@ a role, is stored as a digest of its token, and is accepted either by the signed
 addressed to or by creating that account. Acceptance takes effect at the membership write and the
 token is spent after it. Inviting, resending and revoking answer `204` whatever the address, so they do not reveal whether
 an address has an account.
+
+### 22.3a Deleting an account
+
+The library does not delete users. A host removes an account's memberships before it deletes or
+anonymises the user row, with `MembershipService.removeAllForUser`, which calls the membership
+port's `removeAllForUser` (every membership status, every workspace status, one transaction, one
+`member.removed` audit row per removal). It refuses with `409 auth.last_owner` and
+`details.workspaces` while the account is the only owner of an active or suspended workspace. A
+workspace pending deletion does not block, because no one can finalize it early; the owner's
+membership there is removed, the workspace can no longer be restored, and it is deleted when its
+grace period ends. A cache bump that fails after the commit throws `MembershipBumpFailedError`
+carrying the removed and the failed memberships. The rules and vectors are in the
+`workspaceAccountRemoval` section of `conformance/wire-contract.json`.
 
 ### 22.4 Invitation by OAuth, and MFA
 

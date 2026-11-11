@@ -68,6 +68,7 @@ export function build(withLastActive = true): Harness {
     changeRole: jest.fn().mockResolvedValue('ok'),
     remove: jest.fn().mockResolvedValue('ok'),
     transferOwnership: jest.fn().mockResolvedValue('ok'),
+    removeAllForUser: jest.fn().mockResolvedValue({ result: 'ok', removed: [] }),
     ...(withLastActive ? { getLastActiveWorkspaceId: jest.fn().mockResolvedValue('w9') } : {})
   }
   const access = { invalidateMembership: jest.fn().mockResolvedValue(undefined) }

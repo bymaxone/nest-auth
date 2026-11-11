@@ -21,7 +21,8 @@ import type {
   IMembershipRepository,
   MemberChangeResult,
   MembershipPage,
-  MembershipWithWorkspace
+  MembershipWithWorkspace,
+  RemovedMembership
 } from '../interfaces/membership-repository.interface'
 import type { WorkspaceAuditEvent } from '../interfaces/workspace-audit.interface'
 import type { AuthWorkspace, WorkspaceRef } from '../interfaces/workspace-repository.interface'
@@ -50,6 +51,28 @@ export interface MyWorkspaces extends MembershipPage<MembershipWithWorkspace> {
 function pageSize(limit: number | undefined): number {
   if (limit === undefined || !Number.isInteger(limit)) return DEFAULT_PAGE_SIZE
   return Math.min(Math.max(limit, 1), MAX_PAGE_SIZE)
+}
+
+/**
+ * Thrown by {@link MembershipService.removeAllForUser} when the memberships were removed but the
+ * cached access of some of them could not be dropped. The removal is committed, so calling it again
+ * finds nothing to remove: the host re-runs `WorkspaceAccessService.invalidateMembership` for each
+ * entry of {@link MembershipBumpFailedError.failed}, or waits out `membershipCacheTtlSeconds`.
+ */
+export class MembershipBumpFailedError extends Error {
+  /**
+   * @param removed - Every membership the removal deleted.
+   * @param failed - The ones whose cached access could not be dropped.
+   * @param cause - The first error a bump failed with.
+   */
+  constructor(
+    readonly removed: readonly RemovedMembership[],
+    readonly failed: readonly RemovedMembership[],
+    override readonly cause: unknown
+  ) {
+    super('The memberships were removed but their cached access could not be dropped.')
+    this.name = 'MembershipBumpFailedError'
+  }
 }
 
 /**
@@ -157,6 +180,76 @@ export class MembershipService {
       ...(page.cursor === undefined ? {} : { cursor: page.cursor }),
       limit: pageSize(page.limit)
     })
+  }
+
+  /**
+   * Removes every membership of an account that is about to be deleted or anonymised: in every
+   * membership status and every workspace, with one `member.removed` event per removal and the
+   * cached access of each dropped.
+   *
+   * Refuses while the account is the only owner of an active or suspended workspace, so the host can
+   * transfer ownership or schedule deletion first. A workspace pending deletion does not block:
+   * no one can finalize it early, so the owner's membership there is removed too, the workspace can
+   * no longer be restored, and the host's finalize job deletes it when its grace period ends.
+   *
+   * @param tenantId - The account's tenant.
+   * @param userId - The account.
+   * @param actorUserId - Who authorizes the deletion: the account, an administrator, or `null` for a
+   *   job. No workspace role does, so none is checked.
+   * @param context - Request metadata for the hook.
+   * @returns The memberships removed.
+   * @throws {AuthException} `auth.last_owner`, with `details.workspaces`, while a workspace would be
+   *   left without an owner; nothing is removed.
+   * @throws {MembershipBumpFailedError} When the removal committed but a cache bump failed.
+   */
+  async removeAllForUser(
+    tenantId: string,
+    userId: string,
+    actorUserId: string | null,
+    context: HookContext
+  ): Promise<RemovedMembership[]> {
+    const blocking = await this.soleOwnedBlocking(tenantId, userId)
+    if (blocking.length > 0)
+      throw new AuthException(AUTH_ERROR_CODES.LAST_OWNER, { workspaces: blocking })
+    const at = now()
+    const outcome = await this.memberships.removeAllForUser({
+      tenantId,
+      userId,
+      ownerRole: this.group.roles.ownerRole,
+      audit: { type: 'member.removed', tenantId, actorUserId, userId, at }
+    })
+    if (outcome.result === 'last_owner') {
+      throw new AuthException(AUTH_ERROR_CODES.LAST_OWNER, {
+        workspaces: outcome.workspaceIds.map((id) => ({ id }))
+      })
+    }
+    const failed: RemovedMembership[] = []
+    let cause: unknown
+    for (const removed of outcome.removed) {
+      this.events.emit(
+        {
+          type: 'member.removed',
+          tenantId,
+          workspaceId: removed.workspaceId,
+          actorUserId,
+          userId,
+          at
+        },
+        context
+      )
+      try {
+        await this.access.invalidateMembership({
+          tenantId,
+          workspaceId: removed.workspaceId,
+          userId
+        })
+      } catch (error) {
+        if (failed.length === 0) cause = error
+        failed.push(removed)
+      }
+    }
+    if (failed.length > 0) throw new MembershipBumpFailedError(outcome.removed, failed, cause)
+    return outcome.removed
   }
 
   /**
@@ -426,6 +519,33 @@ export class MembershipService {
       actorRole === ownerRole ||
       (actorRole !== otherRole && hasRole(actorRole, otherRole, hierarchy))
     )
+  }
+
+  /**
+   * The workspaces that stop an account deletion: those the account alone owns, except the ones
+   * pending deletion or deleted. Stops reading pages once a full page of them is known.
+   */
+  private async soleOwnedBlocking(
+    tenantId: string,
+    userId: string
+  ): Promise<Array<{ id: string; name: string; status: AuthWorkspace['status'] }>> {
+    const blocking: Array<{ id: string; name: string; status: AuthWorkspace['status'] }> = []
+    let cursor: string | undefined
+    do {
+      const page = await this.memberships.listSoleOwned({
+        tenantId,
+        userId,
+        ownerRole: this.group.roles.ownerRole,
+        ...(cursor === undefined ? {} : { cursor }),
+        limit: MAX_PAGE_SIZE
+      })
+      for (const workspace of page.items) {
+        if (workspace.status === 'pending_deletion' || workspace.status === 'deleted') continue
+        blocking.push({ id: workspace.id, name: workspace.name, status: workspace.status })
+      }
+      cursor = page.nextCursor ?? undefined
+    } while (cursor !== undefined && blocking.length < MAX_PAGE_SIZE)
+    return blocking.slice(0, MAX_PAGE_SIZE)
   }
 
   private async removeWith(

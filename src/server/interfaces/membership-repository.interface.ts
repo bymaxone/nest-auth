@@ -182,6 +182,47 @@ export type MemberChangeResult = GuardedWriteResult | 'actor_changed'
 export type TransferOwnershipResult = GuardedWriteResult | 'target_not_member'
 
 /**
+ * The event persisted for each membership {@link IMembershipRepository.removeAllForUser} deletes.
+ * The repository stores one `member.removed` event per removed membership, naming that
+ * membership's workspace, and nothing else is added to it.
+ */
+export interface AccountRemovalAudit {
+  type: 'member.removed'
+  /** The tenant of the account. */
+  tenantId: string
+  /** Who authorized the removal: the member themselves, an administrator, or `null` for a job. */
+  actorUserId: string | null
+  /** The account whose memberships are removed. */
+  userId: string
+  /** When the removal was decided, as an ISO-8601 string. */
+  at: string
+}
+
+/** Input to {@link IMembershipRepository.removeAllForUser}. */
+export interface RemoveAllMembershipsParams {
+  /** The tenant of the account. */
+  tenantId: string
+  /** The account whose memberships are removed. */
+  userId: string
+  /** The role that owns a workspace, so the last-owner rule can be decided with the write. */
+  ownerRole: string
+  /** The event to persist for each membership removed. */
+  audit: AccountRemovalAudit
+}
+
+/** One membership an account removal deleted. */
+export interface RemovedMembership {
+  /** The workspace the membership was in. */
+  workspaceId: string
+  /** The role the account held there. */
+  role: string
+}
+
+/** Outcome of {@link IMembershipRepository.removeAllForUser}. */
+export type RemoveAllMembershipsResult =
+  { result: 'ok'; removed: RemovedMembership[] } | { result: 'last_owner'; workspaceIds: string[] }
+
+/**
  * The membership port a host implements.
  *
  * Every method carries the full key of what it names, and every mutating one receives the audit
@@ -289,6 +330,25 @@ export interface IMembershipRepository {
    * @param params - The membership key, the roles judged, owner role and audit event.
    */
   remove(params: RemoveMembershipParams): Promise<MemberChangeResult>
+
+  /**
+   * Removes every membership of an account, in every membership status and in every workspace
+   * status, persisting one `audit` event per removed membership in the same transaction.
+   *
+   * For the host that is about to delete or anonymise a user. `listForUser` shows only active
+   * memberships of active workspaces, so only the repository can find the rest.
+   *
+   * The last-owner rule is decided inside the transaction: when the account is the only active
+   * `ownerRole` holder of a workspace that is not `pending_deletion` or `deleted`, nothing is
+   * removed, no audit row is written and the answer names those workspaces. A workspace pending
+   * deletion does not block: no one can finalize it early, and its owner must not wait out the
+   * grace period to delete their account. Removing the owner's membership there means the
+   * workspace can no longer be restored, and it is deleted when its grace period ends.
+   *
+   * @param params - The tenant, the account, the owner role and the event template.
+   * @returns The removed memberships, or `'last_owner'` with the ids of the workspaces that block.
+   */
+  removeAllForUser(params: RemoveAllMembershipsParams): Promise<RemoveAllMembershipsResult>
 
   /**
    * Hands ownership from one member to another in one transaction, persisting `audit` with it.

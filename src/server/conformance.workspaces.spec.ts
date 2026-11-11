@@ -68,8 +68,8 @@ const WORKSPACE_CODES = [
 ] as const
 
 describe('workspace membership cache conformance', () => {
-  it('is declared by a contract at version 3', () => {
-    expect(contract.version).toBe(3)
+  it('is declared by a contract at version 4', () => {
+    expect(contract.version).toBe(4)
   })
 
   it('pins the derived HMAC key the vectors are computed with', () => {

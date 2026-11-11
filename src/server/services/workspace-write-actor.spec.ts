@@ -194,6 +194,11 @@ const MEMBERSHIP_METHODS: Record<string, Entry> = {
     kind: 'exempt',
     reason: 'a member leaving acts on their own membership; no role authorized it'
   },
+  removeAllForUser: {
+    kind: 'exempt',
+    reason:
+      'the host deletes the account, which no role in any one workspace authorizes; the guard is the last-owner rule, which the repository decides with the write'
+  },
   transferOwnership: {
     kind: 'giver',
     run: (s) => s.membership.transferOwnership(WORKSPACE_REF, ACTOR, 'u2', null, CONTEXT)
@@ -262,7 +267,7 @@ describe('the acting member on every write the workspace services make', () => {
       (entry) => entry.kind === 'exempt'
     )
 
-    expect(exempt.length).toBe(7)
+    expect(exempt.length).toBe(8)
     for (const entry of exempt) {
       expect(entry.kind === 'exempt' && entry.reason.length > 20).toBe(true)
     }
