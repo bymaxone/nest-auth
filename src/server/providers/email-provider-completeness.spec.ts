@@ -63,8 +63,7 @@ export function optionalMethods(source: string): string[] {
 
 describe('the bundled email provider', () => {
   const implemented = (name: string): boolean =>
-    typeof (DefaultAuthEmailProvider.prototype as unknown as Record<string, unknown>)[name] ===
-    'function'
+    typeof Reflect.get(DefaultAuthEmailProvider.prototype, name) === 'function'
 
   describe('reads what to check from the sources', () => {
     it('finds the method a boot-time guard demands', () => {

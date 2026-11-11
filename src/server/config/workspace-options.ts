@@ -258,7 +258,10 @@ export function resolveRegistration(userOptions: BymaxAuthModuleOptions): Regist
  *   invitation path mounted.
  */
 export function assertInvitationControllers(
-  resolved: ResolvedOptions,
+  resolved: Pick<ResolvedOptions, 'registration'> & {
+    workspaces?: object | undefined
+    invitations: { enabled: boolean }
+  },
   workspaceController: boolean,
   tenantController: boolean
 ): void {
@@ -275,7 +278,7 @@ export function assertInvitationControllers(
     ['controllers.workspaceInvitations', workspaceController]
   ])
   const tenantPath = missingPieces([
-    ['invitations.enabled', resolved.invitations.enabled === true],
+    ['invitations.enabled', resolved.invitations.enabled],
     ['controllers.invitations', tenantController]
   ])
   if (workspacePath.length > 0 && tenantPath.length > 0) {

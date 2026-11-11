@@ -6,19 +6,18 @@
  * @layer Test
  */
 
-import type { ResolvedOptions } from './resolved-options'
 import { assertInvitationControllers } from './workspace-options'
 
 /** The resolved options that matter here: the mode and which features resolved. */
 function resolved(
   registration: 'open' | 'invitation-only',
   features: { workspaces?: boolean; invitations?: boolean }
-): ResolvedOptions {
+) {
   return {
     registration,
-    ...(features.workspaces === true ? { workspaces: { enabled: true } } : {}),
+    workspaces: features.workspaces === true ? {} : undefined,
     invitations: { enabled: features.invitations === true }
-  } as unknown as ResolvedOptions
+  }
 }
 
 describe('assertInvitationControllers', () => {
