@@ -437,7 +437,8 @@ export class WorkspaceInvitationService {
         role: record.role,
         inviteToken: token,
         expiresAt: new Date(Date.parse(record.createdAt) + ttl * 1_000),
-        accountExists
+        accountExists,
+        kind: record.kind
       })
     } catch (err: unknown) {
       throw new Error(describeChannelStatus(err))

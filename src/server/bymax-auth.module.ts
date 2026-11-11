@@ -25,7 +25,7 @@ import {
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from './bymax-auth.constants'
 import { resolveOptions, type ResolvedOptions } from './config/resolved-options'
-import { assertWorkspaceProviders } from './config/workspace-options'
+import { assertInvitationControllers, assertWorkspaceProviders } from './config/workspace-options'
 import { AuthController } from './controllers/auth.controller'
 import { EmailChangeController } from './controllers/email-change.controller'
 import { InvitationController } from './controllers/invitation.controller'
@@ -447,12 +447,7 @@ export class BymaxAuthModule {
           )
         }
 
-        if (includeWorkspaceInvitations && resolved.workspaces === undefined) {
-          throw new Error(
-            '[BymaxAuthModule] controllers.workspaceInvitations: true requires ' +
-              'workspaces.enabled: true and both workspace repository providers in extraProviders.'
-          )
-        }
+        assertInvitationControllers(resolved, includeWorkspaceInvitations, includeInvitations)
 
         // Auditing every request was demanded: refuse a module that is plainly unable to write it.
         // The guard denies at runtime too, which also covers what is not inspectable here.

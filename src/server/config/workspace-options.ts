@@ -5,6 +5,7 @@
  * @layer Config
  */
 
+import type { ResolvedOptions } from './resolved-options'
 import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 import type {
@@ -239,6 +240,64 @@ export function resolveRegistration(userOptions: BymaxAuthModuleOptions): Regist
     )
   }
   return mode
+}
+
+/**
+ * Checks the invitation controllers against the workspace layer and the registration mode.
+ *
+ * The workspace invitation controller needs the workspace layer. And `registration:
+ * 'invitation-only'` needs an invitation controller mounted to accept an invitation, the workspace
+ * one with `workspaces.enabled` or the tenant one with `invitations.enabled`: OAuth acceptance
+ * rides on the workspace one, so it is no way in on its own. With neither, no account could ever
+ * be created, and the error names what each path lacks.
+ *
+ * @param resolved - The resolved options.
+ * @param workspaceController - `controllers.workspaceInvitations`.
+ * @param tenantController - `controllers.invitations`.
+ * @throws {Error} For the workspace controller without the layer, or `'invitation-only'` with no
+ *   invitation path mounted.
+ */
+export function assertInvitationControllers(
+  resolved: Pick<ResolvedOptions, 'registration'> & {
+    workspaces?: object | undefined
+    invitations: { enabled: boolean }
+  },
+  workspaceController: boolean,
+  tenantController: boolean
+): void {
+  const workspacesEnabled = resolved.workspaces !== undefined
+  if (workspaceController && !workspacesEnabled) {
+    throw new Error(
+      '[BymaxAuthModule] controllers.workspaceInvitations: true requires ' +
+        'workspaces.enabled: true and both workspace repository providers in extraProviders.'
+    )
+  }
+  if (resolved.registration !== 'invitation-only') return
+  const workspacePath = missingPieces([
+    ['workspaces.enabled', workspacesEnabled],
+    ['controllers.workspaceInvitations', workspaceController]
+  ])
+  const tenantPath = missingPieces([
+    ['invitations.enabled', resolved.invitations.enabled],
+    ['controllers.invitations', tenantController]
+  ])
+  if (workspacePath.length > 0 && tenantPath.length > 0) {
+    throw new Error(
+      `[BymaxAuthModule] registration: 'invitation-only' leaves no way to create an account. ` +
+        `Enable one invitation path: workspaces (missing: ${workspacePath.join(', ')}) or ` +
+        `tenant invitations (missing: ${tenantPath.join(', ')}).`
+    )
+  }
+}
+
+/**
+ * Names the pieces of an invitation path that are not on.
+ *
+ * @param pieces - Each piece's option name and whether it is on.
+ * @returns The names of the ones that are off, in order.
+ */
+function missingPieces(pieces: ReadonlyArray<readonly [string, boolean]>): string[] {
+  return pieces.filter(([, on]) => !on).map(([name]) => name)
 }
 
 /**

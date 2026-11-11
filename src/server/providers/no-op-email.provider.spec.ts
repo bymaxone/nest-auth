@@ -194,7 +194,8 @@ describe('NoOpEmailProvider', () => {
       role: 'editor',
       inviteToken: 'a'.repeat(64),
       expiresAt: new Date('2026-05-01T00:00:00Z'),
-      accountExists: false
+      accountExists: false,
+      kind: 'member' as const
     }
 
     // Verifies that the default provider accepts the message and resolves.

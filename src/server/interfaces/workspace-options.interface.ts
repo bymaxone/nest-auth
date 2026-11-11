@@ -17,8 +17,9 @@ import type { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
  *   address. `POST /auth/register` and the OAuth `create` action answer `403
  *   auth.registration_closed`, the invitation accept routes stay open, and an OAuth flow started
  *   with a workspace invitation may create the account it was addressed to. Existing accounts
- *   keep signing in. Startup refuses the mode when workspaces and tenant invitations are both
- *   disabled, since no account could ever be created.
+ *   keep signing in. Startup refuses the mode unless an invitation controller is mounted
+ *   (`controllers.workspaceInvitations` with `workspaces.enabled`, or `controllers.invitations`
+ *   with `invitations.enabled`), since otherwise no account could ever be created.
  */
 export type RegistrationMode = 'open' | 'invitation-only'
 

@@ -67,6 +67,12 @@ export interface WorkspaceInviteData {
   expiresAt: Date
   /** Whether an account already exists for the address: sign-in wording versus sign-up wording. */
   accountExists: boolean
+  /**
+   * `'member'` joins a workspace that exists; `'bootstrap'` is a platform invitation to own a
+   * workspace that is created when the invitee accepts, so `workspaceName` names one that does not
+   * exist yet and `inviterName` is a display name the platform chose, which may be empty.
+   */
+  kind: 'member' | 'bootstrap'
 }
 
 /**

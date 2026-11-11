@@ -54,7 +54,8 @@ describe('WorkspaceInvitationService', () => {
           role: 'owner',
           inviteToken: expect.stringMatching(/^[0-9a-f]{64}$/),
           expiresAt: new Date(NOW + 604_800_000),
-          accountExists: false
+          accountExists: false,
+          kind: 'bootstrap'
         }
       })
       expect(h.events.emit).toHaveBeenCalledWith(
