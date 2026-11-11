@@ -30,6 +30,7 @@
 19. [Implementation Phases](#19-implementation-phases)
 20. [Known Limitations](#20-known-limitations)
 21. [Frontend Integration](#21-frontend-integration)
+22. [Workspaces](#22-workspaces)
 
 ---
 
@@ -1509,6 +1510,23 @@ export interface IEmailProvider {
 **Important note:** The `IEmailProvider` is **abstract and template-agnostic**. It defines **what** to send, not **how** to render it. The host application decides the template, the email service (Resend, SendGrid, SES, etc.), and the layout. This allows complete freedom in presentation.
 
 > **Internationalization:** All methods accept an optional `locale` parameter (e.g., `'pt-BR'`, `'en'`, `'es'`). The package passes the user's locale (when available in `AuthUser`) so that the host application renders templates in the correct language.
+
+### 5.6 Workspace repository contracts
+
+Opt-in (`workspaces.enabled: true`). Two ports, provided in `extraProviders` under
+`BYMAX_AUTH_WORKSPACE_REPOSITORY` and `BYMAX_AUTH_MEMBERSHIP_REPOSITORY`; the module refuses to
+boot with `controllers.workspaces` and without them. Both are declared in
+`src/server/interfaces/` and every call carries the tenant and the workspace.
+
+| Port                    | Methods                                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `IWorkspaceRepository`  | `createWithOwner`, `findById`, `rename`, `updateStatus`                                                                         |
+| `IMembershipRepository` | `find`, `listForUser`, `listForWorkspace`, `create`, `changeRole`, `remove`, `transferOwnership`, `countOwned`, `listSoleOwned` |
+
+A workspace has the status `active`, `pending_deletion`, `suspended` or `deleted`. The writes that
+must not race answer a guarded result (`MemberChangeResult` adds `actor_changed`;
+`TransferOwnershipResult` adds `target_not_member`), so the implementation decides the last-owner
+rule inside one transaction and the service never has to read then write.
 
 ---
 
@@ -3536,10 +3554,12 @@ deployment that needs it.
 
 ### 20.4 Multi-tenancy
 
-| Limitation               | Impact                                                                  | Alternative                                                      |
-| ------------------------ | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| **Single-tenant JWT**    | A user who belongs to multiple tenants needs separate sessions          | The host application manages tenant switching                    |
-| **No tenant resolution** | The package does not resolve the tenant from subdomain, header, or body | The host application must resolve the tenant before calling auth |
+| Limitation                        | Impact                                                                        | Alternative                                                                                          |
+| --------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **Single-tenant JWT**             | A user who belongs to multiple tenants needs separate sessions                | Tenant switching stays with the host; many workspaces inside one tenant need no second session (§22) |
+| **No tenant resolution**          | The package does not resolve the tenant from subdomain, header, or body       | The host application must resolve the tenant before calling auth                                     |
+| **No workspace in the token**     | The access-token claims carry no workspace, so a role is resolved per request | Read it through `WorkspaceGuard`; cached for `membershipCacheTtlSeconds`                             |
+| **MFA and workspace invitations** | An OAuth sign-in with a second factor does not complete the invitation        | The signed-in caller accepts it with the same token (§22.4)                                          |
 
 ### 20.5 Missing features
 
@@ -4322,6 +4342,70 @@ Browser (SPA)              Next.js Route Handler       Backend (NestJS)
 **The 500ms delay on the redirect:** After a refresh fails, the client schedules a redirect to login with `setTimeout(500ms)` instead of navigating immediately. This resolves a race condition: if the proxy (server-side) renewed the session via a 302 redirect, the browser navigates to the destination, destroying the JS context and canceling the timeout — the redirect to login **never happens**. Without the delay, `window.location.href = '/auth/login'` would execute before the proxy's 302 completes.
 
 Peer dependencies: `next ^16`, `react ^19`
+
+---
+
+## 22. Workspaces
+
+An opt-in layer on top of the tenant: one identity holds a role in each of many workspaces.
+The identity, its sessions and its tokens are unchanged, and the access-token claims carry no
+workspace. A workspace role is resolved on each request for the workspace the request names, so a
+switch records the caller's last active workspace and changes no token.
+
+### 22.1 Configuration and registration
+
+`workspaces: WorkspaceOptions` (see the README for every option and default), `registration:
+'open' | 'invitation-only'`, `controllers.workspaces` and `controllers.workspaceInvitations`.
+Nothing is registered unless `workspaces.enabled` is `true` and both repositories are provided;
+invitations also need an email provider that implements `sendWorkspaceInvitation`.
+
+### 22.2 The access decision
+
+One decision (`assertWorkspaceAccess`) is shared by `WorkspaceGuard` (HTTP), `WsWorkspaceGuard`
+(sockets), `AuthTokenVerifierService.verifyAccessToken` with a `workspace` check (streams) and
+`WorkspaceAccessService.assertStillAuthorized` (jobs), so a route and a stream cannot disagree about
+a member. It reads the workspace from the route (or the host's resolver, never the body), takes the
+tenant from the verified token, resolves the membership, and checks the role through
+`workspaces.roles.hierarchy`. A missing workspace, an inactive one and a non-member all answer `404
+auth.workspace_not_found`; the owner of a workspace pending deletion gets `409
+auth.workspace_pending_deletion` unless the route allows it; a role below the route's answers `403
+auth.insufficient_workspace_role`. A route that declares no roles answers `403 auth.forbidden`.
+Denials reach `onWorkspaceEvent` as `access.denied`, bounded per account by
+`workspaces.accessDeniedEvents`; the bound never affects the decision.
+
+### 22.3 Memberships and invitations
+
+Roles on the member operations follow the ceiling rule: a non-owner acts strictly below their own
+role, the owner at any role. A suspended member is still a member. An invitation names an address and
+a role, is stored as a digest of its token, and is accepted either by the signed-in account it was
+addressed to or by creating that account. Acceptance takes effect at the membership write and the
+token is spent after it. Inviting, resending and revoking answer `204` whatever the address, so they do not reveal whether
+an address has an account.
+
+### 22.4 Invitation by OAuth, and MFA
+
+An OAuth flow started with an invitation vets it against the provider's profile before the
+`onOAuthLogin` hook and completes it for the resulting account. For an account with a second factor
+the invitation is not completed or spent: the callback returns the MFA challenge, and the
+invitation is not resumed after it. The caller accepts it signed in, with the same token, through
+`POST workspaces/invitations/accept`. Binding the invitation to the MFA temp token is not part of
+this release.
+
+### 22.5 Wire contract
+
+The additions are Redis key families for the membership cache and its version counters, workspace
+invitations and their per-address index, the `access.denied` window, plus an optional field on the
+OAuth state record, new error codes and rate limits. They are listed in the conformance contract
+(`conformance/wire-contract.json`), which is the source of truth for a library that shares the Redis.
+
+### 22.6 Frontend
+
+`./shared` exports the workspace types, `AUTH_WORKSPACE_ROUTES`, `fillRoute` and `pathSegment`.
+`./client` exports `createWorkspaceClient`. `./react` exports `<WorkspaceProvider>` and
+`useWorkspaces()`; the provider stores the list, the chosen workspace and the last active one with
+the account they were read for, and reads them only for that account. `./nextjs` exports
+`createWorkspaceAccessReader` and the `lastWorkspaceCookie` option of `createAuthProxy`, and the
+proxy strips an inbound `x-workspace-id`.
 
 ---
 

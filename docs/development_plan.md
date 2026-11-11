@@ -1725,6 +1725,7 @@ Phase 1 (Foundation)
 | v1.0.0  | 2026-04-10 | Initial version of the plan — Phases 1-6 (complete server)                                                                                                                                                               |
 | v1.1.0  | 2026-04-10 | Initial version after an audit by 4 specialist agents. Security, typing and consistency fixes                                                                                                                            |
 | v1.2.0  | 2026-04-13 | Addition of Phases 7-9 (frontend subpaths: shared, client, react, nextjs). Removal of Passport/bcrypt/otpauth — native JWT guards via `@nestjs/jwt`, cryptography via `node:crypto`. Build tool changed to `tsup ^8.0.0` |
+| v1.3.0  | 2026-11-11 | Workspaces (opt-in) were built after this plan, on their own phased roadmap, and are specified in `technical_specification.md` §5.6 and §22 and in the README                                                            |
 
 ---
 
