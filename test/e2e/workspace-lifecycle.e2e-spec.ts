@@ -138,7 +138,8 @@ describe('workspace lifecycle over a real access cache', () => {
     await workspaceService.scheduleDeletion(ref, ALICE, CONTEXT)
 
     await expect(access.resolveAccess({ ...ref, userId: 'bob' })).resolves.toEqual({
-      kind: 'denied'
+      kind: 'denied',
+      pendingDeletion: true
     })
     await expect(access.resolveAccess({ ...ref, userId: 'alice' })).resolves.toMatchObject({
       kind: 'pending_deletion'
