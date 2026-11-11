@@ -4379,8 +4379,8 @@ Roles on the member operations follow the ceiling rule: a non-owner acts strictl
 role, the owner at any role. A suspended member is still a member. An invitation names an address and
 a role, is stored as a digest of its token, and is accepted either by the signed-in account it was
 addressed to or by creating that account. Acceptance takes effect at the membership write and the
-token is spent after it. Invitation responses are uniform (`204`) so they do not reveal whether an
-address has an account.
+token is spent after it. Inviting, resending and revoking answer `204` whatever the address, so they do not reveal whether
+an address has an account.
 
 ### 22.4 Invitation by OAuth, and MFA
 
@@ -4401,7 +4401,7 @@ OAuth state record, new error codes and rate limits. They are listed in the conf
 ### 22.6 Frontend
 
 `./shared` exports the workspace types, `AUTH_WORKSPACE_ROUTES`, `fillRoute` and `pathSegment`.
-`./client` exports `createWorkspaceClient` (19 calls). `./react` exports `<WorkspaceProvider>` and
+`./client` exports `createWorkspaceClient`. `./react` exports `<WorkspaceProvider>` and
 `useWorkspaces()`; the provider stores the list, the chosen workspace and the last active one with
 the account they were read for, and reads them only for that account. `./nextjs` exports
 `createWorkspaceAccessReader` and the `lastWorkspaceCookie` option of `createAuthProxy`, and the
