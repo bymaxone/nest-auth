@@ -62,9 +62,9 @@ what to do about it.
   send the token again from its accept page after sign-in. Binding the invitation to the MFA temp
   token is not part of this release.
 - **`registration: 'invitation-only'` is enforced.** It was refused at startup; it now closes
-  `POST /register` and the OAuth `create` action with `403 auth.registration_closed` unless the flow
-  carries a vetted invitation. Startup refuses the mode only when workspaces and tenant invitations are
-  both disabled.
+  `POST /register` with `403 auth.registration_closed`, and does the same to the OAuth `create` action
+  unless the flow carries a vetted invitation. Startup refuses the mode only when workspaces and tenant
+  invitations are both disabled.
 - **The frontend entries are tree-shakeable, and the workspace pieces are separate.** A bundler now
   drops what a frontend does not import from `./shared`, `./client`, `./react` and `./nextjs`
   (previously every import shipped the whole entry). Measured with a minified, tree-shaken minimal
