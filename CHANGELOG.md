@@ -40,10 +40,10 @@ note below.**
 - **Call `MembershipService.removeAllForUser(tenantId, userId, actorUserId, context)` before you
   delete or anonymise a user.** The library never deletes a user, and until now the membership rows of
   a deleted user stayed behind: they still showed in `listForWorkspace`, a deleted owner still counted,
-  and a workspace whose only owner was deleted was never seen as orphaned. The call refuses with `409
-auth.last_owner` and `details.workspaces` (`{ id, name, status }`, at most 100) while the account is
-  the only owner of an active or suspended workspace, so you can transfer ownership or schedule the
-  workspace's deletion first. A workspace pending deletion does not block, because no one can finalize
+  and a workspace whose only owner was deleted was never seen as orphaned. The call refuses with `409 auth.last_owner` and
+  `details.workspaces` (`{ id, name, status }`, at most 100; `{ id }` alone for one the repository found
+  during the write) while the account is the only owner of an active or suspended workspace, so you can
+  transfer ownership or schedule the workspace's deletion first. A workspace pending deletion does not block, because no one can finalize
   it before its grace period ends: the owner's membership there is removed, the workspace can no longer
   be restored, and your finalize job deletes it when the grace period ends. If a cache bump fails after
   the commit it throws `MembershipBumpFailedError` with `removed` and `failed`; repeating the call
