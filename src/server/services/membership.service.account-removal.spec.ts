@@ -169,6 +169,10 @@ describe('MembershipService.removeAllForUser', () => {
     expect((failure as MembershipBumpFailedError).removed).toEqual(REMOVED)
     expect((failure as MembershipBumpFailedError).failed).toEqual([REMOVED[0]])
     expect((failure as MembershipBumpFailedError).cause).toBe(redis)
+    expect((failure as MembershipBumpFailedError).name).toBe('MembershipBumpFailedError')
+    expect((failure as MembershipBumpFailedError).message).toBe(
+      'The memberships were removed but their cached access could not be dropped.'
+    )
     expect(access.invalidateMembership).toHaveBeenCalledTimes(2)
     expect(events.emit).toHaveBeenCalledTimes(2)
   })
@@ -187,5 +191,35 @@ describe('MembershipService.removeAllForUser', () => {
 
     expect((failure as MembershipBumpFailedError).failed).toEqual(REMOVED)
     expect((failure as MembershipBumpFailedError).cause).toBe(first)
+  })
+
+  const blockers = (count: number, from = 0) =>
+    Array.from({ length: count }, (_, index) => workspaceRow({ id: `w${from + index}` }))
+
+  it('stops reading pages once a full page of blocking workspaces is known', async () => {
+    const { service, memberships } = build()
+    memberships['listSoleOwned']?.mockResolvedValue({ items: blockers(100), nextCursor: 'more' })
+
+    const details = (await detailsOf(service.removeAllForUser('t1', 'u9', null, CONTEXT))) as {
+      workspaces: unknown[]
+    }
+
+    expect(details.workspaces).toHaveLength(100)
+    expect(memberships['listSoleOwned']).toHaveBeenCalledTimes(1)
+  })
+
+  it('names at most one page of blocking workspaces, however many pages held them', async () => {
+    const { service, memberships } = build()
+    memberships['listSoleOwned']
+      ?.mockResolvedValueOnce({ items: blockers(60), nextCursor: 'c1' })
+      .mockResolvedValueOnce({ items: blockers(100, 60), nextCursor: 'c2' })
+
+    const details = (await detailsOf(service.removeAllForUser('t1', 'u9', null, CONTEXT))) as {
+      workspaces: Array<{ id: string }>
+    }
+
+    expect(details.workspaces).toHaveLength(100)
+    expect(details.workspaces[99]?.id).toBe('w99')
+    expect(memberships['listSoleOwned']).toHaveBeenCalledTimes(2)
   })
 })
