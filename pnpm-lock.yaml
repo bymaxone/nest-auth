@@ -128,6 +128,9 @@ importers:
       class-validator:
         specifier: ^0.15.1
         version: 0.15.1
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       eslint:
         specifier: ^9.39.4
         version: 9.39.5(jiti@2.7.0)(supports-color@8.1.1)
