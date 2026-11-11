@@ -677,6 +677,39 @@ describe('useWorkspaces', () => {
       expect(first.listWorkspaces).toHaveBeenCalledTimes(1)
     })
 
+    it('makes no request in a tab that is signed out, and stays idle when it hears a switch', async () => {
+      const signedOut = signedIn()
+      signedOut.getMe.mockRejectedValue(new AuthClientError('no', 401))
+      const active = signedIn()
+      const { result } = mount(active)
+      mount(signedOut)
+      await settle()
+
+      await act(async () => {
+        await result.current.switchWorkspace('w1')
+      })
+      await settle()
+
+      expect(signedOut.listWorkspaces).not.toHaveBeenCalled()
+    })
+
+    it('makes no request in a tab whose session is not known yet when it hears a switch', async () => {
+      const pending = signedIn()
+      pending.getMe.mockImplementation(() => new Promise(() => undefined))
+      const active = signedIn()
+      const { result } = mount(active)
+      const other = mount(pending)
+      await settle()
+
+      await act(async () => {
+        await result.current.switchWorkspace('w1')
+      })
+      await settle()
+
+      expect(pending.listWorkspaces).not.toHaveBeenCalled()
+      expect(other.result.current.status).toBe('idle')
+    })
+
     it('does not change the active workspace of the tab that hears it', async () => {
       const first = signedIn()
       const second = signedIn()

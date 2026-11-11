@@ -51,11 +51,6 @@ export function validateConfig(config: AuthProxyConfig): void {
   }
 }
 
-/**
- * Validate a single `protectedRoutes` pattern string. Extracted so
- * {@link validateConfig} stays flat and each error case reads as
- * one statement.
- */
 function validateLastWorkspaceCookie(config: AuthProxyConfig): void {
   const name = config.lastWorkspaceCookie
   if (name === undefined) return
@@ -67,6 +62,11 @@ function validateLastWorkspaceCookie(config: AuthProxyConfig): void {
   }
 }
 
+/**
+ * Validate a single `protectedRoutes` pattern string. Extracted so
+ * {@link validateConfig} stays flat and each error case reads as
+ * one statement.
+ */
 function validateProtectedRoutePattern(pattern: string): void {
   const segments = pattern.split('/').filter((segment) => segment.length > 0)
   // Stryker disable next-line EqualityOperator: loop bound off-by-one visits an out-of-range (undefined) segment that is not a glob, leaving the validation result unchanged

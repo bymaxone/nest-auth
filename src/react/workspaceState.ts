@@ -88,7 +88,9 @@ function callHost(name: string, run: (() => void) | undefined): void {
 
 /**
  * Loads the caller's workspaces once the session is known to be signed in, and empties them when it
- * ends. A load that finishes after the session changed is ignored.
+ * ends. A load that finishes after the session changed is ignored, and a reload requested while the
+ * session is not signed in does nothing, so a tab that hears a broadcast while signed out makes no
+ * request.
  *
  * @param client - The workspace client.
  * @param authStatus - The session status the auth provider owns.
@@ -105,15 +107,18 @@ export function useWorkspaceList(
 } {
   const [loaded, setLoaded] = useState<Loaded>(IDLE)
   const clientRef = useRef(client)
+  const statusRef = useRef(authStatus)
   const generationRef = useRef<object>({})
 
-  // Kept current in an effect, declared before every effect that reads it, so a load never runs
-  // against the client of an earlier render.
+  // Kept current in an effect, declared before every effect that reads them, so a load never runs
+  // against the client or the session status of an earlier render.
   useEffect(() => {
     clientRef.current = client
+    statusRef.current = authStatus
   })
 
   const refresh = useCallback(async (): Promise<void> => {
+    if (statusRef.current !== 'authenticated') return
     const generation = generationRef.current
     try {
       const result = await loadAll(clientRef.current)

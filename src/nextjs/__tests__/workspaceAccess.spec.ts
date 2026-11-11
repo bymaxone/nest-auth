@@ -147,7 +147,27 @@ describe('createWorkspaceAccessReader', () => {
     ['a workspace that is not an object', { workspace: 'w1', role: 'editor' }],
     ['a workspace with no id', { workspace: { name: 'T', status: 'active' }, role: 'editor' }],
     ['a workspace with no name', { workspace: { id: 'w1', status: 'active' }, role: 'editor' }],
-    ['a workspace with no status', { workspace: { id: 'w1', name: 'T' }, role: 'editor' }]
+    ['a workspace with no status', { workspace: { id: 'w1', name: 'T' }, role: 'editor' }],
+    [
+      'a workspace with an unknown status',
+      { ...ACCESS, workspace: { ...ACCESS.workspace, status: 'weird' } }
+    ],
+    [
+      'a workspace with no createdAt',
+      { ...ACCESS, workspace: { ...ACCESS.workspace, createdAt: undefined } }
+    ],
+    [
+      'a workspace with a numeric createdAt',
+      { ...ACCESS, workspace: { ...ACCESS.workspace, createdAt: 5 } }
+    ],
+    [
+      'a workspace with no deletionScheduledAt',
+      { ...ACCESS, workspace: { ...ACCESS.workspace, deletionScheduledAt: undefined } }
+    ],
+    [
+      'a workspace with a numeric deletionScheduledAt',
+      { ...ACCESS, workspace: { ...ACCESS.workspace, deletionScheduledAt: 5 } }
+    ]
   ])('throws, rather than answering, for %s', async (_name, body) => {
     const { read } = build(() => reply(200, body))
 
@@ -157,7 +177,9 @@ describe('createWorkspaceAccessReader', () => {
   it.each([
     ['an empty id', ''],
     ['a number', 5],
-    ['undefined', undefined]
+    ['undefined', undefined],
+    ['a dot segment', '.'],
+    ['a dot-dot segment', '..']
   ])('answers null and asks nothing for %s', async (_name, id) => {
     const { read, send } = build()
 

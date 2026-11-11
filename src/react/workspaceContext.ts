@@ -1,6 +1,6 @@
 /**
- * The workspace context of the React subpath: what `useWorkspaces()` reads and what a host passes to
- * `<AuthProvider workspaces={...}>` to switch the feature on.
+ * The workspace context of the React subpath: what `useWorkspaces()` reads and the options a host
+ * passes to `<WorkspaceProvider>`, which is what switches the feature on.
  */
 
 import { createContext } from 'react'

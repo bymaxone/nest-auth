@@ -309,6 +309,29 @@ describe('workspace calls of the typed client', () => {
       expect(sent[0]?.url).toBe(`${BASE}/auth/workspaces/w1/members/u%2F1`)
     })
 
+    // A URL parser collapses a '.' or '..' segment, encoded or not, so the id would address another
+    // route: PATCH workspaces/w/members/.. is the rename route.
+    it.each(['.', '..'])('refuses the id %j, which a URL parser would collapse', async (id) => {
+      const { client, authFetch } = build()
+
+      await expect(client.getWorkspaceAccess(id)).rejects.toThrow(TypeError)
+      await expect(client.changeWorkspaceMemberRole('w1', id, 'editor')).rejects.toThrow(TypeError)
+      await expect(client.removeWorkspaceMember(id, 'u1')).rejects.toThrow(TypeError)
+
+      expect(authFetch).not.toHaveBeenCalled()
+    })
+
+    it.each(['...', 'a..', '.a', '..a'])(
+      'accepts the id %j, which is not a dot segment',
+      async (id) => {
+        const { client, sent } = build(json(200, {}))
+
+        await client.getWorkspaceAccess(id)
+
+        expect(sent).toHaveLength(1)
+      }
+    )
+
     it.each([
       [
         'an empty workspace id',
