@@ -13,6 +13,8 @@ import { decodeWorkspaceScopedName, workspaceScopedName } from './workspace-scop
 interface Vector {
   case: string
   args: string[]
+  /** One more final part, built from these UTF-16 code units: the JSON text stays well-formed. */
+  unpairedSurrogateCodeUnits?: number[]
   name?: string
   refused?: string
 }
@@ -53,6 +55,9 @@ describe('workspaceScopedName', () => {
 
     it.each(refused.map((v) => [v.case, v] as const))('refuses %s', (_name, vector) => {
       const [tenantId = '', workspaceId = '', ...parts] = vector.args
+      if (vector.unpairedSurrogateCodeUnits !== undefined) {
+        parts.push(String.fromCharCode(...vector.unpairedSurrogateCodeUnits))
+      }
 
       expect(() => workspaceScopedName(tenantId, workspaceId, ...parts)).toThrow(TypeError)
     })
