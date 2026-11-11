@@ -56,20 +56,26 @@ function httpContext(): ExecutionContext {
     params: { workspaceId: 'w1' },
     user: { type: 'dashboard', sub: 'u1', tenantId: 't1', role: 'MEMBER', jti: 'j' }
   }
-  return {
+  const context: Partial<ExecutionContext> = {
     getHandler: () => handler,
-    getClass: () => Handlers,
-    switchToHttp: () => ({ getRequest: () => request })
-  } as never
+    getClass: (() => Handlers) as ExecutionContext['getClass'],
+    switchToHttp: () =>
+      ({ getRequest: () => request }) as ReturnType<ExecutionContext['switchToHttp']>
+  }
+  return context as ExecutionContext
 }
 
 function wsContext(): ExecutionContext {
   const client = { data: { user: { sub: 'u1', tenantId: 't1' } } }
-  return {
+  const context: Partial<ExecutionContext> = {
     getHandler: () => handler,
-    getClass: () => Handlers,
-    switchToWs: () => ({ getClient: () => client, getData: () => ({ workspaceId: 'w1' }) })
-  } as never
+    getClass: (() => Handlers) as ExecutionContext['getClass'],
+    switchToWs: () =>
+      ({ getClient: () => client, getData: () => ({ workspaceId: 'w1' }) }) as ReturnType<
+        ExecutionContext['switchToWs']
+      >
+  }
+  return context as ExecutionContext
 }
 
 describe('access.denied from the workspace guards', () => {

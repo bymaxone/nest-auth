@@ -33,6 +33,15 @@ export type {
   ResetPasswordInput
 } from './createAuthClient'
 
+export { createWorkspaceClient } from './createWorkspaceClient'
+export type {
+  AcceptInvitationSignupInput,
+  InviteToWorkspaceInput,
+  TransferOwnershipInput,
+  WorkspaceClientMethods,
+  WorkspaceReauth
+} from './createWorkspaceClient'
+
 // ---------------------------------------------------------------------------
 // Re-exports from shared
 // ---------------------------------------------------------------------------

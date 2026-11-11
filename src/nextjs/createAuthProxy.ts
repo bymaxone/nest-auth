@@ -53,6 +53,7 @@ import { handleProtectedRoute, handlePublicRoute } from './internal/proxyHandler
 import { buildSanitizedRequestHeaders } from './internal/proxyUtils'
 import { classifyRoute, normalizePath } from './internal/routeClassifier'
 import { readTokenState } from './internal/tokenState'
+import type { DashboardHint } from './internal/workspaceHint'
 
 /**
  * Pattern specification for a protected route.
@@ -123,8 +124,13 @@ export interface AuthProxyConfig {
    * role. MUST return a same-origin path starting with `/` (not
    * `//`). Call sites guard the return value against open-redirect
    * attempts.
+   *
+   * The second argument is `{ lastActiveWorkspaceId }` when {@link lastWorkspaceCookie} is
+   * configured and the cookie holds a UUID, and `{}` otherwise. It is a landing hint with no
+   * authority; build the path with `encodeURIComponent`, and let the layout's `getWorkspaceAccess`
+   * decide whether the caller may see it.
    */
-  readonly getDefaultDashboard: (role: string) => string
+  readonly getDefaultDashboard: (role: string, hint: DashboardHint) => string
 
   /**
    * Absolute base URL of the upstream NestJS API (e.g.,
@@ -178,6 +184,15 @@ export interface AuthProxyConfig {
    * before equality is tested.
    */
   readonly blockedUserStatuses: readonly string[]
+
+  /**
+   * Name of a cookie the HOST sets to the workspace the caller last used, for example after
+   * `listWorkspaces()`, as `HttpOnly; Secure; SameSite=Lax`. The library never writes it. When set,
+   * the proxy reads it for {@link getDefaultDashboard}'s second argument, but only a UUID is used;
+   * anything else is ignored. It must be a cookie-name token and differ from the three cookie names
+   * above.
+   */
+  readonly lastWorkspaceCookie?: string
 }
 
 /**

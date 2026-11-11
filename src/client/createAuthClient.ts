@@ -295,7 +295,7 @@ function throwAuthError(response: Response, text: string): never {
  * callers that opted into `post<T>()` are expecting a JSON payload.
  * Void endpoints must route through {@link expectNoContent} instead.
  */
-async function parseJsonOrThrow<T>(response: Response): Promise<T> {
+export async function parseJsonOrThrow<T>(response: Response): Promise<T> {
   const text = await response.text()
   if (!response.ok) {
     throwAuthError(response, text)
@@ -320,7 +320,7 @@ async function parseJsonOrThrow<T>(response: Response): Promise<T> {
  * forgot-password, reset-password) — saves callers the boilerplate of
  * awaiting the body just to discard it.
  */
-async function expectNoContent(response: Response): Promise<void> {
+export async function expectNoContent(response: Response): Promise<void> {
   if (!response.ok) {
     const text = await response.text()
     throwAuthError(response, text)
@@ -430,26 +430,18 @@ function buildUrl(baseUrl: string, routePrefix: string, path: string): string {
 }
 
 /**
- * Build a typed {@link AuthClient} bound to a specific server.
+ * The fetch wrapper and the URL composer a typed client works through.
  *
- * @example
- * ```ts
- * const auth = createAuthClient({
- *   baseUrl: 'https://api.example.com',
- *   onSessionExpired: () => router.push('/sign-in')
- * })
+ * Shared by {@link createAuthClient} and `createWorkspaceClient`, so the two compose every URL, and
+ * share the refresh logic, the same way. Not part of the public API.
  *
- * const result = await auth.login({
- *   email: 'user@example.com',
- *   password: 'pw',
- *   tenantId: 'default'
- * })
- * if ('mfaRequired' in result) {
- *   const final = await auth.mfaChallenge(result.mfaTempToken, '123456')
- * }
- * ```
+ * @param config - The client configuration.
+ * @returns The refreshing fetch, and the function that turns a route into the whole request URL.
  */
-export function createAuthClient(config: AuthClientConfig): AuthClient {
+export function resolveTransport(config: AuthClientConfig): {
+  authFetch: AuthFetch
+  url: (path: string) => string
+} {
   const baseUrl = normalizeBaseUrl(config.baseUrl)
   const routePrefix = normalizeRoutePrefix(config.routePrefix ?? 'auth')
 
@@ -460,14 +452,11 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
   const authFetch: AuthFetch =
     config.authFetch ??
     createAuthFetch({
-      // Deliberately NO `baseUrl`. This client composes the full URL itself in `url()` below,
-      // and `createAuthFetch` prepends its own `baseUrl` to any input that is not absolute —
-      // so passing it here applied the base TWICE. With the documented same-origin setting
-      // (`baseUrl: '/api'`, used by the README and by AuthProvider's own example) every call
-      // went to `/api/api/auth/*` and 404'd: login, register, logout, refresh and getMe, all
-      // of them. An absolute base hid it, because the second prepend is skipped for anything
-      // matching `^https?://` — which is why every test in this file, all of which use an
-      // absolute base AND inject a stub `authFetch`, stayed green.
+      // Deliberately NO `baseUrl`: this client composes the full URL itself in `url()`, and
+      // `createAuthFetch` prepends its own `baseUrl` to any input that is not absolute, so passing
+      // it here applied the base TWICE (`/api/api/auth/*`, a 404 on every call under a same-origin
+      // base). An absolute base hid it, because the second prepend is skipped for `^https?://`
+      // inputs, which is why tests with an absolute base and a stub `authFetch` stayed green.
       routePrefix,
       // Stryker disable next-line ConditionalExpression: spreading `{ key: undefined }` vs omitting the key is identical — createAuthFetch coalesces each option with `??`/falsy checks downstream
       ...(config.refreshEndpoint !== undefined ? { refreshEndpoint: config.refreshEndpoint } : {}),
@@ -488,6 +477,31 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
   // receives from this client is already absolute-or-fully-composed, and `createAuthFetch`
   // leaves such an input alone.
   const url = (path: string): string => buildUrl(baseUrl, routePrefix, path)
+  return { authFetch, url }
+}
+
+/**
+ * Build a typed {@link AuthClient} bound to a specific server.
+ *
+ * @example
+ * ```ts
+ * const auth = createAuthClient({
+ *   baseUrl: 'https://api.example.com',
+ *   onSessionExpired: () => router.push('/sign-in')
+ * })
+ *
+ * const result = await auth.login({
+ *   email: 'user@example.com',
+ *   password: 'pw',
+ *   tenantId: 'default'
+ * })
+ * if ('mfaRequired' in result) {
+ *   const final = await auth.mfaChallenge(result.mfaTempToken, '123456')
+ * }
+ * ```
+ */
+export function createAuthClient(config: AuthClientConfig): AuthClient {
+  const { authFetch, url } = resolveTransport(config)
 
   async function post<T>(path: string, body: unknown): Promise<T> {
     const response = await authFetch(url(path), {

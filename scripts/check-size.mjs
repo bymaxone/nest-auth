@@ -25,8 +25,9 @@ import { dirname, resolve } from 'node:path'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 // Budgets are in bytes (KiB units, `n * 1024`, matching the table's ÷1024
-// display) measured against the brotli'd .mjs bundle — what a consumer's
-// bundler/CDN ships. Brotli, not gzip, to match real wire compression.
+// display) of brotli output: the published entry `.mjs` for `BUDGETS`, and a minified, tree-shaken
+// minimal import for `SURFACES`, which is what a consumer's bundler/CDN ships. Brotli, not gzip, to
+// match real wire compression.
 //
 // Bymax bundle-size convention (canonical: Obsidian → 03 - Resources/NestJS/
 // Bymax-Conventions.md → "Bundle-size budgets"):
@@ -35,7 +36,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //      on a backend lib that never reaches a browser. We do NOT minify just to
 //      satisfy a budget.
 //   2. The budget is CALIBRATED to the real built artifact + MODEST headroom
-//      (~20-25%): tight enough to catch accidental bloat (e.g. a dep leaking in),
+//      (~20-25%; about 5% for the entry-file lines, see BUDGETS IN FORCE): tight enough to catch accidental bloat (e.g. a dep leaking in),
 //      loose enough that a normal feature commit passes. Avoid >2× headroom — it
 //      silently lets bloat through. When real growth is legitimate, raise it and
 //      say why here; when the artifact shrinks, tighten it.
@@ -187,9 +188,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const BUDGETS = [
   { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 169 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.8 * 1024 },
-  { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 3.8 * 1024 },
-  { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 1.8 * 1024 },
-  { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 8.7 * 1024 }
+  { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
+  { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 3.3 * 1024 },
+  { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 9.5 * 1024 }
 ]
 
 /**
@@ -208,6 +209,18 @@ const SURFACES = [
     from: 'dist/react/index.mjs',
     exports: ['AuthProvider', 'useSession'],
     brotli: 2.5 * 1024
+  },
+  {
+    name: 'client  workspace surface (+ createWorkspaceClient)',
+    from: 'dist/client/index.mjs',
+    exports: ['createAuthClient', 'createWorkspaceClient'],
+    brotli: 4.3 * 1024
+  },
+  {
+    name: 'react   workspace surface (+ WorkspaceProvider)',
+    from: 'dist/react/index.mjs',
+    exports: ['AuthProvider', 'useSession', 'WorkspaceProvider', 'useWorkspaces'],
+    brotli: 2.3 * 1024
   }
 ]
 

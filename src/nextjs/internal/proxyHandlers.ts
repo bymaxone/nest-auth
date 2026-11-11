@@ -29,6 +29,7 @@ import {
 } from './proxyUtils'
 import { matchesPublicRoute } from './routeClassifier'
 import type { TokenState } from './tokenState'
+import { landingPath } from './workspaceHint'
 import { buildSilentRefreshPath } from '../helpers/buildSilentRefreshUrl'
 import { isBackgroundRequest } from '../helpers/isBackgroundRequest'
 import type { DecodedToken } from '../helpers/jwt'
@@ -129,8 +130,7 @@ function handleAuthenticatedOnPublic(
   )
 
   if (isRedirectIfAuth && !reasonPresent) {
-    // Stryker disable next-line StringLiteral: the fallback reaches `toSameOriginPath`, which maps a value not starting with '/' to '/' — so '' and '/' both emit `Location: /`
-    const destination = safeRelativePath(config.getDefaultDashboard(role), '/')
+    const destination = landingPath(request, config, role)
     // Absolute `Location`, which Next requires of a middleware, and which it strips back to a
     // path before the browser sees it — see `redirectToPathOnOrigin`.
     return redirectToPathOnOrigin(destination, request.nextUrl.origin)
@@ -189,8 +189,7 @@ export function handleProtectedRoute(
 
   // RBAC check.
   if (!matched.allowedRoles.includes(role)) {
-    // Stryker disable next-line StringLiteral: the fallback reaches `toSameOriginPath`, which maps a value not starting with '/' to '/' — so '' and '/' both emit `Location: /`
-    const fallback = safeRelativePath(config.getDefaultDashboard(role), '/')
+    const fallback = landingPath(request, config, role)
     const destination = matched.redirectPath ?? fallback
     const safeDestination = safeRelativePath(destination, fallback)
     return (

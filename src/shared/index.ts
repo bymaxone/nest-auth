@@ -51,6 +51,23 @@ export type {
   PlatformLoginResult
 } from './types/auth-result.types'
 
+export type {
+  AcceptedWorkspaceInvitation,
+  BootstrapInvitationPreviewClient,
+  MemberInvitationPreviewClient,
+  MembershipStatusClient,
+  WorkspaceAccessClient,
+  WorkspaceClient,
+  WorkspaceInvitationClient,
+  WorkspaceInvitationPage,
+  WorkspaceInvitationPreview,
+  WorkspaceListResult,
+  WorkspaceMemberClient,
+  WorkspaceMemberPage,
+  WorkspacePageParams,
+  WorkspaceStatusClient
+} from './types/workspace.types'
+
 export { AuthClientError } from './types/auth-error.types'
 export type { AuthErrorResponse, AuthResponseCode } from './types/auth-error.types'
 

@@ -45,7 +45,11 @@ export const IDENTITY_HEADERS_BASELINE = [
   'x-user-id',
   'x-user-role',
   'x-tenant-id',
-  'x-tenant-domain'
+  'x-tenant-domain',
+  // The workspace a request acts in comes from the route, never from a header the proxy could
+  // vouch for: the proxy decodes a token, which carries no workspace. Stripped so a layout that
+  // reads this name cannot take a browser-supplied value for an authenticated one.
+  'x-workspace-id'
 ]
 
 /**

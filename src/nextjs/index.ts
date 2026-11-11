@@ -39,6 +39,9 @@
 export { isBackgroundRequest } from './helpers/isBackgroundRequest'
 export type { RequestWithHeaders } from './helpers/isBackgroundRequest'
 
+export { createWorkspaceAccessReader } from './helpers/workspaceAccess'
+export type { WorkspaceAccessReaderConfig } from './helpers/workspaceAccess'
+
 export { buildSilentRefreshUrl } from './helpers/buildSilentRefreshUrl'
 export type { RequestWithUrl } from './helpers/buildSilentRefreshUrl'
 
@@ -62,6 +65,8 @@ export type { DecodedToken, JwtHeader } from './helpers/jwt'
 // ---------------------------------------------------------------------------
 // Factory — auth proxy (Next.js Edge middleware)
 // ---------------------------------------------------------------------------
+
+export type { DashboardHint } from './internal/workspaceHint'
 
 export { createAuthProxy } from './createAuthProxy'
 export type {

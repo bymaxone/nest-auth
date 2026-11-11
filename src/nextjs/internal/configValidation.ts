@@ -13,7 +13,7 @@
 
 import type { AuthProxyConfig, ResolvedAuthProxyConfig } from '../createAuthProxy'
 import { DEFAULT_MAX_REFRESH_ATTEMPTS } from './constants'
-import { isSafeSameOriginPath } from '../helpers/routeHandlerUtils'
+import { assertSafeCookieName, isSafeSameOriginPath } from '../helpers/routeHandlerUtils'
 
 /**
  * Throw when the caller's configuration contains a shape we reject:
@@ -39,6 +39,8 @@ export function validateConfig(config: AuthProxyConfig): void {
     )
   }
 
+  validateLastWorkspaceCookie(config)
+
   for (const route of config.protectedRoutes) {
     validateProtectedRoutePattern(route.pattern)
     if (route.redirectPath !== undefined && !isSafeSameOriginPath(route.redirectPath)) {
@@ -54,6 +56,17 @@ export function validateConfig(config: AuthProxyConfig): void {
  * {@link validateConfig} stays flat and each error case reads as
  * one statement.
  */
+function validateLastWorkspaceCookie(config: AuthProxyConfig): void {
+  const name = config.lastWorkspaceCookie
+  if (name === undefined) return
+  assertSafeCookieName(name, 'createAuthProxy', 'lastWorkspaceCookie')
+  if (Object.values(config.cookieNames).includes(name)) {
+    throw new Error(
+      `createAuthProxy: lastWorkspaceCookie "${name}" must differ from cookieNames.access, cookieNames.refresh and cookieNames.hasSession.`
+    )
+  }
+}
+
 function validateProtectedRoutePattern(pattern: string): void {
   const segments = pattern.split('/').filter((segment) => segment.length > 0)
   // Stryker disable next-line EqualityOperator: loop bound off-by-one visits an out-of-range (undefined) segment that is not a glob, leaving the validation result unchanged
