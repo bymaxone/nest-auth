@@ -371,6 +371,17 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > If you use the bundled `DefaultAuthEmailProvider` with `onDeliveryError: 'rethrow'`, the error it
 > re-throws is the channel's original and is still yours to contain the same way.
 
+> [!NOTE]
+> The bundled `DefaultAuthEmailProvider` implements every method of `IEmailProvider`, the optional
+> ones included (`sendWorkspaceInvitation` among them), so a host that takes it can enable every
+> controller. It renders a **token**, not a link: the invitation messages say "use this token to
+> accept: ..." and it has no base URL to build one from. To send a link, override the message,
+> `new DefaultAuthEmailProvider(sink, { messages: { invitation, workspaceInvitation } })`, with a
+> renderer that returns your own `html`; the escaping of caller-supplied text, the credential flag
+> and the delivery-error policy still apply to it. A workspace invitation says whether it is for a
+> workspace that exists (`kind: 'member'`) or a platform invitation to set one up and own it
+> (`kind: 'bootstrap'`).
+
 ```typescript
 // email.provider.ts
 import { Injectable } from '@nestjs/common'
@@ -1477,7 +1488,8 @@ BymaxAuthModule.registerAsync({
 
 `controllers.workspaces` mounts the routes and needs `workspaces.enabled` and both repositories.
 `controllers.workspaceInvitations` also needs an email provider that implements
-`sendWorkspaceInvitation`. The module refuses to boot when a piece is missing. With
+`sendWorkspaceInvitation`, which the bundled `DefaultAuthEmailProvider` does. The module refuses to
+boot when a piece is missing. With
 `workspaces.enabled: false`, the default, nothing in this section exists in your application.
 
 You implement two ports: `IWorkspaceRepository` (`createWithOwner`, `findById`, `rename`,
@@ -1505,8 +1517,9 @@ the last owner.
 
 `registration: 'invitation-only'` closes sign-up except through an invitation for that exact address
 (password registration and the OAuth `create` action answer `403 auth.registration_closed`; the
-invitation accept routes stay open; existing accounts keep signing in). Startup refuses the mode when
-workspaces and tenant invitations are both disabled.
+invitation accept routes stay open; existing accounts keep signing in). Startup refuses the mode unless an
+invitation controller is mounted (`controllers.workspaceInvitations` with `workspaces.enabled`, or
+`controllers.invitations` with `invitations.enabled`), and names what is missing.
 
 ### Protect a route
 

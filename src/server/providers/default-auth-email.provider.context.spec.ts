@@ -8,6 +8,7 @@
  */
 
 import type { InviteData, SessionAlertInfo } from '../interfaces/email-provider.interface'
+import { WORKSPACE_INVITE } from './__tests__/workspace-invite.fixture'
 import {
   AUTH_EMAIL_KINDS,
   DefaultAuthEmailProvider,
@@ -43,7 +44,8 @@ const SENDERS: Record<AuthEmailKind, (provider: DefaultAuthEmailProvider) => Pro
   mfaEnabled: (p) => p.sendMfaEnabledNotification(TENANT, EMAIL, 'en'),
   mfaDisabled: (p) => p.sendMfaDisabledNotification(TENANT, EMAIL, 'en'),
   newSessionAlert: (p) => p.sendNewSessionAlert(TENANT, EMAIL, SESSION, 'en'),
-  invitation: (p) => p.sendInvitation(TENANT, EMAIL, INVITE, 'en')
+  invitation: (p) => p.sendInvitation(TENANT, EMAIL, INVITE, 'en'),
+  workspaceInvitation: (p) => p.sendWorkspaceInvitation(TENANT, EMAIL, WORKSPACE_INVITE, 'en')
 }
 
 /** A catalogue whose every renderer records the input it was given. */
@@ -61,7 +63,7 @@ function recordingCatalogue(seen: Map<AuthEmailKind, unknown>): AuthEmailCatalog
 describe('the input every catalogue renderer receives', () => {
   const sink: AuthEmailSink = { send: jest.fn().mockResolvedValue(undefined) }
 
-  // Scenario: each of the ten messages is sent. Expected: its renderer is told the tenant and the
+  // Scenario: each message is sent. Expected: its renderer is told the tenant and the
   // recipient, next to the fields of its own message. Why: a link built inside a renderer cannot carry
   // `tenantId` otherwise, and the consumer's only workarounds are a shared mutable field on the
   // singleton provider (a cross-tenant race) or re-implementing the renderer.

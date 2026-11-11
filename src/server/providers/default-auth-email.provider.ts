@@ -39,10 +39,12 @@
  */
 import { Logger } from '@nestjs/common'
 
+import { DEFAULT_MESSAGES } from './default-auth-email.messages'
 import type {
   IEmailProvider,
   InviteData,
-  SessionAlertInfo
+  SessionAlertInfo,
+  WorkspaceInviteData
 } from '../interfaces/email-provider.interface'
 import { describeChannelStatus } from '../utils/describe-error'
 
@@ -215,6 +217,8 @@ export interface AuthEmailCatalogue {
   newSessionAlert(input: AuthEmailContext & { sessionInfo: SessionAlertInfo }): AuthEmailMessage
   /** Invitation to join a tenant. */
   invitation(input: AuthEmailContext & { invite: InviteData }): AuthEmailMessage
+  /** Invitation to a workspace, or to set one up and own it. */
+  workspaceInvitation(input: AuthEmailContext & { invite: WorkspaceInviteData }): AuthEmailMessage
 }
 
 /** How the provider reacts to a delivery failure. */
@@ -240,7 +244,8 @@ export const AUTH_EMAIL_KINDS = [
   'mfaEnabled',
   'mfaDisabled',
   'newSessionAlert',
-  'invitation'
+  'invitation',
+  'workspaceInvitation'
 ] as const satisfies readonly (keyof AuthEmailCatalogue)[]
 // Frozen, because `as const` is a TYPE-level claim and this array is exported. A JavaScript
 // consumer could otherwise splice a kind out of it, and a later bare `'rethrow'` would silently
@@ -267,7 +272,8 @@ const CREDENTIAL_BEARING_KINDS: ReadonlySet<AuthEmailKind> = new Set([
   'passwordResetOtp',
   'emailVerificationOtp',
   'emailChangeVerification',
-  'invitation'
+  'invitation',
+  'workspaceInvitation'
 ])
 
 /**
@@ -335,9 +341,9 @@ export interface DefaultAuthEmailProviderOptions {
    * that. `redactSecrets` is for strings you know contain the literal value. This is the one
    * credential this library cannot contain on your behalf.
    *
-   * **Which is why this takes a MAP as well as a bare policy.** Five messages carry a credential
+   * **Which is why this takes a MAP as well as a bare policy.** Six messages carry a credential
    * in their body, and the two flows that motivate the opt-in are two of them — so a bare
-   * `'rethrow'` reaches three MORE credential-bearing paths than anyone asked for, on top of every
+   * `'rethrow'` reaches four MORE credential-bearing paths than anyone asked for, on top of every
    * message that carries none. Naming the flows keeps the unlaundered error where a deployment
    * wanted it and leaves it off the rest:
    *
@@ -349,66 +355,10 @@ export interface DefaultAuthEmailProviderOptions {
    *
    * A message left out of the map keeps `'swallow'`, so the safe value is what you get by saying
    * nothing, and widening the opt-in is always an explicit act. A bare policy still works and
-   * still applies to all ten — it is the coarse form, kept because it is the honest way to say
+   * still applies to every message — it is the coarse form, kept because it is the honest way to say
    * "this deployment wants the throw everywhere".
    */
   readonly onDeliveryError?: DeliveryErrorPolicy | DeliveryErrorPolicyMap
-}
-
-/** How long a verification or reset code stays valid, stated in the message that carries it. */
-const CODE_VALIDITY_TEXT = 'It expires shortly, so use it soon.'
-
-/** Closing line on every message announcing a change the recipient may not have made. */
-const UNEXPECTED_CHANGE_TEXT =
-  'If this was not you, secure your account immediately: change your password and sign out of every session.'
-
-/**
- * The built-in copy, security shape first and wording second.
- *
- * Each entry is a pure function of its inputs, which is what makes an override a drop-in
- * replacement and keeps the copy testable without a provider around it.
- */
-const DEFAULT_MESSAGES: AuthEmailCatalogue = {
-  passwordResetToken: ({ token }) => ({
-    subject: 'Reset your password',
-    text: `Use this token to reset your password: ${token}\n\n${CODE_VALIDITY_TEXT}\n\nIf you did not ask to reset your password, ignore this message and nothing will change.`
-  }),
-  passwordResetOtp: ({ otp }) => ({
-    subject: 'Your password reset code',
-    text: `Your password reset code is ${otp}.\n\n${CODE_VALIDITY_TEXT}\n\nIf you did not ask to reset your password, ignore this message and nothing will change.`
-  }),
-  emailVerificationOtp: ({ otp }) => ({
-    subject: 'Verify your email address',
-    text: `Your verification code is ${otp}.\n\n${CODE_VALIDITY_TEXT}\n\nIf you did not create an account, ignore this message.`
-  }),
-  passwordChanged: () => ({
-    subject: 'Your password was changed',
-    text: `The password on your account was changed.\n\n${UNEXPECTED_CHANGE_TEXT}`
-  }),
-  emailChangeVerification: ({ token }) => ({
-    subject: 'Confirm your new email address',
-    text: `Your confirmation code is ${token}.\n\n${CODE_VALIDITY_TEXT}\n\nIf you did not ask to change your email address, ignore this message.`
-  }),
-  emailChanged: ({ newEmail }) => ({
-    subject: 'Your email address was changed',
-    text: `The email address on your account was changed to ${newEmail}, and this address no longer signs in to it.\n\n${UNEXPECTED_CHANGE_TEXT}`
-  }),
-  mfaEnabled: () => ({
-    subject: 'Two-factor authentication is on',
-    text: `Two-factor authentication was enabled on your account.\n\n${UNEXPECTED_CHANGE_TEXT}`
-  }),
-  mfaDisabled: () => ({
-    subject: 'Two-factor authentication is off',
-    text: `Two-factor authentication was disabled on your account.\n\n${UNEXPECTED_CHANGE_TEXT}`
-  }),
-  newSessionAlert: ({ sessionInfo }) => ({
-    subject: 'New sign-in to your account',
-    text: `A new session was started on your account.\n\nDevice: ${sessionInfo.device}\nIP: ${sessionInfo.ip}\nSession: ${sessionInfo.sessionHash}\n\n${UNEXPECTED_CHANGE_TEXT}`
-  }),
-  invitation: ({ invite }) => ({
-    subject: `${invite.inviterName} invited you to ${invite.tenantName}`,
-    text: `${invite.inviterName} invited you to join ${invite.tenantName}.\n\nUse this token to accept: ${invite.inviteToken}\n\nIt expires on ${invite.expiresAt.toISOString()}.\n\nIf you were not expecting this invitation, ignore this message.`
-  })
 }
 
 /**
@@ -483,7 +433,7 @@ function sanitizeSubject(subject: string): string {
  * a channel that is down would turn each into a failed request over a message that is a
  * notification rather than the operation itself. The failure is logged and the flow continues.
  * Setting `'rethrow'` makes EVERY method reject with the channel's original error — there is one
- * `deliver()` behind all ten and one place the policy is read, so no method is exempt. That is the
+ * `deliver()` behind all of them and one place the policy is read, so no method is exempt. That is the
  * whole point of the option and is documented with the duty it carries.
  *
  * The three MFA notices are the exception at the CALLER rather than here: `MfaService` sends them
@@ -499,8 +449,8 @@ function sanitizeSubject(subject: string): string {
  * verification the recipient never got, so it cannot complete. A deployment that wants the throw
  * back on those two flows names them:
  * `{ onDeliveryError: { passwordResetToken: 'rethrow', emailChangeVerification: 'rethrow' } }`.
- * A bare `'rethrow'` also works and opts in every message. Five of them render a credential, and
- * those two flows are two of the five — so the bare form reaches three further credential-bearing
+ * A bare `'rethrow'` also works and opts in every message. Six of them render a credential, and
+ * those two flows are two of the six — so the bare form reaches four further credential-bearing
  * paths, a wider trade than either flow asks for. The default optimizes for the common case: a
  * transient channel outage must not fail the user's action.
  *
@@ -522,7 +472,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
    *
    * A `Map`, not the plain object the option accepts. An object lookup walks the prototype chain,
    * so `policy['toString']` answers with a function rather than `undefined` — unreachable here,
-   * because the key is a closed union of ten literals this file writes, but "the key cannot be
+   * because the key is a closed union of literals this file writes, but "the key cannot be
    * dangerous" is a property of today's call sites and not of the lookup. A `Map` has no prototype
    * chain to walk, which makes it a property of the data structure instead.
    */
@@ -721,6 +671,20 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       email,
       this.messages.invitation({ tenantId, email, invite: inviteData, locale }),
       'invitation'
+    )
+  }
+
+  public async sendWorkspaceInvitation(
+    tenantId: string,
+    email: string,
+    data: WorkspaceInviteData,
+    locale?: string
+  ): Promise<void> {
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.workspaceInvitation({ tenantId, email, invite: data, locale }),
+      'workspaceInvitation'
     )
   }
 

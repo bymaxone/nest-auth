@@ -63,7 +63,8 @@ describe('WorkspaceInvitationService', () => {
         role: 'editor',
         inviteToken: expect.stringMatching(/^[0-9a-f]{64}$/),
         expiresAt: new Date(NOW + 604_800_000),
-        accountExists: true
+        accountExists: true,
+        kind: 'member'
       })
       expect(await h.store.readByHash(sha256(data.inviteToken))).toEqual({
         kind: 'member',

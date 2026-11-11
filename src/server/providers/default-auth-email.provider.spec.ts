@@ -11,6 +11,7 @@ import {
   type AuthEmailCatalogue,
   type DeliveryErrorPolicyMap
 } from './default-auth-email.provider'
+import { WORKSPACE_INVITE } from './__tests__/workspace-invite.fixture'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -238,10 +239,7 @@ describe('DefaultAuthEmailProvider', () => {
     })
   })
 
-  // ---------------------------------------------------------------------------
-  // HTML escaping
-  // ---------------------------------------------------------------------------
-
+  // HTML escaping.
   // Caller-chosen text (an inviter's display name) reaches an HTML body, so all five structural
   // metacharacters must be escaped — otherwise a name is markup a mail client renders.
   it('escapes every HTML metacharacter in caller-supplied text', async () => {
@@ -350,7 +348,7 @@ describe('DefaultAuthEmailProvider', () => {
     // is right to reject.
     expect(Reflect.set(AUTH_EMAIL_KINDS, 0, 'forged')).toBe(false)
     expect(AUTH_EMAIL_KINDS[0]).toBe('passwordResetToken')
-    expect(AUTH_EMAIL_KINDS).toHaveLength(10)
+    expect(AUTH_EMAIL_KINDS).toHaveLength(11)
   })
 
   // WHICH messages declare a credential, pinned as a whole set rather than one at a time. A new
@@ -358,11 +356,11 @@ describe('DefaultAuthEmailProvider', () => {
   // is the point: "does this body carry something that unlocks an account" is a question somebody
   // has to answer per message, and a default of `false` would answer it silently.
   //
-  // The five that do are the ones whose body renders a value a recipient can use: two codes, two
-  // tokens, and the invitation. The five that do not are notices about a change that already
+  // The six that do are the ones whose body renders a value a recipient can use: two codes, two
+  // tokens, and the two invitations. The five that do not are notices about a change that already
   // happened — they still carry personal data, which is why this library publishes none of a
   // channel's text for them either.
-  it('declares a credential for exactly the five messages that render one', async () => {
+  it('declares a credential for exactly the messages that render one', async () => {
     sink.send.mockResolvedValue(undefined)
 
     await provider.sendPasswordResetToken('t', 'u@e.com', 'tok')
@@ -375,6 +373,7 @@ describe('DefaultAuthEmailProvider', () => {
     await provider.sendMfaDisabledNotification('t', 'u@e.com')
     await provider.sendNewSessionAlert('t', 'u@e.com', SESSION)
     await provider.sendInvitation('t', 'u@e.com', INVITE)
+    await provider.sendWorkspaceInvitation('t', 'u@e.com', WORKSPACE_INVITE)
 
     const declared = sink.send.mock.calls.map(([input]) => [input.kind, input.containsCredential])
 
@@ -388,10 +387,10 @@ describe('DefaultAuthEmailProvider', () => {
       ['mfaEnabled', false],
       ['mfaDisabled', false],
       ['newSessionAlert', false],
-      ['invitation', true]
+      ['invitation', true],
+      ['workspaceInvitation', true]
     ])
-    // Every catalogue entry is represented, so a message added without a line here is visible as
-    // a length mismatch rather than as a silent omission.
+    // A message added without a line here shows as a length mismatch, not a silent omission.
     expect(declared).toHaveLength(AUTH_EMAIL_KINDS.length)
   })
 
@@ -524,9 +523,8 @@ describe('DefaultAuthEmailProvider', () => {
     ).resolves.toBeUndefined()
   })
 
-  // The bare policy still reaches every method. Completeness of the kind list is proved by the
-  // compiler in the source; what a type cannot show is that expanding it actually covers each send
-  // path, so that is asserted behaviourally — one call per method, all of them rejecting.
+  // The bare policy reaches every method. The compiler proves the kind list complete; what a type
+  // cannot show is that expanding it covers each send path, asserted here one call per method.
   it('applies a bare policy to every message', async () => {
     const everywhere = new DefaultAuthEmailProvider(sink, { onDeliveryError: 'rethrow' })
     sink.send.mockRejectedValue(new Error('550 rejected'))
@@ -541,11 +539,11 @@ describe('DefaultAuthEmailProvider', () => {
       everywhere.sendMfaEnabledNotification('t', 'u@e.com'),
       everywhere.sendMfaDisabledNotification('t', 'u@e.com'),
       everywhere.sendNewSessionAlert('t', 'u@e.com', SESSION),
-      everywhere.sendInvitation('t', 'u@e.com', INVITE)
+      everywhere.sendInvitation('t', 'u@e.com', INVITE),
+      everywhere.sendWorkspaceInvitation('t', 'u@e.com', WORKSPACE_INVITE)
     ]
 
-    // As many sends as the catalogue has entries: a method added without a line here leaves the
-    // count short, and the assertion says so.
+    // One send per catalogue entry: a method added without a line here leaves the count short.
     expect(sends).toHaveLength(AUTH_EMAIL_KINDS.length)
     const settled = await Promise.allSettled(sends)
     expect(settled.every((r) => r.status === 'rejected')).toBe(true)
@@ -1181,15 +1179,14 @@ describe('DefaultAuthEmailProvider', () => {
     await provider.sendMfaDisabledNotification('t', 'u@e.com')
     await provider.sendNewSessionAlert('t', 'u@e.com', SESSION)
     await provider.sendInvitation('t', 'u@e.com', INVITE)
+    await provider.sendWorkspaceInvitation('t', 'u@e.com', WORKSPACE_INVITE)
 
     const bearing = sink.send.mock.calls.filter(([input]) => input.containsCredential).length
     const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven']
     const expected = NUMBER_WORDS[bearing]
 
-    // Both files, because scoping this to the source is how the previous round left the same
-    // wrong number alive: the JSDoc was corrected and the CHANGELOG entry describing the same
-    // change still said "three". A claim guarded in one file and loose in another drifts at the
-    // loose one, which is the file a consumer reads first.
+    // The source only: a released CHANGELOG entry states the count of its own release, and a later
+    // release changes the count without rewriting it.
     // The number is captured as the one GOVERNING the claim, not merely present on its line. A
     // `toContain` was tried and is unsound here: "Five messages render a credential ... two of
     // the five" names the count twice, so rewriting the first to "Three" left the second to
@@ -1197,14 +1194,12 @@ describe('DefaultAuthEmailProvider', () => {
     // exercise exists to avoid, and it was the first version of this one.
     const COUNTED_CLAIM =
       /\b(zero|one|two|three|four|five|six|seven)\b[^.]*?(carry|render)s? a credential/gi
-    const claims = [
-      readFileSync(join(__dirname, 'default-auth-email.provider.ts'), 'utf8'),
-      readFileSync(join(__dirname, '../../../CHANGELOG.md'), 'utf8')
-    ].flatMap((text) => [...text.matchAll(COUNTED_CLAIM)].map((match) => match[1]?.toLowerCase()))
+    const text = readFileSync(join(__dirname, 'default-auth-email.provider.ts'), 'utf8')
+    const claims = [...text.matchAll(COUNTED_CLAIM)].map((match) => match[1]?.toLowerCase())
 
-    // Two sentences in the source and one in the CHANGELOG, so deleting any of them cannot make
-    // this pass vacuously — an empty list satisfies a for-loop and proves nothing.
-    expect(claims).toHaveLength(3)
-    expect(claims).toEqual([expected, expected, expected])
+    // Two sentences in the source, so deleting either cannot make this pass vacuously: an empty
+    // list satisfies a for-loop and proves nothing.
+    expect(claims).toHaveLength(2)
+    expect(claims).toEqual([expected, expected])
   })
 })
