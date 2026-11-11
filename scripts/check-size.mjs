@@ -11,7 +11,7 @@
 //
 // The bundler is esbuild, a direct devDependency pinned to the exact version `tsup` resolves, so the
 // lockfile holds one. It already produces the bytes being measured, so measuring with it adds no
-// trust that building did not already require; it is why this script is no longer dependency-free.
+// trust that building did not already require. Nothing else is imported beyond Node's own modules.
 // `node:zlib`'s brotli matches what npm/CDN compression produces on the wire.
 
 import { readFileSync, statSync } from 'node:fs'
