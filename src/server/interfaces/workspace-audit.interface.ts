@@ -89,6 +89,22 @@ export type WorkspaceAuditEvent =
     })
   | (WorkspaceAuditBase & {
       type: 'access.denied'
-      /** Why the guard refused. */
-      reason: 'not_member' | 'insufficient_role'
+      /** The account that was refused; the same value as `actorUserId`. */
+      userId: string
+      /** The surface that refused: a route, a stream's verification or a socket message. */
+      surface: 'http' | 'verifier' | 'ws'
+      /**
+       * The code the caller was answered with, never the internal reason: a caller who is not a
+       * member and one asking after a workspace that does not exist are told the same thing, and
+       * the event does not tell the host more than the caller was told.
+       */
+      code:
+        | 'auth.workspace_not_found'
+        | 'auth.workspace_pending_deletion'
+        | 'auth.insufficient_workspace_role'
+      /**
+       * Denials since the last event for this account that were counted and not emitted, because
+       * the account exceeded `workspaces.accessDeniedEvents.max` inside a window. Zero when none.
+       */
+      suppressedCount: number
     })

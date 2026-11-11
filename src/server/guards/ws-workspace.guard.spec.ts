@@ -18,7 +18,13 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import type { AuthException } from '../errors/auth-exception'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 import { WorkspaceAccessService } from '../services/workspace-access.service'
+import type { WorkspaceDeniedEventsService } from '../services/workspace-denied-events.service'
 import { workspaceOfMessage } from '../utils/ws-message-workspace'
+
+/** Lets the decision through untouched: the emitter has its own specs. */
+const DENIED = {
+  admit: (_denied: unknown, decide: () => unknown) => decide()
+} as Partial<WorkspaceDeniedEventsService> as WorkspaceDeniedEventsService
 
 const SECRET = 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B'
 
@@ -77,7 +83,8 @@ function build(access: jest.Mock, extra: Record<string, unknown> = {}): WsWorksp
   return new WsWorkspaceGuard(
     new Reflector(),
     service as WorkspaceAccessService,
-    resolveOptions(options(extra))
+    resolveOptions(options(extra)),
+    DENIED
   )
 }
 
@@ -309,7 +316,7 @@ describe('WsWorkspaceGuard', () => {
       memberships as never,
       resolved
     )
-    const guard = new WsWorkspaceGuard(new Reflector(), service, resolved)
+    const guard = new WsWorkspaceGuard(new Reflector(), service, resolved, DENIED)
     const client = { data: { user: IDENTITY } }
     const message = { workspaceId: 'w1' }
 
@@ -333,7 +340,7 @@ describe('WsWorkspaceGuard', () => {
     })
 
     expect(
-      () => new WsWorkspaceGuard(new Reflector(), {} as WorkspaceAccessService, plain)
+      () => new WsWorkspaceGuard(new Reflector(), {} as WorkspaceAccessService, plain, DENIED)
     ).toThrow('WsWorkspaceGuard needs workspaces.enabled')
   })
 })

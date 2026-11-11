@@ -89,6 +89,7 @@ import { TokenManagerService } from './services/token-manager.service'
 import { WorkspaceAccessService } from './services/workspace-access.service'
 import { WorkspaceActionsService } from './services/workspace-actions.service'
 import { WorkspaceCallerService } from './services/workspace-caller.service'
+import { WorkspaceDeniedEventsService } from './services/workspace-denied-events.service'
 import { WorkspaceEventsService } from './services/workspace-events.service'
 import { WorkspaceInvitationAcceptService } from './services/workspace-invitation-accept.service'
 import { WorkspaceInvitationService } from './services/workspace-invitation.service'
@@ -179,6 +180,7 @@ export const AUTH_CONTROLLERS: readonly Type<object>[] = [
 const WORKSPACE_PROVIDERS: Provider[] = [
   WorkspaceAccessService,
   WorkspaceEventsService,
+  WorkspaceDeniedEventsService,
   WorkspaceService,
   MembershipService,
   WorkspaceCallerService,

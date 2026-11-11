@@ -67,7 +67,8 @@ describe('resolveWorkspaceOptions', () => {
       invitationTtlSeconds: 604_800,
       maxPendingInvitationsPerWorkspace: 100,
       membershipCacheTtlSeconds: 60,
-      deletionGraceDays: 14
+      deletionGraceDays: 14,
+      accessDeniedEvents: { max: 10, windowSeconds: 60 }
     })
   })
 
@@ -248,6 +249,58 @@ describe('resolveWorkspaceOptions', () => {
       ['deletionGraceDays', 365]
     ])('accepts %s = %p at its bound', (name, value) => {
       expect(resolveWorkspaceOptions(options({ [name]: value }))).toMatchObject({ [name]: value })
+    })
+
+    it('keeps the access.denied bounds a host sets, and defaults the one it leaves out', () => {
+      expect(
+        resolveWorkspaceOptions(options({ accessDeniedEvents: { max: 3, windowSeconds: 5 } }))
+          ?.accessDeniedEvents
+      ).toEqual({ max: 3, windowSeconds: 5 })
+      expect(
+        resolveWorkspaceOptions(options({ accessDeniedEvents: { max: 3 } }))?.accessDeniedEvents
+      ).toEqual({ max: 3, windowSeconds: 60 })
+      expect(
+        resolveWorkspaceOptions(options({ accessDeniedEvents: { windowSeconds: 5 } }))
+          ?.accessDeniedEvents
+      ).toEqual({ max: 10, windowSeconds: 5 })
+    })
+
+    it.each([
+      ['max', 0, 'from 1 to 10000'],
+      ['max', 10_001, 'from 1 to 10000'],
+      ['max', 1.5, 'from 1 to 10000'],
+      ['max', Number.NaN, 'from 1 to 10000'],
+      ['windowSeconds', 0, 'from 1 to 3600'],
+      ['windowSeconds', 3601, 'from 1 to 3600'],
+      ['windowSeconds', -5, 'from 1 to 3600'],
+      ['windowSeconds', 2.5, 'from 1 to 3600']
+    ])('refuses accessDeniedEvents.%s = %p', (name, value, range) => {
+      expect(() =>
+        resolveWorkspaceOptions(options({ accessDeniedEvents: { [name]: value } }))
+      ).toThrow(`workspaces.accessDeniedEvents.${name} must be an integer ${range}.`)
+    })
+
+    it.each([
+      ['max', 1],
+      ['max', 10_000],
+      ['windowSeconds', 1],
+      ['windowSeconds', 3600]
+    ])('accepts accessDeniedEvents.%s = %p at its bound', (name, value) => {
+      expect(
+        resolveWorkspaceOptions(options({ accessDeniedEvents: { [name]: value } }))
+          ?.accessDeniedEvents
+      ).toMatchObject({ [name]: value })
+    })
+
+    it.each([
+      ['a string', 'x'],
+      ['null', null],
+      ['an array', []],
+      ['a number', 5]
+    ])('refuses accessDeniedEvents given as %s', (_label, value) => {
+      expect(() =>
+        resolveWorkspaceOptions(options({ accessDeniedEvents: value as never }))
+      ).toThrow('workspaces.accessDeniedEvents must be an object.')
     })
 
     it('accepts allowCreate as a flag or a function and keeps it as given', () => {

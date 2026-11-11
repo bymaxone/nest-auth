@@ -21,7 +21,13 @@ import type {
   ResolvedWorkspaceMember,
   WorkspaceAccessService
 } from '../services/workspace-access.service'
+import type { WorkspaceDeniedEventsService } from '../services/workspace-denied-events.service'
 import { WorkspaceGuard } from './workspace.guard'
+
+/** Lets the decision through untouched: the emitter has its own specs. */
+const DENIED = {
+  admit: (_denied: unknown, decide: () => unknown) => decide()
+} as Partial<WorkspaceDeniedEventsService> as WorkspaceDeniedEventsService
 
 const HIERARCHY = { owner: ['editor', 'viewer'], editor: ['viewer'], viewer: [] }
 
@@ -83,7 +89,7 @@ function guardFor(
   })
   const access: Partial<WorkspaceAccessService> = { resolveAccess }
   return {
-    guard: new WorkspaceGuard(new Reflector(), access as WorkspaceAccessService, options),
+    guard: new WorkspaceGuard(new Reflector(), access as WorkspaceAccessService, options, DENIED),
     resolveAccess
   }
 }
