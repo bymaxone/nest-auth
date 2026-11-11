@@ -145,7 +145,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = 'ac34251904b993fe1dd5d0fad0025e587511975bd7c92df502b9c88e80ef5ff6'
+const CONTRACT_SHA256 = 'f6e805d109a19a33df9ae0029321b0632f576505173548dbbdb0f0d7849d842c'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -312,12 +312,12 @@ describe('cross-implementation conformance', () => {
     //
     // The count is asserted rather than left open: the whole value of this block is that a key
     // deriving from the subject and NOT listed here is invisible to the contract.
-    it('derives all ten named keys from the subject', () => {
+    it('derives all twelve named keys from the subject', () => {
       const derived = Object.entries(contract.userSubjectDerivedKeys).filter(
         ([name]) => name !== '$comment'
       )
 
-      expect(derived.length).toBe(10)
+      expect(derived.length).toBe(12)
       for (const [, formula] of derived) {
         expect(formula).toContain('userSubject')
       }
