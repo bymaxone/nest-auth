@@ -117,6 +117,7 @@ export function useWorkspaceList(
     statusRef.current = authStatus
   })
 
+  // Stryker disable ArrayDeclaration: any constant array is as stable as `[]`, and no render can tell them apart
   const refresh = useCallback(async (): Promise<void> => {
     if (statusRef.current !== 'authenticated') return
     const generation = generationRef.current
@@ -127,6 +128,7 @@ export function useWorkspaceList(
       if (generationRef.current === generation) setLoaded({ ...IDLE, status: 'error' })
     }
   }, [])
+  // Stryker restore ArrayDeclaration
 
   useEffect(() => {
     generationRef.current = {}
@@ -182,6 +184,7 @@ export function useWorkspaceChannel(
   refresh: () => Promise<void>
 ): RefObject<BroadcastChannel | null> {
   const channelRef = useRef<BroadcastChannel | null>(null)
+  // Stryker disable ArrayDeclaration: `refresh` has no dependencies, so it is one function for the life of the provider and `[]` re-runs the effect exactly as often
   useEffect(() => {
     if (typeof BroadcastChannel === 'undefined') return undefined
     const channel = new BroadcastChannel(CHANNEL_NAME)
@@ -194,6 +197,7 @@ export function useWorkspaceChannel(
       channel.close()
     }
   }, [refresh])
+  // Stryker restore ArrayDeclaration
   return channelRef
 }
 
@@ -278,6 +282,7 @@ export function useSwitch(
       setLoaded((current) => ({ ...current, lastActiveWorkspaceId: workspaceId }))
       channelRef.current?.postMessage({ type: 'workspaces-changed' })
     },
+    // Stryker disable next-line ArrayDeclaration: a ref and a state setter are stable references, so `[]` re-creates the callback exactly as often
     [clientRef, setChosen, setLoaded, channelRef]
   )
 }

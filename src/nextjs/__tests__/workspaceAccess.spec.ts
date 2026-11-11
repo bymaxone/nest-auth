@@ -99,6 +99,30 @@ describe('createWorkspaceAccessReader', () => {
       'https://api.example.test/identity'
     ],
     [
+      'a leading slash on the prefix',
+      'https://api.example.test',
+      '/identity',
+      'https://api.example.test/identity'
+    ],
+    [
+      'a trailing slash on the prefix',
+      'https://api.example.test',
+      'identity/',
+      'https://api.example.test/identity'
+    ],
+    [
+      'several slashes around the prefix',
+      'https://api.example.test',
+      '//identity//',
+      'https://api.example.test/identity'
+    ],
+    [
+      'a prefix with a slash inside',
+      'https://api.example.test',
+      'a/b',
+      'https://api.example.test/a/b'
+    ],
+    [
       'slashes around the prefix',
       'https://api.example.test',
       '/identity/',
@@ -122,6 +146,26 @@ describe('createWorkspaceAccessReader', () => {
     expect(send.mock.calls[0]?.[0]).toBe(`${expected}/workspaces/w1/access`)
   })
 
+  it.each(['active', 'pending_deletion', 'suspended', 'deleted'])(
+    'returns a workspace whose status is %s',
+    async (status) => {
+      const body = { ...ACCESS, workspace: { ...ACCESS.workspace, status } }
+      const { read } = build(() => reply(200, body))
+
+      await expect(read('w1')).resolves.toEqual(body)
+    }
+  )
+
+  it('returns a workspace whose deletion is scheduled', async () => {
+    const body = {
+      ...ACCESS,
+      workspace: { ...ACCESS.workspace, deletionScheduledAt: '2026-02-01T00:00:00.000Z' }
+    }
+    const { read } = build(() => reply(200, body))
+
+    await expect(read('w1')).resolves.toEqual(body)
+  })
+
   it.each([403, 404, 409])(
     'answers null for a %i, a workspace the caller cannot use',
     async (status) => {
@@ -134,7 +178,11 @@ describe('createWorkspaceAccessReader', () => {
   it.each([401, 429, 500, 502])('throws an AuthClientError for a %i', async (status) => {
     const { read } = build(() => reply(status, { error: { code: 'x' } }))
 
-    await expect(read('w1')).rejects.toMatchObject({ name: 'AuthClientError', status })
+    await expect(read('w1')).rejects.toMatchObject({
+      name: 'AuthClientError',
+      status,
+      message: `Workspace access read failed with status ${status}`
+    })
   })
 
   it.each([
@@ -167,11 +215,35 @@ describe('createWorkspaceAccessReader', () => {
     [
       'a workspace with a numeric deletionScheduledAt',
       { ...ACCESS, workspace: { ...ACCESS.workspace, deletionScheduledAt: 5 } }
+    ],
+    ['a body whose workspace is null', { role: 'editor', workspace: null }],
+    ['a body whose workspace is a number', { role: 'editor', workspace: 5 }],
+    ['a workspace with a numeric id', { ...ACCESS, workspace: { ...ACCESS.workspace, id: 5 } }],
+    [
+      'a workspace with only the id missing',
+      { ...ACCESS, workspace: { ...ACCESS.workspace, id: undefined } }
+    ],
+    ['a workspace with a numeric name', { ...ACCESS, workspace: { ...ACCESS.workspace, name: 5 } }],
+    [
+      'a workspace with only the name missing',
+      { ...ACCESS, workspace: { ...ACCESS.workspace, name: undefined } }
+    ],
+    [
+      'a workspace with a numeric status',
+      { ...ACCESS, workspace: { ...ACCESS.workspace, status: 5 } }
+    ],
+    [
+      'a workspace whose deletionScheduledAt is an object',
+      { ...ACCESS, workspace: { ...ACCESS.workspace, deletionScheduledAt: {} } }
     ]
   ])('throws, rather than answering, for %s', async (_name, body) => {
     const { read } = build(() => reply(200, body))
 
-    await expect(read('w1')).rejects.toBeInstanceOf(AuthClientError)
+    await expect(read('w1')).rejects.toMatchObject({
+      name: 'AuthClientError',
+      message: 'Workspace access answer has an unexpected shape',
+      status: 200
+    })
   })
 
   it.each([

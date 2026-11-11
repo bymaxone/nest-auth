@@ -70,7 +70,10 @@ describe('workspace calls of the typed client', () => {
 
       await client.listWorkspaceMembers('w1', page)
 
-      expect(sent[0]?.url).toBe(`${BASE}/auth/workspaces/w1/members${query}`)
+      expect(sent[0]).toMatchObject({
+        url: `${BASE}/auth/workspaces/w1/members${query}`,
+        method: 'GET'
+      })
     })
 
     it('pages invitations the same way', async () => {
@@ -78,7 +81,10 @@ describe('workspace calls of the typed client', () => {
 
       await client.listWorkspaceInvitations('w1', { limit: 2 })
 
-      expect(sent[0]?.url).toBe(`${BASE}/auth/workspaces/w1/invitations?limit=2`)
+      expect(sent[0]).toMatchObject({
+        url: `${BASE}/auth/workspaces/w1/invitations?limit=2`,
+        method: 'GET'
+      })
     })
 
     it('reads the access of one workspace', async () => {

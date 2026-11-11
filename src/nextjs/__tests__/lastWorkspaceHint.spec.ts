@@ -39,6 +39,7 @@ const UNSAFE = [
   ['an over-long value', `${WORKSPACE}${'a'.repeat(200)}`],
   ['a UUID with a character outside hex', '3f2504e0-4f89-41d3-9a0c-0305e82c330g'],
   ['a UUID with no hyphens', '3f2504e04f8941d39a0c0305e82c3301'],
+  ['a UUID behind a prefix', `x${WORKSPACE}`],
   ['an empty value', ''],
   ['an ordinary word', 'dashboard']
 ] as const
@@ -93,7 +94,7 @@ describe('createAuthProxy — lastWorkspaceCookie', () => {
       ['an empty name', '']
     ])('refuses a cookie name with %s', (_name, name) => {
       expect(() => createAuthProxy({ ...DEFAULT_PROXY_CONFIG, lastWorkspaceCookie: name })).toThrow(
-        /invalid cookie name ".*" for lastWorkspaceCookie/
+        `createAuthProxy: invalid cookie name "${name}" for lastWorkspaceCookie.`
       )
     })
 

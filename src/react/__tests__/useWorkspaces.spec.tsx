@@ -20,93 +20,17 @@ import { useAuth } from '../useAuth'
 import { useSession } from '../useSession'
 import { useWorkspaces } from '../useWorkspaces'
 
-import { createMockClient, MOCK_USER, type MockAuthClient } from './_testHelpers'
-
-const workspace = (id: string, role: string): WorkspaceAccessClient => ({
-  workspace: {
-    id,
-    name: `Workspace ${id}`,
-    status: 'active',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    deletionScheduledAt: null
-  },
-  role
-})
-
-const W1 = workspace('w1', 'editor')
-const W2 = workspace('w2', 'viewer')
-
-type WorkspaceMocks = {
-  listWorkspaces: jest.Mock<
-    Promise<{
-      items: WorkspaceAccessClient[]
-      nextCursor: string | null
-      lastActiveWorkspaceId: string | null
-    }>,
-    [({ cursor?: string } | undefined)?]
-  >
-  switchWorkspace: jest.Mock<Promise<void>, [string]>
-}
-type TestClient = MockAuthClient & WorkspaceMocks
-
-/** A client that is signed in and whose workspaces are `items`, last active `lastActive`. */
-function signedIn(items = [W1, W2], lastActive: string | null = 'w2'): TestClient {
-  const client = Object.assign(createMockClient(), {
-    listWorkspaces: jest.fn() as WorkspaceMocks['listWorkspaces'],
-    switchWorkspace: jest.fn() as WorkspaceMocks['switchWorkspace']
-  })
-  client.getMe.mockResolvedValue(MOCK_USER)
-  client.listWorkspaces.mockResolvedValue({
-    items,
-    nextCursor: null,
-    lastActiveWorkspaceId: lastActive
-  })
-  client.switchWorkspace.mockResolvedValue(undefined)
-  return client
-}
-
-/** Mounts the hook under a provider whose `workspaces` option is read fresh on every render. */
-function mount(client: TestClient, options?: { current: AuthWorkspacesOptions | undefined }) {
-  const holder = options ?? { current: {} }
-  const wrapper = ({ children }: { children: ReactNode }): ReactNode => (
-    <AuthProvider client={client}>
-      {holder.current === undefined ? (
-        children
-      ) : (
-        <WorkspaceProvider client={client} {...holder.current}>
-          {children}
-        </WorkspaceProvider>
-      )}
-    </AuthProvider>
-  )
-  const view = renderHook(() => useWorkspaces(), { wrapper })
-  return { ...view, holder }
-}
-
-const settle = async (): Promise<void> => {
-  await act(async () => {
-    await Promise.resolve()
-    await Promise.resolve()
-  })
-}
-
-/** A cross-tab channel double: every instance hears what any other posts. */
-class FakeChannel {
-  static instances: FakeChannel[] = []
-  onmessage: ((event: { data: unknown }) => void) | null = null
-  closed = false
-  constructor(readonly name: string) {
-    FakeChannel.instances.push(this)
-  }
-  postMessage(data: unknown): void {
-    for (const other of FakeChannel.instances) {
-      if (other !== this && !other.closed) other.onmessage?.({ data })
-    }
-  }
-  close(): void {
-    this.closed = true
-  }
-}
+import { MOCK_USER } from './_testHelpers'
+import {
+  FakeChannel,
+  mount,
+  settle,
+  signedIn,
+  W1,
+  W2,
+  workspace,
+  type TestClient
+} from './_workspaceTestKit'
 
 describe('useWorkspaces', () => {
   afterEach(() => {

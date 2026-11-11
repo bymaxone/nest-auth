@@ -112,13 +112,6 @@ export interface WorkspaceClientMethods {
   ): Promise<AuthResult & AcceptedWorkspaceInvitation>
 }
 
-/** Drops the keys whose value is `undefined`, so an absent option is an absent key on the wire. */
-function defined(values: Readonly<Record<string, string | undefined>>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(values).filter((entry): entry is [string, string] => entry[1] !== undefined)
-  )
-}
-
 /** Appends the cursor and the limit of a page as a query string. */
 function paged(path: string, page: WorkspacePageParams | undefined): string {
   const query = new URLSearchParams()
@@ -161,11 +154,7 @@ function workspaceCalls({
     createWorkspace: async (name) => json('POST', ROUTES.list, { name }),
     renameWorkspace: async (id, name) => json('PATCH', inWorkspace(ROUTES.rename, id), { name }),
     scheduleWorkspaceDeletion: async (id, reauth) =>
-      none(
-        'POST',
-        inWorkspace(ROUTES.scheduleDeletion, id),
-        defined({ password: reauth?.password })
-      ),
+      none('POST', inWorkspace(ROUTES.scheduleDeletion, id), { password: reauth?.password }),
     restoreWorkspace: async (id) => none('POST', inWorkspace(ROUTES.restore, id), {})
   }
 }
@@ -190,15 +179,11 @@ function memberCalls({
     removeWorkspaceMember: async (id, userId) => none('DELETE', ofMember(id, userId)),
     leaveWorkspace: async (id) => none('POST', inWorkspace(ROUTES.leave, id), {}),
     transferWorkspaceOwnership: async (id, input) =>
-      none(
-        'POST',
-        inWorkspace(ROUTES.transferOwnership, id),
-        defined({
-          userId: input.userId,
-          demoteSelfTo: input.demoteSelfTo,
-          password: input.password
-        })
-      )
+      none('POST', inWorkspace(ROUTES.transferOwnership, id), {
+        userId: input.userId,
+        demoteSelfTo: input.demoteSelfTo,
+        password: input.password
+      })
   }
 }
 
@@ -250,10 +235,9 @@ function invitationCalls({
 export function createWorkspaceClient(config: AuthClientConfig): WorkspaceClientMethods {
   const { authFetch, url } = resolveTransport(config)
   const send = (method: string, path: string, body?: unknown): Promise<Response> =>
-    authFetch(url(path), {
-      method,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) })
-    })
+    // JSON.stringify answers `undefined` for no body and drops a key whose value is `undefined`, so an
+    // absent option is an absent key on the wire.
+    authFetch(url(path), { method, body: JSON.stringify(body) })
   const requests: Requests = {
     json: async <T>(method: string, path: string, body?: unknown) =>
       parseJsonOrThrow<T>(await send(method, path, body)),
