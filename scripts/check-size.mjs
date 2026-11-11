@@ -36,7 +36,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //      on a backend lib that never reaches a browser. We do NOT minify just to
 //      satisfy a budget.
 //   2. The budget is CALIBRATED to the real built artifact + MODEST headroom
-//      (~20-25%; about 5% for the entry-file lines, see BUDGETS IN FORCE): tight enough to catch accidental bloat (e.g. a dep leaking in),
+//      (~20-25%; a few percent for the entry-file lines, see BUDGETS IN FORCE): tight enough to catch accidental bloat (e.g. a dep leaking in),
 //      loose enough that a normal feature commit passes. Avoid >2× headroom — it
 //      silently lets bloat through. When real growth is legitimate, raise it and
 //      say why here; when the artifact shrinks, tighten it.
@@ -176,8 +176,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // BUDGETS IN FORCE. The `SURFACES` lines are the budget that counts: `client auth surface`
 // (createAuthClient) and `react auth surface` (AuthProvider, useSession) carry 4.25 and 2.5 KiB, and a
 // feature a frontend can leave unimported gets a line of its own when it lands instead of being added
-// to these. The `BUDGETS` lines are calibrated to the measured size plus about 4 to 5%: the client,
-// react and nextjs entries measure 4.41, 3.17 and 9.11 KiB against 4.6, 3.3 and 9.5, because each
+// to these. The `BUDGETS` lines hold the measured size plus a few percent of headroom: the client,
+// react and nextjs entries measure 4.28, 3.21 and 9.11 KiB against 4.6, 3.3 and 9.5, because each
 // entry file holds the whole workspace surface (the workspace client, the provider and its hooks, the
 // access reader and the landing hint), which a frontend that imports none of it never ships. The
 // per-subpath notes above are point-in-time calibration records; the two arrays below hold the
