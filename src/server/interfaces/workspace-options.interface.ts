@@ -95,6 +95,20 @@ export interface WorkspaceOptions {
   deletionGraceDays?: number
 
   /**
+   * Bounds the `access.denied` events one account can cause, so a client probing workspace ids
+   * cannot flood `onWorkspaceEvent`. Per account, at most `max` events are emitted in a window of
+   * `windowSeconds`; the denials past that are counted, and the next event that is emitted carries
+   * the count as `suppressedCount`. The access decision is never affected.
+   *
+   * `max`: a positive integer up to `10000`. Default: `10`. `windowSeconds`: a positive integer up
+   * to `3600`. Default: `60`.
+   */
+  accessDeniedEvents?: {
+    max?: number
+    windowSeconds?: number
+  }
+
+  /**
    * Reads the target workspace from a request, for hosts that do not carry it in the route.
    * Return `undefined` when the request names none. Never read it from the body.
    */

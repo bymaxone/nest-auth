@@ -258,6 +258,37 @@ describe('WorkspaceAccessService', () => {
         expect(access.kind).toBe(kind)
       })
 
+      // The host is told why a non-owner of a workspace pending deletion was refused, and only
+      // that case: every other denial carries no such mark.
+      it.each([
+        [
+          'a non-owner member of a workspace pending deletion',
+          PENDING,
+          MEMBERSHIP,
+          { kind: 'denied', pendingDeletion: true }
+        ],
+        ['a caller with no membership of a pending workspace', PENDING, null, { kind: 'denied' }],
+        [
+          'a suspended non-owner of a pending workspace',
+          PENDING,
+          { ...MEMBERSHIP, status: 'suspended' },
+          { kind: 'denied' }
+        ],
+        [
+          'a member of a suspended workspace',
+          { ...WORKSPACE, status: 'suspended' },
+          MEMBERSHIP,
+          { kind: 'denied' }
+        ],
+        ['a member of a missing workspace', null, MEMBERSHIP, { kind: 'denied' }]
+      ])('marks the denial of %s exactly', async (_name, workspace, row, answer) => {
+        const { service, workspaces, memberships } = build()
+        workspaces.findById.mockResolvedValue(workspace)
+        memberships.find.mockResolvedValue(row)
+
+        await expect(service.resolveAccess(REF)).resolves.toStrictEqual(answer)
+      })
+
       it('carries the owner as the member of a pending deletion', async () => {
         const { service, workspaces, memberships } = build()
         workspaces.findById.mockResolvedValue(PENDING)

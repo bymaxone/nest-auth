@@ -15,6 +15,7 @@ import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { WorkspaceAccessService } from '../services/workspace-access.service'
+import { WorkspaceDeniedEventsService } from '../services/workspace-denied-events.service'
 import { admitsPendingWorkspace, declaredWorkspaceRoles } from '../utils/declared-workspace-roles'
 import { assertWorkspaceId, assertWorkspaceMessage } from '../utils/resolve-request-workspace'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
@@ -60,7 +61,8 @@ export class WsWorkspaceGuard implements CanActivate {
   constructor(
     @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(WorkspaceAccessService) private readonly access: WorkspaceAccessService,
-    @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions
+    @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions,
+    @Inject(WorkspaceDeniedEventsService) private readonly denied: WorkspaceDeniedEventsService
   ) {
     if (options.workspaces === undefined) {
       throw new Error('[BymaxAuthModule] WsWorkspaceGuard needs workspaces.enabled.')
@@ -84,11 +86,15 @@ export class WsWorkspaceGuard implements CanActivate {
       workspaceId,
       userId: user.sub
     })
-    const member = assertWorkspaceAccess(
-      access,
-      accepted,
-      this.group.roles.hierarchy,
-      admitsPendingWorkspace(this.reflector, context)
+    const member = this.denied.admit(
+      { tenantId: user.tenantId, userId: user.sub, workspaceId, surface: 'ws' },
+      () =>
+        assertWorkspaceAccess(
+          access,
+          accepted,
+          this.group.roles.hierarchy,
+          admitsPendingWorkspace(this.reflector, context)
+        )
     )
 
     rememberMessageWorkspace(message, { ...member })

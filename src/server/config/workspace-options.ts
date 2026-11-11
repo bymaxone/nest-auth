@@ -44,6 +44,8 @@ export interface ResolvedWorkspaceOptions {
   membershipCacheTtlSeconds: number
   /** Days a deleted workspace can be restored; `0` deletes at once. */
   deletionGraceDays: number
+  /** How many `access.denied` events one account may cause per window, and how long a window is. */
+  accessDeniedEvents: { readonly max: number; readonly windowSeconds: number }
   /** Reads the target workspace from a request, when the host supplied one. */
   resolveRequestWorkspace?: WorkspaceOptions['resolveRequestWorkspace']
   /** Reads the target workspace from a socket message, when the host supplied one. */
@@ -137,6 +139,33 @@ function validateWorkspacePermissions(
   }
 }
 
+/** Most `access.denied` events one account may cause per window, at the highest. */
+export const ACCESS_DENIED_EVENTS_MAX_LIMIT = 10_000
+
+/** Longest `access.denied` window: one hour, so the suppressed count (a day) always outlives it. */
+export const ACCESS_DENIED_EVENTS_MAX_WINDOW_SECONDS = 3600
+
+/**
+ * Requires `workspaces.accessDeniedEvents` to be an object whose settings are positive integers.
+ *
+ * @param value - The configured group, if any.
+ * @throws {Error} Naming the offending option.
+ */
+function validateAccessDeniedEvents(value: unknown): void {
+  if (value === undefined) return
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`[BymaxAuthModule] workspaces.accessDeniedEvents must be an object.`)
+  }
+  const { max, windowSeconds } = value as { max?: unknown; windowSeconds?: unknown }
+  assertIntegerInRange('workspaces.accessDeniedEvents.max', max, 1, ACCESS_DENIED_EVENTS_MAX_LIMIT)
+  assertIntegerInRange(
+    'workspaces.accessDeniedEvents.windowSeconds',
+    windowSeconds,
+    1,
+    ACCESS_DENIED_EVENTS_MAX_WINDOW_SECONDS
+  )
+}
+
 /**
  * Validates the settings that are numbers, flags and functions.
  *
@@ -164,6 +193,7 @@ function validateWorkspaceTuning(group: WorkspaceOptions): void {
     WORKSPACE_MEMBERSHIP_CACHE_MAX_TTL_SECONDS
   )
   assertIntegerInRange('workspaces.deletionGraceDays', group.deletionGraceDays, 0, 365)
+  validateAccessDeniedEvents(group.accessDeniedEvents)
   const { allowCreate, resolveRequestWorkspace, resolveWsWorkspace } = group
   if (
     allowCreate !== undefined &&
@@ -249,6 +279,10 @@ export function resolveWorkspaceOptions(
     maxPendingInvitationsPerWorkspace: group.maxPendingInvitationsPerWorkspace ?? 100,
     membershipCacheTtlSeconds: group.membershipCacheTtlSeconds ?? 60,
     deletionGraceDays: group.deletionGraceDays ?? 14,
+    accessDeniedEvents: {
+      max: group.accessDeniedEvents?.max ?? 10,
+      windowSeconds: group.accessDeniedEvents?.windowSeconds ?? 60
+    },
     ...(group.resolveRequestWorkspace === undefined
       ? {}
       : { resolveRequestWorkspace: group.resolveRequestWorkspace }),

@@ -9,7 +9,7 @@
 import { hasRole } from './roles.util'
 import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
-import { AuthException } from '../errors/auth-exception'
+import { WorkspaceAccessRefusal } from '../errors/workspace-access-refusal'
 import type { WorkspaceRoleList } from '../interfaces/workspace-options.interface'
 import type { ResolvedWorkspaceMember, WorkspaceAccess } from '../services/workspace-access.service'
 
@@ -40,7 +40,7 @@ export function acceptsWorkspaceRole(
  * @param hierarchy - The configured role hierarchy.
  * @param allowPending - Whether the owner of a workspace pending deletion is admitted.
  * @returns The member, with the role they hold.
- * @throws {AuthException} `auth.workspace_not_found`, `auth.workspace_pending_deletion` or
+ * @throws {WorkspaceAccessRefusal} `auth.workspace_not_found`, `auth.workspace_pending_deletion` or
  *   `auth.insufficient_workspace_role`.
  */
 export function assertWorkspaceAccess(
@@ -49,12 +49,23 @@ export function assertWorkspaceAccess(
   hierarchy: Record<string, string[]>,
   allowPending: boolean
 ): ResolvedWorkspaceMember {
-  if (access.kind === 'denied') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
+  if (access.kind === 'denied') {
+    throw new WorkspaceAccessRefusal(
+      AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND,
+      access.pendingDeletion === true ? 'pending_deletion' : 'not_member'
+    )
+  }
   if (access.kind === 'pending_deletion' && !allowPending) {
-    throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION)
+    throw new WorkspaceAccessRefusal(
+      AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION,
+      'pending_deletion'
+    )
   }
   if (!acceptsWorkspaceRole(accepted, access.member.role, hierarchy)) {
-    throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
+    throw new WorkspaceAccessRefusal(
+      AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE,
+      'insufficient_role'
+    )
   }
   return access.member
 }

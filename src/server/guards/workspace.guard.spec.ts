@@ -21,7 +21,13 @@ import type {
   WorkspaceAccess,
   WorkspaceAccessService
 } from '../services/workspace-access.service'
+import type { WorkspaceDeniedEventsService } from '../services/workspace-denied-events.service'
 import { WorkspaceGuard } from './workspace.guard'
+
+/** Lets the decision through untouched: the emitter has its own specs. */
+const DENIED = {
+  admit: (_denied: unknown, decide: () => unknown) => decide()
+} as Partial<WorkspaceDeniedEventsService> as WorkspaceDeniedEventsService
 
 const SECRET = 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B'
 
@@ -96,7 +102,8 @@ function build(options: BymaxAuthModuleOptions = moduleOptions()): Harness {
   const guard = new WorkspaceGuard(
     new Reflector(),
     access as WorkspaceAccessService,
-    resolveOptions(options)
+    resolveOptions(options),
+    DENIED
   )
   return { guard, resolveMembership, resolveAccess }
 }
@@ -156,7 +163,7 @@ describe('WorkspaceGuard', () => {
     const options = resolveOptions({ ...moduleOptions(), workspaces: { enabled: false } as never })
 
     expect(
-      () => new WorkspaceGuard(new Reflector(), {} as WorkspaceAccessService, options)
+      () => new WorkspaceGuard(new Reflector(), {} as WorkspaceAccessService, options, DENIED)
     ).toThrow('[BymaxAuthModule] WorkspaceGuard needs workspaces.enabled.')
   })
 

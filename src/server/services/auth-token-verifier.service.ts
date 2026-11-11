@@ -11,6 +11,7 @@ import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { AccountStatusService } from './account-status.service'
 import { AuthRevocationService } from './auth-revocation.service'
 import { WorkspaceAccessService } from './workspace-access.service'
+import { WorkspaceDeniedEventsService } from './workspace-denied-events.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { CurrentWorkspaceContext } from '../decorators/current-workspace.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -233,7 +234,11 @@ export class AuthTokenVerifierService {
     // Present only when `workspaces.enabled`.
     @Inject(WorkspaceAccessService)
     @Optional()
-    private readonly workspaceAccess: WorkspaceAccessService | null = null
+    private readonly workspaceAccess: WorkspaceAccessService | null = null,
+    // Present only when `workspaces.enabled`: reports a refusal as `access.denied`.
+    @Inject(WorkspaceDeniedEventsService)
+    @Optional()
+    private readonly deniedEvents: WorkspaceDeniedEventsService | null = null
   ) {}
 
   /**
@@ -358,6 +363,7 @@ export class AuthTokenVerifierService {
     }
     const access = this.workspaceAccess
     const group = this.options.workspaces
+    const denied = this.deniedEvents
     if (access === null || group === undefined) {
       throw new TypeError('verifyAccessToken: workspace needs workspaces.enabled')
     }
@@ -368,12 +374,24 @@ export class AuthTokenVerifierService {
         workspaceId,
         userId: payload.sub
       })
-      return assertWorkspaceAccess(
-        resolved,
-        check.roles,
-        group.roles.hierarchy,
-        check.allowPending === true
-      )
+      const decide = (): CurrentWorkspaceContext =>
+        assertWorkspaceAccess(
+          resolved,
+          check.roles,
+          group.roles.hierarchy,
+          check.allowPending === true
+        )
+      return denied === null
+        ? decide()
+        : denied.admit(
+            {
+              tenantId: payload.tenantId,
+              userId: payload.sub,
+              workspaceId,
+              surface: 'verifier'
+            },
+            decide
+          )
     }
   }
 

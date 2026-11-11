@@ -19,6 +19,7 @@ import type { Socket as ClientSocket } from 'socket.io-client'
 import request from 'supertest'
 
 import {
+  BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../../src/server/bymax-auth.constants'
@@ -116,6 +117,13 @@ describe('workspace authorization on a socket and in a job (E2E)', () => {
   let port: number
   let repositories: ReturnType<typeof memoryRepositories>
   let sequence = 0
+  const denied: Array<Record<string, unknown>> = []
+
+  /** The `access.denied` events that reached the host's hook, once the detached emission is done. */
+  async function deniedEvents(): Promise<Array<Record<string, unknown>>> {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    return denied
+  }
 
   beforeAll(async () => {
     repositories = memoryRepositories()
@@ -134,6 +142,14 @@ describe('workspace authorization on a socket and in a job (E2E)', () => {
         controllers: { auth: true, workspaces: true },
         hostProviders: [WorkspaceGateway],
         extraModuleProviders: [
+          {
+            provide: BYMAX_AUTH_HOOKS,
+            useValue: {
+              onWorkspaceEvent: (event: Record<string, unknown>) => {
+                if (event['type'] === 'access.denied') denied.push(event)
+              }
+            }
+          },
           { provide: BYMAX_AUTH_WORKSPACE_REPOSITORY, useValue: repositories.workspaces },
           { provide: BYMAX_AUTH_MEMBERSHIP_REPOSITORY, useValue: repositories.memberships }
         ]
@@ -298,5 +314,53 @@ describe('workspace authorization on a socket and in a job (E2E)', () => {
       response: { error: { code: 'auth.workspace_not_found' } }
     })
     expect((await send(port, member.token, 'read', { workspaceId: id })).ok).toBe(true)
+  })
+  describe('access.denied reaching the host', () => {
+    beforeEach(() => {
+      denied.length = 0
+    })
+
+    it('reports a refused socket message and a refused stream, each as its surface', async () => {
+      const { id, stranger } = await world()
+
+      await send(port, stranger.token, 'read', { workspaceId: id })
+      await send(port, stranger.token, 'verify', { token: stranger.token, workspaceId: id })
+
+      expect((await deniedEvents()).map((event) => event['surface'])).toEqual(['ws', 'verifier'])
+      expect(denied[0]).toMatchObject({
+        type: 'access.denied',
+        tenantId: 'tenant-1',
+        workspaceId: id,
+        userId: stranger.id,
+        code: 'auth.workspace_not_found',
+        reason: 'not_member',
+        suppressedCount: 0
+      })
+    })
+
+    it('reports a refused route, and nothing for an allowed or a malformed request', async () => {
+      const { id, member, stranger } = await world()
+      const get = (token: string, workspaceId: string) =>
+        request(app.getHttpServer())
+          .get(`/workspaces/${workspaceId}/access`)
+          .set('Authorization', `Bearer ${token}`)
+
+      expect((await get(member.token, id)).status).toBe(200)
+      expect((await get(stranger.token, '%20')).status).toBe(400)
+      expect((await get(stranger.token, id)).status).toBe(404)
+
+      expect(await deniedEvents()).toHaveLength(1)
+      expect(denied[0]).toMatchObject({ surface: 'http', userId: stranger.id })
+    })
+
+    it('emits at most the default ten per account and counts the rest', async () => {
+      const { id, stranger } = await world()
+
+      for (let attempt = 0; attempt < 13; attempt += 1) {
+        await send(port, stranger.token, 'read', { workspaceId: id })
+      }
+
+      expect(await deniedEvents()).toHaveLength(10)
+    })
   })
 })

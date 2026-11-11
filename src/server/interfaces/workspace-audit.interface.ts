@@ -89,6 +89,31 @@ export type WorkspaceAuditEvent =
     })
   | (WorkspaceAuditBase & {
       type: 'access.denied'
-      /** Why the guard refused. */
-      reason: 'not_member' | 'insufficient_role'
+      /** The account that was refused; the same value as `actorUserId`. */
+      userId: string
+      /** The surface that refused: a route, a stream's verification or a socket message. */
+      surface: 'http' | 'verifier' | 'ws'
+      /**
+       * The code the caller was answered with. The host receives the event and the caller never
+       * does, so it also gets {@link reason}, which the answer deliberately does not carry.
+       */
+      code:
+        | 'auth.workspace_not_found'
+        | 'auth.workspace_pending_deletion'
+        | 'auth.insufficient_workspace_role'
+      /**
+       * Why the decision refused, for the host to tell two incidents apart: an account probing
+       * workspaces it does not belong to (`not_member`) and a member reaching above its role
+       * (`insufficient_role`). `not_member` also covers a workspace that does not exist, because
+       * the resolution does not tell the two apart. `pending_deletion` is any active member of a
+       * workspace pending deletion on a surface that does not admit it: the owner, and also a
+       * non-owner, who is answered `auth.workspace_not_found` like a stranger, so `code` and
+       * `reason` differ exactly where the caller is not told.
+       */
+      reason: 'not_member' | 'insufficient_role' | 'pending_deletion'
+      /**
+       * Denials since the last event for this account that were counted and not emitted, because
+       * the account exceeded `workspaces.accessDeniedEvents.max` inside a window. Zero when none.
+       */
+      suppressedCount: number
     })

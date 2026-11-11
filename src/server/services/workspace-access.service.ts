@@ -57,11 +57,13 @@ export interface ResolvedWorkspaceMember extends MembershipRef {
  * - `pending_deletion`: an active OWNER of a workspace pending deletion. Only an owner is told, so
  *   the answer lets a client offer to restore it; every other caller reads as `denied`.
  * - `denied`: anything else, a missing workspace, an inactive one and a non-member alike.
+ *   `pendingDeletion` is set when the workspace is pending deletion and the caller is an active
+ *   member who does not own it: still `denied` to the caller, but the host is told why.
  */
 export type WorkspaceAccess =
   | { kind: 'member'; member: ResolvedWorkspaceMember }
   | { kind: 'pending_deletion'; member: ResolvedWorkspaceMember }
-  | { kind: 'denied' }
+  | { kind: 'denied'; pendingDeletion?: true }
 
 /** The version counters and the cached entry one Redis round trip returns. */
 interface MembershipRead {
@@ -292,10 +294,9 @@ export class WorkspaceAccessService {
     if (membership?.status !== 'active' || workspace === null) return { kind: 'denied' }
     const member = { ...ref, role: membership.role }
     if (workspace.status === 'active') return { kind: 'member', member }
+    if (workspace.status !== 'pending_deletion') return { kind: 'denied' }
     const ownsIt = membership.role === this.group.roles.ownerRole
-    return workspace.status === 'pending_deletion' && ownsIt
-      ? { kind: 'pending_deletion', member }
-      : { kind: 'denied' }
+    return ownsIt ? { kind: 'pending_deletion', member } : { kind: 'denied', pendingDeletion: true }
   }
 }
 

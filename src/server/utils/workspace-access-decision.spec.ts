@@ -8,6 +8,7 @@ import { assertWorkspaceAccess } from './workspace-access-decision'
 import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import type { AuthException } from '../errors/auth-exception'
+import { WorkspaceAccessRefusal } from '../errors/workspace-access-refusal'
 import type { WorkspaceAccess } from '../services/workspace-access.service'
 
 const HIERARCHY = { owner: ['editor', 'viewer'], editor: ['viewer'], viewer: [] }
@@ -76,5 +77,52 @@ describe('assertWorkspaceAccess', () => {
     expect(
       refusal(() => assertWorkspaceAccess(pending('viewer'), ['owner'], HIERARCHY, false))
     ).toBe(AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION)
+  })
+
+  describe('the reason the host is told', () => {
+    /** The refusal an assertion raises, for its code and reason. */
+    function refusedWith(access: WorkspaceAccess, allowPending = false): WorkspaceAccessRefusal {
+      try {
+        assertWorkspaceAccess(access, ['owner'], HIERARCHY, allowPending)
+      } catch (error) {
+        if (error instanceof WorkspaceAccessRefusal) return error
+      }
+      throw new Error('the assertion did not refuse')
+    }
+
+    it.each([
+      [
+        'a stranger',
+        { kind: 'denied' } as WorkspaceAccess,
+        'auth.workspace_not_found',
+        'not_member'
+      ],
+      [
+        'a non-owner of a workspace pending deletion',
+        { kind: 'denied', pendingDeletion: true } as WorkspaceAccess,
+        'auth.workspace_not_found',
+        'pending_deletion'
+      ],
+      [
+        'the owner of a workspace pending deletion',
+        pending('owner'),
+        'auth.workspace_pending_deletion',
+        'pending_deletion'
+      ],
+      [
+        'a member below the role',
+        member('viewer'),
+        'auth.insufficient_workspace_role',
+        'insufficient_role'
+      ]
+    ])('refuses %s with the code %s and the reason %s', (_name, access, code, reason) => {
+      const refusalOf = refusedWith(access)
+
+      expect(refusalOf.refusalCode).toBe(code)
+      expect(refusalOf.reason).toBe(reason)
+      expect(refusalOf.getResponse()).toEqual({
+        error: { code, message: expect.any(String), details: null }
+      })
+    })
   })
 })
