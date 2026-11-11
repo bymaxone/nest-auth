@@ -12,6 +12,11 @@ import { join } from 'node:path'
 const DIR = join(__dirname, '../../conformance')
 const FILES = readdirSync(DIR).filter((name) => name.endsWith('.json'))
 
+/** The text of a file, or a throw when its bytes are not valid UTF-8, which `toString` would hide. */
+function decodeStrictly(bytes: Buffer): string {
+  return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+}
+
 /** Whether a string survives a UTF-8 round trip, which a lone surrogate does not. */
 function wellFormed(text: string): boolean {
   return Buffer.from(text, 'utf8').toString('utf8') === text
@@ -33,13 +38,20 @@ describe('conformance files', () => {
   })
 
   it.each(FILES)('%s holds only well-formed Unicode strings', (name) => {
-    const document: unknown = JSON.parse(readFileSync(join(DIR, name), 'utf8'))
+    const document: unknown = JSON.parse(decodeStrictly(readFileSync(join(DIR, name))))
 
     const ill = strings(document)
       .filter(([, text]) => !wellFormed(text))
       .map(([where]) => where)
 
     expect(ill).toEqual([])
+  })
+
+  it('refuses bytes that are not valid UTF-8, which a plain decode would replace', () => {
+    const invalid = Buffer.from([34, 255, 34])
+
+    expect(invalid.toString('utf8')).toBe('"\ufffd"')
+    expect(() => decodeStrictly(invalid)).toThrow('not valid for encoding utf-8')
   })
 
   it('tells an ill-formed string from a well-formed one', () => {
