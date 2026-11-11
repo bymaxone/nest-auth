@@ -275,7 +275,7 @@ export function assertInvitationControllers(
     ['controllers.workspaceInvitations', workspaceController]
   ])
   const tenantPath = missingPieces([
-    ['invitations.enabled', resolved.invitations?.enabled === true],
+    ['invitations.enabled', resolved.invitations.enabled === true],
     ['controllers.invitations', tenantController]
   ])
   if (workspacePath.length > 0 && tenantPath.length > 0) {
