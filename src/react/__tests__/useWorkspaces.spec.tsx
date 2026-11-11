@@ -109,6 +109,20 @@ describe('useWorkspaces', () => {
       expect(client.listWorkspaces).not.toHaveBeenCalled()
     })
 
+    it('makes no request when the host asks for a reload while signed out', async () => {
+      const client = signedIn()
+      client.getMe.mockRejectedValue(new AuthClientError('no', 401))
+      const { result } = mount(client)
+      await settle()
+
+      await act(async () => {
+        await result.current.refresh()
+      })
+
+      expect(client.listWorkspaces).not.toHaveBeenCalled()
+      expect(result.current.status).toBe('idle')
+    })
+
     it('follows the cursors and keeps the last active workspace of the first page', async () => {
       const client = signedIn()
       client.listWorkspaces

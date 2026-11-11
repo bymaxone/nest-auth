@@ -1565,9 +1565,11 @@ header.
 With `controllers.workspaceInvitations: true`: `POST` and `GET workspaces/:workspaceId/invitations`
 (invite, list pending), `POST .../invitations/resend` and `.../invitations/revoke`, and the
 token-based `POST workspaces/invitations/preview` (public), `.../accept` (the signed-in account the
-invitation was addressed to) and `.../accept-signup` (public, creates the account). The token travels
-in a POST body, never in a query string; put it in the URL fragment on your accept page and set
-`Referrer-Policy: no-referrer` there.
+invitation was addressed to) and `.../accept-signup` (public, creates the account). On these routes
+the token travels in a POST body, never in a query string. The one exception is the OAuth sign-in
+start, `GET /oauth/:provider?workspaceInvitation=<token>`: it stores only the token's sha256 in the
+state record and answers with `Referrer-Policy: no-referrer`. On your accept page, put the token in
+the URL fragment and set `Referrer-Policy: no-referrer` there.
 
 ### Hooks and events
 
