@@ -150,7 +150,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     bundle back without losing a word a consumer reads (they read the `.d.ts`). Not done here
 //     because it is a build change with its own blast radius, and this PR is a route fix.
 //     Recorded so the next raise is argued against that number instead of discovering it again.
-//     5 KiB sits about 5% above the measured 4.75 KiB. The size includes the nine workspace
+//     4.8 KiB sits about 5% above the measured 4.59 KiB. The size includes the nine workspace
 //     error codes with their statuses and the route names of the workspace and workspace
 //     invitation routes, each of which a client composes a URL from.
 //   client   2.64 KiB →  3.5 KiB (~33% headroom; fetch client may grow with auth flows)
@@ -175,10 +175,12 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // auth surface` (AuthProvider, useSession) carry 4.25 and 2.5 KiB. The entry-file lines are a
 // secondary bound on the published files, calibrated to the measured size plus about 5%, so growth
 // that no surface imports cannot accumulate unnoticed.
+// The per-subpath notes above are point-in-time calibration records; the `BUDGETS` and `SURFACES` arrays
+// below are the budgets in force.
 //
 // WHY THE SURFACES CAN BE TRUSTED. A consumer's bundler can only drop what it can prove unused, and a
-// top-level `__name(...)` call, which esbuild's `keepNames` adds after every function, cannot be
-// proven unused. tsup turns `keepNames` on whenever the tsconfig has `emitDecoratorMetadata`, so the
+// top-level `__name(...)` call, which `keepNames` adds after every function (esbuild suffixes the
+// helper, `__name2(...)`, when two collide), cannot be proven unused. tsup turns `keepNames` on whenever the tsconfig has `emitDecoratorMetadata`, so the
 // shared, client, react and nextjs entries build with `tsconfig.build.web.json`, which does not, and
 // `treeShakingProblems()` below fails the build if any of them holds such a call, because the surface
 // lines alone have enough headroom to hide the loss.
@@ -309,7 +311,8 @@ function treeShakingProblems() {
   for (const entry of BROWSER_ENTRIES) {
     for (const extension of ['mjs', 'cjs']) {
       const file = `dist/${entry}/index.${extension}`
-      const wrappers = readFileSync(resolve(ROOT, file), 'utf8').split('__name(').length - 1
+      const wrappers = (readFileSync(resolve(ROOT, file), 'utf8').match(/\b__name\d*\(/g) ?? [])
+        .length
       if (wrappers > 0) {
         problems.push(
           `${file} holds ${wrappers} top-level __name( call(s), which a bundler must keep: build it with tsconfig.build.web.json`
