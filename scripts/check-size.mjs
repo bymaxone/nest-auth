@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-// Bundle-size gate. It measures two different things and fails when either exceeds its budget:
+// Bundle-size gate. It measures two things against budgets, and also runs two build checks (see
+// `treeShakingProblems()` and `errorClassProblems()`). It exits 1 when a budget is exceeded or a check
+// fails. What it measures:
 //
 //   1. THE CONSUMER SURFACES, which are the budgets that count. What a frontend ships is not the
 //      published entry file: it is what its bundler keeps of it after tree-shaking and
 //      minification. Each surface below is a minimal import of the published `dist/` entry, bundled
-//      and minified the way a consumer's build does, then brotli-compressed. A frontend that never
-//      imports a feature pays nothing for it, and this is where that is held.
+//      and minified the way a consumer's build does, then brotli-compressed.
 //   2. THE ENTRY FILES, a secondary bound: every published subpath's ESM entry, raw and brotli, so
 //      growth that no surface imports yet cannot accumulate unnoticed.
 //
@@ -170,22 +171,19 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 //
-// WHAT THE TWO KINDS OF LINE MEAN. The consumer lines are the budget that counts: they measure what a
-// frontend ships for a minimal import, so a feature a frontend can leave unimported gets a line of its
-// own when it lands and is never added to these. `client auth surface` (createAuthClient) and `react
-// auth surface` (AuthProvider, useSession) carry 4.25 and 2.5 KiB. The entry-file lines are a
-// secondary bound on the published files, calibrated to the measured size plus about 5%, so growth
-// that no surface imports cannot accumulate unnoticed.
-// The per-subpath notes above are point-in-time calibration records; the `BUDGETS` and `SURFACES` arrays
-// below are the budgets in force.
+// BUDGETS IN FORCE. The `SURFACES` lines are the budget that counts: `client auth surface`
+// (createAuthClient) and `react auth surface` (AuthProvider, useSession) carry 4.25 and 2.5 KiB, and a
+// feature a frontend can leave unimported gets a line of its own when it lands instead of being added
+// to these. The `BUDGETS` lines are calibrated to the measured size plus about 5%. The per-subpath
+// notes above are point-in-time calibration records; the two arrays below hold the budgets.
 //
 // WHY THE SURFACES CAN BE TRUSTED. A consumer's bundler can only drop what it can prove unused, and a
-// top-level `__name(...)` call, which `keepNames` adds after every function (esbuild suffixes the
-// helper, `__name2(...)`, when two collide), cannot be proven unused. tsup's swc plugin turns `keepNames` on whenever the tsconfig has
-// `emitDecoratorMetadata`, so the shared, client, react and nextjs entries build with
-// `tsconfig.build.web.json`, which does not, and
-// `treeShakingProblems()` below fails the build if any of them holds such a call, because the surface
-// lines alone have enough headroom to hide the loss.
+// top-level `__name(...)` call, which `keepNames` adds after every function, cannot be proven unused.
+// tsup's swc plugin turns `keepNames` on whenever the tsconfig has `emitDecoratorMetadata`, so the
+// shared, client, react and nextjs entries build with `tsconfig.build.web.json`, which does not.
+// `treeShakingProblems()` below fails the run if any of them holds such a call, under the name
+// `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
+// the loss.
 const BUDGETS = [
   { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 169 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.8 * 1024 },
