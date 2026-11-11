@@ -50,6 +50,7 @@ const MEMBERSHIP_KEYS: KeyTable = {
   create: ['tenantId', 'workspaceId', 'userId'],
   changeRole: ['tenantId', 'workspaceId', 'userId'],
   remove: ['tenantId', 'workspaceId', 'userId'],
+  removeAllForUser: ['tenantId', 'userId'],
   transferOwnership: ['tenantId', 'workspaceId'],
   getLastActiveWorkspaceId: ['tenantId', 'userId'],
   setLastActiveWorkspaceId: ['tenantId', 'workspaceId', 'userId']

@@ -192,6 +192,7 @@ export type {
  * always scope the row it reads or writes.
  */
 export type {
+  AccountRemovalAudit,
   AuthMembership,
   ChangeMembershipRoleParams,
   CountOwnedParams,
@@ -208,7 +209,10 @@ export type {
   MembershipRef,
   MembershipStatus,
   MembershipWithWorkspace,
+  RemoveAllMembershipsParams,
+  RemoveAllMembershipsResult,
   RemoveMembershipParams,
+  RemovedMembership,
   SetLastActiveWorkspaceParams,
   TransferOwnershipParams,
   TransferOwnershipResult
@@ -494,7 +498,7 @@ export { WorkspaceAccessService } from './services/workspace-access.service'
 export { decodeWorkspaceScopedName, workspaceScopedName } from './utils/workspace-scoped'
 export { stampJobContext } from './utils/workspace-job'
 export type { WorkspaceJobContext } from './interfaces/workspace-job-context.interface'
-export { MembershipService } from './services/membership.service'
+export { MembershipBumpFailedError, MembershipService } from './services/membership.service'
 export { WorkspaceCallerService } from './services/workspace-caller.service'
 export { WorkspaceActionsService } from './services/workspace-actions.service'
 export type { MyWorkspaces } from './services/membership.service'

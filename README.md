@@ -1482,7 +1482,7 @@ BymaxAuthModule.registerAsync({
 
 You implement two ports: `IWorkspaceRepository` (`createWithOwner`, `findById`, `rename`,
 `updateStatus`) and `IMembershipRepository` (`find`, `listForUser`, `listForWorkspace`, `create`,
-`changeRole`, `remove`, `transferOwnership`, `countOwned`, `listSoleOwned`). Every call carries the
+`changeRole`, `remove`, `removeAllForUser`, `transferOwnership`, `countOwned`, `listSoleOwned`). Every call carries the
 tenant and the workspace. The writes that must not race (a role change, a removal, an ownership
 transfer) are guarded writes the repository answers atomically, so two requests cannot both remove
 the last owner.
@@ -1577,6 +1577,33 @@ context)` receives, after the change has committed, `workspace.created`, `.renam
 `.revoked` and `.accepted`; `member.role_changed`, `.removed` and `.left`; `ownership.transferred`;
 `workspace.switched`; and `access.denied` (with the `surface`, the public `code` and a host-only
 `reason`). It is best-effort and informational: the repository's persisted audit row is the record.
+
+### Deleting an account
+
+The library never deletes a user: `IUserRepository` has no delete. A host that deletes or anonymises
+a user row must remove that user's memberships first, or the rows stay behind, still count as
+members of their workspaces, and a deleted owner keeps a workspace from ever being seen as
+orphaned. Call `MembershipService.removeAllForUser(tenantId, userId, actorUserId, context)` before
+the delete. `actorUserId` is the account itself, an administrator, or `null` for a job.
+
+It removes every membership of the account, in every membership status and every workspace, with one
+`member.removed` event per removal and the cached access of each dropped, so access ends at the next
+request. Only the repository can find them all (`listForUser` lists active memberships of active
+workspaces only), so it is one call on the membership port, `removeAllForUser`, which you implement
+in one transaction together with the audit rows.
+
+- **It refuses while the account is the only owner of an active or suspended workspace:** `409
+auth.last_owner` with `details.workspaces` (`{ id, name, status }`, at most 100; `{ id }` alone for one the repository found during the write), and nothing is
+  removed. Transfer ownership or schedule the workspace's deletion first.
+- **A workspace pending deletion does not block.** No one can finalize a pending deletion before
+  its grace period ends, so an owner who scheduled one would otherwise be unable to delete their own
+  account for the whole period. Their membership there is removed with the rest, the workspace can no
+  longer be restored (restoring is owner-only), and your finalize job deletes it when the grace period
+  ends.
+- **If a cache bump fails after the commit,** the call throws `MembershipBumpFailedError` with
+  `removed` and `failed`. The removal is already committed, so calling it again removes nothing: drop
+  the access of each entry of `failed` with `WorkspaceAccessService.invalidateMembership`, or wait out
+  `membershipCacheTtlSeconds`.
 
 ### Accepting an invitation through OAuth, and MFA
 
