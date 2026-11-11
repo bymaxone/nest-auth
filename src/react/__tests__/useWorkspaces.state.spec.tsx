@@ -394,6 +394,56 @@ describe('WorkspaceProvider state', () => {
       expect(result.current.workspaces.activeWorkspace).toEqual(W2)
     })
 
+    it('keeps what it shows while a sign-in is in flight for the same session', async () => {
+      const client = signedIn()
+      client.listWorkspaces.mockRejectedValueOnce(new Error('down'))
+      const { result } = mountAuth(client)
+      await settle()
+      expect(result.current.workspaces.status).toBe('error')
+      const slow: { resolve: (value: { user: typeof MOCK_USER; accessToken: string }) => void } = {
+        resolve: () => undefined
+      }
+      client.login.mockReturnValueOnce(new Promise((resolve) => (slow.resolve = resolve)))
+
+      let signingIn: Promise<unknown> = Promise.resolve()
+      await act(async () => {
+        signingIn = result.current.auth.login('a@b.c', 'pw')
+        await Promise.resolve()
+      })
+
+      expect(result.current.session.status).toBe('loading')
+      expect(result.current.workspaces.status).toBe('error')
+      await act(async () => {
+        slow.resolve({ user: MOCK_USER, accessToken: '' })
+        await signingIn
+      })
+    })
+
+    it('does not show a failure of a load that a newer load replaced', async () => {
+      const client = signedIn()
+      const { result } = mountAuth(client)
+      await settle()
+      const failing: { reject: (error: Error) => void } = { reject: () => undefined }
+      client.listWorkspaces.mockReturnValueOnce(
+        new Promise((_resolve, reject) => (failing.reject = reject))
+      )
+      await act(async () => {
+        void result.current.workspaces.refresh()
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await result.current.workspaces.refresh()
+      })
+      expect(result.current.workspaces.status).toBe('ready')
+
+      await act(async () => {
+        failing.reject(new Error('late'))
+        await Promise.resolve()
+      })
+
+      expect(result.current.workspaces.status).toBe('ready')
+    })
+
     it('does not reload for the same account revalidating', async () => {
       const client = signedIn()
       const { result } = mountAuth(client)

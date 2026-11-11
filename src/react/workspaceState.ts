@@ -132,7 +132,7 @@ function useReload(
   // Stryker disable ArrayDeclaration: the dependencies are refs and a state setter, which are stable, so any constant array re-creates the callback exactly as often as `[]`
   return useCallback(async (): Promise<void> => {
     const owner = identityRef.current
-    if (statusRef.current !== 'authenticated' || owner === null) return
+    if (statusRef.current !== 'authenticated') return
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
