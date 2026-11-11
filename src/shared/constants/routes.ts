@@ -19,6 +19,8 @@
  * Mounted at the top of the auth route prefix
  * (`src/server/controllers/auth.controller.ts`).
  */
+import { trimSlashes } from '../utils/trim-slashes'
+
 export const AUTH_DASHBOARD_ROUTES = {
   /** POST — register a new local (email + password) user. */
   register: 'register',
@@ -348,36 +350,6 @@ const AUTH_REFRESH_SKIP_PROXY_PATHS = [
   '/api/auth/client-refresh',
   '/api/auth/silent-refresh'
 ] as const
-
-/**
- * Strip leading and trailing `/` characters without a regular expression.
- *
- * The obvious `replace(/^\/+|\/+$/g, '')` is quadratic on a run of slashes — the `$`-anchored
- * alternative backtracks over every prefix of the run — which CodeQL flags as a polynomial
- * ReDoS. The input here is deployment configuration rather than anything a caller sends, so it
- * was never reachable in practice; a scan cannot know that, and neither can the next reader.
- * A pair of scans is linear and says what it does.
- *
- * @param value - The string to trim.
- * @returns `value` with every leading and trailing `/` removed.
- */
-function trimSlashes(value: string): string {
-  let start = 0
-  let end = value.length
-  // Block form because the reason spans both lines and a wrapped `next-line` binds to its own
-  // continuation.
-  //
-  // Stryker disable ConditionalExpression,EqualityOperator: the index bounds cannot be observed.
-  // `end` starts at `value.length`, so a scan that runs past the run of slashes reads `undefined`
-  // and stops on the character test alone; and a bound that lets the two cross produces a
-  // reversed range, which `slice` returns as `''` — the same answer the un-crossed range gives
-  // for an all-slash input. They are here so each loop states its own invariant rather than
-  // relying on the lookup falling off the end
-  while (start < end && value[start] === '/') start += 1
-  while (end > start && value[end - 1] === '/') end -= 1
-  // Stryker restore ConditionalExpression,EqualityOperator
-  return value.slice(start, end)
-}
 
 /**
  * Build the pathname-suffix skip list that `createAuthFetch` uses to

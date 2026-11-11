@@ -30,6 +30,17 @@ export type { UseAuthResult } from './useAuth'
 export { useAuthStatus } from './useAuthStatus'
 export type { UseAuthStatusResult } from './useAuthStatus'
 
+export { WorkspaceProvider } from './WorkspaceProvider'
+export type { WorkspaceProviderClient, WorkspaceProviderProps } from './WorkspaceProvider'
+
+export { useWorkspaces } from './useWorkspaces'
+export type {
+  AuthWorkspacesOptions,
+  WorkspaceRefusalCode,
+  WorkspacesContextValue,
+  WorkspacesStatus
+} from './workspaceContext'
+
 // ---------------------------------------------------------------------------
 // Context types
 // ---------------------------------------------------------------------------

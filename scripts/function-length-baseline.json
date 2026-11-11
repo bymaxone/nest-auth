@@ -1,7 +1,7 @@
 {
   "functions": {
     "[\"src/client/__tests__/createAuthFetch.spec.ts\",[\"container\",\"describe\",\"createAuthFetch — single-flight refresh dedup\"],[\"test\",\"it\",\"coalesces 5 concurrent 401s into a single refresh round-trip\"]]": 57,
-    "[\"src/client/createAuthClient.ts\",[\"fn\",\"createAuthClient\"]]": 129,
+    "[\"src/client/createAuthClient.ts\",[\"fn\",\"createAuthClient\"]]": 92,
     "[\"src/client/createAuthFetch.ts\",[\"fn\",\"createAuthFetch\"]]": 149,
     "[\"src/client/createAuthFetch.ts\",[\"fn\",\"createAuthFetch\"],[\"anon\"]]": 98,
     "[\"src/client/createAuthFetch.ts\",[\"fn\",\"performRefresh\"]]": 55,
@@ -11,9 +11,8 @@
     "[\"src/nextjs/createLogoutHandler.ts\",[\"fn\",\"createLogoutHandler\"],[\"anon\"]]": 51,
     "[\"src/nextjs/createSilentRefreshHandler.ts\",[\"fn\",\"createSilentRefreshHandler\"]]": 98,
     "[\"src/nextjs/createSilentRefreshHandler.ts\",[\"fn\",\"createSilentRefreshHandler\"],[\"anon\"]]": 63,
-    "[\"src/nextjs/internal/proxyHandlers.ts\",[\"fn\",\"handleProtectedRoute\"]]": 53,
+    "[\"src/nextjs/internal/proxyHandlers.ts\",[\"fn\",\"handleProtectedRoute\"]]": 52,
     "[\"src/react/AuthProvider.tsx\",[\"fn\",\"AuthProvider\"]]": 301,
-    "[\"src/react/AuthProvider.tsx\",[\"fn\",\"AuthProvider\"],[\"anon\"]]": 51,
     "[\"src/server/bymax-auth.module.ts\",[\"member\",\"BymaxAuthModule\",\"registerAsync\"]]": 546,
     "[\"src/server/bymax-auth.module.ts\",[\"member\",\"BymaxAuthModule\",\"registerAsync\"],[\"fn\",\"useFactory\"]]": 134,
     "[\"src/server/config/resolved-options.ts\",[\"fn\",\"resolveOptions\"]]": 158,

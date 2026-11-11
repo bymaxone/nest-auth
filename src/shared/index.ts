@@ -21,6 +21,9 @@ export {
 export { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from './constants/error-codes'
 export type { AuthErrorCode } from './constants/error-codes'
 
+export { fillRoute, pathSegment } from './utils/fill-route'
+export { trimSlashes } from './utils/trim-slashes'
+
 export {
   AUTH_DASHBOARD_ROUTES,
   AUTH_EMAIL_CHANGE_ROUTES,
@@ -50,6 +53,23 @@ export type {
   PlatformAuthResult,
   PlatformLoginResult
 } from './types/auth-result.types'
+
+export type {
+  AcceptedWorkspaceInvitation,
+  BootstrapInvitationPreviewClient,
+  MemberInvitationPreviewClient,
+  MembershipStatusClient,
+  WorkspaceAccessClient,
+  WorkspaceClient,
+  WorkspaceInvitationClient,
+  WorkspaceInvitationPage,
+  WorkspaceInvitationPreview,
+  WorkspaceListResult,
+  WorkspaceMemberClient,
+  WorkspaceMemberPage,
+  WorkspacePageParams,
+  WorkspaceStatusClient
+} from './types/workspace.types'
 
 export { AuthClientError } from './types/auth-error.types'
 export type { AuthErrorResponse, AuthResponseCode } from './types/auth-error.types'

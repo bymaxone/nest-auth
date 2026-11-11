@@ -22,23 +22,25 @@ describe('nextjs internal constants', () => {
   // that buildSanitizedRequestHeaders strips a client-sent value before the
   // request reaches a downstream server component. An emptied array would let
   // any of these identity headers be spoofed end to end.
-  it('IDENTITY_HEADERS_BASELINE should contain exactly the four identity header names', () => {
+  it('IDENTITY_HEADERS_BASELINE should contain exactly the five identity header names', () => {
     expect(IDENTITY_HEADERS_BASELINE).toEqual([
       'x-user-id',
       'x-user-role',
       'x-tenant-id',
-      'x-tenant-domain'
+      'x-tenant-domain',
+      'x-workspace-id'
     ])
   })
 
   // Asserts each individual header name independently so a single-element
   // removal (not just a full empty) is also caught, and pins the length.
   it('IDENTITY_HEADERS_BASELINE should include every spoofable identity header', () => {
-    expect(IDENTITY_HEADERS_BASELINE).toHaveLength(4)
+    expect(IDENTITY_HEADERS_BASELINE).toHaveLength(5)
     expect(IDENTITY_HEADERS_BASELINE).toContain('x-user-id')
     expect(IDENTITY_HEADERS_BASELINE).toContain('x-user-role')
     expect(IDENTITY_HEADERS_BASELINE).toContain('x-tenant-id')
     expect(IDENTITY_HEADERS_BASELINE).toContain('x-tenant-domain')
+    expect(IDENTITY_HEADERS_BASELINE).toContain('x-workspace-id')
   })
 
   // Pins the silent-refresh retry ceiling — a regression here would change how

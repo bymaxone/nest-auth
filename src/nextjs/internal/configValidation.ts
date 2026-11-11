@@ -13,7 +13,7 @@
 
 import type { AuthProxyConfig, ResolvedAuthProxyConfig } from '../createAuthProxy'
 import { DEFAULT_MAX_REFRESH_ATTEMPTS } from './constants'
-import { isSafeSameOriginPath } from '../helpers/routeHandlerUtils'
+import { assertSafeCookieName, isSafeSameOriginPath } from '../helpers/routeHandlerUtils'
 
 /**
  * Throw when the caller's configuration contains a shape we reject:
@@ -39,6 +39,8 @@ export function validateConfig(config: AuthProxyConfig): void {
     )
   }
 
+  validateLastWorkspaceCookie(config)
+
   for (const route of config.protectedRoutes) {
     validateProtectedRoutePattern(route.pattern)
     if (route.redirectPath !== undefined && !isSafeSameOriginPath(route.redirectPath)) {
@@ -46,6 +48,17 @@ export function validateConfig(config: AuthProxyConfig): void {
         `createAuthProxy: redirectPath "${route.redirectPath}" in pattern "${route.pattern}" must be a same-origin pathname starting with "/" (not "//") and must not contain CR/LF/NUL/backslash characters.`
       )
     }
+  }
+}
+
+function validateLastWorkspaceCookie(config: AuthProxyConfig): void {
+  const name = config.lastWorkspaceCookie
+  if (name === undefined) return
+  assertSafeCookieName(name, 'createAuthProxy', 'lastWorkspaceCookie')
+  if (Object.values(config.cookieNames).includes(name)) {
+    throw new Error(
+      `createAuthProxy: lastWorkspaceCookie "${name}" must differ from cookieNames.access, cookieNames.refresh and cookieNames.hasSession.`
+    )
   }
 }
 
