@@ -83,6 +83,7 @@ pnpm add @bymax-one/nest-auth
 - ✅ **Platform Admin Auth** — Separate token context and role hierarchy for super-admins
 - ✅ **User Invitations** — Invite users with role assignment and configurable expiration
 - ✅ **Role-Based Access Control** — Hierarchical roles with `@Roles()` decorator
+- ✅ **Workspaces** — One identity with a role in each of many workspaces, switched without a login (see _Workspaces_ below)
 
 ### 🧩 Developer Experience
 
@@ -1434,6 +1435,207 @@ A verified request does a map write, nothing else; every `lastUsedFlushSeconds` 
 written to your repository in one batch. With **N instances** a key is written up to N times
 per window instead of once, and a crash loses at most one window of `lastUsedAt`. The field is
 advisory: authorization never reads it.
+
+## 🗂️ Workspaces (one identity, many workspaces)
+
+For a product where one person belongs to several teams, each with its own role. The identity, its
+sessions and its tokens do not change: a workspace role is resolved on each request, for the
+workspace that request names, so switching workspace never needs a login and two workspaces can be
+open in two tabs at once. Workspaces live inside a tenant. Nothing is registered until you opt in.
+
+### Enable it
+
+```typescript
+import {
+  BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
+  BYMAX_AUTH_WORKSPACE_REPOSITORY,
+  BymaxAuthModule
+} from '@bymax-one/nest-auth'
+
+BymaxAuthModule.registerAsync({
+  useFactory: () => ({
+    jwt: { secret: process.env.JWT_SECRET ?? '' },
+    roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+    rateLimit: { clientIpSource: 'peer' },
+    workspaces: {
+      enabled: true,
+      roles: {
+        // Denormalized, like `roles.hierarchy`: each role lists every role it includes.
+        hierarchy: { owner: ['admin', 'member'], admin: ['member'], member: [] },
+        ownerRole: 'owner'
+      }
+    },
+    controllers: { workspaces: true, workspaceInvitations: true }
+  }),
+  extraProviders: [
+    // …BYMAX_AUTH_USER_REPOSITORY and BYMAX_AUTH_REDIS_CLIENT as usual
+    { provide: BYMAX_AUTH_WORKSPACE_REPOSITORY, useClass: PrismaWorkspaceRepository },
+    { provide: BYMAX_AUTH_MEMBERSHIP_REPOSITORY, useClass: PrismaMembershipRepository }
+  ]
+})
+```
+
+`controllers.workspaces` mounts the routes and needs `workspaces.enabled` and both repositories.
+`controllers.workspaceInvitations` also needs an email provider that implements
+`sendWorkspaceInvitation`. The module refuses to boot when a piece is missing. With
+`workspaces.enabled: false`, the default, nothing in this section exists in your application.
+
+You implement two ports: `IWorkspaceRepository` (`createWithOwner`, `findById`, `rename`,
+`updateStatus`) and `IMembershipRepository` (`find`, `listForUser`, `listForWorkspace`, `create`,
+`changeRole`, `remove`, `transferOwnership`, `countOwned`, `listSoleOwned`). Every call carries the
+tenant and the workspace. The writes that must not race (a role change, a removal, an ownership
+transfer) are guarded writes the repository answers atomically, so two requests cannot both remove
+the last owner.
+
+### Options
+
+| Option                               | Default                          | Meaning                                                                                                                                                                  |
+| ------------------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `roles.hierarchy`, `roles.ownerRole` | — (required)                     | The workspace role hierarchy, separate from `roles.hierarchy`. It must name the owner role, and the owner must include every other role.                                 |
+| `permissions`                        | owner only                       | Which roles may `manageWorkspace` (rename), `deleteWorkspace` and `manageMembers`; `viewMembers` defaults to every active member.                                        |
+| `allowCreate`                        | `true`                           | Whether an identity may create a workspace: a flag, or a function of the user.                                                                                           |
+| `maxWorkspacesPerUser`               | `0`                              | Most workspaces one identity may own; `0` is unlimited. The check is advisory under concurrency; the repository's create call receives the value for an exact cap.       |
+| `invitationTtlSeconds`               | `604800`                         | How long an invitation stays valid. Up to `2592000`.                                                                                                                     |
+| `maxPendingInvitationsPerWorkspace`  | `100`                            | Most pending invitations one workspace may hold.                                                                                                                         |
+| `membershipCacheTtlSeconds`          | `60`                             | How long a resolved membership is cached; `0` always reads the repository. Up to `3600`. A host that changes memberships outside the library must invalidate or set `0`. |
+| `deletionGraceDays`                  | `14`                             | Days a deleted workspace can be restored; `0` deletes at once.                                                                                                           |
+| `accessDeniedEvents`                 | `{ max: 10, windowSeconds: 60 }` | Bounds the `access.denied` events one account can cause. The access decision is never affected.                                                                          |
+| `resolveRequestWorkspace`            | the route                        | Reads the workspace from a request when the host does not carry it in the route. Never from the body.                                                                    |
+| `resolveWsWorkspace`                 | `data.workspaceId`               | Reads the workspace a socket message names, from the message body and nothing else.                                                                                      |
+
+`registration: 'invitation-only'` closes sign-up except through an invitation for that exact address
+(password registration and the OAuth `create` action answer `403 auth.registration_closed`; the
+invitation accept routes stay open; existing accounts keep signing in). Startup refuses the mode when
+workspaces and tenant invitations are both disabled.
+
+### Protect a route
+
+```typescript
+@UseGuards(JwtAuthGuard, UserStatusGuard, WorkspaceGuard)
+@Controller('workspaces/:workspaceId/projects')
+export class ProjectsController {
+  @Get()
+  @WorkspaceRoles(ANY_WORKSPACE_MEMBER)
+  list(@CurrentWorkspace() workspace: CurrentWorkspaceContext) {
+    // workspace.tenantId, workspace.workspaceId, workspace.userId, workspace.role
+  }
+
+  @Delete(':id')
+  @WorkspaceRoles('admin')
+  remove(@CurrentWorkspace() workspace: CurrentWorkspaceContext) {}
+}
+```
+
+`WorkspaceGuard` is default-deny. In order it: refuses a route that declares neither
+`@WorkspaceRoles(...)` nor `@WorkspacePermission(...)` (`403 auth.forbidden`, so a forgotten
+decorator closes the route); accepts only a dashboard token, never a platform one; takes the
+workspace from the route or `resolveRequestWorkspace`, never the body and never a remembered
+default; resolves the caller's membership with the tenant from the token; and checks the role through
+the hierarchy. A workspace that does not exist, one that is not active and one the caller does not
+belong to all answer `404 auth.workspace_not_found`, so the answer reveals nothing about which
+workspaces exist. An insufficient role answers `403 auth.insufficient_workspace_role`. The owner of a
+workspace pending deletion gets `409 auth.workspace_pending_deletion`, except on a route marked
+`@AllowPendingWorkspace()`. A service takes its workspace from `@CurrentWorkspace()` and never from a
+DTO or a query.
+
+A transport with no guard in front of it uses the same decision: `WsWorkspaceGuard` and
+`@CurrentWsWorkspace()` for a gateway, `AuthTokenVerifierService.verifyAccessToken(token, { plane:
+'dashboard', workspace })` for a stream, and `stampJobContext` with
+`WorkspaceAccessService.assertStillAuthorized` for a job that must re-check the caller before it
+writes. `workspaceScopedName` builds cache keys and room names that two workspaces cannot share.
+
+### Routes
+
+With `controllers.workspaces: true`; every `:workspaceId` is a path segment, never a body field or a
+header.
+
+| Route                                        | Method         | Meaning                                                            |
+| -------------------------------------------- | -------------- | ------------------------------------------------------------------ |
+| `workspaces`                                 | GET / POST     | The caller's workspaces and the last one they switched to / create |
+| `workspaces/:workspaceId/access`             | GET            | The workspace and the caller's role in it                          |
+| `workspaces/:workspaceId/switch`             | POST           | Record it as the last active one; no token changes                 |
+| `workspaces/:workspaceId`                    | PATCH          | Rename                                                             |
+| `workspaces/:workspaceId/schedule-deletion`  | POST           | Schedule deletion, re-proving the caller with the password         |
+| `workspaces/:workspaceId/restore`            | POST           | Undo it within the grace period                                    |
+| `workspaces/:workspaceId/members`            | GET            | List members                                                       |
+| `workspaces/:workspaceId/members/:userId`    | PATCH / DELETE | Change a role / remove a member                                    |
+| `workspaces/:workspaceId/leave`              | POST           | Leave                                                              |
+| `workspaces/:workspaceId/transfer-ownership` | POST           | Hand ownership over, re-proving the caller                         |
+
+With `controllers.workspaceInvitations: true`: `POST` and `GET workspaces/:workspaceId/invitations`
+(invite, list pending), `POST .../invitations/resend` and `.../invitations/revoke`, and the
+token-based `POST workspaces/invitations/preview` (public), `.../accept` (the signed-in account the
+invitation was addressed to) and `.../accept-signup` (public, creates the account). The token travels
+in a POST body, never in a query string; put it in the URL fragment on your accept page and set
+`Referrer-Policy: no-referrer` there.
+
+### Hooks and events
+
+`beforeWorkspaceCreate(user, { name }, context)` can refuse a creation. `onWorkspaceEvent(event,
+context)` receives, after the change has committed, `workspace.created`, `.renamed`,
+`.deletion_scheduled`, `.restored` and `.deleted`; `member.invited`, `invitation.resent`,
+`.revoked` and `.accepted`; `member.role_changed`, `.removed` and `.left`; `ownership.transferred`;
+`workspace.switched`; and `access.denied` (with the `surface`, the public `code` and a host-only
+`reason`). It is best-effort and informational: the repository's persisted audit row is the record.
+
+### Accepting an invitation through OAuth, and MFA
+
+An OAuth flow started with a workspace invitation vets the invitation against the provider's profile
+before your `onOAuthLogin` hook runs, and completes it for the account that results. **When that
+account has a second factor, the library does not complete the invitation:** the callback answers the
+MFA challenge as it does for any OAuth sign-in, the invitation stays pending and unspent, and it is
+not resumed after the challenge. The signed-in caller accepts it with `POST
+workspaces/invitations/accept` and the same token, so a host whose members use MFA should send the
+token again from its accept page after sign-in.
+
+### Frontend
+
+```typescript
+// client — a separate factory, so a frontend that does not use workspaces does not ship it
+import { createWorkspaceClient } from '@bymax-one/nest-auth/client'
+const workspaces = createWorkspaceClient({ baseUrl: '/api' })
+```
+
+```tsx
+// react — inside <AuthProvider>
+<WorkspaceProvider client={workspaces} activeWorkspaceId={params.workspaceId} hierarchy={...}>
+  <App />
+</WorkspaceProvider>
+// const { memberships, activeWorkspace, switchWorkspace, hasWorkspaceRole, status } = useWorkspaces()
+```
+
+The active workspace is the URL's, else the one chosen with `switchWorkspace`, else the server's
+`lastActiveWorkspaceId`; never `localStorage`. The provider stores what it loads with the account it
+was read for, so a different account never reads another's list. `hasWorkspaceRole` is a hint for
+what to render and carries no authority; the server decides. `onWorkspaceChanged` and
+`onWorkspaceAccessLost` are options; call `handleWorkspaceError(workspaceId, error)` from your own
+catch to feed the latter. Other tabs reload their lists through a `BroadcastChannel`, and a tab that
+is signed out makes no request.
+
+```typescript
+// nextjs — a server-only reader for a /w/[workspaceId] layout, cached per request
+import { createWorkspaceAccessReader } from '@bymax-one/nest-auth/nextjs'
+export const getWorkspaceAccess = createWorkspaceAccessReader({ apiBase })
+// { workspace, role } for a 200; null for 403, 404 and 409, so call notFound()
+```
+
+`createAuthProxy` accepts `lastWorkspaceCookie`: set a cookie yourself after `listWorkspaces()`
+(`HttpOnly; Secure; SameSite=Lax`) and `getDefaultDashboard(role, hint)` receives
+`{ lastActiveWorkspaceId }` only when the cookie holds a UUID, `{}` otherwise. The library never
+writes the cookie and the value carries no authority; the layout's reader decides. The proxy strips
+an inbound `x-workspace-id` and never sets one. Path values go through `fillRoute` and `pathSegment`
+(`./shared`), which refuse an empty value, `.` and `..` and percent-encode the rest.
+
+### Threat model
+
+A workspace id is never trusted from the body, a header or a stored default; the guard resolves it
+from the route and the membership from the repository. Non-members and nonexistent workspaces are
+indistinguishable. A platform token has no implicit bypass. Memberships are cached for
+`membershipCacheTtlSeconds` and read under version counters, so a stale value is never served after a
+change the library made. The host's rate limiting on guarded routes is what bounds a caller probing
+workspace ids.
+
+---
 
 ## 🏗️ Architecture
 
