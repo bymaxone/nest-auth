@@ -9,6 +9,7 @@
 
 import {
   AUTH_ROUTES,
+  fillRoute,
   type AcceptedWorkspaceInvitation,
   type AuthResult,
   type WorkspaceAccessClient,
@@ -111,29 +112,6 @@ export interface WorkspaceClientMethods {
   ): Promise<AuthResult & AcceptedWorkspaceInvitation>
 }
 
-/**
- * Fills the placeholders of a route template with percent-encoded values.
- *
- * @param template - A route of `AUTH_WORKSPACE_ROUTES`, such as `workspaces/:workspaceId/access`.
- * @param values - What each placeholder stands for.
- * @returns The path.
- * @throws {TypeError} For a placeholder with no value, an empty one or a dot segment: `workspaces//access`
- *   and `workspaces/../access` would address another route, so each is refused before any request is
- *   made.
- */
-function fill(template: string, values: Readonly<Record<string, string>>): string {
-  return template.replace(/:([A-Za-z]+)/g, (_match, name: string) => {
-    const value = Object.entries(values).find(([key]) => key === name)?.[1]
-    if (typeof value !== 'string' || value === '') {
-      throw new TypeError(`${name} must be a non-empty string`)
-    }
-    // A URL parser collapses a '.' or '..' segment even when it is percent-encoded, so such an id
-    // would address another route.
-    if (value === '.' || value === '..') throw new TypeError(`${name} must not be '.' or '..'`)
-    return encodeURIComponent(value)
-  })
-}
-
 /** Drops the keys whose value is `undefined`, so an absent option is an absent key on the wire. */
 function defined(values: Readonly<Record<string, string | undefined>>): Record<string, string> {
   return Object.fromEntries(
@@ -157,10 +135,10 @@ interface Requests {
 }
 
 const inWorkspace = (template: string, workspaceId: string): string =>
-  fill(template, { workspaceId })
+  fillRoute(template, { workspaceId })
 
 const ofMember = (workspaceId: string, userId: string): string =>
-  fill(ROUTES.member, { workspaceId, userId })
+  fillRoute(ROUTES.member, { workspaceId, userId })
 
 /** The calls on the caller's workspaces and on one workspace's lifecycle. */
 function workspaceCalls({

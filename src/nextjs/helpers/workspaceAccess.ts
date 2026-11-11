@@ -15,6 +15,7 @@ import { cache } from 'react'
 
 import {
   AUTH_ROUTES,
+  fillRoute,
   type WorkspaceAccessClient,
   AuthClientError
 } from '@bymax-one/nest-auth/shared'
@@ -91,7 +92,7 @@ export function createWorkspaceAccessReader(
     // A '.' or '..' segment is collapsed by a URL parser even when percent-encoded, which would send
     // the request to another route.
     if (typeof workspaceId !== 'string' || ['', '.', '..'].includes(workspaceId)) return null
-    const url = `${base}/${AUTH_ROUTES.workspaces.access.replace(':workspaceId', encodeURIComponent(workspaceId))}`
+    const url = `${base}/${fillRoute(AUTH_ROUTES.workspaces.access, { workspaceId })}`
     const response = await send(url, {
       method: 'GET',
       headers: { accept: 'application/json', cookie: (await cookies()).toString() },

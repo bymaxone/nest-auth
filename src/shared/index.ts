@@ -21,6 +21,8 @@ export {
 export { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from './constants/error-codes'
 export type { AuthErrorCode } from './constants/error-codes'
 
+export { fillRoute, pathSegment } from './utils/fill-route'
+
 export {
   AUTH_DASHBOARD_ROUTES,
   AUTH_EMAIL_CHANGE_ROUTES,
