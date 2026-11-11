@@ -33,14 +33,14 @@ jobs:
   full:
     uses: bymaxone/.github/.github/workflows/mutation-full.yml@v1
     with:
-      # Two workers, not the config's four. Two runs at four workers ended with the runner lost
-      # after 2.5 and 3.3 hours, and a worker measured up to about 5.5 GiB locally against 16 GB on
-      # the hosted runner. Passed here and not written into stryker.config.json, which the per-push
-      # incremental job and local runs share; `pnpm run` appends the arguments to the script's last
-      # command, `stryker run`.
-      full-command: pnpm mutation:full --concurrency 2
-      # Two workers took 2.9 and 4.4 hours locally for the same work. The ceiling stays under
-      # GitHub's 6 hour job limit. Nothing blocks on this job, so a wide ceiling costs only the
+      # Four shards of two workers each. A worker measured up to about 5.5 GiB locally and the hosted
+      # runner has 16 GB, so two workers and their parent are what one runner holds; four shards
+      # split the 16,200 CPU-seconds of Stryker work of a cold run, so no runner holds the whole
+      # run. The count and the concurrency are passed here and not written into
+      # stryker.config.json, which the per-push incremental job and local runs share.
+      shards: 4
+      concurrency: 2
+      # The ceiling of one shard. Nothing blocks on this job, so a wide ceiling costs only the
       # minutes it uses, while a tight one costs the whole run and leaves the week without a
-      # measured baseline.
+      # measured baseline. It stays under GitHub's 6 hour job limit.
       timeout-minutes: 355
