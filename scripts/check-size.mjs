@@ -175,16 +175,20 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 //
 // BUDGETS IN FORCE. The `SURFACES` lines are the budget that counts: `client auth surface`
-// (createAuthClient) and `react auth surface` (AuthProvider, useSession) carry 4.25 and 2.5 KiB, and a
-// feature a frontend can leave unimported gets a line of its own when it lands instead of being added
-// to these. The `BUDGETS` lines hold the measured size plus a few percent of headroom: the client,
-// react and nextjs entries measure 4.23, 3.36 and 9.11 KiB against 4.6, 3.5 and 9.5, because each
-// entry file holds the whole workspace surface (the workspace client, the provider and its hooks, the
-// access reader and the landing hint), which a frontend that imports none of it never ships. The
-// react workspace surface measures 2.30 against 2.4, and that provider carries the load abort, the
-// account key and the unmount cleanup, each of which keeps another account's or a dead provider's
-// state from being shown. The per-subpath notes above are point-in-time calibration records; the two
-// arrays below hold the budgets.
+// (createAuthClient) and `react auth surface` (AuthProvider, useSession) carry 3.3 and 1.2 KiB, the
+// measured 3.12 and 1.13 plus about 5%, and a feature a frontend can leave unimported gets a line of
+// its own when it lands instead of being added to these. Those two lines protect a frontend that
+// uses no workspace, so they sit close to the measured size. `createAuthClient` imports its own
+// route groups and never the aggregate `AUTH_ROUTES`, because the aggregate keeps every route
+// family, the 16 workspace routes among them, in a frontend that uses none.
+// The `BUDGETS` lines hold the measured size plus a few percent of headroom: the client, react and
+// nextjs entries measure 4.25, 3.54 and 9.11 KiB against 4.6, 3.6 and 9.5, because each entry file
+// holds the whole workspace surface (the workspace client, the provider and its hooks, the access
+// reader and the landing hint), which a frontend that imports none of it never ships. The react
+// workspace surface measures 2.42 against 2.5, and that provider carries the load abort, the account
+// key, the unmount cleanup and the revalidation of the session before a broadcast reloads the list,
+// each of which keeps another account's or a dead provider's state from being shown. The per-subpath
+// notes above are point-in-time calibration records; the two arrays below hold the budgets.
 //
 // WHY THE SURFACES CAN BE TRUSTED. A consumer's bundler can only drop what it can prove unused, and a
 // top-level `__name(...)` call, which `keepNames` adds after every function, cannot be proven unused.
@@ -197,7 +201,7 @@ const BUDGETS = [
   { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 169 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
-  { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 3.5 * 1024 },
+  { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 3.6 * 1024 },
   { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 9.5 * 1024 }
 ]
 
@@ -210,13 +214,13 @@ const SURFACES = [
     name: 'client  auth surface (createAuthClient)',
     from: 'dist/client/index.mjs',
     exports: ['createAuthClient'],
-    brotli: 4.25 * 1024
+    brotli: 3.3 * 1024
   },
   {
     name: 'react   auth surface (AuthProvider, useSession)',
     from: 'dist/react/index.mjs',
     exports: ['AuthProvider', 'useSession'],
-    brotli: 2.5 * 1024
+    brotli: 1.2 * 1024
   },
   {
     name: 'client  workspace surface (+ createWorkspaceClient)',
@@ -228,7 +232,7 @@ const SURFACES = [
     name: 'react   workspace surface (+ WorkspaceProvider)',
     from: 'dist/react/index.mjs',
     exports: ['AuthProvider', 'useSession', 'WorkspaceProvider', 'useWorkspaces'],
-    brotli: 2.4 * 1024
+    brotli: 2.5 * 1024
   }
 ]
 

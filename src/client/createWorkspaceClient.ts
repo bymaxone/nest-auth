@@ -8,7 +8,7 @@
  */
 
 import {
-  AUTH_ROUTES,
+  AUTH_WORKSPACE_ROUTES,
   fillRoute,
   type AcceptedWorkspaceInvitation,
   type AuthResult,
@@ -29,7 +29,7 @@ import {
   resolveTransport
 } from './createAuthClient'
 
-const ROUTES = AUTH_ROUTES.workspaces
+const ROUTES = AUTH_WORKSPACE_ROUTES
 
 /** What a password-confirmed action sends: only a host that requires re-authentication needs it. */
 export interface WorkspaceReauth {

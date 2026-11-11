@@ -37,6 +37,7 @@ export {
   AUTH_REFRESH_SKIP_PATH_SUFFIXES,
   AUTH_ROUTES,
   AUTH_SESSION_ROUTES,
+  AUTH_WORKSPACE_ROUTES,
   buildAuthRefreshSkipSuffixes
 } from './constants/routes'
 

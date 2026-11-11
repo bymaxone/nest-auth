@@ -184,6 +184,7 @@ export function useWorkspaceList(
   setLoaded: Dispatch<SetStateAction<Loaded>>
   clientRef: RefObject<WorkspaceProviderClient>
   identityRef: RefObject<string | null>
+  statusRef: RefObject<AuthStatus>
   refresh: () => Promise<void>
 } {
   const [stored, setLoaded] = useState<Loaded>(IDLE)
@@ -218,7 +219,7 @@ export function useWorkspaceList(
 
   const loaded =
     stored.owner === identity ? stored : identity === null ? IDLE : loadingFor(identity)
-  return { loaded, setLoaded, clientRef, identityRef, refresh }
+  return { loaded, setLoaded, clientRef, identityRef, statusRef, refresh }
 }
 
 /**
@@ -251,29 +252,56 @@ export function useChangeNotice(
 }
 
 /**
- * Opens the cross-tab channel, when the runtime has one, and reloads the list when another tab
- * posts on it.
+ * Builds what another tab's broadcast does here: revalidate the session first, and reload the list
+ * only if the account is still the one that heard it. The browser's cookie may already belong to
+ * another account while this tab's session still names the old one, and a list loaded then would be
+ * stored under the wrong account. When the account did change, the account change loads the new
+ * account's list itself. A tab that is not signed in makes no request.
  *
- * @param refresh - The reload.
+ * @param sessionRefresh - Revalidates the session the auth provider owns.
+ * @param statusRef - The current session status.
+ * @param identityRef - The current account.
+ * @param reload - The list reload.
+ * @returns The handler of a broadcast.
+ */
+export function useBroadcastReload(
+  sessionRefresh: () => Promise<void>,
+  statusRef: RefObject<AuthStatus>,
+  identityRef: RefObject<string | null>,
+  reload: () => Promise<void>
+): () => void {
+  const [request, setRequest] = useState<{ heardAs: string | null } | null>(null)
+  // Runs after the commit that carries the revalidated account, so `identityRef` is current.
+  useEffect(() => {
+    if (request !== null && request.heardAs === identityRef.current) void reload()
+  }, [request, identityRef, reload])
+  return useCallback((): void => {
+    if (statusRef.current !== 'authenticated') return
+    const heardAs = identityRef.current
+    void sessionRefresh().then(() => setRequest({ heardAs }))
+  }, [sessionRefresh, statusRef, identityRef])
+}
+
+/**
+ * Opens the cross-tab channel, when the runtime has one, and runs `onMessage` when another tab posts
+ * on it.
+ *
+ * @param onMessage - What a post does here.
  * @returns A reference to the open channel, for posting.
  */
-export function useWorkspaceChannel(
-  refresh: () => Promise<void>
-): RefObject<BroadcastChannel | null> {
+export function useWorkspaceChannel(onMessage: () => void): RefObject<BroadcastChannel | null> {
   const channelRef = useRef<BroadcastChannel | null>(null)
-  // Stryker disable ArrayDeclaration: `refresh` has no dependencies, so it is one function for the life of the provider and `[]` re-runs the effect exactly as often
+  // Stryker disable ArrayDeclaration: `onMessage` has stable dependencies, so it is one function for the life of the provider and `[]` re-runs the effect exactly as often
   useEffect(() => {
     if (typeof BroadcastChannel === 'undefined') return undefined
     const channel = new BroadcastChannel(CHANNEL_NAME)
-    channel.onmessage = (): void => {
-      void refresh()
-    }
+    channel.onmessage = onMessage
     channelRef.current = channel
     return (): void => {
       channelRef.current = null
       channel.close()
     }
-  }, [refresh])
+  }, [onMessage])
   // Stryker restore ArrayDeclaration
   return channelRef
 }

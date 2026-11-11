@@ -15,6 +15,7 @@ import {
   type WorkspacesContextValue
 } from './workspaceContext'
 import {
+  useBroadcastReload,
   useChangeNotice,
   useRefusalHandler,
   useRoleHint,
@@ -55,7 +56,7 @@ export function WorkspaceProvider({
     optionsRef.current = options
   })
   const identity = ctx.user === null ? null : JSON.stringify([ctx.user.tenantId, ctx.user.id])
-  const { loaded, setLoaded, clientRef, identityRef, refresh } = useWorkspaceList(
+  const { loaded, setLoaded, clientRef, identityRef, statusRef, refresh } = useWorkspaceList(
     client,
     ctx.status,
     identity
@@ -66,7 +67,8 @@ export function WorkspaceProvider({
     [loaded.items, activeId]
   )
   useChangeNotice(loaded.status, activeWorkspace, optionsRef)
-  const channelRef = useWorkspaceChannel(refresh)
+  const onBroadcast = useBroadcastReload(ctx.refresh, statusRef, identityRef, refresh)
+  const channelRef = useWorkspaceChannel(onBroadcast)
   const hasWorkspaceRole = useRoleHint(activeWorkspace, loaded.items, optionsRef)
   const handleWorkspaceError = useRefusalHandler(activeId, optionsRef, refresh)
 

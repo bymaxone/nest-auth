@@ -11,7 +11,9 @@
  */
 
 import {
-  AUTH_ROUTES,
+  AUTH_DASHBOARD_ROUTES,
+  AUTH_MFA_ROUTES,
+  AUTH_PASSWORD_ROUTES,
   type AuthErrorResponse,
   trimSlashes,
   AuthClientError,
@@ -495,27 +497,27 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
 
   return {
     async login(input): Promise<LoginResult> {
-      return post<LoginResult>(AUTH_ROUTES.dashboard.login, input)
+      return post<LoginResult>(AUTH_DASHBOARD_ROUTES.login, input)
     },
 
     async register(data): Promise<AuthResult> {
-      return post<AuthResult>(AUTH_ROUTES.dashboard.register, data)
+      return post<AuthResult>(AUTH_DASHBOARD_ROUTES.register, data)
     },
 
     async logout(): Promise<void> {
-      return postNoContent(AUTH_ROUTES.dashboard.logout, {})
+      return postNoContent(AUTH_DASHBOARD_ROUTES.logout, {})
     },
 
     async refresh(): Promise<AuthResult> {
-      return post<AuthResult>(AUTH_ROUTES.dashboard.refresh, {})
+      return post<AuthResult>(AUTH_DASHBOARD_ROUTES.refresh, {})
     },
 
     async getMe(): Promise<AuthUserClient> {
-      return get<AuthUserClient>(AUTH_ROUTES.dashboard.me)
+      return get<AuthUserClient>(AUTH_DASHBOARD_ROUTES.me)
     },
 
     async mfaChallenge(tempToken, code): Promise<AuthResult> {
-      const result = await post<AuthResult | MfaChallengeResult>(AUTH_ROUTES.mfa.challenge, {
+      const result = await post<AuthResult | MfaChallengeResult>(AUTH_MFA_ROUTES.challenge, {
         mfaTempToken: tempToken,
         code
       })
@@ -537,7 +539,7 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
       // drops an `undefined` value, but a reader cannot see that from the call site — and the
       // difference matters here: the server distinguishes "the caller named no tenant" from "the
       // caller named one", and refuses the second under a resolver.
-      return postNoContent(AUTH_ROUTES.password.forgotPassword, {
+      return postNoContent(AUTH_PASSWORD_ROUTES.forgotPassword, {
         email,
         ...(tenantId !== undefined ? { tenantId } : {})
       })
@@ -557,7 +559,7 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
       if (input.token !== undefined) payload['token'] = input.token
       if (input.otp !== undefined) payload['otp'] = input.otp
       if (input.verifiedToken !== undefined) payload['verifiedToken'] = input.verifiedToken
-      return postNoContent(AUTH_ROUTES.password.resetPassword, payload)
+      return postNoContent(AUTH_PASSWORD_ROUTES.resetPassword, payload)
     }
   }
 }
