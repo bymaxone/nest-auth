@@ -1,14 +1,21 @@
 #!/usr/bin/env node
-// Zero-dependency bundle-size gate. Measures every published subpath's ESM
-// bundle (raw + brotli-compressed) and fails when any subpath exceeds the
-// hard-coded budget below.
+// Bundle-size gate. It measures two different things and fails when either exceeds its budget:
 //
-// Why zero deps: this is an auth library that ships `"dependencies": {}` on
-// purpose. The CI/release runner must stay free of third-party tooling so a
-// compromised devDep cannot tamper with the bundle before `pnpm publish`.
+//   1. THE CONSUMER SURFACES, which are the budgets that count. What a frontend ships is not the
+//      published entry file: it is what its bundler keeps of it after tree-shaking and
+//      minification. Each surface below is a minimal import of the published `dist/` entry, bundled
+//      and minified the way a consumer's build does, then brotli-compressed. A frontend that never
+//      imports a feature pays nothing for it, and this is where that is held.
+//   2. THE ENTRY FILES, a secondary bound: every published subpath's ESM entry, raw and brotli, so
+//      growth that no surface imports yet cannot accumulate unnoticed.
+//
+// The bundler is esbuild, a direct devDependency pinned to the exact version `tsup` resolves, so the
+// lockfile holds one. It already produces the bytes being measured, so measuring with it adds no
+// trust that building did not already require; it is why this script is no longer dependency-free.
 // `node:zlib`'s brotli matches what npm/CDN compression produces on the wire.
 
 import { readFileSync, statSync } from 'node:fs'
+import { build } from 'esbuild'
 import { brotliCompressSync, constants } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -161,12 +168,47 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     bundle carries NO prose — tsup emits it without comments — so every byte here is code.
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
+//
+// THE ENTRY-FILE LINES MOVED DOWN, and that is the one thing to know about them now. The four
+// non-server entries used to be built with `emitDecoratorMetadata` inherited from the server's
+// tsconfig, which makes tsup's swc plugin switch esbuild's `keepNames` on: every function was
+// followed by a top-level `__name(...)` call (32 in client, 8 in react, 94 in nextjs, 3 in shared).
+// A bundler must keep a top-level call, so importing anything from an entry shipped the whole
+// entry. They now build with `tsconfig.build.web.json`; the calls are gone, the declaration files
+// are byte-identical, and the entries shrank: shared 4.75 -> 4.59 KiB, client 3.91 -> 3.63, react
+// 1.82 -> 1.72, nextjs 8.85 -> 8.29. The entry-file budgets below are those measurements plus about
+// 5%, a deliberate recalibration of the SECONDARY bound.
+//
+// THE CONSUMER LINES are the real budget. `client auth surface` (createAuthClient) and `react auth
+// surface` (AuthProvider, useSession) keep the budgets the entry files used to carry, 4.25 and 2.5
+// KiB, which they now meet with a wide margin because they measure what is shipped and not the
+// whole file. A feature that a frontend can leave unimported gets its own line when it lands; it is
+// not added to these.
 const BUDGETS = [
   { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 169 * 1024 },
-  { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
-  { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
-  { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },
-  { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 10 * 1024 }
+  { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.8 * 1024 },
+  { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 3.8 * 1024 },
+  { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 1.8 * 1024 },
+  { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 8.7 * 1024 }
+]
+
+/**
+ * What a consumer ships for a minimal import, per surface: the named exports of a published entry,
+ * bundled and minified, then brotli-compressed. `react` stays external, as it is a peer dependency.
+ */
+const SURFACES = [
+  {
+    name: 'client  auth surface (createAuthClient)',
+    from: 'dist/client/index.mjs',
+    exports: ['createAuthClient'],
+    brotli: 4.25 * 1024
+  },
+  {
+    name: 'react   auth surface (AuthProvider, useSession)',
+    from: 'dist/react/index.mjs',
+    exports: ['AuthProvider', 'useSession'],
+    brotli: 2.5 * 1024
+  }
 ]
 
 // Divides by 1024, so the unit is KiB (not the SI kB = 1000 bytes).
@@ -201,23 +243,123 @@ for (const { name, path, brotli: limit } of BUDGETS) {
   })
 }
 
+/**
+ * Bundles and minifies a minimal import of a published entry, the way a consumer's build does.
+ *
+ * @param {string} from - The entry file, relative to the repository root.
+ * @param {string[]} names - The exports a consumer imports.
+ * @returns {Promise<Uint8Array>} The bundle.
+ */
+async function consumerBundle(from, names) {
+  const entry = resolve(ROOT, from)
+  const result = await build({
+    stdin: {
+      contents: `export { ${names.join(', ')} } from ${JSON.stringify(entry)}`,
+      resolveDir: ROOT,
+      loader: 'js'
+    },
+    bundle: true,
+    minify: true,
+    treeShaking: true,
+    format: 'esm',
+    platform: 'browser',
+    write: false,
+    logLevel: 'silent',
+    external: ['react', 'react/jsx-runtime'],
+    alias: {
+      '@bymax-one/nest-auth/shared': resolve(ROOT, 'dist/shared/index.mjs'),
+      '@bymax-one/nest-auth/client': resolve(ROOT, 'dist/client/index.mjs')
+    }
+  })
+  const [file] = result.outputFiles
+  if (file === undefined) throw new Error(`esbuild produced no output for ${from}`)
+  return file.contents
+}
+
+const surfaceRows = []
+for (const { name, from, exports: names, brotli: limit } of SURFACES) {
+  const bundle = await consumerBundle(from, names)
+  const compressed = brotliCompressSync(bundle, BROTLI_OPTS).length
+  const ok = compressed <= limit
+  if (!ok) failed += 1
+  surfaceRows.push({
+    name,
+    raw: bundle.length,
+    brotli: compressed,
+    limit,
+    delta: compressed - limit,
+    ok
+  })
+}
+
+/**
+ * The error classes the browser-facing entries export. A consumer's minifier may rename functions and
+ * classes now that no `keepNames` wrapper pins them, so each class must set `this.name` itself, and
+ * that has to hold in a MINIFIED CONSUMER BUNDLE, which is what is run here. A class added to those
+ * entries without being listed fails the check, so a new one cannot skip it.
+ */
+const ERROR_CLASSES = [
+  { name: 'AuthClientError', from: 'dist/shared/index.mjs', args: ['message', 500] }
+]
+
+/** @returns {Promise<string[]>} What is wrong with the error classes, empty when nothing is. */
+async function errorClassProblems() {
+  const problems = []
+  for (const entry of ['shared', 'client', 'react', 'nextjs']) {
+    const text = readFileSync(resolve(ROOT, `dist/${entry}/index.mjs`), 'utf8')
+    for (const [, declared, assigned] of text.matchAll(
+      /(?:\bclass (\w+)|\b(\w+) = class(?: \w+)?) extends \w*Error\b/g
+    )) {
+      const className = declared ?? assigned
+      if (!ERROR_CLASSES.some((c) => c.name === className)) {
+        problems.push(`${className} (dist/${entry}) extends Error and is not in ERROR_CLASSES`)
+      }
+    }
+  }
+  for (const { name, from, args } of ERROR_CLASSES) {
+    const bundle = await consumerBundle(from, [name])
+    const mod = await import(
+      `data:text/javascript;base64,${Buffer.from(bundle).toString('base64')}`
+    )
+    const made = new mod[name](...args)
+    if (made.name !== name)
+      problems.push(`${name}.name is "${made.name}" in a minified consumer bundle`)
+    if (!(made instanceof Error))
+      problems.push(`${name} is not an Error in a minified consumer bundle`)
+  }
+  return problems
+}
+
+const nameProblems = await errorClassProblems()
+
 const pad = (s, n) => String(s).padEnd(n)
 const padL = (s, n) => String(s).padStart(n)
+const COL = 50
 
-console.log('')
-console.log(
-  `  ${pad('Subpath', 38)}${padL('Raw', 12)}${padL('Brotli', 12)}${padL('Budget', 12)}  Status`
-)
-console.log(`  ${'-'.repeat(38)}${'-'.repeat(12)}${'-'.repeat(12)}${'-'.repeat(12)}  ------`)
-for (const r of rows) {
-  const status = r.ok ? 'PASS' : `FAIL +${fmt(r.delta)}`
+const printRows = (title, list) => {
+  console.log('')
   console.log(
-    `  ${pad(r.name, 38)}${padL(fmt(r.raw), 12)}${padL(fmt(r.brotli), 12)}${padL(fmt(r.limit), 12)}  ${status}`
+    `  ${pad(title, COL)}${padL('Raw', 12)}${padL('Brotli', 12)}${padL('Budget', 12)}  Status`
   )
+  console.log(`  ${'-'.repeat(COL)}${'-'.repeat(12)}${'-'.repeat(12)}${'-'.repeat(12)}  ------`)
+  for (const r of list) {
+    const status = r.ok ? 'PASS' : `FAIL +${fmt(r.delta)}`
+    console.log(
+      `  ${pad(r.name, COL)}${padL(fmt(r.raw), 12)}${padL(fmt(r.brotli), 12)}${padL(fmt(r.limit), 12)}  ${status}`
+    )
+  }
 }
+
+printRows('Consumer surface (minified, tree-shaken)', surfaceRows)
+printRows('Entry file (published, as built)', rows)
 console.log('')
+
+if (nameProblems.length > 0) {
+  for (const problem of nameProblems) console.error(`Error class check: ${problem}`)
+  failed += nameProblems.length
+}
 
 if (failed > 0) {
-  console.error(`${failed} subpath(s) exceeded the brotli budget.`)
+  console.error(`${failed} problem(s): a size budget was exceeded or an error class check failed.`)
   process.exit(1)
 }

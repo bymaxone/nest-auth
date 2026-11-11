@@ -1,5 +1,11 @@
 import { defineConfig } from 'tsup'
 
+// Only the server entry is built with decorator metadata, which Nest's dependency injection reads.
+// The other four have no decorators, and building them with `emitDecoratorMetadata` makes tsup's
+// swc plugin switch `keepNames` on: every function is then followed by a top-level `__name(...)`
+// call, which a consumer's bundler must keep, so nothing in the entry can be tree-shaken. They use
+// `tsconfig.build.web.json` for that reason.
+
 export default defineConfig([
   // Server entry (main) — Node.js only
   {
@@ -30,7 +36,7 @@ export default defineConfig([
     entry: { 'shared/index': 'src/shared/index.ts' },
     format: ['esm', 'cjs'],
     dts: true,
-    tsconfig: 'tsconfig.build.json',
+    tsconfig: 'tsconfig.build.web.json',
     outDir: 'dist',
     outExtension: ({ format }) => ({
       js: format === 'esm' ? '.mjs' : '.cjs'
@@ -47,7 +53,7 @@ export default defineConfig([
     entry: { 'client/index': 'src/client/index.ts' },
     format: ['esm', 'cjs'],
     dts: true,
-    tsconfig: 'tsconfig.build.json',
+    tsconfig: 'tsconfig.build.web.json',
     outDir: 'dist',
     outExtension: ({ format }) => ({
       js: format === 'esm' ? '.mjs' : '.cjs'
@@ -64,7 +70,7 @@ export default defineConfig([
     entry: { 'react/index': 'src/react/index.ts' },
     format: ['esm', 'cjs'],
     dts: true,
-    tsconfig: 'tsconfig.build.json',
+    tsconfig: 'tsconfig.build.web.json',
     outDir: 'dist',
     outExtension: ({ format }) => ({
       js: format === 'esm' ? '.mjs' : '.cjs'
@@ -84,7 +90,7 @@ export default defineConfig([
     entry: { 'nextjs/index': 'src/nextjs/index.ts' },
     format: ['esm', 'cjs'],
     dts: true,
-    tsconfig: 'tsconfig.build.json',
+    tsconfig: 'tsconfig.build.web.json',
     outDir: 'dist',
     outExtension: ({ format }) => ({
       js: format === 'esm' ? '.mjs' : '.cjs'
