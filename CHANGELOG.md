@@ -18,8 +18,59 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-11
+
+**Workspaces.** One identity can now hold a role in each of many workspaces inside a tenant,
+and switch between them without signing in again. The feature is **off by default**: a host that
+does not set `workspaces.enabled` registers nothing new and is asked for nothing. This is a minor
+release that carries a large additive surface and a few behaviour changes, each listed below with
+what to do about it.
+
 ### Apply to a derived backend
 
+- **Workspaces are opt-in; nothing changes until you enable them.** To use them, set
+  `workspaces: { enabled: true, roles: { hierarchy, ownerRole } }`, provide the two repositories
+  (`BYMAX_AUTH_WORKSPACE_REPOSITORY` and `BYMAX_AUTH_MEMBERSHIP_REPOSITORY`, implementing
+  `IWorkspaceRepository` and `IMembershipRepository`), and turn on `controllers.workspaces`
+  (and `controllers.workspaceInvitations`, which also needs an email provider that implements the new
+  optional `sendWorkspaceInvitation`). The module refuses to start with a flag on and a piece
+  missing. The README has a Workspaces section and the technical specification has §5.6 and §22.
+- **The shared Redis contract is now at version 3.** The new key prefixes are `wsv`, `wmv`, `wm`
+  (membership cache and its version counters), `winv`, `winvidx`, `winvset`, `winvrl` (invitations,
+  their per-address index, the pending set and the per-inviter rate) and `wad`, `wads` (the
+  `access.denied` window and its suppressed count), each specified in
+  `conformance/wire-contract.json`. The contract's sha256 changes with it, so a copy
+  kept by another library is refreshed from that file.
+- **`access.denied` now fires, only when workspaces are enabled.** A refused workspace access on a
+  route, in stream verification or on a socket message reaches `onWorkspaceEvent`, bounded per account
+  by `workspaces.accessDeniedEvents` (default 10 events per 60 s; the denials past the bound are
+  counted and the count is carried on the next event as `suppressedCount`). The event carries the
+  public `code`, a host-only `reason` (`not_member`, `pending_deletion` or `insufficient_role`) and
+  the `surface`. The access decision is never affected by the bound.
+- **A host hook that throws synchronously no longer fails a completed flow.** `afterRegister`,
+  `afterLogin`, `afterEmailVerified`, `afterMfaEnabled`, `afterMfaDisabled`,
+  `afterMfaRecoveryCodesRegenerated`, `afterPasswordReset`, `onNewSession` and `onSessionEvicted`
+  now run detached, so a hook that throws after `register`, `login`, the password-less token path,
+  `verifyEmail`, an MFA enable or disable, a recovery-code regeneration or a password reset leaves the
+  flow's result alone. A throwing `onSessionEvicted` no longer fails `createSession`, and a throwing
+  `onNewSession` is logged as `onNewSession hook threw` rather than as a failed `findById`. The three
+  MFA hooks now log a failure, a rejection included, where they used to swallow it with no trace. A host that relied on a throwing one of these hooks to abort a flow can no longer do so.
+- **Accepting a workspace invitation through OAuth does not complete it for an account with a second
+  factor.** The callback answers the MFA challenge as for any OAuth sign-in, the invitation stays
+  pending and unspent, and it is not resumed after the challenge. The signed-in caller accepts it with
+  `POST /workspaces/invitations/accept` and the same token, so a host whose members use MFA should
+  send the token again from its accept page after sign-in. Binding the invitation to the MFA temp
+  token is not part of this release.
+- **`registration: 'invitation-only'` is enforced.** It was refused at startup; it now closes
+  `POST /register` with `403 auth.registration_closed`, and does the same to the OAuth `create` action
+  unless the flow carries a vetted invitation. Startup refuses the mode only when workspaces and tenant
+  invitations are both disabled.
+- **The frontend entries are tree-shakeable, and the workspace pieces are separate.** A bundler now
+  drops what a frontend does not import from `./shared`, `./client`, `./react` and `./nextjs`
+  (previously every import shipped the whole entry). Measured with a minified, tree-shaken minimal
+  import: `createAuthClient` went from 3.82 to 3.45 KiB brotli and `AuthProvider` plus `useSession`
+  from 1.26 to 1.13 KiB. `createWorkspaceClient`, `<WorkspaceProvider>` and `useWorkspaces()` add to a
+  bundle only when imported (+0.64 and +1.24 KiB over those two). No API change to what existed.
 - **Length bounds on user text now count Unicode code points everywhere, as the validation pipe
   already did.** The service-side checks counted UTF-16 units, so an emoji counted twice. Four
   checks changed: the workspace name, the workspace id, the API key label, and the password floor
@@ -31,17 +82,89 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   refused, is now accepted. Tokens, one-time codes and the other checks that never hold user text
   keep counting units.
 
-### Changed
+### Added
 
-- **A validation error no longer repeats an unknown request property it cannot safely name, on every route.** The pipe every controller mounts answered a body with an unknown key by naming the key in `details[].field` and in the message, so a 1000-character key made the answer as long as the key, and a key holding a control character put that character in the answer. An unknown key over 128 code points, holding a control character, or empty is now reported once under the field `body`, however many there are; a short key is still named, and every other failure is still reported by its own name. The status, the code (`auth.validation`) and the top-level message are unchanged. **Apply to a derived backend:** a client that read the name of such a key from `details[].field` now reads `body`; the contract's `errorEnvelope` row states the rule.
-
+- **The workspace layer.** The ports a host implements, `IWorkspaceRepository` and
+  `IMembershipRepository`, name the whole key (tenant, workspace and member) on every method, and every
+  mutating method persists its audit event in the same transaction as the change. `createWithOwner`
+  receives the effective `workspaces.maxWorkspacesPerUser` and answers `limit_reached` (a host that
+  needs an exact cap enforces it inside the create transaction), and the membership port has
+  `countOwned` and `listSoleOwned`. The `workspaces` option group (`enabled`, `roles`, `permissions`,
+  `allowCreate`, `maxWorkspacesPerUser`, `invitationTtlSeconds`, `maxPendingInvitationsPerWorkspace`,
+  `membershipCacheTtlSeconds`, `deletionGraceDays`, `accessDeniedEvents`, `resolveRequestWorkspace`,
+  `resolveWsWorkspace`) is validated at startup, and so is the `registration` mode.
+- **Workspace error codes and the membership cache.** Nine codes (`auth.workspace_required`,
+  `workspace_not_found`, `insufficient_workspace_role`, `last_owner`, `already_member`,
+  `invitation_email_mismatch`, `registration_closed`, `workspace_limit_reached`,
+  `workspace_pending_deletion`) in the server and shared catalogs. `WorkspaceAccessService` resolves an
+  active membership of an active workspace through a versioned Redis cache backed by the repositories;
+  a failed or unreachable Redis falls back to the repositories and never fails a request.
+- **`WorkspaceGuard`, `@WorkspaceRoles(...)`, `@WorkspacePermission(...)`, `@AllowPendingWorkspace()`
+  and `@CurrentWorkspace()`.** A route authorizes in the workspace it names (a path parameter or the
+  host's resolver, never a body, query or header). A missing workspace, a non-member and an inactive
+  workspace answer an identical `404 auth.workspace_not_found`; a route that declares no roles is refused
+  `403`. A workspace pending deletion is reported to its owner only (`409
+auth.workspace_pending_deletion`); everyone else gets the not-found. Mount the guard after
+  `JwtAuthGuard` and `UserStatusGuard`.
+- **Workspace and membership services, and two hooks.** `WorkspaceService` (create, rename, schedule
+  deletion, restore, finalize deletion, switch), `MembershipService` (list, change role, remove,
+  leave, transfer ownership) and `WorkspaceEventsService`; `IAuthHooks.beforeWorkspaceCreate` (a refusal
+  is `403 auth.forbidden` with the reason) and `onWorkspaceEvent` (detached and best-effort; a throwing
+  hook never fails an operation, and the event is never logged). `finalizeDeletion` is for the host's
+  own job: the library does not schedule it.
+- **The workspace routes, behind `controllers.workspaces: true`.** `GET /workspaces` and `POST
+/workspaces`, `GET /workspaces/:workspaceId/access`, `POST .../switch`, `GET .../members`
+  (cursor-paginated where listing), `PATCH /workspaces/:workspaceId`, `POST .../schedule-deletion`
+  (the password is re-proved), `POST .../restore`, `PATCH` and `DELETE .../members/:userId`, `POST
+.../leave` and `POST .../transfer-ownership` (the owner, re-proved). A caller who may not act is
+  refused before a password is checked or a lockout attempt is spent. The last owner cannot leave, be
+  removed or demote themselves (`409 auth.last_owner`). A switch records the caller's last active
+  workspace and changes no token.
 - **Workspace invitations.** With `controllers.workspaceInvitations: true` the library serves `POST /workspaces/:workspaceId/invitations` (invite), `GET` on the same path (list), `.../invitations/resend`, `.../invitations/revoke` and the public `POST /workspaces/invitations/preview`. The flag requires `workspaces.enabled`, both workspace repositories and an email provider that implements the new optional `sendWorkspaceInvitation`; the module refuses to start without the method. A token is 32 random bytes and only its digest is stored, so a resend mints a new one and retires the old. A member who is not the owner invites only to a role strictly below their own. An address has one live invitation per workspace; inviting it again is a resend, held to a 60-second cooldown and five resends. One member issues at most 20 invitations an hour, and a workspace holds at most `workspaces.maxPendingInvitationsPerWorkspace` pending ones. The preview answers every token it cannot honour with the same `auth.invalid_invitation_token`. The Redis keyspace gains the prefixes `winv`, `winvidx`, `winvset` and `winvrl`, specified in the wire contract with test vectors.
 
 - **Accepting a workspace invitation.** `POST /workspaces/invitations/accept` takes the signed-in account the invitation names, and `POST /workspaces/invitations/accept-signup` creates the account it was addressed to and signs it in. Both answer `workspaceId` and the `role` the caller actually holds. Everything that can be decided without spending the token is decided first, the membership is written next, and the token is spent only after that; an address that is not the invited one answers `auth.invitation_email_mismatch` and an unverified one `auth.email_not_verified`, each leaving the token usable. The stored record is now a union with a required `kind`: `member`, or `bootstrap` for an invitation the platform issues, through the new `WorkspaceInvitationService.inviteAsPlatform`, for the invitee to own a workspace that is created when they accept (`revokeAsPlatform` withdraws it). The preview answer is a union on the same `kind`, and a bootstrap one has no `inviterName`.
 
+- **Accepting a workspace invitation through Google.** `GET /oauth/google?workspaceInvitation=<token>`
+  vets the invitation against the verified provider profile before the host's `onOAuthLogin` hook runs
+  (an account with a second factor gets the MFA challenge; see the note above).
+- **Workspaces on sockets, streams and queued jobs.** `workspaceScopedName` and
+  `decodeWorkspaceScopedName` are an injective encoding for rooms, cache keys and storage prefixes (a
+  C0 control, DEL or an unpaired surrogate in a part is a `TypeError`).
+  `AuthTokenVerifierService.verifyAccessToken(token, { plane: 'dashboard', workspace: { workspaceId,
+roles, allowPending } })` returns the caller's membership; `WsWorkspaceGuard` (with
+  `workspaces.resolveWsWorkspace`) guards a gateway handler per message; and
+  `WorkspaceAccessService.assertStillAuthorized`, `stampJobContext` and `WorkspaceJobContext` serve
+  queued jobs, whose check reads the account, the workspace and the membership live and costs three
+  repository reads. The server size budget is 169 KiB.
+- **The browser half of workspaces.** `./shared`: the workspace types, which mirror the views the
+  server answers with key for key and type for type, and `fillRoute` / `pathSegment`, which build
+  request paths from caller-supplied values and refuse `.`, `..` and empty values (use them for
+  `sessions/:id` and `oauth/:provider` as well). `./client`: `createWorkspaceClient`, 19 typed workspace
+  calls (workspaces, members, ownership, invitations), separate from `createAuthClient`. `./react`:
+  `<WorkspaceProvider>` and `useWorkspaces()` with `onWorkspaceChanged`, `onWorkspaceAccessLost`, a role
+  hint and a cross-tab list sync; the provider stores the list, the chosen workspace and the last
+  active one with the account they were read for, and reads them only for that account.
+  `./nextjs`: `createWorkspaceAccessReader` for server components; `createAuthProxy` accepts
+  `lastWorkspaceCookie` and passes `getDefaultDashboard(role, { lastActiveWorkspaceId })`, and an inbound
+  `x-workspace-id` is stripped.
+- **`conformance/openapi-operation-security.json`**, the per-operation security table, generated by
+  `pnpm gen:openapi-security` and checked on every test run. It is data for the sibling library's own
+  check, not behaviour; the wire contract and the OpenAPI request schemas cover the new routes.
+- **Documentation:** the README and the technical specification describe workspaces, including the
+  decided limitation above.
+
+### Changed
+
+- **A validation error no longer repeats an unknown request property it cannot safely name, on every route.** The pipe every controller mounts answered a body with an unknown key by naming the key in `details[].field` and in the message, so a 1000-character key made the answer as long as the key, and a key holding a control character put that character in the answer. An unknown key over 128 code points, holding a control character, or empty is now reported once under the field `body`, however many there are; a short key is still named, and every other failure is still reported by its own name. The status, the code (`auth.validation`) and the top-level message are unchanged. **Apply to a derived backend:** a client that read the name of such a key from `details[].field` now reads `body`; the contract's `errorEnvelope` row states the rule.
+
 - **The `shared` subpath bundle budget goes from 4.75 KiB to 5 KiB brotli.** The two accept routes' names no longer fit under the old limit. It is checked in `scripts/check-size.mjs` and affects no consumer.
 
 - **A password reset with no usable proof is refused as an invalid token before its password is judged.** `POST password/reset-password` now classifies the proof first, without spending it: more than one proof, none, or one the configured `passwordReset.method` does not accept answers `auth.password_reset_token_invalid` whatever the new password is. Before, such a request with a password under the policy floor answered `auth.validation`. The password is then judged, and the proof is spent last, as before, so a refused password still does not burn a single-use proof. A caller who holds no usable proof can no longer reach the password policy, and with it the breach screen, which is an outbound query when the host wires the bundled HIBP provider.
+
+- **The server bundle budget is 169 KiB brotli.** It is checked in `scripts/check-size.mjs` and
+  affects no consumer; the frontend entries and the consumer surfaces have budgets of their own there.
+
+### Fixed
 
 - **A refresh cookie over 2048 characters is refused with `400 auth.validation`.** The body value
   already was; the cookie is now held to the same bound on the routes that read the refresh token,
@@ -50,6 +173,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   cookies, so a browser holding one can sign out of it. No token this library mints is longer than
   the bound, so only a forged or corrupted cookie is affected. An empty cookie is still treated as
   no token.
+
+- **A synchronous throw from `afterInvitationAccepted` no longer turns a completed signup into a server
+  error.**
+
+### Maintenance
+
+Repository tooling and dependencies; nothing changes for a host. The 50-line limit on functions and
+test bodies is gated against a shrink-only baseline (`pnpm check:function-length`), whose keys are
+structured values; new double assertions through `unknown` are gated against a baseline; the API-key
+option group moved out of the two largest option files; the contract-parity workflow compares the
+request schemas and the operation security table with rust-auth, each under its own tracking issue;
+`minimatch` (GHSA-g3hv-75wg-m249) is resolved for the development tooling, with `glob` 10 mapped to 13; a platform-MFA e2e no longer depends on the wall-clock TOTP
+window; development and CI dependency bumps.
 
 ## [1.4.22] - 2026-11-08
 
@@ -4695,7 +4831,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.22...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/bymaxone/nest-auth/compare/v1.4.22...v1.5.0
 [1.4.22]: https://github.com/bymaxone/nest-auth/compare/v1.4.21...v1.4.22
 [1.4.21]: https://github.com/bymaxone/nest-auth/compare/v1.4.20...v1.4.21
 [1.4.20]: https://github.com/bymaxone/nest-auth/compare/v1.4.19...v1.4.20
