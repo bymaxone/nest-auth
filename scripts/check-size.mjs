@@ -177,11 +177,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // BUDGETS IN FORCE. The `SURFACES` lines are the budget that counts: `client auth surface`
 // (createAuthClient) and `react auth surface` (AuthProvider, useSession) carry 3.3 and 1.2 KiB, the
 // measured 3.12 and 1.13 plus about 5%, and a feature a frontend can leave unimported gets a line of
-// its own when it lands instead of being added to these. Those two lines protect a frontend that uses
-// no workspace: they were 4.25 and 2.5 KiB, set before the entries were made tree-shakeable, and at
-// 36% and 121% above the measured size they could no longer catch a regression. The client one fell
-// from 3.45 to 3.12 KiB when `createAuthClient` stopped importing the aggregate `AUTH_ROUTES`, which
-// carried every route family, the 16 workspace routes among them, into a frontend that uses none.
+// its own when it lands instead of being added to these. Those two lines protect a frontend that
+// uses no workspace, so they sit close to the measured size: a line with headroom of a third or more
+// cannot catch a regression. `createAuthClient` imports its own route groups and never the aggregate
+// `AUTH_ROUTES`, because the aggregate keeps every route family, the 16 workspace routes among them,
+// in a frontend that uses none.
 // The `BUDGETS` lines hold the measured size plus a few percent of headroom: the client, react and
 // nextjs entries measure 4.25, 3.54 and 9.11 KiB against 4.6, 3.6 and 9.5, because each entry file
 // holds the whole workspace surface (the workspace client, the provider and its hooks, the access
