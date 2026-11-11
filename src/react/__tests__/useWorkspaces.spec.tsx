@@ -99,6 +99,15 @@ describe('useWorkspaces', () => {
       })
     })
 
+    it('loads the list once, and only once, when the caller is signed in', async () => {
+      const client = signedIn()
+      mount(client)
+      await settle()
+      await settle()
+
+      expect(client.listWorkspaces).toHaveBeenCalledTimes(1)
+    })
+
     it('stays idle and makes no request for a caller who is not signed in', async () => {
       const client = signedIn()
       client.getMe.mockRejectedValue(new AuthClientError('no', 401))
@@ -107,6 +116,20 @@ describe('useWorkspaces', () => {
 
       expect(result.current.status).toBe('idle')
       expect(client.listWorkspaces).not.toHaveBeenCalled()
+    })
+
+    it('makes no request when the host asks for a reload while signed out', async () => {
+      const client = signedIn()
+      client.getMe.mockRejectedValue(new AuthClientError('no', 401))
+      const { result } = mount(client)
+      await settle()
+
+      await act(async () => {
+        await result.current.refresh()
+      })
+
+      expect(client.listWorkspaces).not.toHaveBeenCalled()
+      expect(result.current.status).toBe('idle')
     })
 
     it('follows the cursors and keeps the last active workspace of the first page', async () => {
@@ -620,6 +643,7 @@ describe('useWorkspaces', () => {
       await settle()
 
       expect(signedOut.listWorkspaces).not.toHaveBeenCalled()
+      expect(signedOut.getMe).toHaveBeenCalledTimes(1)
     })
 
     it('makes no request in a tab whose session is not known yet when it hears a switch', async () => {

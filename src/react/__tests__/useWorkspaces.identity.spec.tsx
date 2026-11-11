@@ -199,6 +199,10 @@ describe('WorkspaceProvider across an account change', () => {
     act(() => {
       new FakeChannel('nest-auth:workspaces').postMessage({ type: 'workspaces-changed' })
     })
+    // The broadcast revalidates the session first and starts its load after that.
+    await settle()
+    await settle()
+    await settle()
 
     await changeAccount(result, client)
     await act(async () => {
@@ -209,5 +213,47 @@ describe('WorkspaceProvider across an account change', () => {
 
     expect(foreign(seen, 'bob')).toEqual([])
     expect(result.current.workspaces.memberships).toEqual([W2])
+  })
+
+  it('never lists the second account under the first when a broadcast arrives before the session knows', async () => {
+    const client = asAlice()
+    const { result, seen } = mountRecording(client)
+    await settle()
+    expect(result.current.workspaces.memberships).toEqual([W1])
+
+    asBob(client)
+    act(() => {
+      new FakeChannel('nest-auth:workspaces').postMessage({ type: 'workspaces-changed' })
+    })
+    await settle()
+    await settle()
+    await settle()
+
+    expect(foreign(seen, 'alice')).toEqual([])
+    expect(foreign(seen, 'bob')).toEqual([])
+    expect(result.current.session.user?.id).toBe('bob')
+    expect(result.current.workspaces.memberships).toEqual([W2])
+    expect(client.listWorkspaces).toHaveBeenCalledTimes(2)
+  })
+
+  it('reloads the list once the session confirms the same account after a broadcast', async () => {
+    const client = asAlice()
+    const { result } = mountRecording(client)
+    await settle()
+    client.listWorkspaces.mockResolvedValue({
+      items: [W1, W2],
+      nextCursor: null,
+      lastActiveWorkspaceId: 'w1'
+    })
+
+    act(() => {
+      new FakeChannel('nest-auth:workspaces').postMessage({ type: 'workspaces-changed' })
+    })
+    await settle()
+    await settle()
+    await settle()
+
+    expect(result.current.session.user?.id).toBe('alice')
+    expect(result.current.workspaces.memberships).toEqual([W1, W2])
   })
 })

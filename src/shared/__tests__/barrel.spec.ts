@@ -30,6 +30,7 @@ import {
   AUTH_REFRESH_SKIP_PATH_SUFFIXES,
   AUTH_ROUTES,
   AUTH_SESSION_ROUTES,
+  AUTH_WORKSPACE_ROUTES,
   AuthClientError
 } from '../index'
 import type {
@@ -96,6 +97,8 @@ describe('shared barrel — constant exports', () => {
     expect(Object.keys(AUTH_PLATFORM_MFA_ROUTES).length).toBeGreaterThan(0)
     expect(typeof AUTH_OAUTH_ROUTES).toBe('object')
     expect(Object.keys(AUTH_OAUTH_ROUTES).length).toBeGreaterThan(0)
+    expect(typeof AUTH_WORKSPACE_ROUTES).toBe('object')
+    expect(Object.keys(AUTH_WORKSPACE_ROUTES).length).toBeGreaterThan(0)
   })
 
   // The aggregate map must contain every NestJS controller route family
@@ -118,7 +121,8 @@ describe('shared barrel — constant exports', () => {
       sessions: AUTH_SESSION_ROUTES,
       invitations: AUTH_INVITATION_ROUTES,
       emailChange: AUTH_EMAIL_CHANGE_ROUTES,
-      oauth: AUTH_OAUTH_ROUTES
+      oauth: AUTH_OAUTH_ROUTES,
+      workspaces: AUTH_WORKSPACE_ROUTES
     })
     expect(AUTH_ROUTES).not.toHaveProperty('proxy')
   })
