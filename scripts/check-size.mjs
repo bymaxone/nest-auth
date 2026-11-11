@@ -183,7 +183,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // from 3.45 to 3.12 KiB when `createAuthClient` stopped importing the aggregate `AUTH_ROUTES`, which
 // carried every route family, the 16 workspace routes among them, into a frontend that uses none.
 // The `BUDGETS` lines hold the measured size plus a few percent of headroom: the client, react and
-// nextjs entries measure 4.25, 3.55 and 9.11 KiB against 4.6, 3.6 and 9.5, because each entry file
+// nextjs entries measure 4.25, 3.54 and 9.11 KiB against 4.6, 3.6 and 9.5, because each entry file
 // holds the whole workspace surface (the workspace client, the provider and its hooks, the access
 // reader and the landing hint), which a frontend that imports none of it never ships. The react
 // workspace surface measures 2.42 against 2.5, and that provider carries the load abort, the account
