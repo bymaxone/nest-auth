@@ -11,7 +11,8 @@
 //
 // The bundler is esbuild, a direct devDependency pinned to the exact version `tsup` resolves, so the
 // lockfile holds one. It already produces the bytes being measured, so measuring with it adds no
-// trust that building did not already require. Nothing else is imported beyond Node's own modules.
+// trust that building did not already require. Besides esbuild, the script imports only Node's own
+// modules.
 // `node:zlib`'s brotli matches what npm/CDN compression produces on the wire.
 
 import { readFileSync, statSync } from 'node:fs'
@@ -180,8 +181,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //
 // WHY THE SURFACES CAN BE TRUSTED. A consumer's bundler can only drop what it can prove unused, and a
 // top-level `__name(...)` call, which `keepNames` adds after every function (esbuild suffixes the
-// helper, `__name2(...)`, when two collide), cannot be proven unused. tsup turns `keepNames` on whenever the tsconfig has `emitDecoratorMetadata`, so the
-// shared, client, react and nextjs entries build with `tsconfig.build.web.json`, which does not, and
+// helper, `__name2(...)`, when two collide), cannot be proven unused. tsup's swc plugin turns `keepNames` on whenever the tsconfig has
+// `emitDecoratorMetadata`, so the shared, client, react and nextjs entries build with
+// `tsconfig.build.web.json`, which does not, and
 // `treeShakingProblems()` below fails the build if any of them holds such a call, because the surface
 // lines alone have enough headroom to hide the loss.
 const BUDGETS = [
