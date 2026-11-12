@@ -16,8 +16,16 @@
     "reason": "Runs scripts/mutate-const-tables.mjs as a child process against a throwaway git repository; it imports no module from src."
   },
   {
+    "file": "src/nextjs/__tests__/documentedProxyExport.spec.ts",
+    "reason": "Reads README.md and createAuthProxy.ts as text and checks the proxy export form they show; it imports only node modules and executes no source under src."
+  },
+  {
     "file": "src/server/agent-docs.spec.ts",
     "reason": "Reads AGENTS.md and the docs as text and checks their rules; it imports only node modules and executes no source under src."
+  },
+  {
+    "file": "src/server/conformance-well-formed.spec.ts",
+    "reason": "Reads the conformance JSON files as bytes and checks every string and key of them for well-formed Unicode; it imports only node modules and executes no source under src, so the related-test lookup is right to leave it out."
   },
   {
     "file": "src/server/conformance-workspace-client-types.spec.ts",
@@ -34,9 +42,5 @@
   {
     "file": "src/shared/__tests__/route-interpolation.spec.ts",
     "reason": "Scans the source files as text for hand-filled route placeholders; it imports only node modules and executes no source under src."
-  },
-  {
-    "file": "src/nextjs/__tests__/documentedProxyExport.spec.ts",
-    "reason": "Reads README.md and createAuthProxy.ts as text and checks the proxy export form they show; it imports only node modules and executes no source under src."
   }
 ]
