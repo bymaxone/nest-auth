@@ -32,6 +32,7 @@ const ROOT = resolve(__dirname, '..', '..')
 /** Directories that never hold an instruction file this repository ships. */
 const SKIPPED_DIRECTORIES = new Set([
   '.git',
+  '.mutation-shards',
   '.stryker-tmp',
   'coverage',
   'dist',
@@ -207,6 +208,17 @@ describe('instruction chain discovery', () => {
     put('dist/AGENTS.md', 10)
 
     expect(findAgentFiles(root)).toEqual(['AGENTS.md'])
+  })
+
+  // The sharded mutation run checks the shared tooling repository out inside the workspace, and
+  // that repository ships its own AGENTS.md, which is not this repository's and must not count
+  // toward the instruction budget.
+  it('ignores the mutation run tooling checkout', () => {
+    put('AGENTS.md', 10)
+    put('.mutation-shards/.github/AGENTS.md', 10)
+
+    expect(findAgentFiles(root)).toEqual(['AGENTS.md'])
+    expect(worstChainBytes(root)).toBe(10)
   })
 
   // Siblings are never loaded together, so the cost is the heavier path, not the sum of both.
