@@ -43,7 +43,7 @@ registration mode that could never create an account is refused at startup.
 - **The bundled `DefaultAuthEmailProvider` implements `sendWorkspaceInvitation`.** The module refuses to
   boot with `controllers.workspaceInvitations` on unless the provider implements it, and the default
   provider did not, so a host that took the default could not enable workspace invitations at all. It
-  renders the invitation like the tenant one: the inviter, the workspace, the role, a token and its expiry,
+  renders the invitation like the tenant one: the inviter, the workspace, a token and its expiry,
   with sign-in or sign-up wording, the text the sender chose escaped, and the same credential flag and
   delivery-error policy as every other message; a bootstrap invitation is worded as an invitation to set up
   the workspace as its owner. Like the tenant invitation, it renders a **token**, not a link, because the
