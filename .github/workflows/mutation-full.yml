@@ -44,3 +44,6 @@ jobs:
       # minutes it uses, while a tight one costs the whole run and leaves the week without a
       # measured baseline. It stays under GitHub's 6 hour job limit.
       timeout-minutes: 355
+      # A unit test the mutation run did not execute fails the job. The specs that execute no source
+      # are listed with their reasons in scripts/mutation-inventory.exempt.json.
+      inventory: enforce

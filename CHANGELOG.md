@@ -18,6 +18,49 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-11-12
+
+A patch release for workspaces: the bundled email provider can deliver a workspace invitation, and a
+registration mode that could never create an account is refused at startup.
+
+### Apply to a derived backend
+
+- **`WorkspaceInviteData` gains a required field, `kind: 'member' | 'bootstrap'`.** The service sets it
+  from the stored invitation: `'member'` joins a workspace that exists, `'bootstrap'` is a platform
+  invitation to set up and own one that is created when the invitee accepts (its `workspaceName` names a
+  workspace that does not exist yet, and its `inviterName` is a display name the platform chose, which may
+  be empty). An implementer of `sendWorkspaceInvitation` that reads the object is unaffected; a test double
+  or a caller that builds one must add the field.
+- **`registration: 'invitation-only'` is refused at startup unless an invitation controller is mounted.**
+  The workspace layer being on was taken for a way in, but with no invitation controller mounted no account
+  could ever be created, and OAuth acceptance rides on the workspace invitation controller, so it is no way
+  in on its own. The mode now needs `controllers.workspaceInvitations` with `workspaces.enabled`, or
+  `controllers.invitations` with `invitations.enabled`, and the error names what each path lacks. A host
+  that runs `invitation-only` with its own invitation flow and none of these controllers must mount one.
+
+### Fixed
+
+- **The bundled `DefaultAuthEmailProvider` implements `sendWorkspaceInvitation`.** The module refuses to
+  boot with `controllers.workspaceInvitations` on unless the provider implements it, and the default
+  provider did not, so a host that took the default could not enable workspace invitations at all. It
+  renders the invitation like the tenant one: the inviter, the workspace, the role, a token and its expiry,
+  with sign-in or sign-up wording, the text the sender chose escaped, and the same credential flag and
+  delivery-error policy as every other message; a bootstrap invitation is worded as an invitation to set up
+  the workspace as its owner. Like the tenant invitation, it renders a **token**, not a link, because the
+  provider has no base URL: override `messages.workspaceInvitation` to send a link. A test now derives, from
+  the source, the methods a feature refuses to boot without and the optional methods of `IEmailProvider`,
+  and checks the default provider implements each.
+
+### Maintenance
+
+Repository tooling; nothing changes for a host. The weekly cold mutation job now fails when a unit test did not run in the mutation run
+(`inventory: enforce`), and the exempt list gains the one spec that executes no source and was missing,
+`src/server/conformance-well-formed.spec.ts`. The sharded run of the 1.5.1 release commit finished Stryker
+on all four shards with no surviving and no uncovered mutant in any shard's own report, over a plan that
+puts each of the 272 files in exactly one shard. Its aggregate job stopped on a test id that carries an
+unformatted `it.each` placeholder, a defect of the shared workflow that was reported there, and an
+inventory of its four reports named the missing exempt entry.
+
 ## [1.5.1] - 2026-11-11
 
 A patch release for workspaces: it adds the way to remove an account's memberships before the host deletes
@@ -4908,7 +4951,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.2...HEAD
+[1.5.2]: https://github.com/bymaxone/nest-auth/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/bymaxone/nest-auth/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/bymaxone/nest-auth/compare/v1.4.22...v1.5.0
 [1.4.22]: https://github.com/bymaxone/nest-auth/compare/v1.4.21...v1.4.22
