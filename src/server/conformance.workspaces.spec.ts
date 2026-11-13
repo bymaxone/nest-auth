@@ -68,7 +68,7 @@ const WORKSPACE_CODES = [
 ] as const
 
 describe('workspace membership cache conformance', () => {
-  it('is declared by a contract at version 5', () => {
+  it('is declared by a contract at version 6', () => {
     expect(contract.version).toBe(6)
   })
 
