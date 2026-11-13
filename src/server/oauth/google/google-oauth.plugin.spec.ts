@@ -397,4 +397,10 @@ describe('GoogleOAuthPlugin', () => {
       expect((init.headers ?? {})['Authorization']).toBe('Bearer my-access-token')
     })
   })
+
+  // Scenario: the library's deadline for the plugin's two requests. Expected: the sum of the 10 s
+  // each request is bounded at, so the library never gives up before the plugin's own bound does.
+  it('asks the library for the sum of its two request deadlines', () => {
+    expect(plugin.timeoutMs).toBe(20_000)
+  })
 })

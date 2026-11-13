@@ -20,6 +20,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
+- **A provider plugin's code exchange and profile fetch are bounded to 10 seconds together.** The
+  callback awaited the plugin with no deadline, so a token or profile endpoint that accepted the
+  connection and went silent held the request open with its state already consumed. Past the deadline
+  the callback is answered `OAUTH_FAILED` and the plugin's pending request is abandoned, not cancelled,
+  so a plugin should bound its own requests too. A plugin may set `timeoutMs` (a whole number from 1
+  to 120000; anything else is read as 10000). The bundled Google plugin sets 20000, the sum of the 10
+  seconds its two requests are each bounded at.
 - **The Next.js proxy can hold a token to the backend's issuer, audience and retired secrets.** Set
   `jwtIssuer`, `jwtAudience` and `jwtPreviousSecrets` on `createAuthProxy` to the backend's
   `jwt.issuer`, `jwt.audience` and `jwt.previousSecrets`. With an issuer or audience set, a token

@@ -52,6 +52,12 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
   /** Stable provider identifier used as a route segment and storage key. */
   readonly name = 'google'
 
+  /**
+   * The library's deadline for the two requests together: each is bounded at 10 s by its own abort
+   * signal, so the pair is 20 s and the library never cuts in before the plugin's own bound.
+   */
+  readonly timeoutMs = 20_000
+
   private readonly clientId: string
   /** The Google client secret, withheld from serialization. */
   readonly #clientSecret: string
