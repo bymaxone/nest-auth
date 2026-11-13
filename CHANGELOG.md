@@ -18,6 +18,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-11-13
+
+A patch release for workspace paging and the verifier: the paging cursor is a codec the library now exports and
+bounds, the owner role is bounded by length instead of a charset, and the verifier refuses a workspace id
+with a validation error when workspaces are off.
+
 ### Apply to a derived backend
 
 - **`workspaces.roles.ownerRole` is checked at startup.** It must be 1 to 32 code points of well-formed
@@ -5008,7 +5014,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.2...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.3...HEAD
+[1.5.3]: https://github.com/bymaxone/nest-auth/compare/v1.5.2...v1.5.3
 [1.5.2]: https://github.com/bymaxone/nest-auth/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/bymaxone/nest-auth/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/bymaxone/nest-auth/compare/v1.4.22...v1.5.0
