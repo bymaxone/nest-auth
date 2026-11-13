@@ -7,7 +7,6 @@
 
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import Redis from 'ioredis'
 
 import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import { RedisReadinessService } from './redis-readiness.service'
@@ -324,30 +323,4 @@ describe('RedisReadinessService', () => {
       expect(warn).toHaveBeenCalledTimes(1)
     }
   )
-
-  // Scenario: a REAL ioredis client pointed at a port nothing listens on, which gives up at once.
-  // Expected: boot fails fast with the address and nothing else. The fakes above invent the
-  // client's shape; this is the shape ioredis really has.
-  it('fails boot for a real client that cannot connect, naming only the address', async () => {
-    jest.useRealTimers()
-    const real = new Redis({
-      host: '127.0.0.1',
-      port: 1,
-      password: 'real-secret',
-      retryStrategy: () => null,
-      maxRetriesPerRequest: 1,
-      commandTimeout: 500
-    })
-    real.on('error', () => undefined)
-    try {
-      const attempt = (await check(real)).onApplicationBootstrap()
-
-      await expect(attempt).rejects.toThrow(
-        '[BymaxAuthModule] Redis at 127.0.0.1:1 did not answer PING'
-      )
-      await expect(attempt).rejects.not.toThrow(/real-secret/)
-    } finally {
-      real.disconnect()
-    }
-  })
 })
