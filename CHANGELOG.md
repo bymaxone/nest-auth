@@ -49,7 +49,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
-- **`AUTH_SECRET_MIN_LENGTH`** (32), the floor the boot check applies to the JWT and the MFA secrets,
+- **`AUTH_SECRET_MIN_LENGTH`** (32), the floor the boot check applies to every secret option,
   exported so a host that generates secrets can size them from the same constant.
 - **`assertWorkspaceId` and `WORKSPACE_ID_MAX_LENGTH`** (128 code points), the refusal the request edge
   applies to a workspace id, exported for a host that reads the id itself. It matches the cursor's rule for
