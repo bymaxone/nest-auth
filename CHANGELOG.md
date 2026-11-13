@@ -20,6 +20,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
+- **The Next.js proxy can hold a token to the backend's issuer, audience and retired secrets.** Set
+  `jwtIssuer`, `jwtAudience` and `jwtPreviousSecrets` on `createAuthProxy` to the backend's
+  `jwt.issuer`, `jwt.audience` and `jwt.previousSecrets`. With an issuer or audience set, a token
+  without exactly that `iss`, or whose `aud` is not or does not contain that value, is not
+  authenticated; with retired secrets set, a token signed under one is verified, as the backend still
+  accepts it while a rotation drains. Unset, the proxy checks the signature and the expiry only, as
+  before, so a backend that sets an issuer or audience today has a proxy that admits a token the
+  backend refuses: set the three to match. `verifyJwtToken` takes the same values as an optional third
+  argument, `VerifyJwtOptions`. The README and the JSDoc now say what the proxy is: a routing hint that
+  cannot see revocation, an account's current status, the MFA state or a workspace membership, never the
+  access decision for data or an action.
+
 - **The module sends `PING` to your Redis client at bootstrap and refuses to start when it never answers.** It
   retries every 250 ms for up to 5 seconds, so a Redis still starting during a rolling deploy, or a client
   built with `lazyConnect` or `enableOfflineQueue: false` whose first command is rejected, passes once

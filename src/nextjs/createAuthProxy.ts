@@ -148,6 +148,25 @@ export interface AuthProxyConfig {
   readonly jwtSecret?: string
 
   /**
+   * Secrets the backend still verifies with while a rotation drains (`jwt.previousSecrets`). The
+   * proxy verifies with them after `jwtSecret`, so a session signed before the rotation is not
+   * treated as signed out while the backend still accepts it.
+   */
+  readonly jwtPreviousSecrets?: readonly string[]
+
+  /**
+   * The issuer the backend requires (`jwt.issuer`). When set, a token without exactly this `iss`
+   * is not authenticated. Leave it unset when the backend sets none.
+   */
+  readonly jwtIssuer?: string
+
+  /**
+   * The audience the backend requires (`jwt.audience`). When set, a token whose `aud` is not this
+   * value, or does not contain it, is not authenticated. Leave it unset when the backend sets none.
+   */
+  readonly jwtAudience?: string
+
+  /**
    * Maximum number of consecutive silent-refresh redirects the
    * proxy will chain before giving up and rendering the page
    * as-is. Two is the documented default.
