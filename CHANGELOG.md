@@ -33,6 +33,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   host that subclasses or constructs the guard by hand must update the call; a host that applies it with
   `@UseGuards(WsJwtGuard)` needs nothing, because the module already exports the verifier.
 
+### Fixed
+
+- **A weak retired signing secret is reported under its own name.** A `jwt.previousSecrets` entry that is
+  empty, shorter than 32 characters or too repetitive was refused with an error that named `jwt.secret`,
+  so an operator fixed the current secret while the retired one stayed broken. The error now names
+  `jwt.previousSecrets[<index>]`. The rules are unchanged.
+
 ## [1.5.3] - 2026-11-13
 
 A patch release for workspace paging and the verifier: the paging cursor is a codec the library now exports and
