@@ -23,7 +23,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **`workspaces.roles.ownerRole` is checked at startup.** It must be 1 to 32 code points of well-formed
   text with no control character, the rule an id follows, and its characters are free: `owner`,
   `org:admin`, `team lead` and `proprietário` all pass. The owner role is part of the key a
-  `listSoleOwned` cursor is bound to, and only a name of more than 32 code points, or one with a control
+  `listSoleOwned` cursor is bound to, and only an empty name, one of more than 32 code points, or one with a control
   character or an unpaired surrogate, is refused, naming the option and the rule. Only the owner role is
   checked: the other roles of the hierarchy keep any name.
 - **A workspace page cursor may now be up to 4096 characters, not 512.** The wire contract is at version 5:
@@ -64,8 +64,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   id were each about 105 to 109 characters or more (the first length at which a cursor passes 512 is 109
   for `listForUser`, 108 for `listForWorkspace` and 105 for `listSoleOwned` with the role `owner`): the
   workspace page query refused a cursor over 512 characters, and a cursor for such ids is longer. The
-  bound is now 4096, sized from the longest cursor that ids, tenants and key parts of 128 code points can
-  produce (2306 characters), and the page query and the decoder share one constant.
+  bound is now 4096, sized from the longest cursor that ids and tenants of 128 code points and an owner role of 32
+  can produce (2306 characters), and the page query and the decoder share one constant.
 
 ## [1.5.2] - 2026-11-12
 
