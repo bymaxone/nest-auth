@@ -268,6 +268,8 @@ export class AuthTokenVerifierService {
    *   `EMAIL_NOT_VERIFIED` code when the account is no longer usable, whether or not a challenge is
    *   pending; or `MFA_REQUIRED` when the account is usable, has MFA enabled and this token
    *   predates its challenge.
+   * @throws {@link AuthException} with `auth.validation` naming `workspaceId`, only after the token is
+   *   verified, when `options.workspace` carries a malformed id or workspaces are not enabled.
    * @throws {TypeError} When `options.plane` is neither `'dashboard'` nor `'platform'` — a caller
    *   error rather than an authentication outcome, so it is deliberately not an `AuthException`.
    */
@@ -352,11 +354,13 @@ export class AuthTokenVerifierService {
 
   /**
    * The function that admits a caller to a workspace. On a plane with no workspaces that is a
-   * `TypeError`, a programmer's error; on a deployment that has not enabled them it is the
-   * `auth.validation` refusal naming `workspaceId`, because the id came from a client.
+   * `TypeError` raised at once, a programmer's error. On a deployment that has not enabled them the
+   * function is returned and refuses with the `auth.validation` error naming `workspaceId` when it is
+   * called, which is after the token has been verified: the id came from a client, and an anonymous
+   * caller must get `TOKEN_INVALID`, not a description of the deployment.
    *
-   * The returned function admits the caller as `WorkspaceGuard` would a route, with `auth.validation`
-   * for a malformed id and then the guard's refusals.
+   * Otherwise the returned function admits the caller as `WorkspaceGuard` would a route, with
+   * `auth.validation` for a malformed id and then the guard's refusals.
    */
   private workspaceResolver(
     plane: AuthPlane
@@ -368,12 +372,15 @@ export class AuthTokenVerifierService {
     const group = this.options.workspaces
     const denied = this.deniedEvents
     if (access === null || group === undefined) {
-      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
-        {
-          field: 'workspaceId',
-          message: 'workspaceId is not accepted: workspaces are not enabled for this deployment'
-        }
-      ])
+      return () =>
+        Promise.reject(
+          new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+            {
+              field: 'workspaceId',
+              message: 'workspaceId is not accepted: workspaces are not enabled for this deployment'
+            }
+          ])
+        )
     }
     return async (payload, check) => {
       const workspaceId = assertWorkspaceId(check.workspaceId)

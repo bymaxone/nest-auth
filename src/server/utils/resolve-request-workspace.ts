@@ -10,7 +10,6 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { TenantResolverRequest } from '../interfaces/auth-module-options.interface'
 
-/** Longest workspace id accepted, in characters. */
 /**
  * The longest workspace id, in code points: the bound every request path applies, an emoji counting
  * once.
@@ -22,15 +21,15 @@ export interface WorkspaceRouteRequest extends TenantResolverRequest {
   readonly params?: Readonly<Record<string, unknown>>
 }
 
+/** What a workspace id must be, as the validation detail says it. */
+const WORKSPACE_ID_RULE = `workspaceId must be 1 to ${WORKSPACE_ID_MAX_LENGTH} code points, not blank, with no control characters`
+
 /**
  * Raises the `400` for a workspace id that is not usable as one.
  *
  * @param message - What is wrong with it.
  * @throws {AuthException} Always, as `auth.validation` on `workspaceId`.
  */
-/** What a workspace id must be, as the validation detail says it. */
-const WORKSPACE_ID_RULE = `workspaceId must be 1 to ${WORKSPACE_ID_MAX_LENGTH} characters, not blank, with no control characters`
-
 function invalidWorkspaceId(message: string): never {
   throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [{ field: 'workspaceId', message }])
 }

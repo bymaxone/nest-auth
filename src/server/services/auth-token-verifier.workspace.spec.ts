@@ -67,11 +67,17 @@ async function code(promise: Promise<unknown>): Promise<string | undefined> {
 }
 
 /** A verifier; `withWorkspaces` is whether the access service is provided and the group resolved. */
-async function build(withWorkspaces = true): Promise<AuthTokenVerifierService> {
+async function build(
+  withWorkspaces = true,
+  token: { verify?: jest.Mock; revoked?: boolean } = {}
+): Promise<AuthTokenVerifierService> {
   const module = await Test.createTestingModule({
     providers: [
       AuthTokenVerifierService,
-      { provide: JwtService, useValue: { verify: jest.fn().mockReturnValue({ ...PAYLOAD }) } },
+      {
+        provide: JwtService,
+        useValue: { verify: token.verify ?? jest.fn().mockReturnValue({ ...PAYLOAD }) }
+      },
       {
         provide: BYMAX_AUTH_OPTIONS,
         useValue: {
@@ -81,7 +87,7 @@ async function build(withWorkspaces = true): Promise<AuthTokenVerifierService> {
       },
       {
         provide: AuthRevocationService,
-        useValue: { isAccessTokenRevoked: jest.fn().mockResolvedValue(false) }
+        useValue: { isAccessTokenRevoked: jest.fn().mockResolvedValue(token.revoked === true) }
       },
       {
         provide: AccountStatusService,
@@ -273,6 +279,28 @@ describe('verifyAccessToken with a workspace', () => {
         ]
       }
     })
+  })
+
+  // Scenario: workspaces off and a token that does not verify, with a workspace option. Expected:
+  // TOKEN_INVALID, so an anonymous caller learns nothing about the deployment's configuration.
+  it('answers TOKEN_INVALID, not the workspaces refusal, for a token that does not verify', async () => {
+    const verify = jest.fn().mockImplementation(() => {
+      throw new Error('jwt expired')
+    })
+    const disabled = await build(false, { verify })
+
+    await expect(
+      code(disabled.verifyAccessToken('bad', { plane: 'dashboard', workspace: CHECK }))
+    ).resolves.toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
+  })
+
+  // Scenario: workspaces off and a revoked token, with a workspace option. Expected: TOKEN_INVALID.
+  it('answers TOKEN_INVALID for a revoked token without workspaces enabled', async () => {
+    const disabled = await build(false, { revoked: true })
+
+    await expect(
+      code(disabled.verifyAccessToken('tok', { plane: 'dashboard', workspace: CHECK }))
+    ).resolves.toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
   })
 
   it('does not touch the repositories when the option is absent', async () => {
