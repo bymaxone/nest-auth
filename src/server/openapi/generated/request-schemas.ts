@@ -695,7 +695,7 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
       "cursor": {
         "type": "string",
         "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
-        "maxLength": 512,
+        "maxLength": 4096,
         "minLength": 1
       },
       "limit": {

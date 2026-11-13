@@ -18,6 +18,51 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **`workspaces.roles.ownerRole` is checked at startup.** It must be 1 to 32 characters, start with a
+  letter and use only letters, digits and `_ . : -` (`^[A-Za-z][A-Za-z0-9_.:-]{0,31}$`). The owner role is
+  part of the key a `listSoleOwned` cursor is bound to, and a name with a quote, a backslash or a long
+  tail made that cursor longer than any page query would accept. `owner`, `admin`, `member`,
+  `billing_admin` and `org:admin` pass; a name with a space or more than 32 characters is refused, naming
+  the option and the rule. Only the owner role is checked: the other roles of the hierarchy keep any name.
+- **A workspace page cursor may now be up to 4096 characters, not 512.** The wire contract is at version 5:
+  `requestFieldBounds.pageLimit.cursor` and the published `WorkspacePageQueryDto` schema say 4096, and the
+  contract states the owner-role rule as a new `workspaceOwnerRole` section. During a rolling deploy an
+  instance still on 1.5.2 or earlier answers `400` to a cursor longer than 512 characters that 1.5.3
+  issued, which only happens for tenant, member and row ids of about 107 characters or more, and only
+  until every instance has been replaced.
+- **A host adapter can drop its own cursor codec.** The exports below read and write the same bytes the
+  template's `workspace-cursor.ts` does, so a cursor issued before the swap keeps working after it.
+  Replace `keyOf`, `positionOf`, `encodeCursor`, `decodeCursor` and `readPosition` with
+  `workspaceQueryKey`, `workspacePositionOf`, `encodeWorkspaceCursor`, `decodeWorkspaceCursor` and
+  `readWorkspacePosition`, and delete the local copy and its spec. `workspaceQueryKey` is
+  `JSON.stringify` of its parts, byte for byte, so a lock or map key built from it does not move.
+  `encodeWorkspaceCursor` throws a `RangeError` for a position an unpaired surrogate or nothing makes
+  unreadable, and for a cursor over 4096 characters (an id, tenant or key part over 128 code points),
+  instead of issuing a cursor the next request could never follow.
+
+### Added
+
+- **Workspace cursor codec**, exported next to the membership port: `workspaceQueryKey`,
+  `workspacePositionOf`, `readWorkspacePosition`, `encodeWorkspaceCursor`, `decodeWorkspaceCursor` and the
+  constants `WORKSPACE_CURSOR_MAX_LENGTH`, `WORKSPACE_CURSOR_PART_MAX_LENGTH`,
+  `WORKSPACE_OWNER_ROLE_MAX_LENGTH` and `WORKSPACE_OWNER_ROLE_PATTERN`. Decoding implements the rule the
+  port states of every cursor: one that is malformed, longer than the bound, not canonical base64url, not
+  UTF-8, not a pair of two strings, issued for another query, or whose position is empty or ill-formed
+  reads as the first page and never widens the scope. A value that is not a string reads the same way. The
+  scope always comes from the query the store builds, never from the cursor, and a cursor is a bookmark, not
+  a signature: a well-formed position another instant names moves within the same scope and nowhere else.
+
+### Fixed
+
+- **The library answered `400` to its own `nextCursor` on page 2** when the tenant, the member and the row
+  id were each about 107 to 109 characters or more: the workspace page query refused a cursor over 512
+  characters, and a cursor for such ids is longer. With UUID-length tenant and member ids it takes a row id
+  of about 247 characters, past the 128-character limit, so only deployments with long tenant ids met it.
+  The bound is now 4096, sized from the longest cursor ids, tenants and key parts of 128 code points can
+  produce (2178 characters), and the page query and the decoder share one constant.
+
 ## [1.5.2] - 2026-11-12
 
 A patch release for workspaces: the bundled email provider can deliver a workspace invitation, and a

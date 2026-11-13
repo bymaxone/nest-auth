@@ -145,6 +145,30 @@ describe('resolveWorkspaceOptions', () => {
       ).toThrow(message)
     })
 
+    // Scenario: owner role names the paging cursor cannot carry. Expected: the boot error names the
+    // option, the value and the rule.
+    it.each(['team lead', 'a"b', 'a\\b', '1owner', 'é', 'x'.repeat(33)])(
+      'refuses the owner role %j',
+      (ownerRole) => {
+        const roles = { hierarchy: { [ownerRole]: [] }, ownerRole }
+
+        expect(() => resolveWorkspaceOptions(options({ roles }))).toThrow(
+          `workspaces.roles.ownerRole '${ownerRole}' must be 1 to 32 characters, start with a ` +
+            'letter and use only letters, digits and _ . : - (the role is part of a paging cursor).'
+        )
+      }
+    )
+
+    // Scenario: realistic owner role names. Expected: each boots.
+    it.each(['owner', 'admin', 'member', 'billing_admin', 'ADMIN', 'org:admin', 'a'.repeat(32)])(
+      'accepts the owner role %s',
+      (ownerRole) => {
+        const roles = { hierarchy: { [ownerRole]: [] }, ownerRole }
+
+        expect(resolveWorkspaceOptions(options({ roles }))?.roles.ownerRole).toBe(ownerRole)
+      }
+    )
+
     // Listing itself adds nothing to the owner, so it is not the "role that includes the owner"
     // case the check refuses.
     it('accepts an owner role that lists itself', () => {
