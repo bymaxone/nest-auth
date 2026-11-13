@@ -211,13 +211,10 @@ export class MfaRecordService {
     // dashboard plane: two tenants' user `1` do not share it, so one tenant's transition cannot make
     // the other's fail with `MFA_STATE_CONFLICT`.
     //
-    // The lock carries a per-call nonce so it can only be released by the call that took it. A fixed
-    // value made the release unsafe: the TTL is short, and a transition that outlives it — the
-    // repository is the host's, and a read plus a write can stall past ten seconds under load — has
-    // already lost the lock by the time its `finally` runs. Deleting it unconditionally there
-    // removes the *successor's* lock, and a third caller then enters alongside the second. That is
-    // the serialization this method exists to provide, undone precisely under the load that makes
-    // concurrent transitions likely in the first place.
+    // The lock carries a per-call nonce so it can only be released by the call that took it. The TTL
+    // is short and the repository is the host's, so a transition can outlive it: a release that
+    // deleted the key unconditionally would then remove the successor's lock and let a third caller
+    // in beside the second. The release is therefore a compare-and-delete on the nonce.
     const lockKey = `mfalock:${hmacSha256(userSubject(context, userId, tenantId), this.options.hmacKey)}`
     const lockToken = randomBytes(16).toString('hex')
     if (!(await this.redis.setIfAbsent(lockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS))) {
@@ -289,18 +286,13 @@ export class MfaRecordService {
     code: string,
     tenantId: string | undefined
   ): Promise<boolean> {
-    // The claim marker is keyed by the tenant-scoped subject, like every other MFA key, so a claim
-    // written under an older preimage is not consulted: deploying alongside pods on an older
-    // version lets the same recovery code be claimed once on each side.
-    //
-    // The transition lock does not bound that. It is keyed by the same subject, so pods that
-    // disagree about the subject disagree about the lock and do not exclude each other (see the
-    // note in `transition`). A double claim then reaches two unserialized read-modify-writes on
-    // the recovery-code list, which is how a spent code comes back.
-    //
-    // The answer is the deployment shape, not a wider key: old pods must be drained before the
-    // new ones serve. The marker is short-lived, so once no older pod is live there is nothing
-    // left to reconcile.
+    // The claim marker is keyed by the tenant-scoped subject, like every other MFA key: one claim per
+    // account and code, never shared with another tenant's account. The transition lock is keyed by
+    // the same subject, so instances that disagree about the subject disagree about the lock and do
+    // not exclude each other, and a double claim would then reach two unserialized read-modify-writes
+    // on the recovery-code list, which is how a spent code comes back. The deployment shape is what
+    // prevents that, not a wider key: instances on a different subject derivation must not serve
+    // together.
     const claimKey = `rcu:${hmacSha256(`${userSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
     return await this.redis.setnx(claimKey, RECOVERY_CODE_CLAIM_TTL_SECONDS)
   }
