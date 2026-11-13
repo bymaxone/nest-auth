@@ -1,6 +1,6 @@
 /**
- * @fileoverview Tests for the startup Redis check: the PING that fails boot on a Redis that cannot
- * be reached, and the warning for a client with no command timeout.
+ * @fileoverview Tests for the startup Redis check: the PING that keeps trying inside its budget and
+ * fails the boot at the end of it, and the warning for a client with no command timeout.
  *
  * @layer Test
  */
@@ -12,12 +12,6 @@ import Redis from 'ioredis'
 import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import { RedisReadinessService } from './redis-readiness.service'
 
-/** A client as far as the check reads it: a `ping` and the options it was built with. */
-interface FakeClient {
-  ping: jest.Mock
-  options?: Record<string, unknown>
-}
-
 /** The service over a client, built through the injector as the module builds it. */
 async function check(client: object): Promise<RedisReadinessService> {
   const module = await Test.createTestingModule({
@@ -26,56 +20,222 @@ async function check(client: object): Promise<RedisReadinessService> {
   return module.get(RedisReadinessService)
 }
 
+/** A client the check accepts without a warning: a `ping`, a status and a command timeout. */
+function client(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    status: 'ready',
+    options: { commandTimeout: 500 },
+    once: jest.fn(),
+    off: jest.fn(),
+    ping: jest.fn().mockResolvedValue('PONG'),
+    ...overrides
+  }
+}
+
+/**
+ * Runs the check under fake timers and reports how long it took to settle.
+ *
+ * @param target - The client.
+ * @param afterStart - Runs once the check has begun, to drive the client from the test.
+ * @param stepMs - How far each timer advance moves the clock.
+ * @returns The outcome and the milliseconds elapsed when it settled.
+ */
+async function settle(
+  target: object,
+  afterStart?: () => void,
+  stepMs = 50
+): Promise<{ outcome: 'resolved' | Error; at: number }> {
+  const service = await check(target)
+  const start = Date.now()
+  let outcome: 'resolved' | Error | undefined
+  let at = -1
+  void service.onApplicationBootstrap().then(
+    () => {
+      outcome = 'resolved'
+      at = Date.now() - start
+    },
+    (error: unknown) => {
+      outcome = error as Error
+      at = Date.now() - start
+    }
+  )
+  await Promise.resolve()
+  afterStart?.()
+  for (let elapsed = 0; outcome === undefined && elapsed <= 8000; elapsed += stepMs) {
+    await jest.advanceTimersByTimeAsync(stepMs)
+  }
+  if (outcome === undefined) throw new Error('the check never settled')
+  return { outcome, at }
+}
+
 describe('RedisReadinessService', () => {
   let warn: jest.SpyInstance
 
   beforeEach(() => {
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    jest.useFakeTimers()
   })
 
   afterEach(() => {
+    jest.useRealTimers()
     jest.restoreAllMocks()
   })
 
-  // Scenario: a Redis that answers. Expected: boot continues.
+  // Scenario: a Redis that answers. Expected: boot continues after one PING.
   it('lets boot continue when Redis answers PING', async () => {
-    const client = { ping: jest.fn().mockResolvedValue('PONG'), options: { commandTimeout: 1000 } }
+    const redis = client()
 
-    await expect((await check(client)).onApplicationBootstrap()).resolves.toBeUndefined()
-    expect(client.ping).toHaveBeenCalledTimes(1)
+    const { outcome, at } = await settle(redis)
+
+    expect(outcome).toBe('resolved')
+    expect(at).toBeLessThan(250)
+    expect(redis['ping']).toHaveBeenCalledTimes(1)
   })
 
-  // Scenario: a Redis that refuses the command (a wrong password, a dead connection). Expected: boot
-  // fails with a message that names the cause and carries nothing the error said, since an ioredis
-  // error can quote the host and port.
-  it('fails boot when Redis rejects PING, without echoing the error', async () => {
-    const client = {
-      ping: jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED 10.1.2.3:6379')),
-      options: { commandTimeout: 1000 }
-    }
+  // Scenario: a Redis still starting during a rolling deploy, which refuses until one second in.
+  // Expected: the check keeps trying and boot continues, instead of failing on the first refusal.
+  it('keeps trying and passes when Redis comes up after one second', async () => {
+    const start = Date.now()
+    const redis = client({
+      ping: jest.fn(() =>
+        Date.now() - start < 1000
+          ? Promise.reject(new Error('connect ECONNREFUSED 10.1.2.3:6379'))
+          : Promise.resolve('PONG')
+      )
+    })
 
-    const attempt = (await check(client)).onApplicationBootstrap()
+    const { outcome, at } = await settle(redis)
 
-    await expect(attempt).rejects.toThrow('[BymaxAuthModule] Redis did not answer PING')
-    await expect(attempt).rejects.not.toThrow(/10\.1\.2\.3|ECONNREFUSED/)
+    expect(outcome).toBe('resolved')
+    expect(at).toBeGreaterThanOrEqual(1000)
+    expect(at).toBeLessThan(1500)
   })
 
-  // Scenario: a Redis that never answers. Expected: boot fails at the deadline and does not hang,
-  // and the timer is not left running.
-  it('fails boot at the deadline when Redis never answers', async () => {
-    jest.useFakeTimers()
-    try {
-      const client = { ping: jest.fn(() => new Promise(() => undefined)), options: {} }
-      const attempt = (await check(client)).onApplicationBootstrap()
-      const assertion = expect(attempt).rejects.toThrow(/did not answer PING within 5000 ms/)
+  // Scenario: a client built with `lazyConnect` and the offline queue off, which rejects the very
+  // command that starts its connection. Expected: the retry passes once the connection is up. This
+  // is the combination the README recommends, so a healthy Redis must not fail boot on it.
+  it('passes for a lazy client whose first command is rejected', async () => {
+    const ping = jest
+      .fn()
+      .mockRejectedValueOnce(
+        new Error("Stream isn't writeable and enableOfflineQueue options is false")
+      )
+      .mockResolvedValue('PONG')
 
-      await jest.advanceTimersByTimeAsync(5000)
+    const { outcome } = await settle(client({ status: 'wait', ping }))
 
-      await assertion
-      expect(jest.getTimerCount()).toBe(0)
-    } finally {
-      jest.useRealTimers()
-    }
+    expect(outcome).toBe('resolved')
+    expect(ping).toHaveBeenCalledTimes(2)
+  })
+
+  // Scenario: a Redis that never answers on a port nothing serves. Expected: not refused early, then
+  // refused at the end of the five seconds, with a message that names the address from the client's
+  // own host and port and nothing the error said or the options held.
+  it('refuses a dead port at the end of the budget, naming only host and port', async () => {
+    const redis = client({
+      options: {
+        commandTimeout: 500,
+        host: 'redis.internal',
+        port: 6380,
+        password: 's3cret-pass',
+        username: 'svc-user'
+      },
+      ping: jest
+        .fn()
+        .mockRejectedValue(new Error('NOAUTH s3cret-pass at redis://svc-user:s3cret-pass@10.9.9.9'))
+    })
+
+    const { outcome, at } = await settle(redis)
+
+    expect(at).toBeGreaterThanOrEqual(4750)
+    expect(at).toBeLessThan(5500)
+    expect(outcome).toBeInstanceOf(Error)
+    const message = (outcome as Error).message
+    expect(message).toBe(
+      '[BymaxAuthModule] Redis at redis.internal:6380 did not answer PING within 5000 ms at startup. ' +
+        'Check the address, the credentials and the network.'
+    )
+    expect(message).not.toMatch(/s3cret|svc-user|10\.9\.9\.9|redis:\/\//)
+    // Retried every 250 ms for the whole budget, not given up on at the first refusal.
+    expect((redis['ping'] as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(15)
+  })
+
+  // Scenario: a client with neither host nor port to name, such as a cluster. Expected: the message
+  // omits the address and keeps the rest.
+  it('omits the address when the client carries none', async () => {
+    const redis = client({ ping: jest.fn().mockRejectedValue(new Error('down')) })
+
+    const { outcome } = await settle(redis)
+
+    expect((outcome as Error).message).toMatch(
+      /^\[BymaxAuthModule\] Redis did not answer PING within 5000 ms/
+    )
+  })
+
+  // Scenario: a client that has already ended, which no retry can bring back. Expected: refused at
+  // once, without sending a command.
+  it('refuses a client that has ended without sending a command', async () => {
+    const redis = client({ status: 'end' })
+
+    const { outcome, at } = await settle(redis)
+
+    expect(outcome).toBeInstanceOf(Error)
+    expect(at).toBeLessThan(250)
+    expect(redis['ping']).not.toHaveBeenCalled()
+  })
+
+  // Scenario: a client that is connecting and then gives up while boot waits. Expected: refused at
+  // once, not at the end of the budget.
+  it('refuses at once a client that gives up while boot waits for it', async () => {
+    let end: () => void = () => undefined
+    const redis = client({
+      status: 'connecting',
+      once: jest.fn((event: string, listener: () => void) => {
+        if (event === 'end') end = listener
+      })
+    })
+    const { outcome, at } = await settle(redis, () => {
+      redis['status'] = 'end'
+      end()
+    })
+
+    expect(outcome).toBeInstanceOf(Error)
+    expect(at).toBeLessThan(400)
+    expect(redis['ping']).not.toHaveBeenCalled()
+  })
+
+  // Scenario: a connecting client that becomes ready. Expected: the PING waits for it, then goes.
+  it('waits for a connecting client to become ready before it pings', async () => {
+    let ready: () => void = () => undefined
+    const redis = client({
+      status: 'connecting',
+      once: jest.fn((event: string, listener: () => void) => {
+        if (event === 'ready') ready = listener
+      })
+    })
+    const { outcome } = await settle(redis, () => {
+      expect(redis['ping']).not.toHaveBeenCalled()
+      ready()
+    })
+
+    expect(outcome).toBe('resolved')
+    expect(redis['ping']).toHaveBeenCalledTimes(1)
+  })
+
+  // Scenario: a client that never becomes ready. Expected: refused at the end of the budget, with no
+  // timer or listener left behind.
+  it('refuses a client that never becomes ready, leaving nothing running', async () => {
+    const redis = client({ status: 'connecting' })
+
+    const { outcome, at } = await settle(redis)
+
+    expect(outcome).toBeInstanceOf(Error)
+    expect(at).toBeGreaterThanOrEqual(4750)
+    expect(jest.getTimerCount()).toBe(0)
+    expect(redis['ping']).not.toHaveBeenCalled()
+    expect((redis['off'] as jest.Mock).mock.calls.map((call) => call[0])).toEqual(
+      expect.arrayContaining(['ready', 'end'])
+    )
   })
 
   // Scenario: a client that is not an ioredis client at all. Expected: a boot error naming the
@@ -88,18 +248,16 @@ describe('RedisReadinessService', () => {
     )
   })
 
-  // Scenario: no command timeout, in the three shapes ioredis carries it. Expected: one warning
-  // that names the option, and boot continues.
+  // Scenario: no command timeout, in the shapes ioredis carries it. Expected: one warning that
+  // names the option, and boot continues.
   it.each([
     ['a client with no options', undefined],
     ['a client with options and no commandTimeout', { host: 'redis' }],
     ['a cluster whose node options carry none', { redisOptions: {} }]
   ])('warns once for %s', async (_why, options) => {
-    const client = { ping: jest.fn().mockResolvedValue('PONG'), options }
-    const service = await check(client)
+    const { outcome } = await settle(client({ options }))
 
-    await service.onApplicationBootstrap()
-
+    expect(outcome).toBe('resolved')
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0]?.[0]).toContain('commandTimeout')
   })
@@ -109,9 +267,7 @@ describe('RedisReadinessService', () => {
     ['a client', { commandTimeout: 500 }],
     ['a cluster', { redisOptions: { commandTimeout: 500 } }]
   ])('does not warn when %s has a command timeout', async (_why, options) => {
-    const client = { ping: jest.fn().mockResolvedValue('PONG'), options }
-
-    await (await check(client)).onApplicationBootstrap()
+    await settle(client({ options }))
 
     expect(warn).not.toHaveBeenCalled()
   })
@@ -121,119 +277,35 @@ describe('RedisReadinessService', () => {
   it.each([['500'], [null], [undefined]])(
     'warns when commandTimeout is %p',
     async (commandTimeout) => {
-      const client = { ping: jest.fn().mockResolvedValue('PONG'), options: { commandTimeout } }
-
-      await (await check(client)).onApplicationBootstrap()
+      await settle(client({ options: { commandTimeout } }))
 
       expect(warn).toHaveBeenCalledTimes(1)
     }
   )
 
-  // Scenario: a client still connecting when boot reaches the probe, as one with the offline queue
-  // off is. Expected: the PING waits for `ready` and does not fail on a connection a moment behind.
-  it('waits for a connecting client to become ready before it pings', async () => {
-    let ready: () => void = () => undefined
-    const client = {
-      status: 'connecting',
-      options: { commandTimeout: 500 },
-      once: jest.fn((event: string, listener: () => void) => {
-        if (event === 'ready') ready = listener
-      }),
-      off: jest.fn(),
-      ping: jest.fn().mockResolvedValue('PONG')
-    }
-    const attempt = (await check(client)).onApplicationBootstrap()
-    await Promise.resolve()
-
-    expect(client.ping).not.toHaveBeenCalled()
-    ready()
-
-    await expect(attempt).resolves.toBeUndefined()
-    expect(client.once).toHaveBeenCalledWith('ready', expect.any(Function))
-    expect(client.ping).toHaveBeenCalledTimes(1)
-  })
-
-  // Scenario: a client that has not started (`lazyConnect`) or is ready. Expected: PING at once,
-  // the first command being what starts a lazy client.
-  it.each([['wait'], ['ready']])('pings a %s client without waiting', async (status) => {
-    const client = {
-      status,
-      options: { commandTimeout: 500 },
-      once: jest.fn(),
-      ping: jest.fn().mockResolvedValue('PONG')
-    }
-
-    await expect((await check(client)).onApplicationBootstrap()).resolves.toBeUndefined()
-    expect(client.once).not.toHaveBeenCalled()
-  })
-
-  // Scenario: a client that gives up connecting while boot waits, or is already closed. Expected:
-  // boot fails at once with the generic message, not at the deadline.
-  it.each([
-    ['gives up while boot waits', 'connecting'],
-    ['is already closed', 'end']
-  ])('fails boot at once for a client that %s', async (_why, status) => {
-    let end: () => void = () => undefined
-    const client = {
-      status,
-      options: { commandTimeout: 500 },
-      once: jest.fn((event: string, listener: () => void) => {
-        if (event === 'end') end = listener
-      }),
-      off: jest.fn(),
-      ping: jest.fn()
-    }
-    const attempt = (await check(client)).onApplicationBootstrap()
-    const assertion = expect(attempt).rejects.toThrow('[BymaxAuthModule] Redis did not answer PING')
-    await Promise.resolve()
-    end()
-
-    await assertion
-    expect(client.ping).not.toHaveBeenCalled()
-  })
-
-  // Scenario: a client that never becomes ready. Expected: boot fails at the deadline.
-  it('fails boot at the deadline for a client that never becomes ready', async () => {
-    jest.useFakeTimers()
-    try {
-      const client = {
-        status: 'connecting',
-        options: {},
-        once: jest.fn(),
-        off: jest.fn(),
-        ping: jest.fn()
-      }
-      const attempt = (await check(client)).onApplicationBootstrap()
-      const assertion = expect(attempt).rejects.toThrow(/did not answer PING within 5000 ms/)
-
-      await jest.advanceTimersByTimeAsync(5000)
-
-      await assertion
-      expect(client.ping).not.toHaveBeenCalled()
-    } finally {
-      jest.useRealTimers()
-    }
-  })
-
   // Scenario: a REAL ioredis client pointed at a port nothing listens on, which gives up at once.
-  // Expected: boot fails with the generic message and not the address ioredis would have quoted.
-  // The fakes above invent the client's shape; this is the shape ioredis really has.
-  it('fails boot for a real client that cannot connect, without the address', async () => {
-    const client = new Redis({
+  // Expected: boot fails fast with the address and nothing else. The fakes above invent the
+  // client's shape; this is the shape ioredis really has.
+  it('fails boot for a real client that cannot connect, naming only the address', async () => {
+    jest.useRealTimers()
+    const real = new Redis({
       host: '127.0.0.1',
       port: 1,
+      password: 'real-secret',
       retryStrategy: () => null,
       maxRetriesPerRequest: 1,
       commandTimeout: 500
     })
-    client.on('error', () => undefined)
+    real.on('error', () => undefined)
     try {
-      const attempt = (await check(client)).onApplicationBootstrap()
+      const attempt = (await check(real)).onApplicationBootstrap()
 
-      await expect(attempt).rejects.toThrow('[BymaxAuthModule] Redis did not answer PING')
-      await expect(attempt).rejects.not.toThrow(/127\.0\.0\.1|:1\b/)
+      await expect(attempt).rejects.toThrow(
+        '[BymaxAuthModule] Redis at 127.0.0.1:1 did not answer PING'
+      )
+      await expect(attempt).rejects.not.toThrow(/real-secret/)
     } finally {
-      client.disconnect()
+      real.disconnect()
     }
   })
 })

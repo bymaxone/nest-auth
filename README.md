@@ -957,9 +957,10 @@ cookie cross-site, and it is the only one where the origin check has anything to
 > })
 > ```
 >
-> The module warns at startup when the client carries no `commandTimeout`, and it sends one `PING`
-> at bootstrap (waiting up to 5 seconds for a client that is still connecting) so a mis-pointed
-> address or a wrong password stops the process from starting instead of surfacing as the first
+> The module warns at startup when the client carries no `commandTimeout`, and it sends `PING`
+> at bootstrap every quarter second for up to 5 seconds, so a Redis that is still starting does not
+> fail the boot on its first refusal, while a mis-pointed address or a wrong password stops the
+> process from starting, with a message that names only the host and port, instead of surfacing as the first
 > request's `5xx`. Expect `5xx` on login, refresh, rate-limited routes and every guarded route for
 > as long as Redis is down: that is the fail-closed behaviour, and a health check on Redis belongs
 > next to your readiness probe.

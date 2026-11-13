@@ -10,8 +10,11 @@ import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 
-/** How long boot waits for Redis to answer a PING, in milliseconds. */
+/** How long boot keeps trying to PING Redis, in milliseconds. */
 const STARTUP_PING_TIMEOUT_MS = 5000
+
+/** The pause between two PING attempts, in milliseconds. */
+const STARTUP_PING_RETRY_MS = 250
 
 /** The states in which an ioredis client is on its way to `ready` without a command to start it. */
 const CONNECTING_STATES: readonly string[] = ['connecting', 'connect', 'reconnecting']
@@ -37,13 +40,45 @@ function commandTimeoutOf(client: unknown): number | undefined {
 }
 
 /**
- * Probes Redis once at bootstrap and warns about a client that cannot bound its commands.
+ * The address a client was built to reach, for the startup error.
+ *
+ * Only `host` and `port` are read, never a URL or the options as a whole, so a password in a
+ * connection string or in `options.password` cannot reach the message. A cluster, or a client with
+ * neither field, has no single address and the message says so by omission.
+ *
+ * @param client - The client the host supplied.
+ * @returns `host:port`, or `undefined`.
+ */
+function addressOf(client: unknown): string | undefined {
+  const options = (client as { options?: { host?: unknown; port?: unknown } }).options
+  const host = options?.host
+  const port = options?.port
+  return typeof host === 'string' && host !== '' && typeof port === 'number'
+    ? `${host}:${port}`
+    : undefined
+}
+
+/**
+ * Pauses for a number of milliseconds.
+ *
+ * @param ms - The pause.
+ * @returns A promise that resolves after it.
+ */
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Probes Redis at bootstrap and warns about a client that cannot bound its commands.
  *
  * Every authentication decision here awaits Redis and fails closed when ioredis rejects, but a
  * client with no command timeout and the default offline queue holds each request until ioredis
- * gives up, so an outage reads as a hang. The warning names that hazard at boot. The probe
- * refuses to start against a Redis that cannot be reached at all, which turns a mis-pointed
- * address or a wrong password into a boot failure and not a first-request 5xx.
+ * gives up, so an outage reads as a hang. The warning names that hazard at boot.
+ *
+ * The probe turns a mis-pointed address or a wrong password into a boot failure and not a
+ * first-request 5xx. It keeps trying for the whole budget, because a Redis that is still starting
+ * during a rolling deploy refuses its first connection, and because a client that is built to
+ * connect lazily, or with the offline queue off, rejects the command that starts its connection.
  */
 @Injectable()
 export class RedisReadinessService implements OnApplicationBootstrap {
@@ -52,31 +87,65 @@ export class RedisReadinessService implements OnApplicationBootstrap {
   constructor(@Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: Redis) {}
 
   /**
-   * Waits for a client that is still connecting to become ready, and refuses one that has given up. A client built with the offline
-   * queue off refuses a command until then, and the connection is normally a moment behind the
-   * module; a client that has not started (`lazyConnect`) is left to connect on the PING.
+   * Waits for a client that is on its way to `ready`, and refuses one that has ended. A client in
+   * any other state is left to the command, which is what starts a lazy connection.
+   *
+   * @param timeoutMs - The time left in the budget.
+   * @throws {Error} When the client ends, or does not become ready in time.
    */
-  private whenReachable(): Promise<void> {
+  private whenReachable(timeoutMs: number): Promise<void> {
     const { status } = this.redis
     if (status === 'end') return Promise.reject(new Error('the client is closed'))
     if (!CONNECTING_STATES.includes(status)) return Promise.resolve()
     return new Promise((resolve, reject) => {
-      const onReady = (): void => {
+      const settle = (done: () => void): void => {
+        clearTimeout(timer)
+        this.redis.off('ready', onReady)
         this.redis.off('end', onEnd)
-        resolve()
+        done()
+      }
+      const onReady = (): void => {
+        settle(resolve)
       }
       const onEnd = (): void => {
-        this.redis.off('ready', onReady)
-        reject(new Error('the client gave up connecting'))
+        settle(() => {
+          reject(new Error('the client gave up connecting'))
+        })
       }
+      const timer = setTimeout(() => {
+        settle(() => {
+          reject(new Error('the client did not become ready'))
+        })
+      }, timeoutMs)
       this.redis.once('ready', onReady)
       this.redis.once('end', onEnd)
     })
   }
 
   /**
-   * @throws {Error} When the client cannot PING, or Redis does not answer within the deadline. The
-   *   message never carries the error ioredis raised, which can quote the host and port.
+   * One PING attempt: waits for the client if it is connecting, then sends the command.
+   *
+   * @param timeoutMs - The time left in the budget; the attempt gives up when it runs out.
+   * @throws {Error} When the client is closed, the command fails or the time runs out.
+   */
+  private async attempt(timeoutMs: number): Promise<void> {
+    let timer: NodeJS.Timeout | undefined
+    const expiry = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error('the PING did not complete in time'))
+      }, timeoutMs)
+    })
+    try {
+      await Promise.race([this.whenReachable(timeoutMs).then(() => this.redis.ping()), expiry])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /**
+   * @throws {Error} When the client cannot PING, or Redis does not answer within the budget. The
+   *   message names the address from the client's own `host` and `port` and never repeats what
+   *   ioredis raised, which can quote a connection string.
    */
   async onApplicationBootstrap(): Promise<void> {
     if (commandTimeoutOf(this.redis) === undefined) {
@@ -91,26 +160,23 @@ export class RedisReadinessService implements OnApplicationBootstrap {
       throw new Error('[BymaxAuthModule] BYMAX_AUTH_REDIS_CLIENT must be an ioredis client.')
     }
 
-    let timer: NodeJS.Timeout | undefined
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        reject(
-          new Error(
-            `[BymaxAuthModule] Redis did not answer PING within ${STARTUP_PING_TIMEOUT_MS} ms at startup.`
-          )
-        )
-      }, STARTUP_PING_TIMEOUT_MS)
-    })
-    try {
-      await Promise.race([this.whenReachable().then(() => this.redis.ping()), deadline])
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith('[BymaxAuthModule]')) throw error
-      throw new Error(
-        '[BymaxAuthModule] Redis did not answer PING at startup: the connection was refused or ' +
-          'the command failed. Check the address, the credentials and the network.'
-      )
-    } finally {
-      clearTimeout(timer)
+    const budgetEnd = Date.now() + STARTUP_PING_TIMEOUT_MS
+    for (;;) {
+      try {
+        await this.attempt(Math.max(budgetEnd - Date.now(), 1))
+        return
+      } catch {
+        // A closed client cannot recover, and a spent budget is the end of the attempts.
+        if (this.redis.status === 'end' || budgetEnd - Date.now() <= STARTUP_PING_RETRY_MS) break
+        await pause(STARTUP_PING_RETRY_MS)
+      }
     }
+
+    const address = addressOf(this.redis)
+    throw new Error(
+      `[BymaxAuthModule] Redis${address === undefined ? '' : ` at ${address}`} did not answer PING ` +
+        `within ${STARTUP_PING_TIMEOUT_MS} ms at startup. Check the address, the credentials ` +
+        `and the network.`
+    )
   }
 }
