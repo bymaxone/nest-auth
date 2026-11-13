@@ -21,6 +21,7 @@ import type { SafeAuthUser } from '../../src/server/interfaces/user-repository.i
 import type { HookContext } from '../../src/server/interfaces/auth-hooks.interface'
 import { WorkspaceAccessService } from '../../src/server/services/workspace-access.service'
 import { WorkspaceService } from '../../src/server/services/workspace.service'
+import { WORKSPACE_CURSOR_MAX_LENGTH } from '../../src/server/utils/workspace-cursor'
 import { bootstrapTestApp, expectAuthError, type BootstrappedTestApp } from './setup'
 import { memoryRepositories } from './workspace-memory-repositories'
 
@@ -311,7 +312,7 @@ describe('workspace read routes (E2E)', () => {
       ['a fractional limit', 'limit=1.5'],
       ['an empty limit', 'limit='],
       ['an empty cursor', 'cursor='],
-      ['a cursor over the length bound', `cursor=${'a'.repeat(513)}`],
+      ['a cursor over the length bound', `cursor=${'a'.repeat(WORKSPACE_CURSOR_MAX_LENGTH + 1)}`],
       ['a cursor with a control character', 'cursor=ab%00cd'],
       ['a parameter the route does not take', 'workspaceId=other']
     ]

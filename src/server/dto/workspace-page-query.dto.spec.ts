@@ -26,8 +26,8 @@ describe('WorkspacePageQueryDto cursor', () => {
     expect(errorsOf({ cursor: 'A'.repeat(WORKSPACE_CURSOR_MAX_LENGTH + 1) })).toEqual(['cursor'])
   })
 
-  // Scenario: a cursor longer than the old 512-character bound. Expected: accepted, since a cursor
-  // the library issues for long ids is longer than that.
+  // Scenario: a cursor of 600 characters. Expected: accepted, since a cursor the library issues for
+  // long ids is longer than that.
   it('accepts a cursor of 600 characters', () => {
     expect(errorsOf({ cursor: 'A'.repeat(600) })).toEqual([])
   })
