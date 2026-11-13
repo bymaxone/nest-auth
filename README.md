@@ -1285,18 +1285,6 @@ or a stored default, and non-members and nonexistent workspaces are indistinguis
 
 ---
 
-## 🚫 What This Library Does NOT Do
-
-- **It does not store your users.** You implement `IUserRepository` (and the workspace, membership and API-key repositories if you enable those); the library never imports an ORM or a database driver.
-- **It does not send email.** You implement `IEmailProvider`; the bundled `DefaultAuthEmailProvider` renders messages and hands them to a transport you supply.
-- **It does not delete users.** `IUserRepository` has no delete; a host that deletes one removes its workspace memberships first.
-- **It does not mount an admin API for service keys or platform operations.** `ApiKeyService` and the support-desk operations are methods; the routes and who may call them are yours.
-- **It does not rate-limit per service key.** Per-address limits on the auth routes are built in; limits on your own routes and on a verified key are yours (`@nestjs/throttler`).
-- **It does not authenticate a WebSocket on `@nestjs/platform-ws`.** `WsJwtGuard` reads a Socket.IO `handshake`, which the raw `ws` adapter does not provide.
-- **It does not depend on Passport, a crypto package, or `@bymax-one/nest-core`.** Cryptography is `node:crypto`; guards verify the JWT through `@nestjs/jwt`.
-
----
-
 ## 🏗️ Architecture
 
 The package runs **inside** your NestJS application as a dynamic module — not as a separate service:
@@ -1411,6 +1399,20 @@ it is the one guarantee cookie delivery exists for and the one no server-side te
 | Breached Passwords | Optional Have I Been Pwned range check by k-anonymity; only a 5-char SHA-1 prefix leaves the process   |
 | Rate Limiting      | Per-IP fixed-window counters in Redis, keyed by `HMAC(ip)` — enforced by the library, not by the host  |
 | Session Lifetime   | Optional absolute cap on how long one login can be extended by rotation                                |
+
+---
+
+## 🧱 Tech Stack
+
+<p>
+  <img src="https://img.shields.io/badge/NestJS-11-E0234E?style=flat-square&logo=nestjs&logoColor=white" alt="NestJS" />
+  <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React" />
+  <img src="https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=next.js&logoColor=white" alt="Next.js" />
+  <img src="https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" />
+  <img src="https://img.shields.io/badge/Redis-7%2B-DC382D?style=flat-square&logo=redis&logoColor=white" alt="Redis" />
+  <img src="https://img.shields.io/badge/Jest-30-C21325?style=flat-square&logo=jest&logoColor=white" alt="Jest" />
+</p>
 
 ---
 
@@ -1748,6 +1750,18 @@ import { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from '@bymax-one/nest-auth/shared
 | `createSilentRefreshHandler()` | GET handler  | iframe-based token refresh      |
 | `createClientRefreshHandler()` | POST handler | Client-triggered token refresh  |
 | `createLogoutHandler()`        | POST handler | Clear tokens and session        |
+
+---
+
+## 🚫 What This Library Does NOT Do
+
+- **It does not store your users.** You implement `IUserRepository` (and the workspace, membership and API-key repositories if you enable those); the library never imports an ORM or a database driver.
+- **It does not send email.** You implement `IEmailProvider`; the bundled `DefaultAuthEmailProvider` renders messages and hands them to a transport you supply.
+- **It does not delete users.** `IUserRepository` has no delete; a host that deletes one removes its workspace memberships first.
+- **It does not mount an admin API for service keys or platform operations.** `ApiKeyService` and the support-desk operations are methods; the routes and who may call them are yours.
+- **It does not rate-limit per service key.** Per-address limits on the auth routes are built in; limits on your own routes and on a verified key are yours (`@nestjs/throttler`).
+- **It does not authenticate a WebSocket on `@nestjs/platform-ws`.** `WsJwtGuard` reads a Socket.IO `handshake`, which the raw `ws` adapter does not provide.
+- **It does not depend on Passport, a crypto package, or `@bymax-one/nest-core`.** Cryptography is `node:crypto`; guards verify the JWT through `@nestjs/jwt`.
 
 ---
 
