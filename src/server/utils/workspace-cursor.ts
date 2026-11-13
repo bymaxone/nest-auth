@@ -17,8 +17,8 @@
  * member and a row id of up to {@link WORKSPACE_CURSOR_PART_MAX_LENGTH} code points each, whatever
  * non-control characters they hold (JSON escapes a quote twice, which is the costliest of them), and
  * an owner role of up to {@link WORKSPACE_OWNER_ROLE_MAX_LENGTH} characters: 2178 characters at most.
- * A key part a host builds from control characters or unpaired surrogates, which JSON escapes at six
- * or seven bytes each, still fits: the longest such cursor is 3543 characters.
+ * A tenant and a member a host builds from control characters or unpaired surrogates, which JSON
+ * escapes at six or seven bytes each, still fit: the longest such cursor is 3202 characters.
  * The HTTP page query and the decoder both use this value, so a cursor the library issues is
  * always one it accepts.
  */

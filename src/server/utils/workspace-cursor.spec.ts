@@ -408,6 +408,8 @@ describe('the length bound', () => {
 describe('the longest cursor a valid listing can issue', () => {
   const quotes = '"'.repeat(128)
   const emoji = '😀'.repeat(128)
+  const controls = '\u0000'.repeat(128)
+  const lone = '\uD800'.repeat(128)
   const letters = 'a'.repeat(WORKSPACE_OWNER_ROLE_MAX_LENGTH)
 
   // Scenario: tenant and member of 128 quote characters (each escaped twice) and a row id of 128
@@ -417,7 +419,24 @@ describe('the longest cursor a valid listing can issue', () => {
     ['listForUser', ['listForUser', quotes, quotes], emoji, 2126],
     ['listForWorkspace', ['listForWorkspace', quotes, quotes], emoji, 2132],
     ['listSoleOwned with the role owner', ['listSoleOwned', quotes, quotes, 'owner'], emoji, 2142],
-    ['listSoleOwned with the longest role', ['listSoleOwned', quotes, quotes, letters], emoji, 2178]
+    [
+      'listSoleOwned with the longest role',
+      ['listSoleOwned', quotes, quotes, letters],
+      emoji,
+      2178
+    ],
+    [
+      'listSoleOwned with control characters in tenant and member',
+      ['listSoleOwned', controls, controls, letters],
+      emoji,
+      3202
+    ],
+    [
+      'listSoleOwned with unpaired surrogates in tenant and member',
+      ['listSoleOwned', lone, lone, letters],
+      emoji,
+      3202
+    ]
   ])('%s is %i characters and fits', (_label, parts, id, length) => {
     const query = workspaceQueryKey(...parts)
     const position = workspacePositionOf(AT, id)
