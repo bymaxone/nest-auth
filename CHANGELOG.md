@@ -29,14 +29,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **A workspace page cursor may now be up to 4096 characters, not 512.** The wire contract is at version 5:
   `requestFieldBounds.pageLimit.cursor` and the published `WorkspacePageQueryDto` schema say 4096, and the
   contract states the owner-role rule as a new `workspaceOwnerRole` section. During a rolling deploy an
-  instance still on 1.5.2 or earlier answers `400` to a cursor longer than 512 characters that 1.5.3
-  issued, which only happens for tenant, member and row ids of about 107 characters or more, and only
-  until every instance has been replaced.
-- **A host adapter can drop its own cursor codec.** The exports below read and write the same bytes the
-  template's `workspace-cursor.ts` does, so a cursor issued before the swap keeps working after it.
-  Replace `keyOf`, `positionOf`, `encodeCursor`, `decodeCursor` and `readPosition` with
-  `workspaceQueryKey`, `workspacePositionOf`, `encodeWorkspaceCursor`, `decodeWorkspaceCursor` and
-  `readWorkspacePosition`, and delete the local copy and its spec. `workspaceQueryKey` is
+  instance still on 1.5.2 or earlier answers `400` to a cursor longer than 512 characters that this
+  release issued, which needs ids of about 105 characters or more (see Fixed), and only until every
+  instance has been replaced.
+- **A host adapter can drop its own cursor codec.** A cursor in the format the template's hand-written
+  codec writes (base64url of the JSON of the query key and the position) keeps reading, which the spec
+  pins with cursors that codec issued. Replace `keyOf`, `positionOf`, `encodeCursor`, `decodeCursor` and
+  `readPosition` with `workspaceQueryKey`, `workspacePositionOf`, `encodeWorkspaceCursor`,
+  `decodeWorkspaceCursor` and `readWorkspacePosition`, and delete the local copy and its spec.
+  `workspaceQueryKey` is
   `JSON.stringify` of its parts, byte for byte, so a lock or map key built from it does not move.
   `encodeWorkspaceCursor` throws a `RangeError` for a position an unpaired surrogate or nothing makes
   unreadable, and for a cursor over 4096 characters (an id, tenant or key part over 128 code points),
@@ -57,10 +58,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 ### Fixed
 
 - **The library answered `400` to its own `nextCursor` on page 2** when the tenant, the member and the row
-  id were each about 107 to 109 characters or more: the workspace page query refused a cursor over 512
-  characters, and a cursor for such ids is longer. With UUID-length tenant and member ids it takes a row id
-  of about 247 characters, past the 128-character limit, so only deployments with long tenant ids met it.
-  The bound is now 4096, sized from the longest cursor ids, tenants and key parts of 128 code points can
+  id were each about 105 to 109 characters or more (the first length at which a cursor passes 512 is 109
+  for `listForUser`, 108 for `listForWorkspace` and 105 for `listSoleOwned` with the role `owner`): the
+  workspace page query refused a cursor over 512 characters, and a cursor for such ids is longer. The
+  bound is now 4096, sized from the longest cursor that ids, tenants and key parts of 128 code points can
   produce (2178 characters), and the page query and the decoder share one constant.
 
 ## [1.5.2] - 2026-11-12
