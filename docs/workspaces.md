@@ -88,9 +88,7 @@ const nextCursor = hasMore
 - The scope of a listing comes from the query the store builds, never from the cursor. A cursor is a
   bookmark and not a signature: a well-formed position another instant names moves within the same scope
   and nowhere else.
-- `decodeWorkspaceCursor` never throws. It reads as none a value that is not a string, one over 4096
-  characters, anything but the canonical encoding, bytes that are not UTF-8, anything but a pair of two
-  strings, a pair issued for another query, and an empty or ill-formed position.
+- `decodeWorkspaceCursor` never throws.
 - `encodeWorkspaceCursor` throws a `RangeError` rather than issue a cursor the next request could not
   follow: an empty or ill-formed position, or a cursor over 4096 characters, which only an id, a tenant or
   a key part over 128 code points can cause. Keep every id you issue to 128 code points of well-formed text.
