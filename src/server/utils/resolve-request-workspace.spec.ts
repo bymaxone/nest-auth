@@ -88,7 +88,7 @@ describe('resolveRequestWorkspace', () => {
     expect(result.details).toEqual([
       {
         field: 'workspaceId',
-        message: 'workspaceId must be 1 to 128 characters, not blank, with no control characters'
+        message: 'workspaceId must be 1 to 128 code points, not blank, with no control characters'
       }
     ])
   })

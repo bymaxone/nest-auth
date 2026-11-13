@@ -67,11 +67,17 @@ async function code(promise: Promise<unknown>): Promise<string | undefined> {
 }
 
 /** A verifier; `withWorkspaces` is whether the access service is provided and the group resolved. */
-async function build(withWorkspaces = true): Promise<AuthTokenVerifierService> {
+async function build(
+  withWorkspaces = true,
+  token: { verify?: jest.Mock; revoked?: boolean } = {}
+): Promise<AuthTokenVerifierService> {
   const module = await Test.createTestingModule({
     providers: [
       AuthTokenVerifierService,
-      { provide: JwtService, useValue: { verify: jest.fn().mockReturnValue({ ...PAYLOAD }) } },
+      {
+        provide: JwtService,
+        useValue: { verify: token.verify ?? jest.fn().mockReturnValue({ ...PAYLOAD }) }
+      },
       {
         provide: BYMAX_AUTH_OPTIONS,
         useValue: {
@@ -81,7 +87,7 @@ async function build(withWorkspaces = true): Promise<AuthTokenVerifierService> {
       },
       {
         provide: AuthRevocationService,
-        useValue: { isAccessTokenRevoked: jest.fn().mockResolvedValue(false) }
+        useValue: { isAccessTokenRevoked: jest.fn().mockResolvedValue(token.revoked === true) }
       },
       {
         provide: AccountStatusService,
@@ -240,16 +246,61 @@ describe('verifyAccessToken with a workspace', () => {
     })
   })
 
-  it('is a TypeError on the platform plane and without workspaces enabled', async () => {
+  // Scenario: the workspace option on the platform plane. Expected: a TypeError, the caller's bug: a
+  // platform token has no workspace and the overloads forbid the call.
+  it('is a TypeError on the platform plane', async () => {
     const enabled = await build()
-    const disabled = await build(false)
 
     await expect(
       enabled.verifyAccessToken('tok', { plane: 'platform', workspace: CHECK } as never)
     ).rejects.toThrow('workspace needs the dashboard plane')
+  })
+
+  // Scenario: the workspace option on a deployment that has not enabled workspaces, as a host that
+  // takes the id from a client would pass it. Expected: auth.validation naming workspaceId, a 400
+  // the host can answer as it is, and not a TypeError that reads as a 500.
+  it('refuses with auth.validation naming workspaceId without workspaces enabled', async () => {
+    const disabled = await build(false)
+
+    const error = await disabled
+      .verifyAccessToken('tok', { plane: 'dashboard', workspace: CHECK })
+      .catch((e: unknown) => e as AuthException)
+
+    expect(error).not.toBeInstanceOf(TypeError)
+    expect((error as AuthException).getStatus()).toBe(400)
+    expect((error as AuthException).getResponse()).toMatchObject({
+      error: {
+        code: AUTH_ERROR_CODES.VALIDATION,
+        details: [
+          {
+            field: 'workspaceId',
+            message: 'workspaceId is not accepted: workspaces are not enabled for this deployment'
+          }
+        ]
+      }
+    })
+  })
+
+  // Scenario: workspaces off and a token that does not verify, with a workspace option. Expected:
+  // TOKEN_INVALID, so an anonymous caller learns nothing about the deployment's configuration.
+  it('answers TOKEN_INVALID, not the workspaces refusal, for a token that does not verify', async () => {
+    const verify = jest.fn().mockImplementation(() => {
+      throw new Error('jwt expired')
+    })
+    const disabled = await build(false, { verify })
+
     await expect(
-      disabled.verifyAccessToken('tok', { plane: 'dashboard', workspace: CHECK })
-    ).rejects.toThrow('workspace needs workspaces.enabled')
+      code(disabled.verifyAccessToken('bad', { plane: 'dashboard', workspace: CHECK }))
+    ).resolves.toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
+  })
+
+  // Scenario: workspaces off and a revoked token, with a workspace option. Expected: TOKEN_INVALID.
+  it('answers TOKEN_INVALID for a revoked token without workspaces enabled', async () => {
+    const disabled = await build(false, { revoked: true })
+
+    await expect(
+      code(disabled.verifyAccessToken('tok', { plane: 'dashboard', workspace: CHECK }))
+    ).resolves.toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
   })
 
   it('does not touch the repositories when the option is absent', async () => {

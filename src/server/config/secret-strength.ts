@@ -28,8 +28,15 @@ function shannonEntropy(value: string): number {
 }
 
 /**
- * Requires a secret to be present, at least 32 characters and at least 3.5 bits per character of
- * Shannon entropy.
+ * The shortest a secret may be, in characters, for every secret option: `jwt.secret`, each retired
+ * signing secret, `identifierKey` and `apiKeys.pepper`. A host's own configuration check reads it
+ * here instead of keeping a copy that could drift from the one startup enforces.
+ */
+export const AUTH_SECRET_MIN_LENGTH = 32
+
+/**
+ * Requires a secret to be present, at least {@link AUTH_SECRET_MIN_LENGTH} characters and at least
+ * 3.5 bits per character of Shannon entropy.
  *
  * @param secret - The configured value; a runtime-nullish value is refused with the same message
  *   as an empty one.
@@ -48,9 +55,9 @@ export function validateSecretStrength(secret: string, name: string): void {
         `Generate a secure secret with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
     )
   }
-  if (secret.length < 32) {
+  if (secret.length < AUTH_SECRET_MIN_LENGTH) {
     throw new Error(
-      `[BymaxAuthModule] ${name} must be at least 32 characters long. ` +
+      `[BymaxAuthModule] ${name} must be at least ${AUTH_SECRET_MIN_LENGTH} characters long. ` +
         `Generate a secure secret with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
     )
   }

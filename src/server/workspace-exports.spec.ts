@@ -6,6 +6,10 @@
 
 import {
   ANY_WORKSPACE_MEMBER,
+  AUTH_SECRET_MIN_LENGTH,
+  AuthException,
+  WORKSPACE_ID_MAX_LENGTH,
+  assertWorkspaceId,
   BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY,
   CurrentWorkspace,
@@ -71,5 +75,49 @@ describe('workspace exports', () => {
     const action: WorkspaceAction = 'manageMembers'
 
     expect(typeof WorkspacePermission(action)).toBe('function')
+  })
+
+  // Scenario: the id bound a host reads from the entry. Expected: 128, counted in code points.
+  it('exports the workspace id bound', () => {
+    expect(WORKSPACE_ID_MAX_LENGTH).toBe(128)
+  })
+
+  // Scenario: ids at and beyond the bound. Expected: 128 code points are accepted, an emoji counting
+  // once, and 129 are refused, so the bound moves with the constant.
+  it('accepts a workspace id of the bound and refuses one past it', () => {
+    expect(assertWorkspaceId('a'.repeat(WORKSPACE_ID_MAX_LENGTH))).toHaveLength(
+      WORKSPACE_ID_MAX_LENGTH
+    )
+    expect(Array.from(assertWorkspaceId('😀'.repeat(WORKSPACE_ID_MAX_LENGTH)))).toHaveLength(
+      WORKSPACE_ID_MAX_LENGTH
+    )
+    expect(() => assertWorkspaceId('a'.repeat(WORKSPACE_ID_MAX_LENGTH + 1))).toThrow(AuthException)
+    expect(() => assertWorkspaceId('😀'.repeat(WORKSPACE_ID_MAX_LENGTH + 1))).toThrow(AuthException)
+  })
+
+  // Scenario: what is not a workspace id. Expected: each is refused with auth.validation naming the
+  // field workspaceId, the refusal a handshake answers as it is.
+  it.each([[''], ['   '], ['a\nb'], ['a\u0000b'], [42], [null], [undefined], [{}]])(
+    'refuses the workspace id %j naming the field',
+    (value) => {
+      const thrown = ((): unknown => {
+        try {
+          return assertWorkspaceId(value)
+        } catch (error) {
+          return error
+        }
+      })()
+
+      expect(thrown).toBeInstanceOf(AuthException)
+      expect((thrown as AuthException).getResponse()).toMatchObject({
+        error: { code: 'auth.validation', details: [{ field: 'workspaceId' }] }
+      })
+    }
+  )
+
+  // Scenario: the secret floor a host reads from the entry. Expected: 32, which the template's
+  // environment schema must hold its own check to.
+  it('exports the secret floor', () => {
+    expect(AUTH_SECRET_MIN_LENGTH).toBe(32)
   })
 })

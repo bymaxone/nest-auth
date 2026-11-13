@@ -43,9 +43,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   cursor over 4096 characters (a key part over 128 code points), instead of issuing a cursor the next
   request could never follow. Every id you issue must be 1 to 128 code points of well-formed text with no
   control character.
+- **`verifyAccessToken` with a `workspaceId` while workspaces are off now throws `AuthException` (validation),
+  not a `TypeError`.** The refusal names the field `workspaceId`, so a handler maps it to a `400` like any
+  other refused input. A platform-plane token still throws a `TypeError`, which is a programming error.
 
 ### Added
 
+- **`AUTH_SECRET_MIN_LENGTH`** (32), the floor the boot check applies to every secret option,
+  exported so a host that generates secrets can size them from the same constant.
+- **`assertWorkspaceId` and `WORKSPACE_ID_MAX_LENGTH`** (128 code points), the refusal the request edge
+  applies to a workspace id, exported for a host that reads the id itself. It matches the cursor's rule for
+  an id except that it does not refuse an unpaired surrogate.
 - **Workspace cursor codec**, exported next to the membership port: `workspaceQueryKey`,
   `workspacePositionOf`, `readWorkspacePosition`, `encodeWorkspaceCursor`, `decodeWorkspaceCursor` and the
   constants `WORKSPACE_CURSOR_MAX_LENGTH`, `WORKSPACE_CURSOR_PART_MAX_LENGTH`,

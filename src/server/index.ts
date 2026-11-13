@@ -507,6 +507,8 @@ export {
   workspacePositionOf,
   workspaceQueryKey
 } from './utils/workspace-cursor'
+export { WORKSPACE_ID_MAX_LENGTH, assertWorkspaceId } from './utils/resolve-request-workspace'
+export { AUTH_SECRET_MIN_LENGTH } from './config/secret-strength'
 export { stampJobContext } from './utils/workspace-job'
 export type { WorkspaceJobContext } from './interfaces/workspace-job-context.interface'
 export { MembershipBumpFailedError, MembershipService } from './services/membership.service'
