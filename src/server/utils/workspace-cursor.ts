@@ -236,8 +236,10 @@ export function decodeWorkspaceCursor(cursor: unknown, query: string): string | 
   if (typeof cursor !== 'string' || cursor.length > WORKSPACE_CURSOR_MAX_LENGTH) return undefined
   try {
     const parsed: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+    // Stryker disable next-line ConditionalExpression: equivalent. Each operand only brings the refusal forward: a pair of another shape either fails to destructure, leaves `position` undefined for the string check below, or re-encodes to different bytes in the last step.
     if (!Array.isArray(parsed) || parsed.length !== 2) return undefined
     const [issuedFor, position] = parsed as unknown[]
+    // Stryker disable next-line ConditionalExpression: equivalent. A cursor issued for another query re-encodes, for this one, to different bytes in the last step, and a position that is not a string is refused by `whyUnreadable` or throws into the catch; both end as `undefined`.
     if (issuedFor !== query || typeof position !== 'string') return undefined
     if (whyUnreadable(position) !== undefined) return undefined
     // Only the encoder's own bytes read: whitespace, escapes, a byte order mark, invalid UTF-8 and
