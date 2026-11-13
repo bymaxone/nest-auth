@@ -7,6 +7,7 @@
 import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator'
 
 import { NO_CONTROL_CHARACTERS } from './no-control-characters'
+import { WORKSPACE_CURSOR_MAX_LENGTH } from '../utils/workspace-cursor'
 
 /**
  * Query parameters of the two paginated workspace lists (`GET /workspaces` and
@@ -22,12 +23,13 @@ export class WorkspacePageQueryDto {
   /**
    * The `nextCursor` of the previous page; absent for the first page.
    *
-   * `@MaxLength(512)` keeps an oversized value away from the repository.
+   * The length bound is the one the cursor codec reads, so a cursor the library issues is always one
+   * this accepts, and an oversized value stays away from the repository.
    */
   @IsOptional()
   @IsString()
   @IsNotEmpty()
-  @MaxLength(512)
+  @MaxLength(WORKSPACE_CURSOR_MAX_LENGTH)
   @Matches(NO_CONTROL_CHARACTERS, { message: 'cursor must not contain control characters' })
   cursor?: string
 

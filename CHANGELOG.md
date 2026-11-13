@@ -18,6 +18,55 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **`workspaces.roles.ownerRole` is checked at startup.** It must be 1 to 32 characters, start with a
+  letter and use only letters, digits and `_ . : -` (`^[A-Za-z][A-Za-z0-9_.:-]{0,31}$`). The owner role is
+  part of the key a `listSoleOwned` cursor is bound to, and a name with a quote, a backslash or a long
+  tail made that cursor longer than any page query would accept. `owner`, `admin`, `member`,
+  `billing_admin` and `org:admin` pass; a name with a space or more than 32 characters is refused, naming
+  the option and the rule. Only the owner role is checked: the other roles of the hierarchy keep any name.
+- **A workspace page cursor may now be up to 4096 characters, not 512.** The wire contract is at version 5:
+  `requestFieldBounds.pageLimit.cursor` and the published `WorkspacePageQueryDto` schema say 4096, and the
+  contract states the owner-role rule as a new `workspaceOwnerRole` section. During a rolling deploy an
+  instance still on 1.5.2 or earlier answers `400` to a cursor longer than 512 characters that this
+  release issued, which needs ids of about 105 characters or more (see Fixed), and only until every
+  instance has been replaced.
+- **A host adapter can drop its own cursor codec.** A cursor in the format the template's hand-written
+  codec writes (base64url of the JSON of the query key and the position) keeps reading, which the spec
+  pins with cursors that codec issued. Replace `keyOf`, `positionOf`, `encodeCursor`, `decodeCursor` and
+  `readPosition` with `workspaceQueryKey`, `workspacePositionOf`, `encodeWorkspaceCursor`,
+  `decodeWorkspaceCursor` and `readWorkspacePosition`, and delete the local copy and its spec.
+  `workspaceQueryKey` is
+  `JSON.stringify` of its parts, byte for byte, so a lock or map key built from it does not move.
+  `encodeWorkspaceCursor` throws a `RangeError` for a position the decoder would read as none and for a
+  cursor over 4096 characters (a key part over 128 code points), instead of issuing a cursor the next
+  request could never follow. Every id you issue must be 1 to 128 code points of well-formed text with no
+  control character.
+
+### Added
+
+- **Workspace cursor codec**, exported next to the membership port: `workspaceQueryKey`,
+  `workspacePositionOf`, `readWorkspacePosition`, `encodeWorkspaceCursor`, `decodeWorkspaceCursor` and the
+  constants `WORKSPACE_CURSOR_MAX_LENGTH`, `WORKSPACE_CURSOR_PART_MAX_LENGTH`,
+  `WORKSPACE_OWNER_ROLE_MAX_LENGTH` and `WORKSPACE_OWNER_ROLE_PATTERN`. Decoding implements the rule the
+  port states of every cursor: one that is malformed, longer than the bound, not exactly the bytes the
+  encoder writes, not a pair of two strings, issued for another query, or whose position is not an
+  instant followed by a well-formed id of 1 to 128 code points without control characters reads as the
+  first page and never widens the scope. A value that is not a string reads the same way. The scope always
+  comes from the query the store builds, never from the cursor, and a cursor is a bookmark, not a
+  signature: a well-formed position another instant names moves within the same scope and nowhere else.
+  The cursor is readable by the client, so its key holds only what the caller already knows.
+
+### Fixed
+
+- **The library answered `400` to its own `nextCursor` on page 2** when the tenant, the member and the row
+  id were each about 105 to 109 characters or more (the first length at which a cursor passes 512 is 109
+  for `listForUser`, 108 for `listForWorkspace` and 105 for `listSoleOwned` with the role `owner`): the
+  workspace page query refused a cursor over 512 characters, and a cursor for such ids is longer. The
+  bound is now 4096, sized from the longest cursor that ids, tenants and key parts of 128 code points can
+  produce (2178 characters), and the page query and the decoder share one constant.
+
 ## [1.5.2] - 2026-11-12
 
 A patch release for workspaces: the bundled email provider can deliver a workspace invitation, and a

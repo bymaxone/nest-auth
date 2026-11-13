@@ -19,14 +19,20 @@ import { REQUEST_SCHEMA_DTOS } from './openapi/request-schema-dtos'
 import { createAuthValidationPipe } from './pipes/auth-validation.pipe'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from './services/membership.service'
 import { REFRESH_TOKEN_MAX_LENGTH } from './services/token-delivery.service'
+import {
+  WORKSPACE_CURSOR_MAX_LENGTH,
+  WORKSPACE_OWNER_ROLE_MAX_LENGTH,
+  WORKSPACE_OWNER_ROLE_PATTERN
+} from './utils/workspace-cursor'
 
 const contract = JSON.parse(
   readFileSync(join(__dirname, '../../conformance/wire-contract.json'), 'utf8')
 ) as {
   requestFieldBounds: {
     opaqueToken: { min: number; max: number }
-    pageLimit: { min: number; max: number; default: number }
+    pageLimit: { min: number; max: number; default: number; cursor: { min: number; max: number } }
   }
+  workspaceOwnerRole: { pattern: string; maxLength: number; accepts: string[]; refuses: string[] }
   refreshTokenInput: { body: string; cookie: string }
   passwordResetOrder: { steps: string[]; reason: string }
 }
@@ -113,6 +119,34 @@ describe('the page limit the contract states', () => {
     expect(accepted).toEqual(Array.from({ length: MAX_PAGE_SIZE }, (_, index) => String(index + 1)))
     expect(pattern.test('1.5')).toBe(false)
     expect(['05', '007', '0100'].some((value) => pattern.test(value))).toBe(false)
+  })
+})
+
+describe('the workspace cursor bounds the contract states', () => {
+  // Scenario: the cursor bound the contract and the published schema state, and the one the codec
+  // and the page query enforce. Expected: one number. Why: a bound that differs is a cursor one
+  // side issues and the other refuses, which ends paging on page one.
+  it('holds the codec, the contract and the published schema to one cursor bound', () => {
+    const schema = REQUEST_SCHEMAS['WorkspacePageQueryDto']?.properties?.['cursor'] as {
+      maxLength: number
+    }
+
+    expect(contract.requestFieldBounds.pageLimit.cursor).toEqual({
+      min: 1,
+      max: WORKSPACE_CURSOR_MAX_LENGTH
+    })
+    expect(schema.maxLength).toBe(WORKSPACE_CURSOR_MAX_LENGTH)
+  })
+
+  // Scenario: the owner-role rule the contract states and the one startup enforces. Expected: the
+  // same pattern and length, and every vector the contract lists reads the way it says.
+  it('holds the owner-role rule to the contract and its vectors', () => {
+    const rule = contract.workspaceOwnerRole
+
+    expect(rule.pattern).toBe(WORKSPACE_OWNER_ROLE_PATTERN.source)
+    expect(rule.maxLength).toBe(WORKSPACE_OWNER_ROLE_MAX_LENGTH)
+    expect(rule.accepts.every((role) => WORKSPACE_OWNER_ROLE_PATTERN.test(role))).toBe(true)
+    expect(rule.refuses.some((role) => WORKSPACE_OWNER_ROLE_PATTERN.test(role))).toBe(false)
   })
 })
 

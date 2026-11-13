@@ -496,6 +496,17 @@ export type {
 } from './decorators/current-workspace.decorator'
 export { WorkspaceAccessService } from './services/workspace-access.service'
 export { decodeWorkspaceScopedName, workspaceScopedName } from './utils/workspace-scoped'
+export {
+  WORKSPACE_CURSOR_MAX_LENGTH,
+  WORKSPACE_CURSOR_PART_MAX_LENGTH,
+  WORKSPACE_OWNER_ROLE_MAX_LENGTH,
+  WORKSPACE_OWNER_ROLE_PATTERN,
+  decodeWorkspaceCursor,
+  encodeWorkspaceCursor,
+  readWorkspacePosition,
+  workspacePositionOf,
+  workspaceQueryKey
+} from './utils/workspace-cursor'
 export { stampJobContext } from './utils/workspace-job'
 export type { WorkspaceJobContext } from './interfaces/workspace-job-context.interface'
 export { MembershipBumpFailedError, MembershipService } from './services/membership.service'
