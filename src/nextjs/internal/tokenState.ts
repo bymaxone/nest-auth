@@ -79,7 +79,11 @@ export async function readTokenState(
   // empty secret. Guarding the call would put the same decision in two places and let them
   // drift; `assertJwtSecretConfigured` refuses to build the proxy at all, and this is the lock
   // that survives a refactor of that one.
-  const decoded: DecodedToken = await verifyJwtToken(raw, config.jwtSecret)
+  const decoded: DecodedToken = await verifyJwtToken(raw, config.jwtSecret, {
+    previousSecrets: config.jwtPreviousSecrets,
+    issuer: config.jwtIssuer,
+    audience: config.jwtAudience
+  })
   const isSession = decoded.isValid && isAccessToken(decoded)
 
   return {

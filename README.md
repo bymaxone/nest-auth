@@ -710,6 +710,21 @@ export const config = {
 }
 ```
 
+> [!IMPORTANT]
+> **The proxy is a routing hint, not an authorization check.** `jwtSecret` lets the proxy tell
+> whether an access token was minted with your secret and has not expired, which is enough to choose
+> between rendering a page and redirecting to sign-in. It cannot see what the backend sees: a logout,
+> a password reset or a revoke-all, a blocked account, the MFA state, or a workspace membership. A
+> token the proxy lets through may be one the backend refuses on the next call, so a role or a header
+> the proxy sets must never be the access decision for data or an action: the backend verifies every
+> request that reads or changes anything.
+>
+> Set `jwtIssuer`, `jwtAudience` and `jwtPreviousSecrets` to the same values as the backend's
+> `jwt.issuer`, `jwt.audience` and `jwt.previousSecrets`. The backend requires a configured issuer
+> and audience on every token and keeps accepting the retired secrets while a rotation drains, so a
+> proxy without them signs out a session the backend still honours, or admits a token the backend
+> refuses. `verifyJwtToken` takes the same three values as its `options` argument.
+
 How the route lists match a path: an entry matches the path that equals it and anything under
 it (`'/auth'` covers `/auth/login`), and takes no wildcards (`'/auth/*'` matches nothing). An
 entry ending in `/` is a plain prefix, so `'/'` matches every path. In `publicRoutes` that is
@@ -956,6 +971,9 @@ cookie cross-site, and it is the only one where the origin check has anything to
 >   retryStrategy: (attempt) => Math.min(attempt * 200, 2000) // bounded, never `null` in a server
 > })
 > ```
+>
+> This is the **auth** client: give a BullMQ queue its own connection. BullMQ workers require `maxRetriesPerRequest: null`, which is the opposite of the setting
+> above, so one shared client forces a choice between the two.
 >
 > The module warns at startup when the client carries no `commandTimeout`, and it sends `PING`
 > at bootstrap every quarter second for up to 5 seconds, so a Redis that is still starting does not

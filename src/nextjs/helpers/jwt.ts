@@ -8,10 +8,11 @@
  *
  * Two functions, and a missing secret never selects between them:
  *
- *   - {@link verifyJwtToken} performs HS256 signature verification and
- *     expiry validation. It fails closed: a missing or empty secret
- *     returns an empty, invalid result rather than a decoded payload.
- *     This is the production path.
+ *   - {@link verifyJwtToken} performs HS256 signature verification,
+ *     expiry validation and, when configured, the issuer and audience
+ *     checks. It fails closed: a missing or empty secret returns an
+ *     empty, invalid result rather than a decoded payload. This is the
+ *     path for a routing decision at the edge.
  *
  *   - {@link decodeJwtToken} parses the payload without verifying the
  *     signature. It is called explicitly, for non-authoritative claims
@@ -215,20 +216,35 @@ export function decodeJwtToken(token: string): DecodedToken {
  * No test can distinguish the two, so the mutants on it carry a
  * suppression.
  *
+ * **This is a routing check, not an authorization check.** It tells the edge whether a token was
+ * minted with the backend's secret, is unexpired and carries the backend's issuer and audience, which
+ * is enough to choose between rendering a page and redirecting to sign-in. It cannot see what the
+ * backend sees: a logout, a password reset or a revoke-all (the revocation list and the per-user
+ * epoch), the account's current status (a blocked or suspended user), the MFA state, or a workspace
+ * membership. A token this function accepts may be one the backend refuses on the next call. Never
+ * use its result, or a role read from it, as the access decision for data or an action: the backend
+ * must verify every request that reads or changes anything.
+ *
  * @param token  - JWS compact serialisation.
  * @param secret - HS256 shared secret. A missing or empty value
  *                 makes every token invalid.
+ * @param options - The backend's retired secrets, issuer and audience, so a token is judged as the
+ *                 backend judges it; see {@link VerifyJwtOptions}. Omitted, only the signature and
+ *                 the expiry are checked.
  * @returns A {@link DecodedToken} where `isValid` reflects BOTH the
  *          signature verification AND the expiry check, and
  *          `signatureVerified` is `true` only when a signature was
  *          actually checked.
  */
-export async function verifyJwtToken(token: string, secret?: string | null): Promise<DecodedToken> {
+export async function verifyJwtToken(
+  token: string,
+  secret?: string | null,
+  options?: VerifyJwtOptions
+): Promise<DecodedToken> {
   // Fail closed on a missing or empty secret — rationale in the JSDoc.
   if (secret === undefined || secret === null) return emptyDecoded()
   // Stryker disable next-line ConditionalExpression: subsumed by WebCrypto's own refusal
   if (secret.length === 0) return emptyDecoded()
-
   const parts = token.split('.')
   if (parts.length !== 3) return emptyDecoded()
 
@@ -247,7 +263,6 @@ export async function verifyJwtToken(token: string, secret?: string | null): Pro
   if (headerSegment.length === 0 || payloadSegment.length === 0 || signatureSegment.length === 0) {
     return emptyDecoded()
   }
-
   const header = safeJsonParse<JwtHeader>(base64UrlDecodeToString(headerSegment))
 
   // Algorithm pinning — rejects `alg: none`, and `alg: RS256` that
@@ -257,21 +272,87 @@ export async function verifyJwtToken(token: string, secret?: string | null): Pro
 
   const payload = safeJsonParse<Record<string, unknown>>(base64UrlDecodeToString(payloadSegment))
   if (payload === undefined) return emptyDecoded()
-
   const signatureBytes = base64UrlDecodeToBytes(signatureSegment)
   if (signatureBytes === undefined) return emptyDecoded()
 
-  const signatureValid = await verifyHs256Signature(
-    headerSegment,
-    payloadSegment,
-    signatureBytes,
-    secret
-  )
-  if (!signatureValid) return emptyDecoded()
+  const signatureValid = await verifyAgainstSecrets(headerSegment, payloadSegment, signatureBytes, [
+    secret,
+    ...(options?.previousSecrets ?? [])
+  ])
+  if (!signatureValid || !carriesRequiredClaims(payload, options)) return emptyDecoded()
 
   // The one call site that may claim a verified signature: reached only past the algorithm
   // pinning, the HMAC check and a non-empty secret.
   return buildDecodedToken(header, payload, true)
+}
+
+/**
+ * What `verifyJwtToken` holds a token to beyond its signature, as the backend holds it.
+ *
+ * Both libraries stamp and require the same claims, so a proxy that ignores one accepts a token the
+ * backend refuses (or, for a retired secret, refuses one the backend still accepts).
+ */
+export interface VerifyJwtOptions {
+  /**
+   * Secrets the backend still verifies with while a rotation drains (`jwt.previousSecrets`), tried
+   * after the current one. An empty entry never verifies anything.
+   */
+  readonly previousSecrets?: readonly string[] | undefined
+  /**
+   * The issuer every token must carry in `iss` (`jwt.issuer`). A token with no `iss`, or any other
+   * value, is refused, so omitting the claim is not a way to skip the check. An empty string reads
+   * as unconfigured.
+   */
+  readonly issuer?: string | undefined
+  /**
+   * The audience every token must carry in `aud` (`jwt.audience`), as a string or inside an array.
+   * A token with none, or without it, is refused. An empty string reads as unconfigured.
+   */
+  readonly audience?: string | undefined
+}
+
+/**
+ * Whether the signature verifies under any of the secrets, tried in order.
+ *
+ * An empty secret never verifies, because the HMAC key import refuses zero-length key material, so
+ * listing one is harmless and the later secrets are still tried.
+ *
+ * @param headerSegment - The encoded header.
+ * @param payloadSegment - The encoded payload.
+ * @param signatureBytes - The decoded signature.
+ * @param secrets - The current secret first, then the retired ones.
+ * @returns `true` when one verifies.
+ */
+async function verifyAgainstSecrets(
+  headerSegment: string,
+  payloadSegment: string,
+  signatureBytes: Uint8Array,
+  secrets: readonly string[]
+): Promise<boolean> {
+  for (const secret of secrets) {
+    if (await verifyHs256Signature(headerSegment, payloadSegment, signatureBytes, secret)) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Whether the payload carries the issuer and the audience that are configured.
+ *
+ * @param payload - The decoded payload.
+ * @param options - The configured claims; an unset or empty value requires nothing.
+ * @returns `true` when every configured claim matches.
+ */
+function carriesRequiredClaims(
+  payload: Record<string, unknown>,
+  options: VerifyJwtOptions | undefined
+): boolean {
+  const { issuer, audience } = options ?? {}
+  if (issuer !== undefined && issuer !== '' && payload['iss'] !== issuer) return false
+  if (audience === undefined || audience === '') return true
+  const claim = payload['aud']
+  return Array.isArray(claim) ? claim.includes(audience) : claim === audience
 }
 
 /**

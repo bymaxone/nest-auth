@@ -60,7 +60,7 @@ export {
   isTokenExpired,
   verifyJwtToken
 } from './helpers/jwt'
-export type { DecodedToken, JwtHeader } from './helpers/jwt'
+export type { DecodedToken, JwtHeader, VerifyJwtOptions } from './helpers/jwt'
 
 // ---------------------------------------------------------------------------
 // Factory — auth proxy (Next.js Edge middleware)
