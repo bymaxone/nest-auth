@@ -83,6 +83,19 @@ function slug(heading) {
     .replace(/\s/g, '-')
 }
 
+/** A document with its fenced code blocks removed: a `# Using pnpm` inside a ```bash fence is a
+ * shell comment, not a heading, and an `<a href="${url}">` inside a fence is a string an example
+ * builds at runtime, not a link a reader can click. */
+const proseOf = (text) => text.replace(/^```[\s\S]*?^```$/gm, '')
+
+/** The anchors a document's headings answer to, lowercased as links are compared. */
+const anchorsOf = (text) =>
+  new Set([...proseOf(text).matchAll(/^#{1,6}\s+(.+)$/gm)].map((m) => `#${slug(m[1])}`))
+
+/** A document with its blockquote markers removed. A fence inside a `> ` callout is still code a
+ * reader copies, and a line-anchored fence match does not see it until the marker is gone. */
+const unquoted = (text) => text.replace(/^>[ \t]?/gm, '')
+
 /** Classifies a bare IP address as one a documentation link must not reach, or
  * null when it is ordinary public space. Shared by the literal check and the
  * resolved-address check, so both answer with the same vocabulary. */
@@ -237,10 +250,10 @@ async function checkLinks() {
   let relativeCount = 0
 
   for (const { path, text } of DOCUMENTS) {
-    const prose = text.replace(/^```[\s\S]*?^```$/gm, '')
+    const prose = proseOf(text)
     // Anchors and relative links are per document: `#section` means a heading of THIS file,
     // and `../README.md` is relative to the file that says it.
-    const anchors = new Set([...prose.matchAll(/^#{1,6}\s+(.+)$/gm)].map((m) => `#${slug(m[1])}`))
+    const anchors = anchorsOf(text)
     const clickable = prose.replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     for (const m of clickable.matchAll(/\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)) links.add(m[1])
     for (const m of clickable.matchAll(/<a\s+href="(https?:\/\/[^"]+)"/g)) links.add(m[1])
@@ -261,9 +274,7 @@ async function checkLinks() {
           (m) => m[1]
         ),
         ...[...clickable.matchAll(/<a\s+href="(?!https?:|#|mailto:)([^"]+)"/g)].map((m) => m[1])
-      ]
-        .map((target) => target.split('#')[0])
-        .filter(Boolean)
+      ].filter((target) => !target.startsWith('#'))
     )
 
     internalCount += internal.size
@@ -271,7 +282,9 @@ async function checkLinks() {
     for (const a of internal) {
       if (!anchors.has(a)) fail('links', `${path}: anchor ${a} matches no heading`)
     }
-    for (const r of relative) {
+    for (const link of relative) {
+      const [r, fragment] = link.split('#')
+      if (!r) continue
       // Resolve and confine before touching the filesystem. `..` segments would
       // otherwise walk out of the repository and have the runner stat arbitrary
       // paths, and a link that escapes the repository is broken documentation
@@ -283,6 +296,12 @@ async function checkLinks() {
         fail('links', `${path}: ${r} resolves outside the repository`)
       } else if (!existsSync(target)) {
         fail('links', `${path}: ${r} does not exist in the repository`)
+      } else if (fragment && target.endsWith('.md')) {
+        // A link into another page names a heading of THAT page, so it is checked there.
+        const there = anchorsOf(readFileSync(target, 'utf8'))
+        if (!there.has(`#${fragment.toLowerCase()}`)) {
+          fail('links', `${path}: ${link} names no heading of ${r}`)
+        }
       }
     }
   }
@@ -526,7 +545,7 @@ function checkSnippets() {
   // to a .tsx file or it does not parse, and a package with a React subpath
   // documents its surface in exactly those blocks.
   const blocks = DOCUMENTS.flatMap(({ text }) => [
-    ...text.matchAll(/^```(ts|typescript|tsx)\n([\s\S]*?)^```$/gm)
+    ...unquoted(text).matchAll(/^```(ts|typescript|tsx)\n([\s\S]*?)^```$/gm)
   ]).map((m) => ({
     ext: m[1] === 'tsx' ? 'tsx' : 'ts',
     code: m[2]
