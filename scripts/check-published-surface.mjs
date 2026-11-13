@@ -28,12 +28,11 @@ const PKG = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const README = readFileSync(join(ROOT, 'README.md'), 'utf8')
 
 /**
- * The README's reference pages: the `docs/*.md` files it links to that link back to it. They hold
- * material the README moved out, so a snippet or a link there is the same claim a reader copies, and
- * a gate that read only the README stopped checking it the day it moved. Found rather than listed,
- * so a page added later is covered without anyone remembering to register it; a page that does not
- * link back (the mutation-testing reports) is not the README's reference and is left out.
- * `test/e2e/readme-contract.e2e-spec.ts` applies the same rule.
+ * The README's reference pages: the `docs/*.md` files it links to that link back to it. They carry
+ * public API claims, so a snippet or a link there is the same promise a reader copies as one in the
+ * README. Found from the README's links rather than listed, so a page added later is covered; a page
+ * that does not link back (the mutation-testing reports) is not the README's reference and is left
+ * out. `test/e2e/readme-contract.e2e-spec.ts` applies the same rule.
  */
 const REFERENCE_PAGES = [...README.matchAll(/\]\((\.\/docs\/[^)\s#]+\.md)(?:#[^)\s]*)?\)/g)]
   .map((m) => m[1].replace(/^\.\//, ''))

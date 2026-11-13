@@ -53,11 +53,10 @@ const README = readFileSync(join(__dirname, '../../README.md'), 'utf8')
 /**
  * The README's reference pages: the `docs/*.md` files it links to that link back to it.
  *
- * They hold material the README moved out, so an import, a symbol or a scheme name there is the
- * same claim a reader copies, and an arm that read only the README stopped checking it the day it
- * moved. Found by the README's own links rather than listed, so a page added later is covered. A
- * page that does not link back (the mutation-testing reports) is not the README's reference.
- * `scripts/check-published-surface.mjs` applies the same rule.
+ * They carry public API claims, so an import, a symbol or a scheme name there is the same promise a
+ * reader copies as one in the README. Found from the README's links rather than listed, so a page
+ * added later is covered. A page that does not link back (the mutation-testing reports) is not the
+ * README's reference. `scripts/check-published-surface.mjs` applies the same rule.
  */
 const REFERENCE_PAGES: readonly { path: string; text: string }[] = [
   ...new Set(
@@ -287,9 +286,8 @@ function schemeTable(readme: string): string {
 }
 
 describe('README contract (E2E)', () => {
-  // The reference pages are found through the README's links. If that stops finding them, every
-  // arm below silently goes back to reading the README alone, so the discovery is pinned here: the
-  // pages this README moved material into must all be read.
+  // The reference pages are found through the README's links. If that finds none, every arm below
+  // reads the README alone, so the discovery is pinned here: every page it documents must be read.
   it('reads every reference page the README links to', () => {
     expect(REFERENCE_PAGES.map(({ path }) => path).sort()).toEqual([
       'docs/email-delivery-errors.md',
