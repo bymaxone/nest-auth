@@ -1,11 +1,11 @@
 /**
  * @fileoverview The startup Redis check against a REAL ioredis client.
  *
- * The unit specs drive the check with fakes whose shape the author chose, which proves each branch
- * runs and cannot prove ioredis presents that shape: the first real-client run found that a client
- * which gave up connecting (status `end`) was waited on until the deadline. A real client pointed
- * at a port nothing listens on is the cheapest way to hold the check to what ioredis really does,
- * and it needs no Redis server, so it lives here and not in the unit suite that mocks Redis.
+ * The unit specs drive the check with fakes whose shape the spec chooses, so they cannot establish
+ * what ioredis really does. The constraint held here is a lifecycle one: a real client that reaches
+ * the `end` state (it gave up connecting) must fail bootstrap promptly, not wait out the deadline.
+ * A client pointed at a port nothing listens on reaches it with no Redis server, so the case lives
+ * in this suite and not in the unit suite, which mocks Redis.
  */
 
 import { Test } from '@nestjs/testing'
