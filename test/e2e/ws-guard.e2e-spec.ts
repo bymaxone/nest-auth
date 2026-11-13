@@ -86,8 +86,8 @@ class ProbeGateway {
 }
 
 /**
- * The same gateway with `WsAuthExceptionFilter` registered — the deployment the README
- * prescribes for a host that mounts WebSockets.
+ * The same gateway with `WsAuthExceptionFilter` registered — the deployment
+ * docs/websocket-upgrades.md prescribes for a host that mounts WebSockets.
  *
  * It exists beside the unfiltered one on purpose: the filter's whole claim is that the two
  * answer a refused client DIFFERENTLY, and one gateway can only ever show one of the two

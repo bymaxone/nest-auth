@@ -51,6 +51,26 @@ const TABLE_HEADER = 'what the document says'
 const README = readFileSync(join(__dirname, '../../README.md'), 'utf8')
 
 /**
+ * The README's reference pages: the `docs/*.md` files it links to that link back to it.
+ *
+ * They hold material the README moved out, so an import, a symbol or a scheme name there is the
+ * same claim a reader copies, and an arm that read only the README stopped checking it the day it
+ * moved. Found by the README's own links rather than listed, so a page added later is covered. A
+ * page that does not link back (the mutation-testing reports) is not the README's reference.
+ * `scripts/check-published-surface.mjs` applies the same rule.
+ */
+const REFERENCE_PAGES: readonly { path: string; text: string }[] = [
+  ...new Set(
+    [...README.matchAll(/\]\(\.\/(docs\/[^)\s#]+\.md)(?:#[^)\s]*)?\)/g)].map((m) => m[1] as string)
+  )
+]
+  .map((path) => ({ path, text: readFileSync(join(__dirname, '../..', path), 'utf8') }))
+  .filter(({ text }) => text.includes('](../README.md'))
+
+/** The README and its reference pages as one text, for the arms that scan every claim. */
+const DOCUMENTED = [README, ...REFERENCE_PAGES.map(({ text }) => text)].join('\n')
+
+/**
  * The subpaths a manifest publishes, as a consumer would write them.
  *
  * Narrowed rather than cast. `JSON.parse` answers `any`, and asserting the shape onto it would
@@ -110,7 +130,7 @@ function documentedImports(): Map<string, Set<string>> {
   const found = new Map<string, Set<string>>()
   const pattern = /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+'(@bymax-one\/nest-auth[^']*)'/g
 
-  for (const match of README.matchAll(pattern)) {
+  for (const match of DOCUMENTED.matchAll(pattern)) {
     const [, names, subpath] = match
     if (names === undefined || subpath === undefined) continue
     const set = found.get(subpath) ?? new Set<string>()
@@ -146,7 +166,7 @@ function nonNamedImports(): string[] {
   // Anything importing this package that does not open with `{` after the (optional) `type`.
   const pattern = /import\s+(?!type\s+\{)(?!\{)[^;\n]*?from\s+'(@bymax-one\/nest-auth[^']*)'/g
 
-  return [...README.matchAll(pattern)].map((match) => match[0])
+  return [...DOCUMENTED.matchAll(pattern)].map((match) => match[0])
 }
 
 /**
@@ -267,6 +287,20 @@ function schemeTable(readme: string): string {
 }
 
 describe('README contract (E2E)', () => {
+  // The reference pages are found through the README's links. If that stops finding them, every
+  // arm below silently goes back to reading the README alone, so the discovery is pinned here: the
+  // pages this README moved material into must all be read.
+  it('reads every reference page the README links to', () => {
+    expect(REFERENCE_PAGES.map(({ path }) => path).sort()).toEqual([
+      'docs/email-delivery-errors.md',
+      'docs/openapi-interop.md',
+      'docs/server-services.md',
+      'docs/service-api-keys.md',
+      'docs/websocket-upgrades.md',
+      'docs/workspaces.md'
+    ])
+  })
+
   // Every subpath the README imports from is one this package actually publishes. A typo here
   // sends a reader to a path that does not resolve, which no amount of correct symbol names fixes.
   //
@@ -344,7 +378,9 @@ describe('README contract (E2E)', () => {
       Object.values(BARRELS).flatMap((barrel) => [...barrelExports(join(__dirname, barrel))])
     )
     const claimedPrivate = [
-      ...flatten(README).matchAll(/`([A-Za-z_][A-Za-z0-9_]*)`[^.]{0,80}?is not part of the public/g)
+      ...flatten(DOCUMENTED).matchAll(
+        /`([A-Za-z_][A-Za-z0-9_]*)`[^.]{0,80}?is not part of the public/g
+      )
     ]
       .map((match) => match[1])
       .filter((name): name is string => name !== undefined)
@@ -394,7 +430,7 @@ describe('README contract (E2E)', () => {
     // The `+` is load-bearing: with `*`, the `bymax` in `@bymax-one/nest-auth` matched as a bare
     // prefix — the hyphen is not an identifier character, so the token ended there — and every
     // package specifier in the document became an invented scheme.
-    const invented = [...README.matchAll(/(bymax[A-Za-z0-9_$]+)/g)]
+    const invented = [...DOCUMENTED.matchAll(/(bymax[A-Za-z0-9_$]+)/g)]
       .map((m) => m[1])
       .filter((name): name is string => name !== undefined)
       .filter((name) => !NOT_A_SCHEME.has(name))

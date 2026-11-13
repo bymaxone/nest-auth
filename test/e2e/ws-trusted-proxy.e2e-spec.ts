@@ -8,7 +8,7 @@
  * make the same decision from the TCP peer the transport reports. These cases drive a real
  * Socket.IO handshake from the loopback address the test client really connects from, and judge
  * that peer with the compiled `trust proxy` function of the Express instance behind the Nest
- * adapter, wired the way the README documents.
+ * adapter, wired the way docs/websocket-upgrades.md documents.
  */
 
 import type { INestApplication } from '@nestjs/common'
@@ -53,9 +53,9 @@ const tenantFromHost: NonNullable<BymaxAuthModuleOptions['tenantIdResolver']> = 
 }
 
 /**
- * The README's recipe: the module factory runs before the app exists, so it reads the policy per
- * connection from a holder that refuses every peer until the Express instance behind the adapter
- * has been configured. `app.get()` would resolve a provider and not read the setting.
+ * The documented recipe (docs/websocket-upgrades.md): the module factory runs before the app
+ * exists, so it reads the policy per connection from a holder that refuses every peer until the
+ * Express instance behind the adapter has been configured. `app.get()` would resolve a provider and not read the setting.
  */
 function proxyPolicy(): {
   trusts: (peer: string) => boolean

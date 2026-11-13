@@ -399,7 +399,7 @@ describe('service API keys (e2e)', () => {
     })
   })
 
-  describe('rate limiting on the verified key (README example)', () => {
+  describe('rate limiting on the verified key (docs/service-api-keys.md example)', () => {
     // The limit is bucketed by the verified key id, not the address: two keys behind one address
     // do not share a budget, and one key cannot spend the other's.
     it('limits each key separately once it has verified', async () => {
