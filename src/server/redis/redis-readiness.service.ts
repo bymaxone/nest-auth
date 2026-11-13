@@ -43,19 +43,27 @@ function commandTimeoutOf(client: unknown): number | undefined {
  * The address a client was built to reach, for the startup error.
  *
  * Only `host` and `port` are read, never a URL or the options as a whole, so a password in a
- * connection string or in `options.password` cannot reach the message. A cluster, or a client with
- * neither field, has no single address and the message says so by omission.
+ * connection string or in `options.password` cannot reach the message. A cluster, a socket or
+ * sentinel client, or a host that is not a plain name has no single address to name and the message
+ * says so by omission.
  *
  * @param client - The client the host supplied.
  * @returns `host:port`, or `undefined`.
  */
 function addressOf(client: unknown): string | undefined {
-  const options = (client as { options?: { host?: unknown; port?: unknown } }).options
+  const options = (
+    client as { options?: { host?: unknown; port?: unknown; path?: unknown; sentinels?: unknown } }
+  ).options
+  // ioredis fills `host` and `port` with `localhost:6379` for EVERY client and sets `sentinels` to
+  // `null` when there are none, so a socket or sentinel client would be named by an address it never
+  // dialled.
+  if (options?.path != null || options?.sentinels != null) return undefined
   const host = options?.host
   const port = options?.port
-  return typeof host === 'string' && host !== '' && typeof port === 'number'
-    ? `${host}:${port}`
-    : undefined
+  if (typeof host !== 'string' || typeof port !== 'number') return undefined
+  // A host that carries userinfo, a path or whitespace is not a host name; echoing it could
+  // repeat a credential.
+  return /^[^\s@/]+$/.test(host) ? `${host}:${port}` : undefined
 }
 
 /**

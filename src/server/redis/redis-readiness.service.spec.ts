@@ -172,6 +172,45 @@ describe('RedisReadinessService', () => {
     )
   })
 
+  // Scenario: a client that does not dial a host and port, or whose host is not a plain name.
+  // Expected: no address in the message. ioredis fills `localhost:6379` into every client's options,
+  // so naming it for a socket or sentinel client would report an address it never tried, and a host
+  // carrying userinfo or a path would repeat a credential.
+  it.each([
+    ['a unix-socket client', { host: 'localhost', port: 6379, path: '/var/run/redis.sock' }],
+    [
+      'a sentinel client',
+      { host: 'localhost', port: 6379, sentinels: [{ host: 's', port: 26379 }] }
+    ],
+    ['a host with userinfo', { host: 'svc:s3cret@redis.internal', port: 6379 }],
+    ['a host that is a URL', { host: 'redis://redis.internal', port: 6379 }],
+    ['a host with whitespace', { host: 'redis internal', port: 6379 }],
+    ['a port that is not a number', { host: 'redis.internal', port: '6379' }]
+  ])('omits the address for %s', async (_why, options) => {
+    const redis = client({
+      options: { commandTimeout: 500, ...options },
+      ping: jest.fn().mockRejectedValue(new Error('down'))
+    })
+
+    const { outcome } = await settle(redis)
+
+    expect((outcome as Error).message).toMatch(
+      /^\[BymaxAuthModule\] Redis did not answer PING within 5000 ms/
+    )
+  })
+
+  // Scenario: an IPv6 literal host. Expected: named, since it is a plain host with colons.
+  it('names an IPv6 host', async () => {
+    const redis = client({
+      options: { commandTimeout: 500, host: '::1', port: 6379 },
+      ping: jest.fn().mockRejectedValue(new Error('down'))
+    })
+
+    const { outcome } = await settle(redis)
+
+    expect((outcome as Error).message).toContain('Redis at ::1:6379 did not answer PING')
+  })
+
   // Scenario: a client that has already ended, which no retry can bring back. Expected: refused at
   // once, without sending a command.
   it('refuses a client that has ended without sending a command', async () => {
