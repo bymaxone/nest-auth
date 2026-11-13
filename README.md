@@ -939,6 +939,31 @@ behaviour for origins that already exist. It is required as soon as `cookies.sam
 is set, and refused otherwise — that posture is the only one where the browser sends the session
 cookie cross-site, and it is the only one where the origin check has anything to authorize.
 
+> [!IMPORTANT]
+> **Bound your Redis client.** Every authentication and authorization decision here reads Redis and
+> **fails closed**: when Redis is unreachable the request is answered with a `5xx` or a refusal,
+> never admitted. What the library cannot do is bound how long the client waits before it gives
+> up, because the client is yours (`BYMAX_AUTH_REDIS_CLIENT`). With ioredis defaults the offline
+> queue is on and a command retries up to 20 times, so a Redis outage reads as requests that hang
+> before they fail, and `maxRetriesPerRequest: null` waits forever. Build the client with a
+> deadline on every command and a bounded reconnect:
+>
+> ```typescript
+> new Redis(url, {
+>   commandTimeout: 500, // ms; every command rejects after this, which the guards answer as a 5xx
+>   maxRetriesPerRequest: 1, // do not queue a command through repeated reconnects
+>   enableOfflineQueue: false, // refuse a command while disconnected instead of holding it
+>   retryStrategy: (attempt) => Math.min(attempt * 200, 2000) // bounded, never `null` in a server
+> })
+> ```
+>
+> The module warns at startup when the client carries no `commandTimeout`, and it sends one `PING`
+> at bootstrap (waiting up to 5 seconds for a client that is still connecting) so a mis-pointed
+> address or a wrong password stops the process from starting instead of surfacing as the first
+> request's `5xx`. Expect `5xx` on login, refresh, rate-limited routes and every guarded route for
+> as long as Redis is down: that is the fail-closed behaviour, and a health check on Redis belongs
+> next to your readiness probe.
+
 The breach check is opt-in for a different reason: it is the only part of the credential path
 that reaches the network, and a library should not start talking to a third party because it was
 upgraded. Wire it explicitly:
