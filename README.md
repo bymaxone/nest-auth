@@ -880,8 +880,8 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 
 > [!IMPORTANT]
 > **The parameters that carry a control's strength are bounded at startup.** `mfa.totpWindow` must
-> be `0..=10`: the window counts 30-second steps on _either_ side of now, so `2n + 1` codes are
-> valid at once (three at the default of 1, 121 at 60). `mfa.recoveryCodeCount` must be `1..=50`,
+> be `0..=2`: the window counts 30-second steps on _either_ side of now, so `2n + 1` codes are
+> valid at once (three at the default of 1). `mfa.recoveryCodeCount` must be `1..=50`,
 > because zero enrols an account with no way back if the authenticator is lost.
 > `password.blockSize` must be at least 8 and `password.parallelization` at least 1: scrypt's memory
 > cost is `128 * N * r`, so a smaller block size divides the hardness `password.costFactor`'s floor
