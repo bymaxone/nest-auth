@@ -44,7 +44,7 @@
     "src/server/guards/auth-rate-limit.guard.spec.ts": 2,
     "src/server/guards/request-encoding.guard.spec.ts": 1,
     "src/server/guards/trusted-origin.guard.spec.ts": 1,
-    "src/server/guards/ws-jwt.guard.spec.ts": 5,
+    "src/server/guards/ws-jwt.guard.spec.ts": 4,
     "src/server/hooks/no-op-auth.hooks.spec.ts": 1,
     "src/server/interceptors/no-store.interceptor.spec.ts": 3,
     "src/server/oauth/google/google-oauth.plugin.spec.ts": 2,
