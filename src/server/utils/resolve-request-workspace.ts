@@ -11,7 +11,11 @@ import { AuthException } from '../errors/auth-exception'
 import type { TenantResolverRequest } from '../interfaces/auth-module-options.interface'
 
 /** Longest workspace id accepted, in characters. */
-const MAX_WORKSPACE_ID_LENGTH = 128
+/**
+ * The longest workspace id, in code points: the bound every request path applies, an emoji counting
+ * once.
+ */
+export const WORKSPACE_ID_MAX_LENGTH = 128
 
 /** A request as far as workspace resolution reads it. */
 export interface WorkspaceRouteRequest extends TenantResolverRequest {
@@ -25,14 +29,19 @@ export interface WorkspaceRouteRequest extends TenantResolverRequest {
  * @throws {AuthException} Always, as `auth.validation` on `workspaceId`.
  */
 /** What a workspace id must be, as the validation detail says it. */
-const WORKSPACE_ID_RULE = `workspaceId must be 1 to ${MAX_WORKSPACE_ID_LENGTH} characters, not blank, with no control characters`
+const WORKSPACE_ID_RULE = `workspaceId must be 1 to ${WORKSPACE_ID_MAX_LENGTH} characters, not blank, with no control characters`
 
 function invalidWorkspaceId(message: string): never {
   throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [{ field: 'workspaceId', message }])
 }
 
 /**
- * Requires a candidate workspace id to be a bounded string without control characters.
+ * Requires a candidate workspace id to be a bounded string without control characters, and refuses
+ * one that is not with `auth.validation` naming the field `workspaceId`, the answer a handshake or a
+ * route gives. A host that takes the id from a client calls it before using the id.
+ *
+ * The rule is the one the cursor codec holds an id to (1 to {@link WORKSPACE_ID_MAX_LENGTH} code points
+ * with no control character) except that it does not refuse an unpaired surrogate.
  *
  * @param value - What a source returned.
  * @returns The id.
@@ -44,7 +53,7 @@ export function assertWorkspaceId(value: unknown): string {
   if (
     typeof value !== 'string' ||
     value.trim() === '' ||
-    exceedsCodePoints(value, MAX_WORKSPACE_ID_LENGTH) ||
+    exceedsCodePoints(value, WORKSPACE_ID_MAX_LENGTH) ||
     !NO_CONTROL_CHARACTERS.test(value)
   ) {
     return invalidWorkspaceId(WORKSPACE_ID_RULE)

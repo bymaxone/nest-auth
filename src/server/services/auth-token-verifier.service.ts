@@ -153,9 +153,11 @@ export interface VerifyAccessTokenOptions {
    * for a role no accepted one covers, and `auth.validation` naming `workspaceId` for an id that is
    * blank, over-long or holds a control character, ahead of any lookup.
    *
-   * Dashboard plane only, and only with `workspaces.enabled`: anything else is a `TypeError`,
-   * because a platform token has no workspace and the feature is absent otherwise. A stream calls
-   * it at subscribe time and again on its cadence or per message; a refusal means disconnect.
+   * Dashboard plane only: on the platform plane it is a `TypeError`, because a platform token has no
+   * workspace. On a deployment without `workspaces.enabled` it is refused with `auth.validation`
+   * naming `workspaceId`, the same refusal a bad id gets, so a host that takes the id from a client
+   * never has to check the feature first. A stream calls it at subscribe time and again on its
+   * cadence or per message; a refusal means disconnect.
    */
   readonly workspace?: WorkspaceCheck
 }
@@ -349,8 +351,9 @@ export class AuthTokenVerifierService {
   }
 
   /**
-   * The function that admits a caller to a workspace, or a `TypeError` when none can: on a plane
-   * with no workspaces, or on a deployment that has not enabled them. A programmer's error.
+   * The function that admits a caller to a workspace. On a plane with no workspaces that is a
+   * `TypeError`, a programmer's error; on a deployment that has not enabled them it is the
+   * `auth.validation` refusal naming `workspaceId`, because the id came from a client.
    *
    * The returned function admits the caller as `WorkspaceGuard` would a route, with `auth.validation`
    * for a malformed id and then the guard's refusals.
@@ -365,7 +368,12 @@ export class AuthTokenVerifierService {
     const group = this.options.workspaces
     const denied = this.deniedEvents
     if (access === null || group === undefined) {
-      throw new TypeError('verifyAccessToken: workspace needs workspaces.enabled')
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+        {
+          field: 'workspaceId',
+          message: 'workspaceId is not accepted: workspaces are not enabled for this deployment'
+        }
+      ])
     }
     return async (payload, check) => {
       const workspaceId = assertWorkspaceId(check.workspaceId)

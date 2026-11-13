@@ -240,16 +240,39 @@ describe('verifyAccessToken with a workspace', () => {
     })
   })
 
-  it('is a TypeError on the platform plane and without workspaces enabled', async () => {
+  // Scenario: the workspace option on the platform plane. Expected: a TypeError, the caller's bug: a
+  // platform token has no workspace and the overloads forbid the call.
+  it('is a TypeError on the platform plane', async () => {
     const enabled = await build()
-    const disabled = await build(false)
 
     await expect(
       enabled.verifyAccessToken('tok', { plane: 'platform', workspace: CHECK } as never)
     ).rejects.toThrow('workspace needs the dashboard plane')
-    await expect(
-      disabled.verifyAccessToken('tok', { plane: 'dashboard', workspace: CHECK })
-    ).rejects.toThrow('workspace needs workspaces.enabled')
+  })
+
+  // Scenario: the workspace option on a deployment that has not enabled workspaces, as a host that
+  // takes the id from a client would pass it. Expected: auth.validation naming workspaceId, a 400
+  // the host can answer as it is, and not a TypeError that reads as a 500.
+  it('refuses with auth.validation naming workspaceId without workspaces enabled', async () => {
+    const disabled = await build(false)
+
+    const error = await disabled
+      .verifyAccessToken('tok', { plane: 'dashboard', workspace: CHECK })
+      .catch((e: unknown) => e as AuthException)
+
+    expect(error).not.toBeInstanceOf(TypeError)
+    expect((error as AuthException).getStatus()).toBe(400)
+    expect((error as AuthException).getResponse()).toMatchObject({
+      error: {
+        code: AUTH_ERROR_CODES.VALIDATION,
+        details: [
+          {
+            field: 'workspaceId',
+            message: 'workspaceId is not accepted: workspaces are not enabled for this deployment'
+          }
+        ]
+      }
+    })
   })
 
   it('does not touch the repositories when the option is absent', async () => {
