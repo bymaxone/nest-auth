@@ -24,6 +24,7 @@ import type { Request, Response } from 'express'
 
 import { isStoredOAuthState, type StoredOAuthState } from './oauth-state'
 import { OAUTH_PLUGINS } from './oauth.constants'
+import { pluginDeadlineMs, withDeadline } from './plugin-deadline'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
@@ -549,7 +550,8 @@ export class OAuthService {
    * @param code - The authorization code.
    * @param codeVerifier - The PKCE verifier stored with the state.
    * @returns The normalized profile.
-   * @throws `AuthException(OAUTH_FAILED)` when the exchange or the fetch fails.
+   * @throws `AuthException(OAUTH_FAILED)` when the exchange or the fetch fails, or the plugin's
+   *   deadline passes first.
    */
   private async fetchProfile(
     plugin: OAuthProviderPlugin,
@@ -558,8 +560,10 @@ export class OAuthService {
     codeVerifier: string
   ): Promise<OAuthProfile> {
     try {
-      const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
-      return await plugin.fetchProfile(tokenResponse.access_token)
+      return await withDeadline(async () => {
+        const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
+        return await plugin.fetchProfile(tokenResponse.access_token)
+      }, pluginDeadlineMs(plugin))
     } catch (err: unknown) {
       // Nothing the plugin wrote is published. This path holds a LIVE ACCESS TOKEN: the plugin
       // received `code`, `codeVerifier` and `accessToken`, and an HTTP client attaching its
