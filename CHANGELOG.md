@@ -18,6 +18,21 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **`WsJwtGuard` holds a handshake `Authorization` header to the chain a request is held to.** It now
+  verifies through `AuthTokenVerifierService`, so a token with a `jti` that is not a UUID, or with no
+  `tenantId`, is refused at the guard, and two gates that were absent are on by default: the account's
+  **current** status (a blocked or suspended account answers its `ACCOUNT_*` code) and the MFA policy (a
+  token with `mfaEnabled` and no `mfaVerified` answers `MFA_REQUIRED`). A socket stayed open for as long
+  as its client wished, and a token issued before MFA was enabled mid-session opened it without the second
+  factor. `@SkipMfa()` on a gateway handler or class lifts the MFA gate, as it does on HTTP, for the
+  handler that has to work while a factor is being set up; the status gate has no opt-out. The ticket path
+  is unchanged: a ticket is minted from a session that already passed both. The constructor takes
+  `AuthTokenVerifierService` and `Reflector` in place of `JwtService` and `AuthRevocationService`, so a
+  host that subclasses or constructs the guard by hand must update the call; a host that applies it with
+  `@UseGuards(WsJwtGuard)` needs nothing, because the module already exports the verifier.
+
 ## [1.5.3] - 2026-11-13
 
 A patch release for workspace paging and the verifier: the paging cursor is a codec the library now exports and

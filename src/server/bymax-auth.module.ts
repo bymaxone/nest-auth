@@ -741,9 +741,9 @@ export class BymaxAuthModule {
         // exported for the same @UseGuards() reason as the entries around it: the guard is
         // re-instantiated in the consumer's injector, where an unexported dep fails their boot.
         AccountStatusService,
-        // AuthTokenVerifierService is exported for the consumer rather than for a guard: it is
-        // the one call that establishes everything a guarded route establishes, which is what a
-        // long-lived transport needs and cannot assemble from the exported parts alone.
+        // AuthTokenVerifierService is the one call that establishes everything a guarded route
+        // establishes, which is what a long-lived transport needs and cannot assemble from the
+        // exported parts alone. `WsJwtGuard` depends on it, and a host may call it directly.
         AuthTokenVerifierService,
         // Same reason, for the two exported guards whose remaining constructor deps are not
         // covered by the entries above. Exporting the guard class is necessary but not
@@ -752,7 +752,7 @@ export class BymaxAuthModule {
         // UnknownDependenciesException even though the guard itself is exported.
         //
         //   UserStatusGuard -> AccountStatusService
-        //   WsJwtGuard      -> WsTicketService
+        //   WsJwtGuard      -> AuthTokenVerifierService, WsTicketService
         //
         // Only the DIRECT dependency needs exporting. An exported provider arrives already
         // instantiated, so the consumer's injector binds that instance and never re-resolves its

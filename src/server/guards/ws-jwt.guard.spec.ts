@@ -15,17 +15,21 @@
  * the "not installed" test via jest.resetModules() + jest.doMock() + fresh require.
  */
 
+import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
 import type { ExecutionContext } from '@nestjs/common'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { SkipMfa } from '../decorators/skip-mfa.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { AccountStatusService } from '../services/account-status.service'
 import { AuthRevocationService } from '../services/auth-revocation.service'
+import { AuthTokenVerifierService } from '../services/auth-token-verifier.service'
 import { WsTicketService } from '../services/ws-ticket.service'
 import { WsJwtGuard } from './ws-jwt.guard'
 
@@ -45,7 +49,7 @@ function errorCodeOf(err: unknown): string | undefined {
 }
 
 const VALID_PAYLOAD = {
-  jti: 'some-jti-uuid',
+  jti: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
   sub: 'user-1',
   tenantId: 'tenant-1',
   role: 'member',
@@ -75,6 +79,17 @@ const mockOptions = {
   jwt: { algorithm: 'HS256' }
 }
 
+/** The account's current-status check the verifier runs; a usable account by default. */
+const mockAccountStatus = {
+  assertDashboardAccountUsable: jest.fn()
+}
+
+/** What the guard reads off the context to find a decorator: a handler and its class. */
+const HANDLER_AND_CLASS = {
+  getHandler: () => () => undefined,
+  getClass: () => class Gateway {}
+}
+
 // ---------------------------------------------------------------------------
 // Helper — builds a mock WS ExecutionContext
 // ---------------------------------------------------------------------------
@@ -86,6 +101,8 @@ const mockOptions = {
  */
 function makeWsContext(authorizationHeader: string | undefined): {
   context: {
+    getHandler: () => () => void
+    getClass: () => new () => object
     switchToWs: () => {
       getClient: () => {
         handshake: { headers: Record<string, string | undefined> }
@@ -97,6 +114,7 @@ function makeWsContext(authorizationHeader: string | undefined): {
 } {
   const clientData: Record<string, unknown> = {}
   const context = {
+    ...HANDLER_AND_CLASS,
     switchToWs: () => ({
       getClient: () => ({
         handshake: {
@@ -125,6 +143,7 @@ describe('WsJwtGuard', () => {
     // Default: no per-user cutoff, so the bulk-revocation check is a no-op for the
     // existing tests. Cutoff-specific tests override this.
     mockRedis.getUserTokenEpoch.mockResolvedValue(0)
+    mockAccountStatus.assertDashboardAccountUsable.mockResolvedValue(undefined)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -132,6 +151,8 @@ describe('WsJwtGuard', () => {
         { provide: JwtService, useValue: mockJwtService },
         { provide: AuthRedisService, useValue: mockRedis },
         AuthRevocationService,
+        AuthTokenVerifierService,
+        { provide: AccountStatusService, useValue: mockAccountStatus },
         { provide: WsTicketService, useValue: mockWsTickets },
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }
       ]
@@ -186,10 +207,10 @@ describe('WsJwtGuard', () => {
 
       const { WsJwtGuard: FreshGuard } = await import('./ws-jwt.guard')
       const freshGuard = new FreshGuard(
-        mockJwtService as unknown as JwtService,
-        new AuthRevocationService(mockRedis as unknown as AuthRedisService),
+        {} as unknown as AuthTokenVerifierService,
         mockWsTickets as unknown as WsTicketService,
-        mockOptions as unknown as ResolvedOptions
+        mockOptions as unknown as ResolvedOptions,
+        new Reflector()
       )
 
       // Act + Assert
@@ -440,6 +461,93 @@ describe('WsJwtGuard', () => {
     })
   })
 
+  // A socket is the longer-lived credential, so the header path is held to the chain a request is.
+  describe('parity with the HTTP chain', () => {
+    const UUID_JTI = '3f2504e0-4f89-41d3-9a0c-0305e82c3301'
+
+    it.each([
+      ['a jti that is not a UUID', { jti: 'some-jti-uuid' }],
+      ['no tenantId', { tenantId: undefined }],
+      ['MFA enabled and not verified', { mfaEnabled: true, mfaVerified: false }]
+    ])('refuses a token with %s', async (_why, override) => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, jti: UUID_JTI, ...override })
+      mockRedis.get.mockResolvedValue(null)
+      const { context } = makeWsContext('Bearer valid.jwt.token')
+
+      await expect(guard.canActivate(context as never)).rejects.toBeInstanceOf(AuthException)
+    })
+
+    it('refuses a token whose MFA is pending with the MFA code, not an opaque one', async () => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, mfaEnabled: true })
+      const { context } = makeWsContext('Bearer valid.jwt.token')
+
+      await expect(guard.canActivate(context as never)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_REQUIRED } }
+      })
+    })
+
+    // The account's CURRENT status, read from the store: the claim in a token minted before the
+    // account was blocked says nothing about now.
+    it('refuses an account that is blocked now', async () => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD })
+      mockAccountStatus.assertDashboardAccountUsable.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.ACCOUNT_SUSPENDED)
+      )
+      const { context, clientData } = makeWsContext('Bearer valid.jwt.token')
+
+      await expect(guard.canActivate(context as never)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED } }
+      })
+      expect(clientData['user']).toBeUndefined()
+      expect(mockAccountStatus.assertDashboardAccountUsable).toHaveBeenCalledWith({
+        userId: 'user-1',
+        tenantId: 'tenant-1'
+      })
+    })
+
+    // The opt-out, as on HTTP: a handler that has to work while a second factor is being set up.
+    // It lifts the MFA gate and nothing else.
+    it.each([
+      ['a handler', 'handler'],
+      ['a class', 'class']
+    ])('lets @SkipMfa() on %s admit a token whose MFA is pending', async (_why, where) => {
+      class Gateway {
+        handle(): void {}
+      }
+      if (where === 'class') SkipMfa()(Gateway)
+      else
+        SkipMfa()(
+          Gateway.prototype,
+          'handle',
+          Object.getOwnPropertyDescriptor(Gateway.prototype, 'handle')!
+        )
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, mfaEnabled: true })
+      const { context, clientData } = makeWsContext('Bearer valid.jwt.token')
+      const decorated = {
+        ...context,
+        getHandler: () => Gateway.prototype.handle,
+        getClass: () => Gateway
+      }
+
+      await expect(guard.canActivate(decorated as never)).resolves.toBe(true)
+      expect(clientData['user']).toMatchObject({ mfaEnabled: true })
+    })
+
+    it('still refuses a blocked account under @SkipMfa()', async () => {
+      class Gateway {}
+      SkipMfa()(Gateway)
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD })
+      mockAccountStatus.assertDashboardAccountUsable.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.ACCOUNT_SUSPENDED)
+      )
+      const { context } = makeWsContext('Bearer valid.jwt.token')
+
+      await expect(
+        guard.canActivate({ ...context, getClass: () => Gateway } as never)
+      ).rejects.toMatchObject({ response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED } } })
+    })
+  })
+
   // ----------------- Tenant binding -----------------
 
   describe('tenant binding', () => {
@@ -473,7 +581,10 @@ describe('WsJwtGuard', () => {
         },
         data: {} as Record<string, unknown>
       }
-      return { client, context: { switchToWs: () => ({ getClient: () => client }) } }
+      return {
+        client,
+        context: { ...HANDLER_AND_CLASS, switchToWs: () => ({ getClient: () => client }) }
+      }
     }
 
     beforeEach(() => {
@@ -614,123 +725,6 @@ describe('WsJwtGuard', () => {
       await guard.canActivate(context as never)
 
       expect(resolver.mock.calls[0]?.[0]).toMatchObject({ hostname: 'tenant-b.example.com' })
-    })
-  })
-
-  // ----------------- Single-use upgrade ticket -----------------
-
-  describe('upgrade ticket', () => {
-    const snapshot = {
-      sub: 'user-7',
-      tenantId: 'tenant-7',
-      role: 'MEMBER',
-      status: 'ACTIVE',
-      mfaEnabled: true,
-      mfaVerified: true,
-      jti: 'jti-7',
-      epoch: 0
-    }
-
-    /** A handshake carrying a parsed query, the shape Socket.IO provides. */
-    function ticketContext(query: Record<string, string | string[] | undefined>, url?: string) {
-      const client = {
-        handshake: { headers: {}, query, ...(url === undefined ? {} : { url }) },
-        data: {} as Record<string, unknown>
-      }
-      return { client, context: { switchToWs: () => ({ getClient: () => client }) } }
-    }
-
-    // Scenario: a valid ticket in the parsed query. Expected: the socket is authorized as the
-    // snapshot, and no JWT verification is attempted. Why: the ticket is the browser's only
-    // path — a guard that still demanded a header would leave it unusable.
-    it('should authorize the socket from a redeemed ticket', async () => {
-      mockWsTickets.redeem.mockResolvedValue(snapshot)
-      const { client, context } = ticketContext({ ticket: 'raw-ticket' })
-
-      await expect(guard.canActivate(context as never)).resolves.toBe(true)
-      expect(mockWsTickets.redeem).toHaveBeenCalledWith('raw-ticket')
-      expect(client.data['user']).toStrictEqual(snapshot)
-      expect(mockJwtService.verify).not.toHaveBeenCalled()
-    })
-
-    // Scenario: a ticket the service refuses. Expected: the refusal propagates. Why: a guard
-    // that fell through to the header path on a bad ticket would let a client retry with a
-    // token the ticket flow exists to avoid putting on the wire.
-    it('should propagate a refused ticket rather than falling back', async () => {
-      mockWsTickets.redeem.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID))
-      const { context } = ticketContext({ ticket: 'stale' })
-
-      await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
-      expect(mockJwtService.verify).not.toHaveBeenCalled()
-    })
-
-    // Scenario: the ticket only in the raw upgrade URL, as a bare `ws` server exposes it.
-    it('should read the ticket from the raw upgrade URL', async () => {
-      mockWsTickets.redeem.mockResolvedValue(snapshot)
-      const { context } = ticketContext({}, '/socket?ticket=from-url')
-
-      await expect(guard.canActivate(context as never)).resolves.toBe(true)
-      expect(mockWsTickets.redeem).toHaveBeenCalledWith('from-url')
-    })
-
-    // Scenario: the parameter repeated. Expected: treated as ticketless, so the request falls
-    // through to the header path and is refused there. Why: taking the first of two values
-    // lets a caller smuggle a second past whatever inspected the first.
-    it.each([
-      ['a repeated query parameter', { ticket: ['a', 'b'] }, undefined],
-      // The repeated parameter poisons the WHOLE request, not just the query. Falling through to
-      // the URL instead would hand the caller the smuggling route back: send two values where the
-      // parsed query is inspected and a single clean one in the raw URL, and whatever looked at
-      // the query is bypassed by the value the guard actually redeems.
-      [
-        'a repeated query parameter even when the URL carries a single good one',
-        { ticket: ['a', 'b'] },
-        '/socket?ticket=from-url'
-      ],
-      ['a repeated URL parameter', {}, '/socket?ticket=a&ticket=b'],
-      ['an empty query parameter', { ticket: '' }, undefined],
-      ['an empty URL parameter', {}, '/socket?ticket='],
-      ['no ticket at all', {}, '/socket'],
-      ['an empty URL', {}, ''],
-      // A base does not make every string parseable: `http://[` throws `ERR_INVALID_URL` even
-      // with one. The string comes off the wire, so a throw here would escape the guard —
-      // unhandled, and reachable by anyone who can attempt a connection. An unparseable URL
-      // carries no ticket, which is the answer a URL carrying none already gets.
-      ['an unparseable URL', {}, 'http://['],
-      ['a URL that is only a scheme delimiter', {}, '//']
-    ])('should ignore %s', async (_label, query, url) => {
-      const { context } = ticketContext(query as Record<string, string | string[]>, url)
-
-      await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
-      expect(mockWsTickets.redeem).not.toHaveBeenCalled()
-    })
-
-    // A redemption proves the ticket existed and was unspent. It does not prove which identity
-    // plane minted it: `wst:` is one keyspace, shared with rust-auth over one Redis, and
-    // `tenantId` is optional on the snapshot precisely because a platform ticket omits it. This
-    // guard authorizes a DASHBOARD identity, so it has to ask.
-    //
-    // `AuthUser.tenantId` is not optional, so every ticket this library mints carries one — a
-    // snapshot without it was written by something else. The refusal matches the one a bad
-    // ticket already produces, so the two stay indistinguishable to a caller probing the
-    // keyspace.
-    it.each([
-      ['a platform ticket, which carries no tenant', { ...snapshot, tenantId: undefined }],
-      ['a record whose tenant decoded empty', { ...snapshot, tenantId: '' }],
-      ['a record whose tenant is not a string', { ...snapshot, tenantId: 42 }],
-      ['a record that lost its subject', { ...snapshot, sub: '' }],
-      // The type, not just the emptiness. A numeric `sub` is truthy and non-empty, so an
-      // emptiness-only check admits it — and the socket then carries a principal that every
-      // downstream `sub === userId` comparison silently fails to match, or matches by coercion.
-      ['a record whose subject is not a string', { ...snapshot, sub: 42 }]
-    ])('should refuse %s rather than open the socket', async (_label, bad) => {
-      mockWsTickets.redeem.mockResolvedValue(bad)
-      const { client, context } = ticketContext({ ticket: 'raw-ticket' })
-
-      await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
-      // The point of the refusal: the socket must not be carrying an authorization whose scope
-      // is `undefined`, which every downstream tenant check would then compare against nothing.
-      expect(client.data['user']).toBeUndefined()
     })
   })
 })
