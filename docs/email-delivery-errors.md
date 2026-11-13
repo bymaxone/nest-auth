@@ -14,15 +14,29 @@ every one of its own log lines, so you get the whole treatment rather than just 
 
 ```typescript
 import { describeChannelStatus } from '@bymax-one/nest-auth'
+import type { Logger } from '@nestjs/common'
+import type { Resend } from 'resend'
 
-async sendPasswordResetOtp(tenantId: string, email: string, otp: string): Promise<void> {
-  try {
-    await this.resend.emails.send({ /* ... */ })
-  } catch (error: unknown) {
-    // Never `logger.error(msg, error)` here, and never `new Error(msg, { cause: error })`
-    // into something that logs — both carry the quoted body.
-    this.logger.error(`reset OTP delivery failed: ${describeChannelStatus(error)}`)
-    throw error
+export class ResendEmailProvider {
+  constructor(
+    private readonly resend: Resend,
+    private readonly logger: Logger
+  ) {}
+
+  async sendPasswordResetOtp(_tenantId: string, email: string, otp: string): Promise<void> {
+    try {
+      await this.resend.emails.send({
+        from: 'no-reply@example.com',
+        to: email,
+        subject: otp,
+        html: ''
+      })
+    } catch (error: unknown) {
+      // Never `logger.error(msg, error)` here, and never `new Error(msg, { cause: error })`
+      // into something that logs — both carry the quoted body.
+      this.logger.error(`reset OTP delivery failed: ${describeChannelStatus(error)}`)
+      throw error
+    }
   }
 }
 ```

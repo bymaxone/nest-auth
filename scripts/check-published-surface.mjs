@@ -26,6 +26,23 @@ import { fileURLToPath } from 'node:url'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PKG = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const README = readFileSync(join(ROOT, 'README.md'), 'utf8')
+
+/**
+ * The README's reference pages: the `docs/*.md` files it links to that link back to it. They carry
+ * public API claims, so a snippet or a link there is the same promise a reader copies as one in the
+ * README. Found from the README's links rather than listed, so a page added later is covered; a page
+ * that does not link back (the mutation-testing reports) is not the README's reference and is left
+ * out. `test/e2e/readme-contract.e2e-spec.ts` applies the same rule.
+ */
+const REFERENCE_PAGES = [...README.matchAll(/\]\((\.\/docs\/[^)\s#]+\.md)(?:#[^)\s]*)?\)/g)]
+  .map((m) => m[1].replace(/^\.\//, ''))
+  .filter((path, i, all) => all.indexOf(path) === i)
+  .filter((path) => existsSync(join(ROOT, path)))
+  .map((path) => ({ path, text: readFileSync(join(ROOT, path), 'utf8') }))
+  .filter(({ text }) => text.includes('](../README.md'))
+
+/** Every document the gate reads, the README first. */
+const DOCUMENTS = [{ path: 'README.md', text: README }, ...REFERENCE_PAGES]
 const CHANGELOG = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
 
 /** A throwaway consumer built by this script. Nothing outside it is touched, and
@@ -65,10 +82,18 @@ function slug(heading) {
     .replace(/\s/g, '-')
 }
 
-/** README with fenced blocks removed. A `# Using pnpm` inside a ```bash fence is
- * a shell comment, not a heading, and letting it into the anchor set makes a
- * broken anchor pass. */
-const README_PROSE = README.replace(/^```[\s\S]*?^```$/gm, '')
+/** A document with its fenced code blocks removed: a `# Using pnpm` inside a ```bash fence is a
+ * shell comment, not a heading, and an `<a href="${url}">` inside a fence is a string an example
+ * builds at runtime, not a link a reader can click. */
+const proseOf = (text) => text.replace(/^```[\s\S]*?^```$/gm, '')
+
+/** The anchors a document's headings answer to, lowercased as links are compared. */
+const anchorsOf = (text) =>
+  new Set([...proseOf(text).matchAll(/^#{1,6}\s+(.+)$/gm)].map((m) => `#${slug(m[1])}`))
+
+/** A document with its blockquote markers removed. A fence inside a `> ` callout is still code a
+ * reader copies, and a line-anchored fence match does not see it until the marker is gone. */
+const unquoted = (text) => text.replace(/^>[ \t]?/gm, '')
 
 /** Classifies a bare IP address as one a documentation link must not reach, or
  * null when it is ordinary public space. Shared by the literal check and the
@@ -211,9 +236,6 @@ async function fetchChecked(url, init, hops = 0) {
 }
 
 async function checkLinks() {
-  const anchors = new Set(
-    [...README_PROSE.matchAll(/^#{1,6}\s+(.+)$/gm)].map((m) => `#${slug(m[1])}`)
-  )
   // Only follow links a reader clicks. A badge is `[![alt](image)](target)`, and
   // a naive link regex captures the IMAGE — probing shields.io on every run and
   // failing the build when it rate-limits, for a reason that is not ours. The
@@ -222,43 +244,64 @@ async function checkLinks() {
   // Collection starts from the prose for the same reason the anchor set does: an
   // `<a href="${url}">` inside a fence is a string an example builds at runtime,
   // not a link a reader can click, and the checker cannot resolve a placeholder.
-  const clickable = README_PROSE.replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-  const links = new Set([
-    ...[...clickable.matchAll(/\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)].map((m) => m[1]),
-    ...[...clickable.matchAll(/<a\s+href="(https?:\/\/[^"]+)"/g)].map((m) => m[1])
-  ])
-  // Both spellings: the section links are Markdown, but the header navigation is
-  // raw HTML. Collecting only the first left this README's nav bar unchecked.
-  const internal = new Set([
-    ...[...README_PROSE.matchAll(/\[[^\]]*\]\((#[^)\s]+)\)/g)].map((m) => m[1].toLowerCase()),
-    ...[...README_PROSE.matchAll(/<a\s+href="(#[^"]+)"/g)].map((m) => m[1].toLowerCase())
-  ])
+  const links = new Set()
+  let internalCount = 0
+  let relativeCount = 0
 
-  // Relative links are the ones most likely to rot — a file gets renamed and
-  // nothing outside the README notices. They cost no network to verify, and the
-  // section above claims to check every link, so it has to mean every link.
-  const relative = new Set(
-    [
-      ...[...clickable.matchAll(/\[[^\]]*\]\((?!https?:|#|mailto:)([^)\s]+)\)/g)].map((m) => m[1]),
-      ...[...clickable.matchAll(/<a\s+href="(?!https?:|#|mailto:)([^"]+)"/g)].map((m) => m[1])
-    ]
-      .map((target) => target.split('#')[0])
-      .filter(Boolean)
-  )
+  for (const { path, text } of DOCUMENTS) {
+    const prose = proseOf(text)
+    // Anchors and relative links are per document: `#section` means a heading of THIS file,
+    // and `../README.md` is relative to the file that says it.
+    const anchors = anchorsOf(text)
+    const clickable = prose.replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    for (const m of clickable.matchAll(/\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)) links.add(m[1])
+    for (const m of clickable.matchAll(/<a\s+href="(https?:\/\/[^"]+)"/g)) links.add(m[1])
 
-  for (const a of internal) {
-    if (!anchors.has(a)) fail('links', `anchor ${a} matches no heading`)
-  }
-  for (const r of relative) {
-    // Resolve and confine before touching the filesystem. `..` segments would
-    // otherwise walk out of the repository and have the runner stat arbitrary
-    // paths, and a link that escapes the repository is broken documentation
-    // regardless — the file it names is not in the package.
-    const target = resolve(ROOT, r.replace(/^\/+/, ''))
-    if (target !== ROOT && !target.startsWith(ROOT + sep)) {
-      fail('links', `${r} resolves outside the repository`)
-    } else if (!existsSync(target)) {
-      fail('links', `${r} does not exist in the repository`)
+    // Both spellings: the section links are Markdown, but the header navigation is
+    // raw HTML. Collecting only the first left this README's nav bar unchecked.
+    const internal = new Set([
+      ...[...prose.matchAll(/\[[^\]]*\]\((#[^)\s]+)\)/g)].map((m) => m[1].toLowerCase()),
+      ...[...prose.matchAll(/<a\s+href="(#[^"]+)"/g)].map((m) => m[1].toLowerCase())
+    ])
+
+    // Relative links are the ones most likely to rot — a file gets renamed and
+    // nothing outside the documents notices. They cost no network to verify, and the
+    // section above claims to check every link, so it has to mean every link.
+    const relative = new Set(
+      [
+        ...[...clickable.matchAll(/\[[^\]]*\]\((?!https?:|#|mailto:)([^)\s]+)\)/g)].map(
+          (m) => m[1]
+        ),
+        ...[...clickable.matchAll(/<a\s+href="(?!https?:|#|mailto:)([^"]+)"/g)].map((m) => m[1])
+      ].filter((target) => !target.startsWith('#'))
+    )
+
+    internalCount += internal.size
+    relativeCount += relative.size
+    for (const a of internal) {
+      if (!anchors.has(a)) fail('links', `${path}: anchor ${a} matches no heading`)
+    }
+    for (const link of relative) {
+      const [r, fragment] = link.split('#')
+      if (!r) continue
+      // Resolve and confine before touching the filesystem. `..` segments would
+      // otherwise walk out of the repository and have the runner stat arbitrary
+      // paths, and a link that escapes the repository is broken documentation
+      // regardless — the file it names is not in the package.
+      const target = r.startsWith('/')
+        ? resolve(ROOT, r.replace(/^\/+/, ''))
+        : resolve(ROOT, dirname(path), r)
+      if (target !== ROOT && !target.startsWith(ROOT + sep)) {
+        fail('links', `${path}: ${r} resolves outside the repository`)
+      } else if (!existsSync(target)) {
+        fail('links', `${path}: ${r} does not exist in the repository`)
+      } else if (fragment && target.endsWith('.md')) {
+        // A link into another page names a heading of THAT page, so it is checked there.
+        const there = anchorsOf(readFileSync(target, 'utf8'))
+        if (!there.has(`#${fragment.toLowerCase()}`)) {
+          fail('links', `${path}: ${link} names no heading of ${r}`)
+        }
+      }
     }
   }
 
@@ -329,7 +372,8 @@ async function checkLinks() {
   )
   for (const r of results) if (r) fail('links', r)
   console.log(
-    `  links: ${links.size} external, ${internal.size} internal, ${relative.size} relative`
+    `  links: ${links.size} external, ${internalCount} internal, ${relativeCount} relative ` +
+      `across ${DOCUMENTS.length} document(s)`
   )
 }
 
@@ -492,14 +536,16 @@ function scaffoldConsumer() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. The README's own snippets compile against the built package.
+// 3. The documented snippets, in the README and its reference pages, compile against the built package.
 // ---------------------------------------------------------------------------
 
 function checkSnippets() {
   // `tsx` too, and the fence language is kept: a React example has to be written
   // to a .tsx file or it does not parse, and a package with a React subpath
   // documents its surface in exactly those blocks.
-  const blocks = [...README.matchAll(/^```(ts|typescript|tsx)\n([\s\S]*?)^```$/gm)].map((m) => ({
+  const blocks = DOCUMENTS.flatMap(({ text }) => [
+    ...unquoted(text).matchAll(/^```(ts|typescript|tsx)\n([\s\S]*?)^```$/gm)
+  ]).map((m) => ({
     ext: m[1] === 'tsx' ? 'tsx' : 'ts',
     code: m[2]
   }))
@@ -507,7 +553,7 @@ function checkSnippets() {
   // about the public API. Merely naming it in a comment is not a claim.
   const subjects = blocks.filter((b) => new RegExp(`from ['"]${PKG.name}`).test(b.code))
   if (subjects.length === 0) {
-    fail('snippets', 'no README snippet imports the package — the gate would be vacuous')
+    fail('snippets', 'no documented snippet imports the package — the gate would be vacuous')
     return
   }
 
@@ -558,7 +604,7 @@ function checkSnippets() {
     // version, and a gate that compiles against a compiler the project does not
     // use is measuring the wrong thing.
     execFileSync(process.execPath, [TSC, '-p', GATE_DIR], { cwd: ROOT, stdio: 'pipe' })
-    console.log(`  snippets: ${subjects.length} README snippets compile against dist/`)
+    console.log(`  snippets: ${subjects.length} documented snippets compile against dist/`)
   } catch (err) {
     const lines = `${err.stdout ?? ''}${err.stderr ?? ''}`
       .trim()
@@ -574,7 +620,7 @@ function checkSnippets() {
     if (real.length > 0) {
       fail(
         'snippets',
-        `${real.length} README snippet error(s) about the published API:\n${real.map((l) => `      ${l}`).join('\n')}`
+        `${real.length} documented snippet error(s) about the published API:\n${real.map((l) => `      ${l}`).join('\n')}`
       )
     }
     console.log(
