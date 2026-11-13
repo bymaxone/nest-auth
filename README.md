@@ -25,7 +25,7 @@
   <a href="https://github.com/bymaxone/nest-auth">GitHub</a> ·
   <a href="https://github.com/bymaxone/nest-auth/issues">Issues</a> ·
   <a href="#-quick-start">Quick Start</a> ·
-  <a href="#-subpath-exports">API Reference</a> ·
+  <a href="#-api-reference">API Reference</a> ·
   <a href="https://github.com/bymaxone/nest-auth-example">Example App</a>
 </p>
 
@@ -142,7 +142,8 @@ yarn add @bymax-one/nest-auth
 
 ```bash
 # Server subpath (required)
-pnpm add @nestjs/common @nestjs/core @nestjs/jwt @nestjs/throttler @nestjs/websockets ioredis class-validator class-transformer reflect-metadata
+pnpm add @nestjs/common @nestjs/core @nestjs/jwt @nestjs/throttler @nestjs/websockets express ioredis class-validator class-transformer reflect-metadata
+pnpm add -D @types/express
 
 # Also needed with `tokenDelivery: 'cookie'` or `'both'` (see step 4): the library reads `req.cookies`
 pnpm add cookie-parser
@@ -306,70 +307,11 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > Any user-supplied value (display name, tenant name, inviter name) interpolated into HTML email bodies MUST be escaped to prevent stored XSS in notification content. Tokens and OTPs are library-generated and safe, but `inviterName`, `tenantName`, device strings, and any consumer-supplied placeholder are attacker-controllable.
 
 > [!CAUTION]
-> **Never log the error your transport rejects with — it can contain the code you just sent.**
-> A policy, DLP or anti-spam relay answering `550` commonly **quotes the offending message body**,
-> so the error your `send()` throws carries the OTP or token this library rendered into it. Logging
-> that error, or attaching it as a `cause` to one you log, puts a working credential into your log
-> pipeline in clear text until it expires. Measured on a real relay, not hypothesised.
->
-> This is your half: the library cannot reach inside your provider implementation.
-> **`describeChannelStatus` is exported for it** — the same helper the bundled provider uses on
-> every one of its own log lines, so you get the whole treatment rather than just redaction:
->
-> ```typescript
-> import { describeChannelStatus } from '@bymax-one/nest-auth'
->
-> async sendPasswordResetOtp(tenantId: string, email: string, otp: string): Promise<void> {
->   try {
->     await this.resend.emails.send({ /* ... */ })
->   } catch (error: unknown) {
->     // Never `logger.error(msg, error)` here, and never `new Error(msg, { cause: error })`
->     // into something that logs — both carry the quoted body.
->     this.logger.error(`reset OTP delivery failed: ${describeChannelStatus(error)}`)
->     throw error
->   }
-> }
-> ```
->
-> Two functions, not one with a mode: which one you call IS the decision, and there is no
-> permissive default to inherit by forgetting.
->
-> **`describeChannelStatus(error)` wherever the body rendered something you would withhold.** It
-> takes no secrets, and that is the guarantee rather than an omission — nothing the channel wrote
-> is published, so there is nothing to name. Redaction alone does not close this, and neither does
-> a length cap. A relay may quote the body it rejected in transfer encoding rather
-> than verbatim; base64 is the ordinary case and defeats both at once — substring matching finds
-> nothing because the credential's characters are not in the line, and the cap does not help
-> because the encoding runs from the body's first byte, so the code is in the first sentence.
-> Measured: a reset-code body is 96 base64 characters end to end, and the first 200 characters of
-> the line decode straight back to the OTP. Under `describeChannelStatus` NOTHING the channel wrote
-> reaches the line — not the message, not the `name`, not a status parsed off the front. Each of
-> those was tried and each fell: shape validation admits `MTIzNDU2`, the base64 of OTP `123456`;
-> and a status grammar admits `424-242`, an OTP grouped, publishing `424`. What you keep is which
-> message failed. What you lose is the transient-versus-permanent split, which your mail provider's
-> dashboard has and this library does not.
->
-> **`describeError(error, [values])` for errors whose text you have a reason to trust**, where the
-> values you name appear the way you wrote them and redaction reaches them. The bundled provider
-> uses it nowhere — every one of its paths uses the opaque form, including the notices that
-> render nothing secret, because a relay may re-encode whatever it quotes and the recipient address
-> is in the message either way. If you can say the same about your channel, prefer
-> `describeChannelStatus` and keep this one for strings you built yourself.
->
-> Neither reads `stack`, and neither reads the transport's own fields — nodemailer hangs the
-> server's full reply on `response`. Beyond that they differ, and the difference is the point:
-> `describeError` reads `name` and `message`, strips the values you named, caps the length and
-> removes control characters so a relay cannot forge extra records in a line-oriented pipeline.
-> `describeChannelStatus` reads **neither** — the only thing it touches is `cause`, walked to count
-> the links. Both walk that chain and never throw, whatever the transport's error does.
->
-> `redactSecrets(text, [otp])` is exported too, for a string you built yourself and know contains
-> the literal value. It is **not** a substitute for either description on a transport's error: a
-> substring match cannot see through an encoding, which is the whole reason the bundled provider
-> stopped relying on it.
->
-> If you use the bundled `DefaultAuthEmailProvider` with `onDeliveryError: 'rethrow'`, the error it
-> re-throws is the channel's original and is still yours to contain the same way.
+> **Never log the error your transport rejects with.** A relay that answers `550` commonly quotes the
+> message body, so the error `send()` throws can carry the OTP or token the library rendered into it,
+> and logging it (or attaching it as a `cause`) puts a working credential in your logs. Log
+> `describeChannelStatus(error)` instead: it is exported for exactly this and reads nothing the
+> channel wrote. See [Keeping delivery errors out of your logs](./docs/email-delivery-errors.md).
 
 > [!NOTE]
 > The bundled `DefaultAuthEmailProvider` implements every method of `IEmailProvider`, the optional
@@ -813,124 +755,8 @@ export const POST = createLogoutHandler({
 })
 ```
 
----
-
-### WebSocket upgrades
-
-The browser `WebSocket` API cannot set handshake headers, so a browser client cannot send
-`Authorization: Bearer <token>` at the upgrade. The usual workaround puts the access token in the
-query string, where it lands in access logs, browser history and proxy caches — a long-lived
-credential in plaintext. `WsJwtGuard` refuses it.
-
-The supported path is a single-use ticket:
-
-```typescript
-// 1. Mint from an authenticated session (POST, cookies or bearer as usual).
-const { ticket, expiresIn } = await fetch('/auth/ws-ticket', {
-  method: 'POST',
-  credentials: 'include'
-}).then((r) => r.json())
-
-// 2. Open the socket with it. The ticket is consumed by the first redemption.
-const socket = new WebSocket(`wss://api.example.com/socket?ticket=${ticket}`)
-```
-
-The ticket is opaque, 32 bytes of CSPRNG output, and lives at most 30 seconds, ending a second before the access
-token that minted it does at the latest: `expiresIn` in the response is that capped lifetime in seconds, so a client
-schedules its upgrade by it, and a token with no life left mints nothing. Only `sha256(ticket)` is
-ever a Redis key, and the stored value is a verified-identity **snapshot** — no signature, no
-expiry of its own — so a redeemed ticket authorizes a socket and cannot be turned back into a
-session. It carries the `jti` and `epoch` of the access token that minted it, the two keys the
-revocation channels are read by, and redemption is refused when that token has been blacklisted by
-a logout or stamped below the user's current epoch (sign-out-everywhere, password change, MFA
-reset): a ticket does not outlive the session that asked for it. A logout blacklists only
-the access token it was given and does not move the epoch, so a ticket minted from an access token
-that a refresh had already replaced is not refused after that logout, as a bearer token of that
-kind is not; it is refused only after a later epoch bump (a password reset or change, an MFA
-enable, disable or reset, or revoking another session or all of them). Minting requires an authenticated session in good standing that has already
-satisfied MFA, so a ticket never carries more authority than the request that asked for it.
-
-Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;
-both channels are accepted, and a ticket wins when both are present. `WsJwtGuard` checks
-signature, token type and revocation on the Bearer path but not account status or MFA; where the
-socket must also refuse a blocked account or an unfinished second factor, authorize with
-`AuthTokenVerifierService.verifyAccessToken` (see
-[Authorising a long-lived transport](#authorising-a-long-lived-transport--authtokenverifierservice)).
-
-**Tenant binding on the socket.** With `enforceTenantBinding` on, `WsJwtGuard` re-resolves the
-tenant of the upgrade and refuses (`auth.token_invalid`, the same code HTTP answers) a ticket or
-token minted for another tenant, as `JwtAuthGuard` does on a mismatch. An upgrade has no Express request,
-so your `tenantIdResolver` is handed a request-like object with **only** these fields:
-
-| Field      | Value                                                                                                                               |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `headers`  | The handshake headers, names lowercased                                                                                             |
-| `url`      | The upgrade URL, `''` when the transport exposes none                                                                               |
-| `hostname` | The `Host` header with the port cut (a bracketed IPv6 literal keeps its brackets), `''` if absent; see below for `X-Forwarded-Host` |
-
-There is **no** `cookies` (the `Cookie` header is present in `headers`, but nothing parses it the way
-`cookie-parser` does on HTTP) and no `ip` or `ips`. `hostname` is the `Host` as received unless you
-set `isTrustedProxy` (below). The resolver's parameter is typed
-`TenantResolverRequest` (exported), so a resolver that reads one of the absent fields does not
-compile. If a resolver still throws at runtime, or returns anything other than the credential's
-tenant, the connection is **refused**, never bound to the wrong tenant. Resolve from `headers` or
-`hostname` so one resolver
-serves both HTTP and sockets.
-
-**Behind a proxy that rewrites `Host`.** nginx's default `proxy_set_header Host $proxy_host` presents
-the upstream name in `Host` and the public one in `X-Forwarded-Host`. Over HTTP, Express resolves
-`req.hostname` from the forwarded header when its `trust proxy` setting trusts the peer; a socket has
-no Express request, so without more the resolver sees the upstream host and the binding refuses every
-stream. Declare the same trust decision once with `isTrustedProxy`, a function that takes the TCP peer
-address and answers a boolean:
-
-```typescript
-// The module factory runs before the app exists, so it reads the policy per connection.
-// Until main.ts fills it in, no peer is trusted.
-export const proxyPolicy = { trusts: (_peer: string): boolean => false }
-
-BymaxAuthModule.registerAsync({
-  useFactory: () => ({
-    // ...
-    enforceTenantBinding: true,
-    tenantIdResolver: (req) => req.hostname.split('.')[0] ?? '',
-    isTrustedProxy: (peer) => proxyPolicy.trusts(peer)
-  })
-})
-
-// main.ts
-import { proxyPolicy } from './app.module' // wherever the module is configured
-
-const app = await NestFactory.create<NestExpressApplication>(AppModule)
-const expressApp = app.getHttpAdapter().getInstance()
-expressApp.set('trust proxy', 'loopback, 10.0.0.0/8')
-proxyPolicy.trusts = (peer) => expressApp.get('trust proxy fn')(peer, 0)
-```
-
-Read the compiled policy from the **Express instance**, `app.getHttpAdapter().getInstance()`. On a
-Nest application, `app.get()` resolves a provider from the container and does not read an Express
-setting, so `app.get('trust proxy fn')` looks for a provider of that name and fails.
-
-The predicate receives the peer **exactly as the transport reported it**, so an IPv4-mapped form such
-as `::ffff:10.0.0.1` reaches it unchanged; Express's compiled setting understands that form, which
-is why the recipe delegates to it. When it answers `true`, the first element of a single
-`X-Forwarded-Host` is used, with the port cut like `Host`. Unset, which is the default,
-`X-Forwarded-Host` is never read. Every other case falls back to `Host`: no peer address, a header handed
-over as separate values, an empty first element, a predicate that throws or answers anything but
-`true`. (Node joins a header repeated on the wire into one comma-separated string, and its first
-element is used, as in Express.) Those cases can therefore only make the binding stricter, never
-admit a tenant the client chose. The
-peer address comes from `WsJwtGuard` itself (Socket.IO's `handshake.address`); a caller of
-`AuthTokenVerifierService.verifyAccessToken` passes it as `request.remoteAddress`.
-
-Both channels live on the client's `handshake`, and only a **Socket.IO** client has one — with
-`@nestjs/platform-ws` the gateway receives the raw `ws` socket, which carries no `handshake` and
-does not retain the upgrade request. `WsJwtGuard` refuses such a connection with
-`auth.token_invalid` instead of crashing on it, but it cannot authenticate anyone on that
-adapter. And because `AuthException` extends `HttpException`, which Nest's WebSocket layer does
-not recognise, a gateway that applies the guard also needs `WsAuthExceptionFilter` for the
-refusal to reach the client as anything but `Internal server error` — see
-[On a WebSocket, the envelope needs its own filter](#on-a-websocket-the-envelope-needs-its-own-filter).
+> [!NOTE]
+> Authenticating a WebSocket (single-use upgrade tickets, tenant binding on a socket, a proxy that rewrites `Host`) is covered in [WebSocket upgrades](./docs/websocket-upgrades.md).
 
 ---
 
@@ -966,84 +792,60 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > [!IMPORTANT]
 > **`environment` is how the module decides whether this is production, and it defaults to
 > saying yes.** It drives cookie `Secure`, the HTTPS requirement on the OAuth `callbackUrl`, and
-> three redirect validations. It used to be read from `NODE_ENV`, which failed **open** on every
-> near miss — unset, `'staging'`, `'prod'`, or `'production '` with a trailing space each
-> silently took the insecure branch, in all six places at once. Whether a deployment is
-> production is something the deployer knows and the process environment only hints at, so it is
-> passed in. The consequence to plan for: a local or test setup must now say
-> `environment: 'development'` (or `'test'`) explicitly, or it will be held to production rules —
-> an `http://` callback URL is refused, and cookies are marked `Secure` and never sent over
-> plaintext. That failure is loud, which is the point; the old one was silent. Matches
-> `Environment` in rust-auth.
+> redirect validations. A local or test setup must say `environment: 'development'` (or
+> `'test'`) explicitly, or it is held to production rules: an `http://` callback URL is refused and
+> cookies are marked `Secure`. It is an explicit option rather than `NODE_ENV` because a near miss
+> (unset, `'staging'`, `'prod'`) would otherwise silently take the insecure branch.
 
 > [!NOTE]
-> **`password.minLength` defaults to 15, not 8.** The DTOs keep a structural floor of 8 — the
-> lowest NIST SP 800-63B-4 §3.1.1.1 permits under any circumstance — and this is the
-> deployment's policy on top of it. §3.1.1.1 allows 8 only for a password used as part of
-> multi-factor authentication and requires 15 for one used as a single factor; MFA here is
-> opt-in per user, so the default deployment **is** single-factor. Configurable to anything in
-> `8..=128`, validated at startup: below 8 changes no outcome (the DTOs refuse the request
-> first), and above 128 is longer than any password the validation layer accepts. It is checked
-> in the service rather than a decorator because a decorator is evaluated when the class is
-> defined, before any configuration exists — and it answers the same `auth.validation` code and
-> the same `{ field, message }[]` details a length failure already produced, so a client
-> handling short passwords sees no new shape.
+> **`password.minLength` defaults to 15, not 8.** The DTOs keep a structural floor of 8, the lowest
+> NIST SP 800-63B-4 §3.1.1.1 permits under any circumstance, and 15 is the minimum it requires for a
+> password used as a single factor. MFA is opt-in per user, so the default deployment is
+> single-factor. Configurable to anything in `8..=128`, validated at startup. A shorter password
+> answers the same `auth.validation` code and `{ field, message }[]` details as any length failure.
 
 > [!IMPORTANT]
-> **`rateLimit.clientIpSource` is required** whenever rate limiting is enabled — there is no
-> default. The option group is a discriminated union, so TypeScript refuses the omission at
-> compile time; the module also refuses to start without it, because the type binds TypeScript
-> and nothing else. Set `'peer'` when the application is
-> directly exposed: the limit keys on the socket address, read from the connection and never
-> from a forwarding header. Set `'trusted-proxy'` when it runs behind a proxy and `trust proxy`
-> is configured for the real hop count: the limit keys on `req.ip`, the forwarded client
-> address. Neither can be the default, because each is a working limiter in one deployment and
-> no limiter at all in the other — `'peer'` behind a proxy puts every client in **one** bucket,
-> so a single caller can rate-limit your whole user base with no credential, and
-> `'trusted-proxy'` without a proxy lets the caller choose their own key. Both look like a
-> working limiter at runtime. Pass `rateLimit.enabled: false` if the limits are enforced at the
-> edge instead.
+> **`rateLimit.clientIpSource` is required** whenever rate limiting is enabled; there is no default,
+> and the module refuses to start without it. Set `'peer'` when the application is directly
+> exposed: the limit keys on the socket address, never on a forwarding header. Set
+> `'trusted-proxy'` when it runs behind a proxy and `trust proxy` is configured for the real hop
+> count: the limit keys on `req.ip`. Neither can be the default, because each is a working limiter
+> in one deployment and none in the other: `'peer'` behind a proxy puts every client in **one**
+> bucket, and `'trusted-proxy'` without a proxy lets the caller choose their own key. Pass
+> `rateLimit.enabled: false` if the limits are enforced at the edge instead.
 >
-> `'trusted-proxy'` is only as honest as the hops in front of the app. Behind such a proxy each
-> hop appends the address it saw, so the client is the rightmost entry that is not itself a
-> trusted proxy. A hop that forwards the client's own `X-Forwarded-For` unchanged lets the client
-> choose its address, so a client that varies it gets a fresh budget every time; behind such a hop
-> use `'peer'`, or make the hop append or overwrite the header. An entry that is not an address at
-> all is never a key: the limit is charged to the nearest trusted hop instead.
+> `'trusted-proxy'` is only as honest as the hops in front of the app: the client is the rightmost
+> `X-Forwarded-For` entry that is not itself a trusted proxy. A hop that forwards the client's own
+> header unchanged lets the client choose its address; behind such a hop use `'peer'`, or make the
+> hop append or overwrite the header. An entry that is not an address is never a key; the limit is
+> charged to the nearest trusted hop instead.
 
 > [!TIP]
 > **Binding tokens to an issuer and an audience.** `jwt.issuer` and `jwt.audience` are off by
 > default. Set either and its value is stamped on every token this backend mints and **required**
-> on every token it verifies — one carrying a different value, or none at all, is rejected.
-> That matters with HS256, where the verifier can also sign: every service holding the secret to
-> check a token can mint one, so audience binding is what stops a token minted for one service
-> being replayed at another that trusts the same secret.
->
-> Two things to know before switching it on. Both backends of a shared deployment must carry the
-> same pair, or they stop accepting each other's tokens. And enabling it invalidates the access
-> tokens already in flight, since those were minted without the claims — a window of one
-> access-token lifetime, which clients close by refreshing. An empty string reads as unconfigured
-> rather than as "require the empty issuer", so an unset environment variable cannot turn the
-> check on by accident.
+> on every token it verifies. With HS256 every service holding the secret can mint a token, so
+> audience binding is what stops a token minted for one service being replayed at another that
+> trusts the same secret. Both backends of a shared deployment must carry the same pair, and
+> enabling it invalidates access tokens already in flight (one access-token lifetime, closed by a
+> refresh). An empty string reads as unconfigured, so an unset environment variable cannot turn the
+> check on.
 
 > **Rotating the signing secret.** `jwt.previousSecrets` lists secrets retired by a rotation,
-> accepted for verification only. Without it, changing `jwt.secret` signs every user out the
-> moment the new configuration rolls out **and** invalidates every stored recovery-code digest —
-> those are keyed by an HMAC derived from the secret, so users lose the codes they printed and
-> filed. With it, both keep working while tokens issued under the old secret drain, and a
-> rotation becomes a rollout. Remove the entry once the longest-lived token signed under it has
-> expired: every entry is a key that still opens the door. `mfa.encryptionKey` rotates the same
-> way, through its own list — see below.
+> accepted for verification only. Without it, changing `jwt.secret` signs every user out and
+> invalidates every stored recovery-code digest, since those are keyed by an HMAC derived from the
+> secret. With it both keep working while old tokens drain. Remove an entry once the longest-lived
+> token signed under it has expired: every entry is a key that still opens the door.
+> `mfa.encryptionKey` rotates the same way, through its own list, below.
 >
-> **Pin `identifierKey` before you rotate.** Every Redis name that identifies an account — the
-> session index, the token epoch, the MFA keys, the recent-authentication marker, and the OTP and
-> rate-limit identifiers — is an HMAC under a key derived from `jwt.secret` unless you set
-> `identifierKey`, and so are the stored MFA recovery-code digests. Rotate `jwt.secret` alone and
-> all of them are renamed: live sessions lose their index, every token epoch reads zero, so a token
-> that a password reset or a revoke-all had refused is accepted again until it expires, and
-> recovery codes stop verifying unless the old secret is listed in `jwt.previousSecrets`. `identifierKey` is a secret of its own for those names and
-> digests; it is validated like `jwt.secret` and never signs or verifies a token. The value is
-> simply the secret you want them to keep deriving from — there is nothing to compute.
+> **Pin `identifierKey` before you rotate.** Every Redis name that identifies an account (the
+> session index, the token epoch, the MFA keys, the recent-authentication marker, the OTP and
+> rate-limit identifiers) and every stored MFA recovery-code digest is an HMAC under a key derived
+> from `jwt.secret`, unless you set `identifierKey`. Rotate `jwt.secret` alone and all of them are
+> renamed: live sessions lose their index, every token epoch reads zero (so a token that a password
+> reset had refused is accepted again until it expires), and recovery codes stop verifying.
+> `identifierKey` is a secret of its own for those names and digests, validated like `jwt.secret`;
+> it never signs or verifies a token. Its value is simply the secret you want them to keep deriving
+> from.
 >
 > |                 | Routine rotation — keep sessions, epochs and recovery codes                                                                                                | Rotation after a compromise — cut the link                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 > | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1054,101 +856,69 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > | Afterwards      | Drop the old secret from `previousSecrets` once its last token has expired.                                                                                | Users with MFA need new recovery codes: an old code is refused like any wrong code, and sign-in with the authenticator app is unaffected. A signed-in user replaces them with `POST /mfa/recovery-codes` (`POST /platform/mfa/recovery-codes` for an admin), proving a fresh OTP; the library does not regenerate them at the next sign-in or notify anyone, so your application prompts for it. Listing the secret the digests were keyed from (the old `identifierKey` value) in `previousSecrets` would keep the old codes working, and would keep tokens signed with it verifying if it was also a signing secret: that is the trade-off. |
 >
 > Pinning to the old secret leaves the derived Redis names computable by anyone who knows that
-> secret. They are names, not signing material, and using one still needs access to your Redis;
-> if cutting that link matters more than keeping sessions, take the second column. Without
-> `identifierKey` a rotation moves the names as the second column does, whether or not you wanted them to.
+> secret. They are names, not signing material, and using one still needs access to your Redis; if
+> cutting that link matters more than keeping sessions, take the second column.
 
 > [!TIP]
-> **Rotating the MFA encryption key.** `mfa.previousEncryptionKeys` lists AES-256 keys retired by
-> a rotation of `mfa.encryptionKey`. The stored ciphertext carries no key identifier, so without
-> the list a change of key makes every enrolled user's TOTP secret undecryptable at once, with no
-> way back — their authenticator simply stops matching. With it, a stored secret that opened
-> under a retired key is **re-encrypted under the current one** on the next successful challenge,
-> so the rotation drains on its own instead of requiring the retired key to stay configured
-> forever. Each entry is validated at startup exactly like the current key (base64, exactly 32
-> bytes, and never equal to the current key or to another entry), because a malformed one would
-> otherwise surface at a user's first challenge rather than at boot. Drop the entry once your
-> enrolled users have had time to authenticate at least once.
+> **Rotating the MFA encryption key.** `mfa.previousEncryptionKeys` lists AES-256 keys retired by a
+> rotation of `mfa.encryptionKey`. The stored ciphertext carries no key identifier, so without the
+> list a change of key makes every enrolled TOTP secret undecryptable at once. With it, a secret
+> that opened under a retired key is **re-encrypted under the current one** on the next successful
+> challenge, so the rotation drains on its own. Each entry is validated at startup like the current
+> key (base64, exactly 32 bytes, never equal to the current key or another entry). Drop an entry
+> once your enrolled users have authenticated at least once.
 
 > [!WARNING]
-> **Keep your `updateMfa` fast.** Every MFA state change
-> rewrites the account's MFA record through your repository's `updateMfa`, and the library
-> serializes those writes per account with a lock that expires on its own
-> (`MFA_TRANSITION_LOCK_TTL_SECONDS`, 10 seconds) so a process that dies mid-write cannot strand
-> the account. The lock cannot outlast a write that is still running: if your `updateMfa` stalls
-> past that time, a second change takes the lock, reads the record, and writes it, and the stalled
-> write then lands _after_ it and overwrites it. The repository interface offers no
-> compare-and-set for the library to use, so it cannot detect this. Keep `updateMfa` well under the
-> lock's lifetime (a plain single-row update is, but a call that waits on a contended lock or a slow
-> replica may not be). A guard of your own inside `updateMfa` can narrow the window only for a stall
-> that happens after the guard's own read, such as a wait on a row lock inside the `UPDATE`: the
-> library passes `updateMfa` the new values and not the ones it read, so closing the window
-> completely would need those values passed in. The lock is held
-> across the read the transition makes inside it as well as the write, so a slow `findById` counts
-> against the same lifetime.
+> **Keep your `updateMfa` fast.** The library serializes MFA writes per account with a lock that
+> expires on its own (`MFA_TRANSITION_LOCK_TTL_SECONDS`, 10 seconds), so a process that dies
+> mid-write cannot strand the account. The lock cannot outlast a write that is still running: if
+> your `updateMfa` stalls past that time, a second change takes the lock and writes, and the stalled
+> write then lands _after_ it and overwrites it. The repository interface has no compare-and-set, so
+> the library cannot detect this. Keep `updateMfa` well under the lock's lifetime (a plain
+> single-row update is). The lock also covers the read the transition makes inside it, so a slow
+> `findById` counts against the same lifetime.
 
 > [!IMPORTANT]
-> **The parameters that carry a control's strength are bounded at startup.** `mfa.totpWindow`
-> must be `0..=10`: the window counts 30-second steps on _either_ side of now, so `2n + 1`
-> codes are valid at once — three at the default of 1, but 121 at 60, which makes a six-digit
-> code a hundred times easier to guess while the configuration still reads as "MFA enabled".
-> `mfa.recoveryCodeCount` must be `1..=50`, because zero enrols an account with no way back
-> if the authenticator is lost. `password.blockSize` must be at least 8 and
-> `password.parallelization` at least 1: scrypt's memory cost is `128 * N * r`, so a smaller
-> block size divides the hardness that `password.costFactor`'s floor exists to guarantee —
-> invisibly, since the bounded parameter is still intact. `rust-auth` enforces the identical
-> ranges.
+> **The parameters that carry a control's strength are bounded at startup.** `mfa.totpWindow` must
+> be `0..=2`: the window counts 30-second steps on _either_ side of now, so `2n + 1` codes are
+> valid at once (three at the default of 1). `mfa.recoveryCodeCount` must be `1..=50`,
+> because zero enrols an account with no way back if the authenticator is lost.
+> `password.blockSize` must be at least 8 and `password.parallelization` at least 1: scrypt's memory
+> cost is `128 * N * r`, so a smaller block size divides the hardness `password.costFactor`'s floor
+> exists to guarantee.
 
 > [!IMPORTANT]
-> `jwt.accessExpiresIn` must not exceed **30 days**, the window the store keeps a bumped token
-> epoch readable. The epoch is what makes a stateless access token revocable: a password reset
-> advances it and every token stamped below it stops verifying — but only while the bumped value
-> is still there. A longer-lived access token would outlive it, the lookup would fall back to
-> `0`, and a token the reset revoked would verify again. Startup refuses the configuration
-> rather than letting it fail open, and rejects an unreadable time span or a non-positive
-> lifetime on the same pass.
+> `jwt.accessExpiresIn` must not exceed **30 days**, the window the store keeps a bumped token epoch
+> readable. A longer-lived access token would outlive the epoch, the lookup would fall back to `0`,
+> and a token a password reset had revoked would verify again. Startup refuses the configuration
+> rather than failing open, and rejects an unreadable time span or a non-positive lifetime on the
+> same pass.
 
 > [!WARNING]
 > **Do not gate on the access token's `status` claim.** It is **point-in-time, never
-> authoritative**, and which of its three states you get depends on things a client cannot see:
+> authoritative**:
 >
-> | how the token was minted                                                   | `status`                                                                                  |
-> | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-> | login, register, OAuth, MFA challenge                                      | the account's value **at that moment**                                                    |
-> | an ordinary refresh rotation                                               | **empty string** — the session record carries no live status, so there is nothing to copy |
-> | a refresh that re-signs because `role`, `tenantId` or `mfaEnabled` changed | the account's value **at that moment**, read during that request                          |
+> | how the token was minted                                                   | `status`                                                                                 |
+> | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+> | login, register, OAuth, MFA challenge                                      | the account's value **at that moment**                                                   |
+> | an ordinary refresh rotation                                               | **empty string**: the session record carries no live status, so there is nothing to copy |
+> | a refresh that re-signs because `role`, `tenantId` or `mfaEnabled` changed | the account's value **at that moment**, read during that request                         |
 >
-> `rust-auth` stamps the same empty string on its rotation path, deliberately and with a test
-> pinning it, so the middle row is a shared contract rather than a defect in either library.
+> Every populated value is stale the instant the account changes, so a route that reads the claim
+> is wrong in **both** directions: `status !== 'active'` refuses everyone whose session was
+> refreshed ordinarily, and `status === 'suspended'` refuses nobody. Resolve status per request:
+> mount `UserStatusGuard` on the route (on a WebSocket, SSE stream or message consumer, call
+> `AuthTokenVerifierService.verifyAccessToken`, which resolves status through the same cache before
+> it applies the MFA policy), and for anything richer read the account **tenant-scoped**:
+> `findById({ id: request.user.sub, tenantId: request.user.tenantId })`. The tenant argument is
+> required by the port because ids may collide across tenants.
 >
-> Every populated value is stale the instant the account changes, because status can change under
-> an unexpired token and nothing re-stamps it. So a route that reads the claim is wrong in **both**
-> directions: `status !== 'active'` refuses everyone whose session has been refreshed ordinarily,
-> and `status === 'suspended'` refuses nobody, ever. Both fail quietly and hours from the code
-> that caused them — the first looks like a broken login, the second like nothing at all.
->
-> The exceptional re-stamp is the worst of the three for a reader, not the best: it makes the
-> claim _usually_ wrong instead of _reliably_ empty, which is the failure mode that survives
-> testing.
->
-> Status is resolved per request or not at all: mount `UserStatusGuard` on the route (on a
-> WebSocket, SSE stream or message consumer, call `AuthTokenVerifierService.verifyAccessToken`,
-> which resolves status through the same cache before it applies the MFA policy), and for
-> anything richer read the account **tenant-scoped**, the way that guard does —
-> `findById({ id: request.user.sub, tenantId: request.user.tenantId })`. The tenant argument is required by the
-> port and cannot be dropped: ids may collide across tenants, so a lookup by bare id can resolve
-> another tenant's account. That is what the library's own guards do, which
-> is why the claim can be left as it is. `mfaVerified` behaves the same way and for the same
-> reason — it is always `false` after a rotation, so step-up does not survive a refresh and a
-> user re-acquires it through the MFA challenge.
->
-> One consequence worth planning for: the guard reads a status cache with a
-> `userStatusCacheTtlSeconds` window (default **60**), so a suspension takes up to that long to
-> bite on a guarded route, and a reactivation the same to restore. Call
-> `AccountStatusService.invalidate({ userId, tenantId })` after persisting a status change to drop
-> that account's cached status immediately; a request already resolving can still write the old
-> value back, so the window narrows to one repository read rather than to zero (see
-> [Invalidating the account cache](#invalidating-the-account-cache--accountstatusserviceinvalidate)).
+> The guard reads a status cache with a `userStatusCacheTtlSeconds` window (default **60**), so a
+> suspension takes up to that long to bite on a guarded route, and a reactivation the same to
+> restore. Call `AccountStatusService.invalidate({ userId, tenantId })` after persisting a status
+> change to drop that account's cached status at once (a request already resolving can still write
+> the old value back; see
+> [Invalidating the account cache](./docs/server-services.md#invalidating-the-account-cache--accountstatusserviceinvalidate)).
 > `bumpUserTokenEpoch` is the heavier lever: it ends every session the user has. Lower
 > `userStatusCacheTtlSeconds` if a faster answer matters more than the repository reads it costs.
 
@@ -1225,7 +995,7 @@ fails at startup and says which is missing.
 | `header`               | `'x-api-key'`   | Where the key is read from. Never the query string. Lowercased. Never a header the library reads, such as `authorization`, `cookie`, `user-agent`, `origin` or the forwarded-address headers; also avoid one your own `tenantIdResolver` reads. |
 | `prefix`               | `'bak'`         | Literal start of every issued key, for secret scanners. Lowercase letters and digits, 2 to 16, no underscore.                                                                                                                                   |
 | `lastUsedFlushSeconds` | `60`            | How often coalesced `lastUsedAt` values are written, in one batch. 1 to 3600.                                                                                                                                                                   |
-| `auditMode`            | `'best-effort'` | `'required'` awaits the audit hook and **denies** the request if it throws, and startup refuses it when the registered hooks plainly lack `onApiKeyRequest`. See [Audit](#audit).                                                               |
+| `auditMode`            | `'best-effort'` | `'required'` awaits the audit hook and **denies** the request if it throws, and startup refuses it when the registered hooks plainly lack `onApiKeyRequest`. See [Audit](./docs/service-api-keys.md#audit).                                     |
 
 ### Protect a route
 
@@ -1316,136 +1086,18 @@ export class KeysAdminController {
   not rotated (`auth.api_key_not_found`): that would re-issue access nobody holds.
 - `revoke(id)` takes effect on the very next request: the row is read on every request, and
   there is no verification cache.
-- **Who did it.** `issue`, `revoke` and `rotate` emit no hook of their own — they run inside
-  your admin route, which already knows the operator, so attribute them there (log or audit it
-  beside the call). The per-request hook below covers requests _made with_ a key. If you want
-  provenance stored with the key, add your own columns: `IApiKeyRepository.create` receives the
-  row and your implementation can persist whatever else it knows. That is why `issue()` takes
-  no `createdBy`.
 
-### The repository
+Everything else is in [Service API keys: reference](./docs/service-api-keys.md):
 
-You implement `IApiKeyRepository`, as you do for users. The library supplies the `id` and the
-`digest`; the store only persists them.
-
-| Method                   | Contract                                                                                                                                                                                                                                                                                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `findById(id)`           | One primary-key read per request. Return revoked and expired rows too: the library decides validity.                                                                                                                                                                                                                                             |
-| `create(row)`            | Insert `{ id, label, digest, scopes, createdAt, expiresAt }`. Do not make `label` unique.                                                                                                                                                                                                                                                        |
-| `markRevoked(id, at)`    | `false` when unknown. Revoking twice is not an error. A row with `revokedAt` set is revoked at once on every instance, whatever instant it holds: a future date is not a schedule, so schedule with `expiresAt`.                                                                                                                                 |
-| `setExpiry(id, at)`      | `false` when unknown. The scheduling field: a key stops verifying at `expiresAt`. Used by rotation to retire the old key after the overlap.                                                                                                                                                                                                      |
-| `limitExpiry(id, at)`    | **Optional, recommended.** An atomic minimum: lower the expiry to `at`, never raise it (`SET expires_at = LEAST(COALESCE(expires_at, :at), :at)`). `false` when unknown. Rotation uses it when present; without it two rotations of one key can interleave and leave the old key valid past the shortest overlap, so serialize rotation per key. |
-| `touchLastUsed(entries)` | One batch. **Must be monotonic**: `GREATEST(last_used_at, :at)`, never backwards — several instances flush independently.                                                                                                                                                                                                                        |
-| `listByLabel(label)`     | Every key of a label, for your admin screen.                                                                                                                                                                                                                                                                                                     |
-
-### How a key is stored and checked
-
-A key looks like `bak_<keyId>_<secret>`: a literal prefix, the row's UUID (a public handle that
-makes verification an indexed read), and 43 base64url characters carrying 32 random bytes. Only
-`HMAC-SHA-256(pepper, secret)` is stored, as lowercase hex. Labels and scopes are not part of the
-digest, so editing them never invalidates a key. The grammar and the digest are pinned by
-[`conformance/wire-contract.json`](./conformance/wire-contract.json) with a vector, because
-`rust-auth` mints and verifies the same keys.
-
-**Why a fast HMAC rather than a slow password hash.** This is the library's own reasoning, not
-an OWASP rule: the OWASP Password Storage Cheat Sheet's case against fast hashes is about
-passwords, which people choose and which can be guessed. A key's secret is 256 bits from the
-CSPRNG, so the work factor of the hash adds nothing to its resistance, and a per-request scrypt
-would only hand an attacker a cheap way to burn CPU. The pepper is what the cheat sheet calls
-the HMAC key: kept apart from the database, so a leaked table of digests cannot be tested
-offline.
-
-**Every key takes the same steps.** Parse (substituting a dummy when it does not parse), read a
-row (always), compute the digest, compare two 32-byte buffers with `timingSafeEqual` (against a
-dummy digest when there is no row), and only then decide. An unknown, malformed, wrong, revoked
-or expired key all answer `401 auth.api_key_invalid` with the same body; the operator sees the
-real reason in the audit event. A key is valid strictly before its `expiresAt`, and not at all once `revokedAt` is set.
-
-Two things this does _not_ claim. The store round trip costs differently for a present and an
-absent row, and no library can hide that — put a per-address throttle in front (below). And the
-fail-closed branch (a bound route with no scopes) intentionally takes different steps: it
-depends on route configuration, not on the key, so there is nothing for the key to leak.
-
-**Changing the pepper makes every issued key unverifiable.** Digests are not portable across
-peppers, so a new pepper means re-issuing every key. There is no pepper rotation in this
-version.
-
-### Audit
-
-Implement `onApiKeyRequest` on your `IAuthHooks`. It fires once for every guarded request:
-
-```typescript
-import type { ApiKeyAccessEvent, HookContext, IAuthHooks } from '@bymax-one/nest-auth'
-
-export class AuditHooks implements IAuthHooks {
-  async onApiKeyRequest(event: ApiKeyAccessEvent, context: HookContext): Promise<void> {
-    // event.outcome: 'allowed' | 'denied'
-    // event.reason:  null, or missing | malformed | unknown | wrong_secret | revoked | expired
-    //                | scope_insufficient | route_undeclared | store_error
-    // event.label, event.keyId, event.method, event.route (the PATTERN, e.g. /videos/:id),
-    // event.requiredScopes, event.ip
-    await this.audit.write({ ...event, userAgent: context.userAgent })
-  }
-}
-```
-
-Every refused request reaches the hook too, so anonymous traffic can write audit rows: throttle by address before the guard. By default the hook is fired without being awaited and its failure is logged. With `apiKeys.auditMode: 'required'` it is awaited, and **if it throws the request is
-denied** (`500 auth.internal`): use that when the audit row is a record you must have.
-
-### Keep the key out of your logs
-
-The library never logs, throws or emits the presented key, and strips the key header from the
-hook's `sanitizedHeaders`. Your HTTP logger sits outside the library, so redact the header
-there, custom `apiKeys.header` included:
-
-```typescript
-// nest-logger
-LoggerModule.forRoot({ redactPaths: ['req.headers["x-machine-key"]'] })
-```
-
-```typescript
-// plain pino
-const logger = pino({ redact: ['req.headers["x-api-key"]'] })
-```
-
-### Rate limiting
-
-Rate limiting is deliberately not built in. Use `@nestjs/throttler` in two layers: a per-address
-limit in front of everything, which is the only protection for the pre-verification lookup; and
-a per-key limit placed **after** `ApiKeyGuard`, keyed on the verified key id:
-
-```typescript
-import { UseGuards, Get } from '@nestjs/common'
-import { ServiceKey } from '@bymax-one/nest-auth'
-import type { ApiKeyPrincipal } from '@bymax-one/nest-auth'
-import { ThrottlerGuard } from '@nestjs/throttler'
-
-export class KeyThrottlerGuard extends ThrottlerGuard {
-  protected override async getTracker(req: Record<string, unknown>): Promise<string> {
-    const key = req['apiKey'] as ApiKeyPrincipal | undefined
-    return key?.id ?? String(req['ip'])
-  }
-}
-
-export class LimitedController {
-  // @UseGuards sits ABOVE @ServiceKey: decorators run bottom-up and the guards run in that
-  // order, so the key guard verifies first and the tracker sees `request.apiKey`.
-  @UseGuards(KeyThrottlerGuard)
-  @ServiceKey('read')
-  @Get('limited')
-  limited() {}
-}
-```
-
-A request that fails verification never reaches the second guard, so garbage cannot spend a real
-key's budget. This example is exercised end to end in `test/e2e/api-keys.e2e-spec.ts`.
-
-### Last-used tracking, and what it costs
-
-A verified request does a map write, nothing else; every `lastUsedFlushSeconds` the values are
-written to your repository in one batch. With **N instances** a key is written up to N times
-per window instead of once, and a crash loses at most one window of `lastUsedAt`. The field is
-advisory: authorization never reads it.
+- **The repository** you implement (`IApiKeyRepository`): what each method must guarantee.
+- **How a key is stored and checked**: `bak_<keyId>_<secret>`, only `HMAC-SHA-256(pepper, secret)`
+  is stored, every key takes the same steps and every refusal answers `401 auth.api_key_invalid`.
+  Changing the pepper makes every issued key unverifiable.
+- **Audit**: implement `onApiKeyRequest` on your `IAuthHooks`; it fires for every guarded request,
+  refused ones included. With `apiKeys.auditMode: 'required'` a throwing hook denies the request.
+- **Logs and rate limiting**: the library never logs the key, but your HTTP logger sits outside it,
+  so redact the key header there. Rate limiting is deliberately not built in; use
+  `@nestjs/throttler` per address before the guard and per key after it.
 
 ## 🗂️ Workspaces (one identity, many workspaces)
 
@@ -1584,52 +1236,6 @@ start, `GET /oauth/:provider?workspaceInvitation=<token>`: it stores only the to
 state record and answers with `Referrer-Policy: no-referrer`. On your accept page, put the token in
 the URL fragment and set `Referrer-Policy: no-referrer` there.
 
-### Hooks and events
-
-`beforeWorkspaceCreate(user, { name }, context)` can refuse a creation. `onWorkspaceEvent(event,
-context)` receives, after the change has committed, `workspace.created`, `.renamed`,
-`.deletion_scheduled`, `.restored` and `.deleted`; `member.invited`, `invitation.resent`,
-`.revoked` and `.accepted`; `member.role_changed`, `.removed` and `.left`; `ownership.transferred`;
-`workspace.switched`; and `access.denied` (with the `surface`, the public `code` and a host-only
-`reason`). It is best-effort and informational: the repository's persisted audit row is the record.
-
-### Deleting an account
-
-The library never deletes a user: `IUserRepository` has no delete. A host that deletes or anonymises
-a user row must remove that user's memberships first, or the rows stay behind, still count as
-members of their workspaces, and a deleted owner keeps a workspace from ever being seen as
-orphaned. Call `MembershipService.removeAllForUser(tenantId, userId, actorUserId, context)` before
-the delete. `actorUserId` is the account itself, an administrator, or `null` for a job.
-
-It removes every membership of the account, in every membership status and every workspace, with one
-`member.removed` event per removal and the cached access of each dropped, so access ends at the next
-request. Only the repository can find them all (`listForUser` lists active memberships of active
-workspaces only), so it is one call on the membership port, `removeAllForUser`, which you implement
-in one transaction together with the audit rows.
-
-- **It refuses while the account is the only owner of an active or suspended workspace:** `409
-auth.last_owner` with `details.workspaces` (`{ id, name, status }`, at most 100; `{ id }` alone for one the repository found during the write), and nothing is
-  removed. Transfer ownership or schedule the workspace's deletion first.
-- **A workspace pending deletion does not block.** No one can finalize a pending deletion before
-  its grace period ends, so an owner who scheduled one would otherwise be unable to delete their own
-  account for the whole period. Their membership there is removed with the rest, the workspace can no
-  longer be restored (restoring is owner-only), and your finalize job deletes it when the grace period
-  ends.
-- **If a cache bump fails after the commit,** the call throws `MembershipBumpFailedError` with
-  `removed` and `failed`. The removal is already committed, so calling it again removes nothing: drop
-  the access of each entry of `failed` with `WorkspaceAccessService.invalidateMembership`, or wait out
-  `membershipCacheTtlSeconds`.
-
-### Accepting an invitation through OAuth, and MFA
-
-An OAuth flow started with a workspace invitation vets the invitation against the provider's profile
-before your `onOAuthLogin` hook runs, and completes it for the account that results. **When that
-account has a second factor, the library does not complete the invitation:** the callback answers the
-MFA challenge as it does for any OAuth sign-in, the invitation stays pending and unspent, and it is
-not resumed after the challenge. The signed-in caller accepts it with `POST
-workspaces/invitations/accept` and the same token, so a host whose members use MFA should send the
-token again from its accept page after sign-in.
-
 ### Frontend
 
 ```typescript
@@ -1668,14 +1274,14 @@ writes the cookie and the value carries no authority; the layout's reader decide
 an inbound `x-workspace-id` and never sets one. Path values go through `fillRoute` and `pathSegment`
 (`./shared`), which refuse an empty value, `.` and `..` and percent-encode the rest.
 
-### Threat model
+### Hooks, account deletion and the threat model
 
-A workspace id is never trusted from the body, a header or a stored default; the guard resolves it
-from the route and the membership from the repository. Non-members and nonexistent workspaces are
-indistinguishable. A platform token has no implicit bypass. Memberships are cached for
-`membershipCacheTtlSeconds` and read under version counters, so a stale value is never served after a
-change the library made. The host's rate limiting on guarded routes is what bounds a caller probing
-workspace ids.
+`beforeWorkspaceCreate` can refuse a creation and `onWorkspaceEvent` receives every committed change.
+A host that deletes a user must call `MembershipService.removeAllForUser(tenantId, userId,
+actorUserId, context)` first; it refuses with `409 auth.last_owner` while the account is the only
+owner of an active or suspended workspace. A workspace id is never trusted from the body, a header
+or a stored default, and non-members and nonexistent workspaces are indistinguishable. All of it is in
+[Workspaces: reference](./docs/workspaces.md).
 
 ---
 
@@ -1743,14 +1349,6 @@ The `tenantId` is always extracted from the validated JWT — never from the req
 
 Access tokens are short-lived (default 15 minutes) and immediately revocable via a Redis JTI blacklist. Refresh tokens rotate on every use with a configurable grace window to handle concurrent requests. This is the industry-standard hybrid approach used by Auth0, Okta, and SuperTokens — combining short lifetimes for low-latency revocation with rotating refresh tokens for session continuity.
 
-### Password Hashing
-
-Passwords are hashed with **scrypt** via `node:crypto`, which is memory-hard and resistant to GPU-based brute-force attacks. All secret comparisons use `crypto.timingSafeEqual` for constant-time evaluation — [a requirement explicitly documented](https://nodejs.org/api/crypto.html#cryptotimingsafeequala-b) in the Node.js crypto documentation.
-
-### No External Cryptographic Dependencies
-
-All security-critical operations use the OpenSSL-backed `node:crypto` module — no bcrypt, argon2, otpauth, uuid, or nanoid packages. This eliminates the supply chain attack surface for the most sensitive code paths.
-
 ### Security Checklist
 
 When integrating `@bymax-one/nest-auth` in production, verify each of the following:
@@ -1801,9 +1399,6 @@ it is the one guarantee cookie delivery exists for and the one no server-side te
 | Breached Passwords | Optional Have I Been Pwned range check by k-anonymity; only a 5-char SHA-1 prefix leaves the process   |
 | Rate Limiting      | Per-IP fixed-window counters in Redis, keyed by `HMAC(ip)` — enforced by the library, not by the host  |
 | Session Lifetime   | Optional absolute cap on how long one login can be extended by rotation                                |
-
-> [!IMPORTANT]
-> This package uses **zero external cryptographic dependencies**. All operations use Node.js native `node:crypto`, eliminating supply chain attack vectors for critical security code.
 
 ---
 
@@ -1952,16 +1547,13 @@ Three constraints are worth stating because they are not visible from the field 
   length here would leak it as a pre-KDF timing signal, because a request failing validation
   returns before the hash runs.
 
-#### On `@bymax-one/nest-core`, the security posture writes itself
+#### OpenAPI: the security posture writes itself
 
 A deployment that builds its OpenAPI document with `@bymax-one/nest-core` **1.4.0 or later** gets
-this library's operations described automatically — which schemes exist, which operation requires
-which, and which are reachable unauthenticated. Nothing to enable and nothing to import: the
-module registers a contributor, nest-core discovers it while building the document, and the
-fragments are merged.
-
-It has to be derived at your boot rather than shipped as a static file, because the answer
-depends on your configuration:
+this library's operations described automatically: which schemes exist, which operation requires
+which, and which are reachable unauthenticated. Nothing to enable and nothing to import; the module
+registers a contributor and nest-core merges its fragments. The answer depends on your
+configuration, so it is derived at your boot:
 
 | your options                   | what the document says                                                                                                                                                                                                                                                                                                           |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1971,17 +1563,15 @@ depends on your configuration:
 | `controllers.platform: true`   | `bymaxPlatformAccessBearer` — always bearer, in every mode, because platform credentials are read from the header whatever `tokenDelivery` says. The **registration** switch decides, not `platform.enabled`: the module mounts the platform controllers on `controllers.platform` and validates the `platform` config only then |
 | a controller you did not mount | nothing at all: no operation, and no scheme only it would have referenced                                                                                                                                                                                                                                                        |
 
-A scheme the resolved options cannot satisfy is **absent**, never defined-and-unreferenced — a
-document that defines a credential the server will not read tells a generated client to offer it.
+A scheme the resolved options cannot satisfy is **absent**, never defined-and-unreferenced.
 
 The four names — `bymaxAuthAccessCookie`, `bymaxAuthAccessBearer`, `bymaxAuthRefreshCookie`,
 `bymaxPlatformAccessBearer` — are stable identifiers. Renaming one is a break a generated client
 feels, so they will not change; their **definitions** are config-derived.
 
-Import them rather than spelling them. A platform-only deployment guarding its own routes with
-`JwtAuthGuard` has to declare the dashboard access scheme itself — the fragment will not, because
-`schemesFor` gates dashboard schemes on what you mounted — and a hand-written literal in a section
-about literals drifting from configuration is the wrong instruction:
+Import them rather than spelling them: a hand-written literal drifts from your configuration. A
+platform-only deployment guarding its own routes with `JwtAuthGuard` has to declare the dashboard
+access scheme itself, because the fragment only declares what you mounted.
 
 ```typescript
 import { AUTH_SECURITY_SCHEMES } from '@bymax-one/nest-auth'
@@ -1990,518 +1580,24 @@ import { AUTH_SECURITY_SCHEMES } from '@bymax-one/nest-auth'
 const security = [{ [AUTH_SECURITY_SCHEMES.accessCookie]: [] }]
 ```
 
-> **This package does not depend on `@bymax-one/nest-core`** — not as a dependency, a peer, or a
-> devDependency. The contract revision is inlined, the discovery marker is the documented string
-> literal, and a gate fails the build if any file here imports another Bymax library. That keeps
-> your install graph free of a package you may not use, and it moves one check to your side:
->
-> ```typescript
-> // in your suite, where both packages are installed at the versions you run
-> import {
->   BYMAX_OPENAPI_CONTRACT_VERSION,
->   BYMAX_OPENAPI_CONTRIBUTOR_METADATA
-> } from '@bymax-one/nest-core/openapi'
->
-> expect(fragment.contractVersion).toBe(BYMAX_OPENAPI_CONTRACT_VERSION)
-> expect(Reflect.getMetadata(BYMAX_OPENAPI_CONTRIBUTOR_METADATA, contributor.constructor)).toBe(
->   true
-> )
-> ```
->
-> Worth writing once. A revision mismatch fails your document build loudly and names the
-> contributor, but a **marker** mismatch is silent: the provider is simply never discovered and
-> the document renders without the fragments — the same symptom as running nest-core < 1.4.0.
+This package does not depend on `@bymax-one/nest-core`. From nest-core 1.6.1 the request-body
+schemas of every mounted DTO are described too. Which nest-core version contributes what, how to
+remove hand-written `operationSecurity` entries and derive the document-level default with
+`authDocumentSecurity`, and the machine-readable schemas under `conformance/` are in
+[OpenAPI documents and `@bymax-one/nest-core`](./docs/openapi-interop.md).
 
-> **On nest-core older than 1.4.0 the fragments are silently ignored.** There is no contributor
-> lane to discover them, so the document renders exactly as before — no error, no warning, no
-> failed boot. If you add a document and the auth schemes do not appear, check in this order:
-> whether this library is new enough to contribute them at all, and only then your nest-core
-> version. The two states look identical from the document.
+### Server services for operations that are not routes
 
-#### On `@bymax-one/nest-core` 1.6.1 or later, the request bodies are described too
+Services cover what a guard or a route cannot, each documented in
+[Server services](./docs/server-services.md):
 
-The same contributor offers the request-body schema of every DTO that the controllers your
-deployment mounted take (`LoginDto`, `RegisterDto`, `ResetPasswordDto` and the rest), derived from
-their `class-validator` decorators. Without a contribution `@nestjs/swagger` registers each of them as
-`{"type":"object","properties":{}}`, because this package is built without its CLI plugin, and a
-client generated from the document types every request body as `{}`.
-
-> **Request schemas appear with `@bymax-one/nest-core` ≥ 1.6.1; older versions ignore the
-> contribution without a signal.** Through 1.6.0 an empty placeholder counts as a declaration, so
-> the schema offered here is dropped and the document renders exactly as before: no error, no
-> warning, and no `discarded` field on what `applyBymaxOpenApi` returns. From 1.6.1 the
-> placeholder is filled from the contribution. A schema of the same name that carries properties
-> of its own is a declaration and wins, and `applyBymaxOpenApi` reports the contribution that
-> lost in `discarded`. Components are keyed by the DTO's class name, so a DTO of your own that
-> shares a name with one of this library's (a `LoginDto`, say) and is itself an empty placeholder
-> is filled with this library's schema: name your own classes differently.
-
-Two limits, so a missing field is not mistaken for a bug. The OAuth endpoints take their input as
-query parameters, which the builder describes as operation parameters rather than as a component,
-so no schema is offered for those two DTOs. And what a decorator cannot express (which proof
-`ResetPasswordDto` accepts for the configured `passwordReset.method`, the deployment's
-`password.minLength`) is not in the schema and is not described elsewhere in the served document.
-
-**If you already wrote these by hand, delete them** — not because they are wrong. They are what
-makes your document correct today; the deletion is what hands the job to the library, and it is
-needed precisely because they were doing it. Precedence, read from nest-core's
-`augmentOperation` rather than summarised: the generated operation's own `security` outranks
-everything, then your `openapi.operationSecurity` override, then this library's fragment, then
-nest-core's policy. So a stale scheme name or an override for an auth route keeps winning and the
-contributed one never lands — the document goes on describing whatever you wrote when you wrote
-it, including cookie names you have since changed.
-
-> **Delete the entries for THESE routes. Keep your document-level `security`.** They are usually
-> written in the same options block, and taking the block out is the failure this warning exists
-> for — reported by a consumer who ran the comparison below and found their document **more wrong
-> after adopting than before**. The mechanism is in `augmentOperation`: an operation with no
-> requirement of its own, no override and no fragment falls through to `ownRouteSecurity`, which
-> answers `undefined` for anything that is not a route nest-core answers for itself — the health
-> probes, and from **nest-core 1.5.3** an unprotected metrics endpoint (through 1.5.2 metrics was
-> not among them). So **your** guarded routes carry no requirement and inherit the document
-> default. Remove that default and every one of those routes reads as needing no credential.
->
-> **Keep the condition attached, because it decides how much of your API is affected.** This
-> reaches the routes that state nothing of their own — no `@ApiSecurity`-style decorator feeding
-> the scanned operation, no entry in nest-core's `operationSecurity`, and not a route nest-core
-> answers for itself. Anything carrying its own requirement outranks the document default and is
-> untouched, which is exactly why the fix works at all. If your backend annotates every guarded
-> route individually, this note does not apply to you; the reason it bit two consumers is that
-> annotating each route is the thing a document-level default exists to avoid.
->
-> **nest-core's own routes are the exception that still moves.** It emits an explicit `security: []`
-> for the health probes — and, from 1.5.3, for a metrics endpoint left unprotected — but only when
-> the **served document actually carries a non-empty top-level `security`**, whether that came from
-> `openapi.security` or was already on the generated document handed to nest-core.
-> Remove the default and the `[]` goes with it. Write the default as an explicit empty list and
-> nothing is being overridden, so the member stays absent either way.
->
-> (Through 1.5.2 that condition read `openapi.security.length > 0` alone, which answered `false`
-> for a document that carried its own default without one being configured — so those routes
-> inherited a credential nest-core does not check. If you build the document yourself rather than
-> handing the default to `openapi.security`, that is your shape, and 1.5.3 is the fix.)
->
-> **On nest-core below 1.5.0, nothing reports this.** No error, no unmatched key, no failing
-> build — the document simply stops asking for credentials on the routes the library never knew
-> about, which are the ones your backend owns. **nest-core 1.5.0 warns**, on exactly this shape:
-> a document with no top-level `security` where some other operation does state a requirement, so
-> the bare ones are bare against a described posture rather than in a document that describes
-> none. It names the operations and never throws. That makes the failure visible, not impossible —
-> a warning in a build log is still something a person has to read.
->
-> Keep the default, and **derive it rather than writing a literal**. Since 1.4.4 the derivation
-> ships, so the common case is one call rather than a rule you apply by hand:
->
-> ```ts
-> import { authDocumentSecurity } from '@bymax-one/nest-auth'
->
-> BymaxCoreModule.forRoot({
->   openapi: {
->     // `tokenDelivery` here is the SAME value you pass to BymaxAuthModule.forRoot — read it from
->     // one place. A default derived from a second copy drifts exactly like a literal does.
->     security: authDocumentSecurity({ guard: 'dashboard', tokenDelivery })
->   }
-> })
-> ```
->
-> It answers the delivery axis of both questions below — the scheme name for your guard family,
-> and the two-entry alternation under `'both'` that a hand-written default usually collapses into
-> a single AND entry. **It does not know what you mounted**, which is the third row of the table
-> in question 2 and the one case you still have to answer yourself. Read on for that, and for why
-> the recipe takes two questions rather than one:
->
-> **1. Which guard protects your own routes?** That decides the credential family, and
-> `tokenDelivery` does not enter into it for one of them.
->
-> - `JwtAuthGuard` (the dashboard family) → an access scheme, chosen by delivery. Go to question 2.
-> - `JwtPlatformGuard` → **`bymaxPlatformAccessBearer`, in every mode**. `extractPlatformAccessToken`
->   reads the `Authorization` header whatever `tokenDelivery` says, and `schemesFor` declares that
->   scheme with no delivery condition on it. A platform-guarded route wants it under `cookie`
->   delivery exactly as much as under `bearer`.
-> - **Both, on different routes** → the default cannot express this, though not because it is
->   limited to one entry. A document `security` array may hold both requirements — but the entries
->   are **alternatives**, and the whole array applies to every operation that inherits it. Listing
->   both therefore documents each credential as valid for _either_ family, which says your platform
->   routes accept a member token. That is not a missing detail; it is a false statement about who
->   can call what. Give the minority family per-operation `security` (via your own decorator or
->   nest-core's `operationSecurity`) and let the default cover the majority.
->
-> **2. For the dashboard family — which schemes does this deployment actually declare?** Delivery
-> decides, and so does what you mounted. Take a default written as `[{ bymaxAuthAccessCookie: [] }]`:
->
-> | deployment                             | this contributor declares         | that literal default                                        |
-> | -------------------------------------- | --------------------------------- | ----------------------------------------------------------- |
-> | dashboard mounted, `cookie`            | the cookie scheme only            | correct                                                     |
-> | dashboard mounted, `both`              | the cookie **and** bearer schemes | resolves, but describes only one of the two channels        |
-> | dashboard mounted, `bearer`            | no cookie scheme at all           | names an undeclared scheme — `assertSchemesDeclared` throws |
-> | **no dashboard surface, any delivery** | **neither dashboard scheme**      | names an undeclared scheme — throws, `cookie` included      |
->
-> That last row is the one a delivery-only recipe gets wrong, and **"no dashboard surface" is
-> wider than it first sounds.** `schemesFor` gates both dashboard schemes on one of `auth`,
-> `passwordReset`, `mfa`, `sessions`, `invitations` or `emailChange` being registered. `oauth` is
-> **not** in that list — its operations are public and reference no credential — so an OAuth-only
-> deployment contributes operations and zero schemes, exactly like a platform-only one. Any
-> deployment with no dashboard controller is in this row, and `cookie` delivery, which the recipe
-> would call the safe case, throws just as hard as `bearer`.
->
-> **And that row needs a remedy, not just a warning, because these deployments are legitimate.**
-> `JwtAuthGuard` is registered and exported unconditionally — it is not gated on any controller
-> flag — so mounting no dashboard controller does **not** stop you from guarding your own routes
-> with a dashboard access token. Both shapes are real: the platform surface plus your own routes
-> on the member credential; or the OAuth surface alone, where sign-in happens through a provider
-> and your app issues member tokens itself. In each case the guard is available and the scheme
-> describing it is not. Deriving correctly there lands you on "the scheme I need does not exist",
-> which is an accurate answer and not a usable
-> one.
->
-> **Declare it yourself, in your own `openapi.securitySchemes`.** This is the one case where
-> "delete your hand-written `securitySchemes`" has an exception, and the exception exists because
-> the contributor deliberately declares only what its own operations reference — defining a
-> dashboard scheme on a deployment with no dashboard operation would put an unreferenced
-> credential in every such document, which is the opposite error and the reason for the gate.
->
-> **Which scheme you declare is still a function of delivery** — the exception is to the deletion
-> rule, not to the derivation rule, and writing one fixed definition here reintroduces the very
-> literal this section is about:
->
-> - `cookie` → the `apiKey`-in-cookie definition, carrying the `cookies.accessTokenName` you
->   configured. The cookie name is yours to choose, so this is the one that must match what the
->   server actually reads.
-> - `bearer` → the HTTP bearer definition. There is no cookie name to carry.
-> - `both` → **both of them**, or your document is incomplete in exactly the quiet way described
->   above.
->
-> One note on doing any of it: **`AUTH_SECURITY_SCHEMES` is exported from the package entry**, so
-> import the names rather than writing `bymaxAuthAccessCookie` and `bymaxAuthAccessBearer` as
-> string literals. The compiler then checks the PROPERTY you reach for, so a typo is a build
-> error rather than a document declaring a scheme nothing defines — and if a scheme's identifier
-> is ever renamed, your document carries the new one instead of a literal that has quietly gone
-> stale. Renaming the value is not itself a build error, since `AUTH_SECURITY_SCHEMES.accessCookie`
-> stays valid and only its string changes; that is precisely why importing beats copying.
->
-> **The wrong outcomes are not one failure, and the difference is the point.** Where the scheme
-> does not exist, nest-core's `assertSchemesDeclared` **throws** and the document never builds —
-> loud, immediate, impossible to ship. Under `both` the scheme does exist, so nothing throws; the
-> default is merely **incomplete**, telling a reader that your own routes take a cookie when they
-> equally accept a bearer token. That one is quiet, and it is the same class of quiet as the bug
-> this whole note is about. A literal written against a bearer-only deployment inverts the table
-> and fails under `cookie` for the same reasons.
->
-> So the advice that fixes a silently wrong document can introduce a loud broken one **or a second
-> quiet one**, depending on where you land. Derive from the same inputs the contributor reads —
-> the guard your routes use, your delivery mode, and the controllers you registered — and the
-> answer is right everywhere at once, instead of correct in one configuration and checked forever.
->
-> The default is what covers your routes, and it cannot disturb this library's: a per-operation
-> requirement outranks a document-level one, and every operation the contributor describes carries
-> its own.
->
-> **What an empty `{}` alternative says, and where this library uses it as an approximation.**
-> In OpenAPI it means one thing: authentication is **optional** for that operation — a caller
-> presenting none of the named schemes is valid. Tooling reads it as anonymous access and infers
-> nothing about a request body from it.
->
-> On `logout` that is exactly right, in **every** delivery mode including `cookie`: the operation
-> really does answer a caller who presents nothing, which is why a user whose access token
-> expired can still sign out. How many alternatives you see depends on the mode, since each one
-> is a combination of the credentials that mode actually has:
->
-> | operation         | `cookie` | `bearer` | `both` |
-> | ----------------- | -------- | -------- | ------ |
-> | `logout`          | 4        | 2        | 6      |
-> | `password/change` | 2        | 1        | 4      |
->
-> On `refresh` under `tokenDelivery: 'both'` it is an **approximation, and a permissive one**.
-> That operation refuses a caller with no credential at all; the token may simply arrive in the
-> request body, which `security` has no vocabulary for. The empty entry is what lets the document
-> describe the body-only caller, and the cost is that it also tells tooling anonymous access is
-> acceptable when it is not.
->
-> The `requestBody` beside it **documents the body channel; it does not carry the requirement**.
-> Under `'both'` it is `required: false` and its schema does not list `refreshToken` as required,
-> because either channel satisfies the server and a body that omits the token is valid when the
-> cookie carries it. So the document as a whole permits a request with neither, and the server
-> refuses that request. **OpenAPI cannot express "one of these two channels" across a security
-> requirement and a request body**, and this is the shape of that limitation rather than an
-> oversight. Under `'bearer'`, where the cookie does not exist, the body becomes required at both
-> levels and the document is exact.
->
-> Written out because two earlier versions of this note were wrong in opposite directions: one
-> called `{}` "a credential this member cannot model", which is the intent rather than the
-> notation; the other claimed the `requestBody` carried the requirement, which it does not.
->
-> **Verify with a diff, not by reasoning.** Render the document with the contributor active and
-> again with your entries in place, and compare only the operations you mount. The consumer who
-> did this found their own three differences were improvements — a configured cookie name over
-> the exported default, `logout` gaining the access-only and refresh-only alternatives their map
-> called unsatisfiable — and one regression that no status-code probe could have surfaced,
-> because the routes it broke still answered correctly at runtime.
->
-> **And there is one shape no warning will catch for you, however new your nest-core.** If you
-> remove _every_ requirement at once — no library describing anything, no decorator, no override,
-> no document default — what remains is indistinguishable from the document of an API that is
-> public on purpose. Both are a set of operations that ask for nothing. **No general-purpose tool** can separate the two from the rendered document alone
-> without also shouting at every genuinely public API, which is how a warning earns the right to
-> be ignored. This is why nest-core's warning requires that _some_ operation still state a
-> requirement: the gap is deliberate, not an omission, and no version closes it.
->
-> **But it is a limit on document-only checks, not on you** — and the distinction matters, because
-> the better answer is the one a general-purpose tool cannot supply. **You** know your API is not
-> public, which is exactly the intent no renderer can recover, so write it down as an assertion in
-> your own suite: that the built document carries a top-level `security`, or that every route
-> behind your auth guard renders with some requirement. That is a standing check, it runs on every
-> commit, and it does not depend on anyone remembering to compare. Prefer it to the diff.
->
-> Render the document twice and compare when you are **changing** this — adopting the contributor,
-> moving delivery mode, adding a surface — because a diff shows you what moved without your having
-> to predict it in advance. Then turn what you learned into the assertion, so the next change is
-> caught rather than inspected.
-
-**That chain is about `security` alone, and the other members run the opposite rule** — worth
-stating because generalising either one produces a wrong belief about the other. There is no
-configuration channel for a `description`, a `summary` or a tag: `mergeFragment` merges the
-scanned operation **over** the fragment, so a contributed member lands unless the handler itself
-declared that member, and the handler is this library's. Concretely, the `description` on
-`logout` cannot be shadowed by anything in your options — only by an `@ApiOperation` on a handler
-you do not own. Nothing to delete for that half; the deletion above is entirely about `security`.
-
-> **Your own document test will not catch this.** A consumer seat measured it on their own
-> repository: ten `operationSecurity` entries, all for this library's routes, and a suite
-> asserting the operation-to-posture map with `toEqual`. On adoption, every contributed fragment
-> loses to those entries, the old scheme names survive — and the suite stays **green**, because
-> it is asserting the old answer that is still being served. A test that pins your document
-> confirms the staleness rather than finding it. The deletion is the step; nothing downstream
-> will remind you.
-
-Do it as one change: delete the literals, update whatever pins your document to the four-name
-vocabulary, rebuild it, and regenerate any typed client — the operation ids do not move, but the
-scheme names and the per-operation requirements do.
-
-#### Machine-readable schemas
-
-The same contracts are published as data in
-[`conformance/openapi-request-schemas.json`](./conformance/openapi-request-schemas.json) —
-OpenAPI 3.0 schemas for all 22 DTOs, generated from the decorators themselves and regenerated by
-`pnpm gen:openapi-schemas`. Alongside it,
-[`openapi-request-descriptions.json`](./conformance/openapi-request-descriptions.json) carries the
-facts no keyword expresses: the twelve e-mail fields that are **trimmed and lowercased before
-validation**, each entry shipping the probe that verifies its own sentence.
-
-A third file,
-[`openapi-declared-structures.json`](./conformance/openapi-declared-structures.json), carries the
-contracts the generated header names and no decorator can express — as **structure**, not prose:
-
-| Declared                                                                                                         | As                                                                  |
-| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `reset-password` takes exactly one of `token`, `otp`, `verifiedToken`                                            | `oneOf`                                                             |
-| An OAuth callback with neither `code` nor `error` is the **handler's** refusal, not the pipe's                   | probes the pipe accepts and the handler answers `auth.oauth_failed` |
-| The 8-character floor is structural, not your policy                                                             | probes showing the pipe accepting what the deployment refuses       |
-| `forgot-password`, `resend-otp`, `resend-verification`, `verify-email` answer identically for an unknown address | probes asserting the two responses are **equal**                    |
-
-Three rules keep it honest. Only `required`, `oneOf` and `anyOf` may appear — `allOf` and `not`
-are valid OpenAPI 3.0 and are **refused at load**, because a keyword nothing evaluates publishes
-a claim nothing checks. Every entry carries probes, and both suites run them: the unit suite
-evaluates each body against its own structure and reads what the pipe answers, the e2e suite
-answers the rest with a real application. An entry whose two layers disagree — the pipe accepting
-what the handler or the service then refuses — is split across the two suites on purpose, because
-neither can see the pair. And presence means _present and not `null`_ — this
-server's rule rather than JSON Schema's, because `@IsOptional()` treats `null` as absent, so a
-body sending `null` and one omitting the key are the same request.
-
-A structure is a **necessary** condition, never a sufficient one, and `reset-password` shows why:
-which of the three proofs is eligible depends on `passwordReset.method`, and an ineligible proof
-is refused with the same code a structural violation gets. That narrowing is declared with its
-own probes and is deliberately not something a client can generate against.
-
-Another file,
-[`openapi-operation-security.json`](./conformance/openapi-operation-security.json), maps every
-operation this library mounts (`METHOD /path`, relative to your route prefix) to the **kind** of
-credential it requires, with the meaning of each kind alongside. It is generated from the table the
-OpenAPI fragment is built from and the controllers' route metadata, regenerated by
-`pnpm gen:openapi-security`, and a spec fails when it differs. How a kind becomes a security
-requirement depends on your `tokenDelivery` and is not in the file.
-
-These are development artifacts — they are not in the published tarball, and nothing reads
-them at runtime yet. They exist so the schemas are a function of the decorators rather than a
-second description maintained by hand.
-
-### Administrative operations — methods, deliberately not routes
-
-Two support-desk operations ship as **methods with no HTTP route**. Every route above is scoped
-to the caller's own account, and both of these act on somebody else's — so exposing them would
-mean inventing an authorization model ("who is an admin?") that this library does not have and
-your application already does. Call them from your own admin surface, where the caller is
-already authorized.
-
-| Method                                             | Answers                                             |
-| -------------------------------------------------- | --------------------------------------------------- |
-| `AuthService.unlockAccount(email, tenant)`         | "I am locked out and I need in now"                 |
-| `MfaService.resetMfa(userId, context?, tenantId?)` | "I lost my authenticator **and** my recovery codes" |
-
-**`unlockAccount`** clears the brute-force lockout. It grants no access: the password, the
-status gate, the verification gate and MFA all still apply — it restores the ability to _try_.
-It exists because the counter is keyed by an HMAC under the library's own `hmacKey`, which no
-consumer can derive, so until it existed a lockout could only be waited out. It is also the
-lever an attacker pulls to deny service to one specific account, which makes undoing it part of
-the defence. Idempotent.
-
-**`resetMfa`** removes a second factor without one. Every self-service exit needs the factor
-itself — `disable` wants a valid TOTP code, the recovery codes want the codes — so a user who
-has lost both is locked out permanently by the control meant to protect them (ASVS v5 §6.1.1
-asks for this path for exactly that reason). It invalidates every session and bumps the token
-epoch, so access tokens carrying `mfaVerified: true` die with the factor; it **notifies the
-account holder** through the same channel a self-service disable uses; and it logs at `warn`
-under its own prefix. The notification is not optional: an administrative reset the owner
-cannot see is an account-takeover path, and it is what makes the event detectable and
-disputable. `tenantId` is required when `context` is `'dashboard'` (the default) and ignored for
-`'platform'`. Idempotent; throws for an id that resolves to nobody, so a typo cannot read as
-"done".
-
-> `MfaService` is only registered when `controllers.mfa` or `controllers.platform` is on —
-> otherwise add it to `extraProviders` to inject it.
-
-### Checking revocation outside a guard — `AuthRevocationService`
-
-The three JWT guards do not decide revocation themselves; they delegate to one service, and that
-service is exported so **you can consult the same two channels from a transport the guards never
-see** — a WebSocket, an SSE stream, a message consumer. Without it there is no way to ask the
-question at all outside an HTTP request: a connection whose user logs out keeps its stream until
-the access token expires, while that user's HTTP calls are refused at once.
-
-```ts
-import { AuthRevocationService } from '@bymax-one/nest-auth'
-
-const revoked = await this.revocation.isAccessTokenRevoked(
-  { jti: payload.jti, sub: payload.sub, epoch: payload.epoch, tenantId: payload.tenantId },
-  'dashboard'
-)
-```
-
-It is registered and exported unconditionally, so it is injectable wherever `BymaxAuthModule` is
-imported — no `extraProviders` entry and no controller flag to turn on.
-
-> [!IMPORTANT]
-> **On the dashboard plane you must forward `tenantId` from the verified token.** It is optional
-> on `RevocableTokenPayload` because the platform plane genuinely has none — its admins are
-> cross-tenant — so **`tsc` will not catch the omission**, and a dashboard payload without it is
-> treated as **revoked** without a store read, with a `warn` naming the missing field.
->
-> Failing closed is deliberate. The epoch key derives from the tenant-scoped subject, so an absent
-> tenant names a keyspace belonging to no tenant, where nothing has ever been bumped: the read
-> would answer `0`, `stamped < 0` is false for every token, and a bulk-revoked token would be
-> reported **valid**. A revocation check that fails open on malformed input is worse than no check.
->
-> **Recognise the symptom, because it does not look like an auth bug.** The refusal answers the
-> same `true` a genuinely revoked token answers, throws nothing and emits no event — so a
-> transport that gates a stream on it simply registers nothing. Measured on a consumer's realtime
-> bridge: the SSE handshake answered `200` and the connection registry stayed at `count: 0`.
-> Declaring the tenant **required** on your own port type is the stronger fix, because it turns the
-> next occurrence into a compile error rather than a log line.
-
-**What this method is and is not.** It answers two channels at the moment you call it: the
-per-token blacklist and the user's token epoch. It reads no `exp`, holds no subscription, emits no
-event, and knows nothing about account status, roles, tenant binding or the identity plane. It is
-therefore **one check among the many a guarded HTTP route performs**, and not a substitute for
-them.
-
-Using it to authorise a long-lived transport takes more than this method. Use
-`AuthTokenVerifierService` for that, below.
-
-### Authorising a long-lived transport — `AuthTokenVerifierService`
-
-A guarded HTTP route establishes seven things before a handler runs. A WebSocket, an SSE stream or
-a message consumer has no guard in front of it, so it must establish the same seven itself — and on
-a cadence, because a connection outlives the request that opened it. Assembling that from the
-exported parts is where it goes wrong: a bridge that calls `isAccessTokenRevoked` alone has checked
-a signature and a blacklist while checking neither the token's **type**, nor its **`exp`**, nor
-whether the **account** behind it still exists.
-
-`AuthTokenVerifierService.verifyAccessToken` is all seven in one call:
-
-```ts
-import { AuthTokenVerifierService } from '@bymax-one/nest-auth'
-
-const { plane, payload } = await this.verifier.verifyAccessToken(token, { plane: 'dashboard' })
-registry.add(socket, { plane, userId: payload.sub, tenantId: payload.tenantId })
-```
-
-| It checks                                                                              | So that                                                                                                                                                                                                                                                                                                                                                                 |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Signature, pinned algorithm, `issuer`/`audience`, and any secret retired by a rotation | `alg: none` and a token carrying no binding claim are refused, and a rotation drains instead of disconnecting everyone                                                                                                                                                                                                                                                  |
-| `exp`                                                                                  | A revocation check answers "was this withdrawn", never "is this still current" — `isAccessTokenRevoked` reads no `exp` at all                                                                                                                                                                                                                                           |
-| `jti` a UUID v4; `sub` and (dashboard) `tenantId` bounded non-empty strings            | A malformed claim cannot build a Redis key nobody intended                                                                                                                                                                                                                                                                                                              |
-| Token `type`, against the plane **you** name                                           | An `mfa_challenge` token — signed with the same secret, half a credential — cannot read as a session                                                                                                                                                                                                                                                                    |
-| Both revocation channels                                                               | A logout's `jti` blacklist AND the epoch a password reset or revoke-all advances                                                                                                                                                                                                                                                                                        |
-| Account status (`checkStatus`, default on)                                             | Runs before the MFA decision. A suspension landing between two reconnects is seen, and so is an unverified email on the dashboard plane (`auth.email_not_verified`) — the token's own `status` claim is a snapshot taken at issuance                                                                                                                                    |
-| MFA policy (`requireMfa`, default on)                                                  | Runs after the account-status check, so a blocked account is refused with its own code even while a challenge is pending. A refresh mints `mfaEnabled: true, mfaVerified: false`; the type alone does not imply the second factor was completed. A token whose `mfaEnabled` claim is missing or not a boolean is refused `auth.token_invalid` before the account lookup |
-
-On the dashboard plane that last row reads a cache, and **its freshness is bounded by
-`userStatusCacheTtlSeconds` (default 60 s), not by how often you call**: a stream re-verifying every
-five seconds still serves a banned account until the entry expires. What shortens that is
-[`AccountStatusService.invalidate`](#invalidating-the-account-cache--accountstatusserviceinvalidate)
-— call it wherever you change a status, and read the caveat under that method: a request already
-resolving when you invalidate can write the old value back, so the window narrows to one repository
-read rather than to zero. Failing that, lower the TTL. The platform plane is uncached and genuinely current, at one repository read per call.
-
-The plane is **yours to declare**, never inferred from the token. Inferring it would make the plane
-attacker-chosen: a platform token would open a dashboard stream by saying it is one. Passing a
-value that is neither throws a `TypeError` rather than refusing quietly — the fall-through would
-otherwise be the cross-tenant platform arm.
-
-Every refusal is an `AuthException`, and each mirrors the code the equivalent guard already
-answers. Most answer `auth.token_invalid` so a caller cannot tell "valid but revoked" from "never
-valid"; `auth.mfa_required`, the `ACCOUNT_*` codes, `auth.email_not_verified` (dashboard plane) and — on
-the platform plane only — `auth.platform_auth_required` name themselves, because a legitimate
-client acts on each differently. The account codes are answered whether or not an MFA challenge
-is pending; `auth.mfa_required` is answered only for a usable account.
-
-> [!IMPORTANT]
-> **Three things it still does not do.** Route **authorization** is yours — this answers who the
-> caller is, never what they may do, so your `@Roles()` equivalent belongs on every message a
-> stream carries, not only on the handshake. **Tenant binding** (`enforceTenantBinding`) needs the
-> request its resolver reads, so pass the handshake as `request` to `verifyAccessToken` (the same
-> `headers`/`url`/`hostname` request as on `WsJwtGuard`, fail-closed on a resolver that cannot answer);
-> without it the binding is not applied to that call, and one warning per service instance says so. And it holds **no
-> subscription**: it answers at the moment you call it, so a stream that calls it once at connect
-> is authorized for the lifetime of the token rather than of the session. Call it again on a
-> cadence and treat a rejection as a disconnect.
-
-`AccountStatusService` is exported alongside it for the narrower case: you already hold a verified
-payload and want to re-ask only the one question whose answer changes while a stream is open.
-
-### Invalidating the account cache — `AccountStatusService.invalidate`
-
-Account status is read through a Redis cache with a `userStatusCacheTtlSeconds` lifetime (60 s by
-default), so a change made **outside** this library is not seen until the entry expires. Suspend a
-user through your own admin surface and they keep reaching protected routes for up to a minute.
-
-```ts
-import { AccountStatusService } from '@bymax-one/nest-auth'
-
-await this.accountStatus.invalidate({ userId, tenantId })
-```
-
-Call it whenever you change an account's status yourself. It drops both cached facts — the status
-and the email-verified flag — and is idempotent, so you need not know whether the account was
-cached. The tenant is required: a repository id is unique only within one, so a bare id would name
-another tenant's entry. An empty or blank `userId` or `tenantId` throws a `TypeError` rather than
-deleting nothing and resolving.
-
-**Persist the status change first, then invalidate.** The read path fills the cache in two steps —
-resolve from the repository, then write — so a request that resolved the old value just before your
-update lands will write it back afterwards, with a full TTL, however promptly you call this. The
-window is one repository read wide rather than one TTL, which is the improvement; it is not zero.
-Writing first means any request whose read starts after your write already sees the new value, and
-only genuinely concurrent ones can lose the race. Closing it entirely would need the fill to be
-conditional on nothing having invalidated in between, which this service does not do today.
-
-> [!IMPORTANT]
-> **Do not delete the cache keys yourself**, even though the `<namespace>:*` prefix is yours to
-> read. Their format is this library's to change — it already changed once, in v1.3.2, which added
-> the tenant segment — and a delete that stops matching **fails silently**: no error, no event, just
-> a status change that takes a full TTL to land. That is a security control degrading quietly. This
-> method is the supported way to ask, and it is the only thing that stays correct when the format
-> moves.
+- **Administrative operations** — support-desk operations that ship as methods with no HTTP route.
+- **`AuthRevocationService`** — check revocation outside a guard.
+- **`AuthTokenVerifierService`** — authorise a long-lived transport (a WebSocket, an SSE stream, a
+  message consumer): signature, token type, both revocation channels, account status and the MFA
+  policy, with the same refusals the guards give.
+- **`AccountStatusService.invalidate`** — drop an account's cached status after you persist a
+  status change.
 
 ### Server Guards
 
@@ -2545,7 +1641,7 @@ thrown one.
 > **Do not register it on a `@bymax-one/nest-core` application.** The two filters are mutually
 > exclusive and this one wins: `useGlobalFilters` binds ahead of an `APP_FILTER` provider, and
 > `@Catch()` with no argument catches everything, so nest-core's envelope filter never runs.
-> Measured — the same request answers `{ error: { code, message, details } }` with this filter
+> The same request answers `{ error: { code, message, details } }` with this filter
 > registered and the flat `{ statusCode, code, message, timestamp, path, details }` without it.
 > Registering both therefore **loses** `statusCode`, `timestamp`, `path` and the correlation id,
 > which is the opposite of what adding a filter looks like it should do.
@@ -2560,65 +1656,18 @@ thrown one.
 
 #### On a WebSocket, the envelope needs its own filter
 
-`WsJwtGuard` throws the same `AuthException` every HTTP guard throws — and `AuthException`
-extends `HttpException`, which Nest's **WebSocket** exception layer does not recognise. It
-understands `WsException` and nothing else, so without a filter a refused socket client receives:
-
-```json
-{ "status": "error", "message": "Internal server error" }
-```
-
-The refusal itself is correct: the handler never runs. What is lost is everything the client
-could act on. A reconnect policy cannot tell a dead credential from a crashed handler, and the
-sensible default for an unknown error is to retry — so an expired token becomes a reconnect loop
-against an endpoint that will refuse it forever.
-
-> **Socket.IO only, measured.** `WsJwtGuard` reads both credential channels from the client's
-> `handshake`, and only a Socket.IO client has one: with `@nestjs/platform-ws` the gateway
-> receives the raw `ws` socket, which carries no `handshake` — and `ws` does not retain the
-> upgrade request either, so there is nothing to read. Such a connection is **refused** with
-> `auth.token_invalid` rather than crashing the socket, and the filter below delivers that
-> refusal, but the guard cannot authenticate anyone on that adapter. Supporting it needs the
-> gateway to stash the upgrade request in `handleConnection`, which is a contract this library
-> does not have today.
-
-Register the filter on any gateway that applies the guard:
-
-```typescript
-@UseFilters(new WsAuthExceptionFilter())
-@UseGuards(WsJwtGuard)
-@WebSocketGateway()
-export class FeedGateway {}
-```
-
-```json
-{ "status": "error", "error": { "code": "auth.token_invalid", "message": "...", "details": null } }
-```
-
-`status: 'error'` is kept — it is the field Nest itself sets and the one socket.io clients
-already branch on — and the envelope is added beside it, so a client handling both shapes needs
-no second listener. The `AuthException` travels whole, so a `details` payload survives.
-
-The filter is scoped to `AuthException` on purpose. An argument-less `@Catch()` would claim
-every exception the gateway raises, so a `WsException` an unrelated handler throws — a domain
-error with its own contract — would be rewritten as an `auth.*` code, and following this README
-would silently break errors a consumer already ships. Everything that is not this library's
-refusal keeps travelling through Nest's own exception layer, untouched.
-
-Both transports are answered. A Socket.IO client is dispatched to with `emit`; a native `ws`
-client is written to with `send`, in the `{event, data}` envelope `@nestjs/platform-ws` uses for
-every other message — emitting on one of those succeeds, dispatches a local event and sends the
-peer nothing, which is the failure this ordering exists to prevent. Both paths are driven over a
-real handshake in `test/e2e/ws-guard.e2e-spec.ts`.
+`AuthException` extends `HttpException`, which Nest's WebSocket layer does not recognise, so a
+gateway that applies `WsJwtGuard` also needs `WsAuthExceptionFilter`; without it the refusal reaches
+the client as `Internal server error`. See
+[On a WebSocket, the envelope needs its own filter](./docs/websocket-upgrades.md#on-a-websocket-the-envelope-needs-its-own-filter).
 
 #### The HTTP status belongs to the code
 
 Every code answers exactly one status, and the status is derived from the code rather than
 chosen at the throw site — `AuthException` takes no status argument. A client can switch on
-`error.code` and the status line together and get the same answer from either implementation:
-`@bymax-one/nest-auth` and `rust-auth` read the same table, pinned in
+`error.code` and the status line together. The table is pinned in
 [`conformance/wire-contract.json`](./conformance/wire-contract.json) under
-`errorCatalog.statuses` and asserted by both suites against that file.
+`errorCatalog.statuses` and asserted against that file.
 
 | Status | Codes                                                                                                                                                                                                                                                                                                 |
 | -----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2638,19 +1687,11 @@ it:
 import { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from '@bymax-one/nest-auth/shared'
 ```
 
-Shown as an import rather than described, on purpose: this package's README contract test reads
-import statements, so a symbol that stops being exported from the subpath named here fails the
-suite. It scans prose too — for scheme names it invented and for claims that something is not
-public — but it cannot check a sentence that merely _says_ where a symbol ships from. That claim
-went one release stated and unenforced.
-
 > **Assert your fixtures against the catalogue, not against string literals.** `AUTH_ERROR_CODES`
 > is exported from `@bymax-one/nest-auth/shared` so a suite can check that every code it branches
-> on is one the server can actually produce. A frontend seat found three invented codes this way —
-> `auth.unauthorized` among them, which does not exist — and a branch on a code the server never
-> sends is silent forever: it simply never runs, and the handler it replaces is the one that
-> matters. The check is one test over your own source, and it is worth having standing rather than
-> as a one-off audit.
+> on is one the server can actually produce. A branch on a code the server never sends (for example
+> `auth.unauthorized`, which does not exist) is silent forever: it simply never runs, and the
+> handler it replaces is the one that matters. The check is one test over your own source.
 >
 > **Five codes are internal-only and never reach a client**: `auth.token_expired`,
 > `auth.token_revoked`, `auth.token_missing` (all collapsed onto `auth.token_invalid`) and
@@ -2709,6 +1750,18 @@ went one release stated and unenforced.
 | `createSilentRefreshHandler()` | GET handler  | iframe-based token refresh      |
 | `createClientRefreshHandler()` | POST handler | Client-triggered token refresh  |
 | `createLogoutHandler()`        | POST handler | Clear tokens and session        |
+
+---
+
+## 🚫 What This Library Does NOT Do
+
+- **It does not store your users.** You implement `IUserRepository` (and the workspace, membership and API-key repositories if you enable those); the library never imports an ORM or a database driver.
+- **It does not send email.** You implement `IEmailProvider`; the bundled `DefaultAuthEmailProvider` renders messages and hands them to a transport you supply.
+- **It does not delete users.** `IUserRepository` has no delete; a host that deletes one removes its workspace memberships first.
+- **It does not mount an admin API for service keys or platform operations.** `ApiKeyService` and the support-desk operations are methods; the routes and who may call them are yours.
+- **It does not rate-limit per service key.** Per-address limits on the auth routes are built in; limits on your own routes and on a verified key are yours (`@nestjs/throttler`).
+- **It does not authenticate a WebSocket on `@nestjs/platform-ws`.** `WsJwtGuard` reads a Socket.IO `handshake`, which the raw `ws` adapter does not provide.
+- **It does not depend on Passport, a crypto package, or `@bymax-one/nest-core`.** Cryptography is `node:crypto`; guards verify the JWT through `@nestjs/jwt`.
 
 ---
 

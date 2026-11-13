@@ -388,15 +388,7 @@ const NOT_EXECUTED: [marker: string, reason: string][] = [
   ['// proxy.ts — Next.js 16 Edge middleware', 'Section 7: the Next.js half is not run here'],
   ['// app/api/auth/silent-refresh/route.ts', 'Section 7: the Next.js half is not run here'],
   ['// app/api/auth/client-refresh/route.ts', 'Section 7: the Next.js half is not run here'],
-  ['// app/api/auth/logout/route.ts', 'Section 7: the Next.js half is not run here'],
-  [
-    '// 1. Mint from an authenticated session',
-    'the WebSocket upgrade example is browser code that needs a socket server'
-  ],
-  [
-    '// The module factory runs before the app exists',
-    'the WebSocket upgrade example is a configuration excerpt for a gateway this suite does not mount'
-  ]
+  ['// app/api/auth/logout/route.ts', 'Section 7: the Next.js half is not run here']
 ]
 
 /**
