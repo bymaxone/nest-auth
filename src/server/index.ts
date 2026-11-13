@@ -500,9 +500,9 @@ export {
   WORKSPACE_CURSOR_MAX_LENGTH,
   WORKSPACE_CURSOR_PART_MAX_LENGTH,
   WORKSPACE_OWNER_ROLE_MAX_LENGTH,
-  WORKSPACE_OWNER_ROLE_PATTERN,
   decodeWorkspaceCursor,
   encodeWorkspaceCursor,
+  isWorkspaceOwnerRole,
   readWorkspacePosition,
   workspacePositionOf,
   workspaceQueryKey

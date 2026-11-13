@@ -13,10 +13,7 @@ import type {
   WorkspaceOptions,
   WorkspaceRoleList
 } from '../interfaces/workspace-options.interface'
-import {
-  WORKSPACE_OWNER_ROLE_MAX_LENGTH,
-  WORKSPACE_OWNER_ROLE_PATTERN
-} from '../utils/workspace-cursor'
+import { WORKSPACE_OWNER_ROLE_MAX_LENGTH, isWorkspaceOwnerRole } from '../utils/workspace-cursor'
 
 /** Longest an invitation may stay valid: 30 days, in seconds. */
 export const WORKSPACE_INVITATION_MAX_TTL_SECONDS = 2_592_000
@@ -100,11 +97,11 @@ function validateWorkspaceRoles(roles: WorkspaceOptions['roles'] | undefined): v
   if (typeof ownerRole !== 'string' || !names.has(ownerRole)) {
     throw new Error(`[BymaxAuthModule] workspaces.roles.ownerRole must be a role of the hierarchy.`)
   }
-  if (!WORKSPACE_OWNER_ROLE_PATTERN.test(ownerRole)) {
+  if (!isWorkspaceOwnerRole(ownerRole)) {
     throw new Error(
       `[BymaxAuthModule] workspaces.roles.ownerRole '${ownerRole}' must be 1 to ` +
-        `${WORKSPACE_OWNER_ROLE_MAX_LENGTH} characters, start with a letter and use only letters, ` +
-        `digits and _ . : - (the role is part of a paging cursor).`
+        `${WORKSPACE_OWNER_ROLE_MAX_LENGTH} code points of well-formed text with no control ` +
+        'character (the role is part of a paging cursor).'
     )
   }
   for (const [role, included] of Object.entries(hierarchy)) {

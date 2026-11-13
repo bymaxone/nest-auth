@@ -22,7 +22,7 @@ import { REFRESH_TOKEN_MAX_LENGTH } from './services/token-delivery.service'
 import {
   WORKSPACE_CURSOR_MAX_LENGTH,
   WORKSPACE_OWNER_ROLE_MAX_LENGTH,
-  WORKSPACE_OWNER_ROLE_PATTERN
+  isWorkspaceOwnerRole
 } from './utils/workspace-cursor'
 
 const contract = JSON.parse(
@@ -32,7 +32,11 @@ const contract = JSON.parse(
     opaqueToken: { min: number; max: number }
     pageLimit: { min: number; max: number; default: number; cursor: { min: number; max: number } }
   }
-  workspaceOwnerRole: { pattern: string; maxLength: number; accepts: string[]; refuses: string[] }
+  workspaceOwnerRole: {
+    maxLength: number
+    accepts: string[]
+    refuses: { case: string; value: string; unpairedSurrogateCodeUnits?: number[] }[]
+  }
   refreshTokenInput: { body: string; cookie: string }
   passwordResetOrder: { steps: string[]; reason: string }
 }
@@ -139,14 +143,17 @@ describe('the workspace cursor bounds the contract states', () => {
   })
 
   // Scenario: the owner-role rule the contract states and the one startup enforces. Expected: the
-  // same pattern and length, and every vector the contract lists reads the way it says.
+  // same length bound, every accepted vector accepted and every refused vector refused. A refused
+  // vector with unpaired surrogates is built from its code units, so the file holds none.
   it('holds the owner-role rule to the contract and its vectors', () => {
     const rule = contract.workspaceOwnerRole
+    const refused = rule.refuses.map(
+      (entry) => entry.value + String.fromCharCode(...(entry.unpairedSurrogateCodeUnits ?? []))
+    )
 
-    expect(rule.pattern).toBe(WORKSPACE_OWNER_ROLE_PATTERN.source)
     expect(rule.maxLength).toBe(WORKSPACE_OWNER_ROLE_MAX_LENGTH)
-    expect(rule.accepts.every((role) => WORKSPACE_OWNER_ROLE_PATTERN.test(role))).toBe(true)
-    expect(rule.refuses.some((role) => WORKSPACE_OWNER_ROLE_PATTERN.test(role))).toBe(false)
+    expect(rule.accepts.every((role) => isWorkspaceOwnerRole(role))).toBe(true)
+    expect(refused.some((role) => isWorkspaceOwnerRole(role))).toBe(false)
   })
 })
 

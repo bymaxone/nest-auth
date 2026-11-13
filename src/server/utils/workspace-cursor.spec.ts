@@ -10,9 +10,9 @@ import {
   WORKSPACE_CURSOR_MAX_LENGTH,
   WORKSPACE_CURSOR_PART_MAX_LENGTH,
   WORKSPACE_OWNER_ROLE_MAX_LENGTH,
-  WORKSPACE_OWNER_ROLE_PATTERN,
   decodeWorkspaceCursor,
   encodeWorkspaceCursor,
+  isWorkspaceOwnerRole,
   readWorkspacePosition,
   workspacePositionOf,
   workspaceQueryKey
@@ -415,30 +415,60 @@ describe('the longest cursor a valid listing can issue', () => {
   const lone = '\uD800'.repeat(128)
   const letters = 'a'.repeat(WORKSPACE_OWNER_ROLE_MAX_LENGTH)
 
+  const costliest = ['"', '😀'].map((character) =>
+    character.repeat(WORKSPACE_OWNER_ROLE_MAX_LENGTH)
+  )
+
   // Scenario: tenant and member of 128 quote characters (each escaped twice) and a row id of 128
-  // emoji (four bytes each), for each listing a repository serves. Expected: the length the bound
-  // was sized for, under the maximum, and the cursor reads back.
+  // emoji (four bytes each), for each listing a repository serves, with owner roles up to the
+  // longest the bound allows and made of the costliest characters, then with control characters or
+  // unpaired surrogates in tenant and member. Expected: the length the bound was sized for, under
+  // the maximum, and the cursor reads back.
   it.each([
     ['listForUser', ['listForUser', quotes, quotes], emoji, 2126],
     ['listForWorkspace', ['listForWorkspace', quotes, quotes], emoji, 2132],
     ['listSoleOwned with the role owner', ['listSoleOwned', quotes, quotes, 'owner'], emoji, 2142],
     [
-      'listSoleOwned with the longest role',
+      'listSoleOwned with a role of letters',
       ['listSoleOwned', quotes, quotes, letters],
       emoji,
       2178
     ],
     [
-      'listSoleOwned with control characters in tenant and member',
-      ['listSoleOwned', controls, controls, letters],
+      'listSoleOwned with the role proprietário',
+      ['listSoleOwned', quotes, quotes, 'proprietário'],
       emoji,
-      3202
+      2152
+    ],
+    [
+      'listSoleOwned with a role of 32 é',
+      ['listSoleOwned', quotes, quotes, 'é'.repeat(32)],
+      emoji,
+      2220
+    ],
+    [
+      'listSoleOwned with a role of 32 quotes',
+      ['listSoleOwned', quotes, quotes, costliest[0] ?? ''],
+      emoji,
+      2306
+    ],
+    [
+      'listSoleOwned with a role of 32 emoji',
+      ['listSoleOwned', quotes, quotes, costliest[1] ?? ''],
+      emoji,
+      2306
+    ],
+    [
+      'listSoleOwned with control characters in tenant and member',
+      ['listSoleOwned', controls, controls, costliest[0] ?? ''],
+      emoji,
+      3330
     ],
     [
       'listSoleOwned with unpaired surrogates in tenant and member',
-      ['listSoleOwned', lone, lone, letters],
+      ['listSoleOwned', lone, lone, costliest[0] ?? ''],
       emoji,
-      3202
+      3330
     ]
   ])('%s is %i characters and fits', (_label, parts, id, length) => {
     const query = workspaceQueryKey(...parts)
@@ -448,16 +478,6 @@ describe('the longest cursor a valid listing can issue', () => {
     expect(cursor).toHaveLength(length)
     expect(cursor.length).toBeLessThanOrEqual(WORKSPACE_CURSOR_MAX_LENGTH)
     expect(decodeWorkspaceCursor(cursor, query)).toBe(position)
-  })
-
-  // Scenario: a role of 32 quote characters, the costliest a role could be. Expected: the cursor is
-  // longer than any a permitted role gives, and the owner-role pattern is what refuses it.
-  it('would be longer with a role of quotes, which the pattern refuses', () => {
-    const role = '"'.repeat(WORKSPACE_OWNER_ROLE_MAX_LENGTH)
-    const query = workspaceQueryKey('listSoleOwned', quotes, quotes, role)
-
-    expect(encodeWorkspaceCursor(query, workspacePositionOf(AT, emoji))).toHaveLength(2306)
-    expect(WORKSPACE_OWNER_ROLE_PATTERN.test(role)).toBe(false)
   })
 
   // Scenario: an id of 300 emoji, past the id bound. Expected: it overflows, which is why an adapter
@@ -470,22 +490,40 @@ describe('the longest cursor a valid listing can issue', () => {
     )
   })
 
-  // Scenario: names an owner role may and may not take. Expected: realistic names pass; anything
-  // that escapes in JSON, a space, a leading digit, non-ASCII and more than 32 characters do not.
-  it.each(['owner', 'admin', 'member', 'viewer', 'billing_admin', 'ADMIN', 'org:admin', letters])(
-    'accepts the owner role %s',
-    (role) => {
-      expect(WORKSPACE_OWNER_ROLE_PATTERN.test(role)).toBe(true)
-    }
-  )
+  // Scenario: names an owner role may take. Expected: each is accepted, whatever its characters: a
+  // space, accents, an emoji, and exactly the longest length counted in code points.
+  it.each([
+    'owner',
+    'admin',
+    'billing_admin',
+    'ADMIN',
+    'org:admin',
+    'team lead',
+    'proprietário',
+    'dono_é',
+    '😀',
+    costliest[0] ?? '',
+    costliest[1] ?? '',
+    letters
+  ])('accepts the owner role %s', (role) => {
+    expect(isWorkspaceOwnerRole(role)).toBe(true)
+  })
 
-  // Scenario: names an owner role may not take. Expected: each is refused.
-  it.each(['', 'team lead', `${letters}a`, '1owner', 'a"b', 'a\\b', 'é', 'a\nb', '-owner'])(
-    'refuses the owner role %j',
-    (role) => {
-      expect(WORKSPACE_OWNER_ROLE_PATTERN.test(role)).toBe(false)
-    }
-  )
+  // Scenario: names an owner role may not take: empty, over the length in code points, a control
+  // character of either range or DEL, and an unpaired surrogate. Expected: each is refused.
+  it.each([
+    '',
+    `${letters}a`,
+    '😀'.repeat(WORKSPACE_OWNER_ROLE_MAX_LENGTH + 1),
+    '\u0000',
+    'a\nb',
+    'a\u007fb',
+    'a\u0085b',
+    '\uD800',
+    'a\uDC00'
+  ])('refuses the owner role %j', (role) => {
+    expect(isWorkspaceOwnerRole(role)).toBe(false)
+  })
 })
 
 describe('fuzz', () => {
