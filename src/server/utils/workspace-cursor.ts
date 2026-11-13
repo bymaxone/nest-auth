@@ -15,8 +15,10 @@
  *
  * Sized for the longest cursor a listing can issue from the ids the library admits: a tenant, a
  * member and a row id of up to {@link WORKSPACE_CURSOR_PART_MAX_LENGTH} code points each, whatever
- * well-formed characters they hold (JSON escapes a quote twice, which is the costliest), and an
- * owner role of up to {@link WORKSPACE_OWNER_ROLE_MAX_LENGTH} characters: 2178 characters at most.
+ * non-control characters they hold (JSON escapes a quote twice, which is the costliest of them), and
+ * an owner role of up to {@link WORKSPACE_OWNER_ROLE_MAX_LENGTH} characters: 2178 characters at most.
+ * A key part a host builds from control characters or unpaired surrogates, which JSON escapes at six
+ * or seven bytes each, still fits: the longest such cursor is 3543 characters.
  * The HTTP page query and the decoder both use this value, so a cursor the library issues is
  * always one it accepts.
  */
@@ -44,8 +46,19 @@ const INSTANT_LENGTH = 24
 /** A high surrogate without its low one, or a low one without its high: no UTF-8 form. */
 const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 
-/** Reads bytes as UTF-8 and refuses any that are not. */
-const STRICT_UTF8 = new TextDecoder('utf-8', { fatal: true })
+/**
+ * Whether a text holds a C0 or C1 control character or DEL, none of which may appear in an id.
+ *
+ * @param text - The text.
+ * @returns `true` for the first such character found.
+ */
+function hasControlCharacter(text: string): boolean {
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true
+  }
+  return false
+}
 
 /**
  * The key of a value scoped by tenant and further parts, and the key a cursor is bound to.
@@ -91,23 +104,45 @@ export function readWorkspacePosition(position: string): { at: Date; id: string 
 }
 
 /**
- * Describes what in a cursor's parts is too long, so the error that refuses it says where to look.
+ * Describes what in a cursor's key is too long, so the error that refuses it says where to look.
  *
  * @param query - The key the cursor is bound to.
  * @param position - The position it carries.
- * @returns The first key part or the position's id that is over the id bound, or the two sizes.
+ * @returns The first key part over the id bound, or the sizes of the key and the position.
  */
 function describeOverflow(query: string, position: string): string {
-  const parts = keyParts(query)
-  const part = parts.find(({ length }) => length > WORKSPACE_CURSOR_PART_MAX_LENGTH)
+  const part = keyParts(query).find(({ length }) => length > WORKSPACE_CURSOR_PART_MAX_LENGTH)
   if (part !== undefined) {
     return `query key part ${part.index} is ${part.length} code points, over ${WORKSPACE_CURSOR_PART_MAX_LENGTH}`
   }
-  const id = Array.from(position.slice(INSTANT_LENGTH)).length
-  if (id > WORKSPACE_CURSOR_PART_MAX_LENGTH) {
-    return `position id is ${id} code points, over ${WORKSPACE_CURSOR_PART_MAX_LENGTH}`
-  }
   return `the query key is ${query.length} characters and the position ${position.length}`
+}
+
+/**
+ * Says what is wrong with a position the decoder would read as none.
+ *
+ * A position is the canonical instant of {@link workspacePositionOf} followed by an id of 1 to
+ * {@link WORKSPACE_CURSOR_PART_MAX_LENGTH} code points with no control character and no unpaired
+ * surrogate. A position outside that is never one a listing issued, and an adapter binds it as a
+ * query value and may log it.
+ *
+ * @param position - The position.
+ * @returns The reason, or `undefined` for a readable position.
+ */
+function whyUnreadable(position: string): string | undefined {
+  if (readWorkspacePosition(position) === undefined) {
+    return 'it is not a canonical instant followed by an id'
+  }
+  const id = position.slice(INSTANT_LENGTH)
+  if (id === '') return 'its id is empty'
+  const length = Array.from(id).length
+  if (length > WORKSPACE_CURSOR_PART_MAX_LENGTH) {
+    return `position id is ${length} code points, over ${WORKSPACE_CURSOR_PART_MAX_LENGTH}`
+  }
+  if (hasControlCharacter(id) || UNPAIRED_SURROGATE.test(id)) {
+    return 'its id holds a control character or an unpaired surrogate'
+  }
+  return undefined
 }
 
 /**
@@ -144,10 +179,11 @@ function keyParts(query: string): { index: number; length: number }[] {
  *   refuse makes the next page unreachable.
  */
 export function encodeWorkspaceCursor(query: string, position: string): string {
-  if (position === '' || UNPAIRED_SURROGATE.test(position)) {
+  const reason = whyUnreadable(position)
+  if (reason !== undefined) {
     throw new RangeError(
-      'workspace cursor position must be a non-empty well-formed string: the decoder reads ' +
-        'anything else as the first page, so the cursor could never be followed'
+      `workspace cursor position is refused because ${reason}: the decoder reads it as the first ` +
+        'page, so the cursor could never be followed'
     )
   }
   const cursor = Buffer.from(JSON.stringify([query, position])).toString('base64url')
@@ -163,13 +199,17 @@ export function encodeWorkspaceCursor(query: string, position: string): string {
 /**
  * Reads a cursor back for one query. Anything that is not exactly what {@link encodeWorkspaceCursor}
  * writes for this query reads as none, so the page restarts from the first one and never widens the
- * scope: a value that is not a string, one over {@link WORKSPACE_CURSOR_MAX_LENGTH}, an encoding
- * other than the canonical one, bytes that are not UTF-8, anything but a pair of two strings, a pair
- * issued for another query, and an empty or ill-formed position.
+ * scope: a value that is not a string, one over {@link WORKSPACE_CURSOR_MAX_LENGTH}, another spelling
+ * of the same pair (base64url, JSON whitespace or escapes, a byte order mark, bytes that are not
+ * UTF-8), anything but a pair of two strings, a pair issued for another query, and a position that
+ * is not an instant followed by an id of 1 to {@link WORKSPACE_CURSOR_PART_MAX_LENGTH} code points
+ * with no control character and no unpaired surrogate.
  *
  * The cursor is a bookmark, not a signature: a well-formed position another instant names reads as
  * given, and moves within the same scope and nowhere else, because the scope comes from the query
- * the store builds and never from the cursor. It never throws.
+ * the store builds and never from the cursor. The cursor is also readable by the client, so the
+ * key holds only what the caller already knows (their own tenant, member and workspace), never a
+ * value that must stay on the server. It never throws.
  *
  * @param cursor - The cursor the caller sent, of any type a request can carry.
  * @param query - The key of the query being paged, from {@link workspaceQueryKey}.
@@ -178,13 +218,16 @@ export function encodeWorkspaceCursor(query: string, position: string): string {
 export function decodeWorkspaceCursor(cursor: unknown, query: string): string | undefined {
   if (typeof cursor !== 'string' || cursor.length > WORKSPACE_CURSOR_MAX_LENGTH) return undefined
   try {
-    const bytes = Buffer.from(cursor, 'base64url')
-    if (bytes.toString('base64url') !== cursor) return undefined
-    const parsed: unknown = JSON.parse(STRICT_UTF8.decode(bytes))
+    const parsed: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
     if (!Array.isArray(parsed) || parsed.length !== 2) return undefined
     const [issuedFor, position] = parsed as unknown[]
     if (issuedFor !== query || typeof position !== 'string') return undefined
-    return position !== '' && !UNPAIRED_SURROGATE.test(position) ? position : undefined
+    if (whyUnreadable(position) !== undefined) return undefined
+    // Only the encoder's own bytes read: whitespace, escapes, a byte order mark, invalid UTF-8 and
+    // any other spelling of the same pair re-encode to something else.
+    return Buffer.from(JSON.stringify([query, position])).toString('base64url') === cursor
+      ? position
+      : undefined
   } catch {
     return undefined
   }

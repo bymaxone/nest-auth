@@ -39,9 +39,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `decodeWorkspaceCursor` and `readWorkspacePosition`, and delete the local copy and its spec.
   `workspaceQueryKey` is
   `JSON.stringify` of its parts, byte for byte, so a lock or map key built from it does not move.
-  `encodeWorkspaceCursor` throws a `RangeError` for a position an unpaired surrogate or nothing makes
-  unreadable, and for a cursor over 4096 characters (an id, tenant or key part over 128 code points),
-  instead of issuing a cursor the next request could never follow.
+  `encodeWorkspaceCursor` throws a `RangeError` for a position the decoder would read as none and for a
+  cursor over 4096 characters (a key part over 128 code points), instead of issuing a cursor the next
+  request could never follow. Every id you issue must be 1 to 128 code points of well-formed text with no
+  control character.
 
 ### Added
 
@@ -49,11 +50,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `workspacePositionOf`, `readWorkspacePosition`, `encodeWorkspaceCursor`, `decodeWorkspaceCursor` and the
   constants `WORKSPACE_CURSOR_MAX_LENGTH`, `WORKSPACE_CURSOR_PART_MAX_LENGTH`,
   `WORKSPACE_OWNER_ROLE_MAX_LENGTH` and `WORKSPACE_OWNER_ROLE_PATTERN`. Decoding implements the rule the
-  port states of every cursor: one that is malformed, longer than the bound, not canonical base64url, not
-  UTF-8, not a pair of two strings, issued for another query, or whose position is empty or ill-formed
-  reads as the first page and never widens the scope. A value that is not a string reads the same way. The
-  scope always comes from the query the store builds, never from the cursor, and a cursor is a bookmark, not
-  a signature: a well-formed position another instant names moves within the same scope and nowhere else.
+  port states of every cursor: one that is malformed, longer than the bound, not exactly the bytes the
+  encoder writes, not a pair of two strings, issued for another query, or whose position is not an
+  instant followed by a well-formed id of 1 to 128 code points without control characters reads as the
+  first page and never widens the scope. A value that is not a string reads the same way. The scope always
+  comes from the query the store builds, never from the cursor, and a cursor is a bookmark, not a
+  signature: a well-formed position another instant names moves within the same scope and nowhere else.
+  The cursor is readable by the client, so its key holds only what the caller already knows.
 
 ### Fixed
 

@@ -194,7 +194,33 @@ describe('encodeWorkspaceCursor and decodeWorkspaceCursor', () => {
     ['an array of two with a number query', cursorOf([1, POSITION])],
     ['an array of two with an array position', cursorOf([QUERY, [POSITION]])],
     ['nested arrays', cursorOf([[QUERY], [POSITION]])],
-    ['an empty position', cursorOf([QUERY, ''])]
+    ['an empty position', cursorOf([QUERY, ''])],
+    [
+      'JSON with spaces',
+      Buffer.from(`[ ${JSON.stringify(QUERY)} , ${JSON.stringify(POSITION)} ]`).toString(
+        'base64url'
+      )
+    ],
+    [
+      'JSON with a leading byte order mark',
+      Buffer.from(`\uFEFF${JSON.stringify([QUERY, POSITION])}`).toString('base64url')
+    ],
+    [
+      'JSON with an escaped character',
+      Buffer.from(JSON.stringify([QUERY, POSITION]).replace('l', '\\u006c')).toString('base64url')
+    ],
+    ['a position that is not an instant', cursorOf([QUERY, 'whatever'])],
+    ['a position with no id', cursorOf([QUERY, workspacePositionOf(AT, '')])],
+    ['a position whose id holds a NUL', cursorOf([QUERY, workspacePositionOf(AT, 'a\u0000b')])],
+    ['a position whose id holds a newline', cursorOf([QUERY, workspacePositionOf(AT, 'a\nb')])],
+    [
+      'a position whose id holds a C1 control',
+      cursorOf([QUERY, workspacePositionOf(AT, 'a\u0085b')])
+    ],
+    [
+      'a position whose id is 129 code points',
+      cursorOf([QUERY, workspacePositionOf(AT, 'a'.repeat(129))])
+    ]
   ])('reads a cursor that is %s as none', (_label, cursor) => {
     expect(decodeWorkspaceCursor(cursor, QUERY)).toBeUndefined()
   })
@@ -207,6 +233,31 @@ describe('encodeWorkspaceCursor and decodeWorkspaceCursor', () => {
 
     expect(decodeWorkspaceCursor(lone, QUERY)).toBeUndefined()
     expect(decodeWorkspaceCursor(notUtf8, QUERY)).toBeUndefined()
+  })
+
+  // Scenario: the edges of the control-character ranges. Expected: the last control character of
+  // each range is refused and the character beside it is read, so the comparisons are exact.
+  it.each([
+    ['\u001f', false],
+    ['\u0020', true],
+    ['\u007e', true],
+    ['\u007f', false],
+    ['\u009f', false],
+    ['\u00a0', true]
+  ])('reads an id holding %j: %s', (character, readable) => {
+    const position = workspacePositionOf(AT, `a${character}b`)
+
+    expect(decodeWorkspaceCursor(cursorOf([QUERY, position]), QUERY)).toBe(
+      readable ? position : undefined
+    )
+  })
+
+  // Scenario: an id of exactly 128 code points, ASCII and emoji. Expected: read back, so the bound is
+  // inclusive and counts code points.
+  it.each([['a'.repeat(128)], ['😀'.repeat(128)]])('reads an id of 128 code points', (id) => {
+    const position = workspacePositionOf(AT, id)
+
+    expect(decodeWorkspaceCursor(encodeWorkspaceCursor(QUERY, position), QUERY)).toBe(position)
   })
 
   // Scenario: a position that moved but is well-formed. Expected: it reads as given, within the same
@@ -226,10 +277,22 @@ describe('what encode refuses', () => {
   // following nextCursor can never be sent back to the first page by a cursor the library wrote.
   it.each([
     ['an empty position', ''],
+    ['a position that is not an instant', 'whatever'],
+    ['a position with no id', workspacePositionOf(AT, '')],
     ['a lone high surrogate', workspacePositionOf(AT, '\uD800')],
-    ['a lone low surrogate', workspacePositionOf(AT, 'a\uDC00b')]
+    ['a lone low surrogate', workspacePositionOf(AT, 'a\uDC00b')],
+    ['a NUL in the id', workspacePositionOf(AT, 'a\u0000b')],
+    ['a DEL in the id', workspacePositionOf(AT, 'a\u007fb')],
+    ['an id of 129 code points', workspacePositionOf(AT, 'a'.repeat(129))]
   ])('refuses %s', (_label, position) => {
     expect(() => encodeWorkspaceCursor(QUERY, position)).toThrow(RangeError)
+  })
+
+  // Scenario: an id over the bound. Expected: the message names it and its length in code points.
+  it('names a position id that is too long', () => {
+    expect(() => encodeWorkspaceCursor(QUERY, workspacePositionOf(AT, '😀'.repeat(300)))).toThrow(
+      /position id is 300 code points, over 128/
+    )
   })
 
   // Scenario: a key part that is a lone surrogate. Expected: still a cursor that reads back, because
@@ -243,11 +306,11 @@ describe('what encode refuses', () => {
 
 describe('the length bound', () => {
   /** A canonical cursor of exactly `length` characters, written without the length check. */
-  function cursorOfLength(length: number): { cursor: string; position: string } {
+  function cursorOfLength(length: number): { cursor: string; query: string } {
     for (let padding = 0; padding < 8000; padding++) {
-      const position = workspacePositionOf(AT, 'a'.repeat(padding))
-      const cursor = cursorOf(['q', position])
-      if (cursor.length === length) return { cursor, position }
+      const query = `q${'a'.repeat(padding)}`
+      const cursor = cursorOf([query, POSITION])
+      if (cursor.length === length) return { cursor, query }
     }
     throw new Error(`no cursor of ${length} characters`)
   }
@@ -274,9 +337,11 @@ describe('the length bound', () => {
   it('reads a cursor of 4096 characters and refuses one of 4098', () => {
     const at = cursorOfLength(4096)
 
-    expect(decodeWorkspaceCursor(at.cursor, 'q')).toBe(at.position)
-    expect(decodeWorkspaceCursor(cursorOfLength(4098).cursor, 'q')).toBeUndefined()
-    expect(decodeWorkspaceCursor('A'.repeat(4097), 'q')).toBeUndefined()
+    const over = cursorOfLength(4098)
+
+    expect(decodeWorkspaceCursor(at.cursor, at.query)).toBe(POSITION)
+    expect(decodeWorkspaceCursor(over.cursor, over.query)).toBeUndefined()
+    expect(decodeWorkspaceCursor('A'.repeat(4097), at.query)).toBeUndefined()
   })
 
   // Scenario: a cursor of millions of characters. Expected: none, without parsing it.
@@ -306,15 +371,6 @@ describe('the length bound', () => {
 
     expect(messageOf(() => encodeWorkspaceCursor(key, POSITION))).toMatch(
       /query key part 2 is 3000 code points/
-    )
-  })
-
-  // Scenario: the id in the position is what is far over the bound. Expected: the message names it.
-  it('names a position id that is too long', () => {
-    const position = workspacePositionOf(AT, 'x'.repeat(4000))
-
-    expect(messageOf(() => encodeWorkspaceCursor(QUERY, position))).toMatch(
-      /position id is 4000 code points, over 128/
     )
   })
 
@@ -415,10 +471,26 @@ describe('fuzz', () => {
   // encode accepts reads back as the same position, and whatever it refuses is refused for the one
   // reason the decoder would also refuse it. Why: a cursor written but never readable makes a client
   // that follows nextCursor loop on the first page.
+  /** Whether a position is one the decoder must read as none: the fuzz's own account of the rule. */
+  function isUnreadablePosition(position: string): boolean {
+    const id = position.slice(24)
+    return (
+      readWorkspacePosition(position) === undefined ||
+      id === '' ||
+      Array.from(id).length > 128 ||
+      Array.from(id).some(
+        (c) =>
+          (c.codePointAt(0) ?? 0) <= 0x1f ||
+          ((c.codePointAt(0) ?? 0) >= 0x7f && (c.codePointAt(0) ?? 0) <= 0x9f)
+      ) ||
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(id)
+    )
+  }
+
   it('reads back every cursor it writes', () => {
     const next = generator(31)
     const pick = (n: number): number => Math.floor(next() * n)
-    const units = [0x20, 0x22, 0x5c, 0x61, 0xe9, 0x20ac, 0xd800, 0xdc00, 0xd83d, 0xde00]
+    const units = [0x0, 0x20, 0x22, 0x5c, 0x61, 0x7f, 0xe9, 0x20ac, 0xd800, 0xdc00, 0xd83d, 0xde00]
     const text = (max: number): string =>
       String.fromCharCode(
         ...Array.from({ length: pick(max) }, () => units[pick(units.length)] ?? 0)
@@ -435,7 +507,7 @@ describe('fuzz', () => {
       }
 
       if (cursor !== undefined) expect(decodeWorkspaceCursor(cursor, query)).toBe(position)
-      else expect(position === '' || /[\uD800-\uDFFF]/.test(position)).toBe(true)
+      else expect(isUnreadablePosition(position)).toBe(true)
     }
   })
 
@@ -496,16 +568,13 @@ describe('fuzz', () => {
           ? values[pick(values.length)]
           : [values[pick(values.length)], values[pick(values.length)]]
       const result = decodeWorkspaceCursor(cursorOf(payload), QUERY)
-      const expected =
+      const isThePair =
         Array.isArray(payload) &&
         payload.length === 2 &&
         payload[0] === QUERY &&
-        typeof payload[1] === 'string' &&
-        payload[1] !== ''
-          ? payload[1]
-          : undefined
+        payload[1] === POSITION
 
-      expect(result).toBe(expected === '\uD800' ? undefined : expected)
+      expect(result).toBe(isThePair ? POSITION : undefined)
     }
   })
 })

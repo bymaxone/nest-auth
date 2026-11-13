@@ -90,8 +90,13 @@ const nextCursor = hasMore
   and nowhere else.
 - `decodeWorkspaceCursor` never throws.
 - `encodeWorkspaceCursor` throws a `RangeError` rather than issue a cursor the next request could not
-  follow: an empty or ill-formed position, or a cursor over 4096 characters, which only an id, a tenant or
-  a key part over 128 code points can cause. Keep every id you issue to 128 code points of well-formed text.
+  follow: a position that is not an instant followed by an id of 1 to 128 code points of well-formed text
+  without control characters, or a cursor over 4096 characters, which only a key part over 128 code
+  points can cause. Keep every id you issue within that.
+- The cursor is readable by the client: it is base64url, not encrypted. Its key holds only what the
+  caller already knows, their own tenant, member and workspace, and never a value that must stay on the
+  server. The position is checked on the way out and on the way in, so an adapter that binds it as a query
+  value or logs it never sees a control character or a long id a client invented.
 - `workspaceQueryKey` is `JSON.stringify` of its parts, and is also fit for any key that must stay
   unambiguous, a lock name for example.
 - `workspaces.roles.ownerRole` is checked at startup against `WORKSPACE_OWNER_ROLE_PATTERN`, because it is
