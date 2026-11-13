@@ -72,7 +72,7 @@ describe('the MFA failure counters across tenants', () => {
     await expect(service.isLockedOut(flow, 'dashboard', '1', 'tenant-a')).resolves.toBe(true)
   })
 
-  // Scenario: the three flows of one account. Expected: separate budgets, as before.
+  // Scenario: the three flows of one account. Expected: separate budgets, so a failure in one flow never spends another's.
   it('keeps the three flows of one account apart', async () => {
     const service = lockout()
     for (let attempt = 0; attempt < THRESHOLD; attempt += 1) {
