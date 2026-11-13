@@ -219,8 +219,7 @@ export function decodeJwtToken(token: string): DecodedToken {
  * **This is a routing check, not an authorization check.** It tells the edge whether a token was
  * minted with the backend's secret, is unexpired and carries the backend's issuer and audience, which
  * is enough to choose between rendering a page and redirecting to sign-in. It cannot see what the
- * backend sees: a logout, a password reset or a revoke-all (the revocation list and the per-user
- * epoch), the account's current status (a blocked or suspended user), the MFA state, or a workspace
+ * backend sees: a logout, a password reset or a revoke-all, the account's current status (a blocked or suspended user), the MFA state, or a workspace
  * membership. A token this function accepts may be one the backend refuses on the next call. Never
  * use its result, or a role read from it, as the access decision for data or an action: the backend
  * must verify every request that reads or changes anything.
@@ -289,8 +288,8 @@ export async function verifyJwtToken(
 /**
  * What `verifyJwtToken` holds a token to beyond its signature, as the backend holds it.
  *
- * Both libraries stamp and require the same claims, so a proxy that ignores one accepts a token the
- * backend refuses (or, for a retired secret, refuses one the backend still accepts).
+ * A proxy that ignores one accepts a token the backend refuses (or, for a retired secret, refuses
+ * one the backend still accepts).
  */
 export interface VerifyJwtOptions {
   /**
