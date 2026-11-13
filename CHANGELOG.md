@@ -20,6 +20,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
+- **The wire contract is at version 6: the two password re-proof counters are pinned.** `userSubjectDerivedKeys`
+  gains `changePasswordFailureCounter` and `emailChangeFailureCounter` (`lf:` over `reauth:change-password:` or
+  `reauth:email-change:` and the tenant-scoped user subject), and the new `reproofCounterVectors` section gives
+  known answers for them, including an accented tenant, a tenant containing `:` and the pair a bare delimiter would
+  merge, so a library that derived the counter from the bare user id would fail its own test instead of splitting a
+  budget unnoticed. This library already derived both counters this way, so nothing changes at runtime here; the
+  derivation moved into one function, `reproofCounterId`, that the two flows call. A backend that reads the contract
+  must adopt version 6 and derive the same bytes.
 - **MFA state and its failure counters are keyed by the tenant on the dashboard plane, and the tenant-less
   duplicates are gone.** Five keys also took a second, tenant-less form that two tenants' user `1` shared:
   the MFA transition lock (`mfalock:`), the TOTP replay marker (`tu:`), and the failure counters of the

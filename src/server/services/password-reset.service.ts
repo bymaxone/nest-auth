@@ -12,7 +12,7 @@ import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { userSubject } from '../constants/user-subject'
+import { reproofCounterId } from '../constants/reproof-counter'
 import { generateSecureToken, hmacSha256, sha256, timingSafeCompare } from '../crypto/secure-token'
 import type { ChangePasswordDto } from '../dto/change-password.dto'
 import type { ForgotPasswordDto } from '../dto/forgot-password.dto'
@@ -538,15 +538,10 @@ export class PasswordResetService {
     // locks the owner out of their own account. The per-route IP limit is not that control: a
     // distributed caller sidesteps it, and it is not keyed to the account being attacked. The
     // counter is namespaced by flow so it cannot lock the owner out of `login` instead.
-    // Derived from the tenant-scoped SUBJECT, not the bare id. Keyed on `${userId}` alone this
-    // counter was tenant-blind: a repository id is unique only within a tenant, so failures
-    // against `t1/u1` spent `t2/u1`'s budget and locked that account out with no credential, and
-    // a success on either side cleared the other's. `userSubject` is injective, so two tenants
-    // sharing an id get two counters.
-    const bfIdentifier = hmacSha256(
-      `reauth:change-password:${userSubject('dashboard', userId, tenantId)}`,
-      this.options.hmacKey
-    )
+    // Counted under the tenant-scoped subject, not the bare id: a repository id is unique only
+    // within a tenant, so two tenants' user `1` need two budgets, or failures against one lock the
+    // other out with no credential. `userSubject` is injective over (tenant, user).
+    const bfIdentifier = reproofCounterId('change-password', userId, tenantId, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
       this.logger.warn(`changePassword: account locked userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
