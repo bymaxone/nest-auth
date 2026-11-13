@@ -4,7 +4,7 @@ Services for operations that are not routes. Part of the [`@bymax-one/nest-auth`
 
 ## Administrative operations — methods, deliberately not routes
 
-Two support-desk operations ship as **methods with no HTTP route**. Every route above is scoped
+Support-desk operations ship as **methods with no HTTP route**. Every route above is scoped
 to the caller's own account, and both of these act on somebody else's — so exposing them would
 mean inventing an authorization model ("who is an admin?") that this library does not have and
 your application already does. Call them from your own admin surface, where the caller is
@@ -39,7 +39,7 @@ disputable. `tenantId` is required when `context` is `'dashboard'` (the default)
 
 ## Checking revocation outside a guard — `AuthRevocationService`
 
-The three JWT guards do not decide revocation themselves; they delegate to one service, and that
+The JWT guards do not decide revocation themselves; they delegate to one service, and that
 service is exported so **you can consult the same two channels from a transport the guards never
 see** — a WebSocket, an SSE stream, a message consumer. Without it there is no way to ask the
 question at all outside an HTTP request: a connection whose user logs out keeps its stream until
@@ -85,14 +85,14 @@ Using it to authorise a long-lived transport takes more than this method. Use
 
 ## Authorising a long-lived transport — `AuthTokenVerifierService`
 
-A guarded HTTP route establishes seven things before a handler runs. A WebSocket, an SSE stream or
-a message consumer has no guard in front of it, so it must establish the same seven itself — and on
+A guarded HTTP route establishes these before a handler runs. A WebSocket, an SSE stream or
+a message consumer has no guard in front of it, so it must establish the same itself — and on
 a cadence, because a connection outlives the request that opened it. Assembling that from the
 exported parts is where it goes wrong: a bridge that calls `isAccessTokenRevoked` alone has checked
 a signature and a blacklist while checking neither the token's **type**, nor its **`exp`**, nor
 whether the **account** behind it still exists.
 
-`AuthTokenVerifierService.verifyAccessToken` is all seven in one call:
+`AuthTokenVerifierService.verifyAccessToken` is all of them in one call:
 
 ```ts
 import { AuthTokenVerifierService } from '@bymax-one/nest-auth'
@@ -101,17 +101,17 @@ const { plane, payload } = await this.verifier.verifyAccessToken(token, { plane:
 registry.add(socket, { plane, userId: payload.sub, tenantId: payload.tenantId })
 ```
 
-| It checks                                                                              | So that                                                                                                                                                                                                                                                                                                                                                                 |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Signature, pinned algorithm, `issuer`/`audience`, and any secret retired by a rotation | `alg: none` and a token carrying no binding claim are refused, and a rotation drains instead of disconnecting everyone                                                                                                                                                                                                                                                  |
-| `exp`                                                                                  | A revocation check answers "was this withdrawn", never "is this still current" — `isAccessTokenRevoked` reads no `exp` at all                                                                                                                                                                                                                                           |
-| `jti` a UUID v4; `sub` and (dashboard) `tenantId` bounded non-empty strings            | A malformed claim cannot build a Redis key nobody intended                                                                                                                                                                                                                                                                                                              |
-| Token `type`, against the plane **you** name                                           | An `mfa_challenge` token — signed with the same secret, half a credential — cannot read as a session                                                                                                                                                                                                                                                                    |
-| Both revocation channels                                                               | A logout's `jti` blacklist AND the epoch a password reset or revoke-all advances                                                                                                                                                                                                                                                                                        |
-| Account status (`checkStatus`, default on)                                             | Runs before the MFA decision. A suspension landing between two reconnects is seen, and so is an unverified email on the dashboard plane (`auth.email_not_verified`) — the token's own `status` claim is a snapshot taken at issuance                                                                                                                                    |
-| MFA policy (`requireMfa`, default on)                                                  | Runs after the account-status check, so a blocked account is refused with its own code even while a challenge is pending. A refresh mints `mfaEnabled: true, mfaVerified: false`; the type alone does not imply the second factor was completed. A token whose `mfaEnabled` claim is missing or not a boolean is refused `auth.token_invalid` before the account lookup |
+| It checks                                                                              | So that                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Signature, pinned algorithm, `issuer`/`audience`, and any secret retired by a rotation | `alg: none` and a token carrying no binding claim are refused, and a rotation drains instead of disconnecting everyone                                                                                                                                                                                                                                                                                    |
+| `exp`                                                                                  | A revocation check answers "was this withdrawn", never "is this still current" — `isAccessTokenRevoked` reads no `exp` at all                                                                                                                                                                                                                                                                             |
+| `jti` a UUID v4; `sub` and (dashboard) `tenantId` bounded non-empty strings            | A malformed claim cannot build a Redis key nobody intended                                                                                                                                                                                                                                                                                                                                                |
+| Token `type`, against the plane **you** name                                           | An `mfa_challenge` token — signed with the same secret, half a credential — cannot read as a session                                                                                                                                                                                                                                                                                                      |
+| Both revocation channels                                                               | A logout's `jti` blacklist AND the epoch a password reset or revoke-all advances                                                                                                                                                                                                                                                                                                                          |
+| Account status (`checkStatus`, default on)                                             | Runs before the MFA decision. A suspension landing between two reconnects is seen, and so is an unverified email on the dashboard plane (`auth.email_not_verified`) — the token's own `status` claim is a snapshot taken at issuance                                                                                                                                                                      |
+| MFA policy (`requireMfa`, default on)                                                  | Runs after the account-status check, so a blocked account is refused with its own code even while a challenge is pending. A refresh carries `mfaVerified` forward only from a session that completed the challenge; the type alone does not imply the second factor was completed. A token whose `mfaEnabled` claim is missing or not a boolean is refused `auth.token_invalid` before the account lookup |
 
-On the dashboard plane that last row reads a cache, and **its freshness is bounded by
+On the dashboard plane the account-status row reads a cache, and **its freshness is bounded by
 `userStatusCacheTtlSeconds` (default 60 s), not by how often you call**: a stream re-verifying every
 five seconds still serves a banned account until the entry expires. What shortens that is
 [`AccountStatusService.invalidate`](#invalidating-the-account-cache--accountstatusserviceinvalidate)
@@ -173,8 +173,7 @@ conditional on nothing having invalidated in between, which this service does no
 
 > [!IMPORTANT]
 > **Do not delete the cache keys yourself**, even though the `<namespace>:*` prefix is yours to
-> read. Their format is this library's to change — it already changed once, in v1.3.2, which added
-> the tenant segment — and a delete that stops matching **fails silently**: no error, no event, just
+> read. Their format is this library's to change — and a delete that stops matching **fails silently**: no error, no event, just
 > a status change that takes a full TTL to land. That is a security control degrading quietly. This
 > method is the supported way to ask, and it is the only thing that stays correct when the format
 > moves.

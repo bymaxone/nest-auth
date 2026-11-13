@@ -792,7 +792,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > [!IMPORTANT]
 > **`environment` is how the module decides whether this is production, and it defaults to
 > saying yes.** It drives cookie `Secure`, the HTTPS requirement on the OAuth `callbackUrl`, and
-> three redirect validations. A local or test setup must say `environment: 'development'` (or
+> redirect validations. A local or test setup must say `environment: 'development'` (or
 > `'test'`) explicitly, or it is held to production rules: an `http://` callback URL is refused and
 > cookies are marked `Secure`. It is an explicit option rather than `NODE_ENV` because a near miss
 > (unset, `'staging'`, `'prod'`) would otherwise silently take the insecure branch.
@@ -911,8 +911,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > `AuthTokenVerifierService.verifyAccessToken`, which resolves status through the same cache before
 > it applies the MFA policy), and for anything richer read the account **tenant-scoped**:
 > `findById({ id: request.user.sub, tenantId: request.user.tenantId })`. The tenant argument is
-> required by the port because ids may collide across tenants. `mfaVerified` behaves the same way:
-> it is always `false` after a rotation, and a user re-acquires it through the MFA challenge.
+> required by the port because ids may collide across tenants.
 >
 > The guard reads a status cache with a `userStatusCacheTtlSeconds` window (default **60**), so a
 > suspension takes up to that long to bite on a guarded route, and a reactivation the same to
@@ -1587,7 +1586,7 @@ remove hand-written `operationSecurity` entries and derive the document-level de
 
 ### Server services for operations that are not routes
 
-Four services cover what a guard or a route cannot, each documented in
+Services cover what a guard or a route cannot, each documented in
 [Server services](./docs/server-services.md):
 
 - **Administrative operations** — support-desk operations that ship as methods with no HTTP route.

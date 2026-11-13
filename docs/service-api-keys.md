@@ -19,7 +19,7 @@ You implement `IApiKeyRepository`, as you do for users. The library supplies the
 
 ## How a key is stored and checked
 
-A key looks like `bak_<keyId>_<secret>`: a literal prefix, the row's UUID (a public handle that
+A key looks like `bak_<keyId>_<secret>`: a prefix (`bak` by default), the row's UUID (a public handle that
 makes verification an indexed read), and 43 base64url characters carrying 32 random bytes. Only
 `HMAC-SHA-256(pepper, secret)` is stored, as lowercase hex. Labels and scopes are not part of the
 digest, so editing them never invalidates a key. The grammar and the digest are pinned by
