@@ -61,9 +61,11 @@ function addressOf(client: unknown): string | undefined {
   const host = options?.host
   const port = options?.port
   if (typeof host !== 'string' || typeof port !== 'number') return undefined
-  // A host that carries userinfo, a path or whitespace is not a host name; echoing it could
-  // repeat a credential.
-  return /^[^\s@/]+$/.test(host) ? `${host}:${port}` : undefined
+  // Only characters a host name or an address literal is made of: anything else (userinfo, a path,
+  // a query, whitespace) is not a host, and echoing it could repeat a credential.
+  if (!/^[A-Za-z0-9._:%-]+$/.test(host)) return undefined
+  // An IPv6 literal is bracketed, so the port is not read as part of the address.
+  return host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`
 }
 
 /**

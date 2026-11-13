@@ -185,6 +185,8 @@ describe('RedisReadinessService', () => {
     ['a host with userinfo', { host: 'svc:s3cret@redis.internal', port: 6379 }],
     ['a host that is a URL', { host: 'redis://redis.internal', port: 6379 }],
     ['a host with whitespace', { host: 'redis internal', port: 6379 }],
+    ['a host with a query', { host: 'redis.internal?password=x', port: 6379 }],
+    ['an empty host', { host: '', port: 6379 }],
     ['a port that is not a number', { host: 'redis.internal', port: '6379' }]
   ])('omits the address for %s', async (_why, options) => {
     const redis = client({
@@ -199,8 +201,9 @@ describe('RedisReadinessService', () => {
     )
   })
 
-  // Scenario: an IPv6 literal host. Expected: named, since it is a plain host with colons.
-  it('names an IPv6 host', async () => {
+  // Scenario: an IPv6 literal host. Expected: named and bracketed, so the port is not read as part of
+  // the address.
+  it('names an IPv6 host in brackets', async () => {
     const redis = client({
       options: { commandTimeout: 500, host: '::1', port: 6379 },
       ping: jest.fn().mockRejectedValue(new Error('down'))
@@ -208,7 +211,7 @@ describe('RedisReadinessService', () => {
 
     const { outcome } = await settle(redis)
 
-    expect((outcome as Error).message).toContain('Redis at ::1:6379 did not answer PING')
+    expect((outcome as Error).message).toContain('Redis at [::1]:6379 did not answer PING')
   })
 
   // Scenario: a client that has already ended, which no retry can bring back. Expected: refused at
