@@ -2470,7 +2470,7 @@ describe('resolveOptions — jwt.previousSecrets validation', () => {
         ...MINIMAL_OPTIONS,
         jwt: { secret: VALID_SECRET, previousSecrets: [secret] }
       })
-    ).toThrow(/jwt\.secret/)
+    ).toThrow(/jwt\.previousSecrets\[0\]/)
   })
 
   // Scenario: a non-string entry, and a non-array value. Expected: rejected by shape.

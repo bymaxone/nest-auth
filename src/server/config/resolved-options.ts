@@ -589,7 +589,7 @@ function validatePreviousSecrets(jwt: BymaxAuthModuleOptions['jwt']): void {
           `Every entry still verifies tokens, so each is held to the same rules as jwt.secret.`
       )
     }
-    validateSecretStrength(secret, 'jwt.secret')
+    validateSecretStrength(secret, `jwt.previousSecrets[${index}]`)
     if (seen.has(secret)) {
       throw new Error(
         `[BymaxAuthModule] jwt.previousSecrets[${index}] repeats jwt.secret or an earlier entry. ` +
