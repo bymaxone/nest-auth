@@ -6,13 +6,14 @@
  * verifier here is a mock that must stay untouched.
  */
 
-import { Reflector } from '@nestjs/core'
+import { Test } from '@nestjs/testing'
+
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { ResolvedOptions } from '../config/resolved-options'
-import type { AuthTokenVerifierService } from '../services/auth-token-verifier.service'
-import type { WsTicketService } from '../services/ws-ticket.service'
+import { AuthTokenVerifierService } from '../services/auth-token-verifier.service'
+import { WsTicketService } from '../services/ws-ticket.service'
 import { WsJwtGuard } from './ws-jwt.guard'
 
 /** What the guard reads off the context to find a decorator: a handler and its class. */
@@ -28,14 +29,17 @@ const mockOptions = { jwt: { algorithm: 'HS256' } }
 describe('WsJwtGuard upgrade ticket', () => {
   let guard: WsJwtGuard
 
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.clearAllMocks()
-    guard = new WsJwtGuard(
-      mockVerifier as unknown as AuthTokenVerifierService,
-      mockWsTickets as unknown as WsTicketService,
-      mockOptions as unknown as ResolvedOptions,
-      new Reflector()
-    )
+    const module = await Test.createTestingModule({
+      providers: [
+        WsJwtGuard,
+        { provide: AuthTokenVerifierService, useValue: mockVerifier },
+        { provide: WsTicketService, useValue: mockWsTickets },
+        { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }
+      ]
+    }).compile()
+    guard = module.get(WsJwtGuard)
   })
 
   describe('upgrade ticket', () => {
