@@ -54,8 +54,7 @@ const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBF
  */
 function hasControlCharacter(text: string): boolean {
   for (const character of text) {
-    const code = character.codePointAt(0) ?? 0
-    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true
+    if (character <= '\u001f' || (character >= '\u007f' && character <= '\u009f')) return true
   }
   return false
 }
