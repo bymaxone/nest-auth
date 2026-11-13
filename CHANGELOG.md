@@ -50,7 +50,8 @@ with a validation error when workspaces are off.
   request could never follow. Every id you issue must be 1 to 128 code points of well-formed text with no
   control character.
 - **`verifyAccessToken` with a `workspaceId` while workspaces are off now throws `AuthException` (validation),
-  not a `TypeError`.** The refusal names the field `workspaceId`, so a handler maps it to a `400` like any
+  not a `TypeError`, and only after the token is verified: an invalid, expired or revoked token still gets
+  `TOKEN_INVALID`.** The refusal names the field `workspaceId`, so a handler maps it to a `400` like any
   other refused input. A platform-plane token still throws a `TypeError`, which is a programming error.
 
 ### Added
