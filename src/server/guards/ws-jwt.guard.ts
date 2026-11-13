@@ -1,19 +1,17 @@
 import { Inject, Injectable } from '@nestjs/common'
 import type { CanActivate, ExecutionContext, OnModuleInit } from '@nestjs/common'
-import { JwtService } from '@nestjs/jwt'
+import { Reflector } from '@nestjs/core'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { SKIP_MFA_KEY } from '../decorators/skip-mfa.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
-import { AuthRevocationService } from '../services/auth-revocation.service'
+import { AuthTokenVerifierService } from '../services/auth-token-verifier.service'
 import { WsTicketService } from '../services/ws-ticket.service'
 import { assertTenantBinding } from '../utils/assert-tenant-binding'
 import type { HandshakeLike } from '../utils/handshake-request'
-import { verifyWithRotation } from '../utils/verify-with-rotation'
-import { assertTokenType, assertValidSub } from './utils/assert-token-type'
 
 /** Minimal shape of a WebSocket client as seen during the handshake. */
 type WsClient = {
@@ -36,9 +34,11 @@ type WsClient = {
 /**
  * WebSocket authentication guard — the WS twin of {@link JwtAuthGuard}.
  *
- * Validates HS256-signed dashboard JWTs carried in the `Authorization` header
- * of the Socket.IO/ws handshake. Token type isolation (`type: 'dashboard'`) and
- * Redis revocation checks mirror the HTTP guard exactly.
+ * Validates dashboard JWTs carried in the `Authorization` header of the Socket.IO/ws
+ * handshake through {@link AuthTokenVerifierService}, the chain a request is held to:
+ * signature, claim shapes, token type, revocation, tenant binding, the account's current
+ * status and the MFA policy. The status and MFA gates are on by default; `@SkipMfa()` on
+ * a handler or class lifts the MFA one only.
  *
  * @remarks
  * **Two credential channels, and only two** — the handshake
@@ -57,10 +57,6 @@ type WsClient = {
  * opaque; ~30 seconds; and consumed by the first redemption, so a captured
  * upgrade URL is worthless by the time it reaches a log. rust-auth authenticates
  * its upgrades the same way.
- *
- * **Algorithm pinning** — `algorithms: [this.options.jwt.algorithm]` is forwarded
- * to `JwtService.verify()` to prevent algorithm-confusion attacks (CVE-2015-9235).
- * An attacker cannot substitute `alg: none` or swap to an asymmetric algorithm.
  *
  * **Soft peer-dependency on `@nestjs/websockets`** — this guard does not import
  * `@nestjs/websockets` at module load time (which would create a hard dependency
@@ -85,10 +81,10 @@ type WsClient = {
 @Injectable()
 export class WsJwtGuard implements CanActivate, OnModuleInit {
   constructor(
-    @Inject(JwtService) private readonly jwtService: JwtService,
-    @Inject(AuthRevocationService) private readonly revocation: AuthRevocationService,
+    @Inject(AuthTokenVerifierService) private readonly verifier: AuthTokenVerifierService,
     @Inject(WsTicketService) private readonly wsTickets: WsTicketService,
-    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
+    @Inject(Reflector) private readonly reflector: Reflector
   ) {}
 
   /**
@@ -144,36 +140,25 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    // Algorithm is pinned from options — rejects alg:none and algorithm-confusion attacks.
-    let payload: DashboardJwtPayload
-    try {
-      payload = verifyWithRotation<DashboardJwtPayload>(this.jwtService, this.options, token)
-    } catch {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
+    // The same chain an HTTP request is held to, from the one service that owns it: signature
+    // and pinned algorithm, a UUID `jti`, `sub` and `tenantId` shapes, the token type, both
+    // revocation channels, the tenant binding, the account's CURRENT status, and the MFA policy.
+    // A socket is the longer-lived credential, so it must not be admitted on less than a request
+    // is. The status and MFA gates are on by default; `@SkipMfa()` lifts only the MFA one, as it
+    // does on HTTP for the handler that has to work while a second factor is being set up.
+    const skipMfa =
+      this.reflector.getAllAndOverride<boolean | undefined>(SKIP_MFA_KEY, [
+        context.getHandler(),
+        context.getClass()
+      ]) === true
+    const verified = await this.verifier.verifyAccessToken(token, {
+      plane: 'dashboard',
+      requireMfa: !skipMfa,
+      checkStatus: true,
+      request: bindingInput(handshake)
+    })
 
-    // jti must be a string — a missing or numeric jti cannot be used as a Redis key.
-    if (typeof payload.jti !== 'string') {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
-
-    assertTokenType(payload, 'dashboard')
-
-    // Require a well-formed `sub` before it keys the epoch lookup — mirrors JwtAuthGuard; a
-    // missing/empty/oversized sub would otherwise build a malformed Redis key.
-    assertValidSub(payload.sub)
-
-    // Both revocation channels, the same check JwtAuthGuard runs: a dashboard logout or a
-    // password reset kills a WebSocket access token exactly as it kills an HTTP one. Surfaced as
-    // TOKEN_INVALID (not a distinct revoked code) so the handshake leaks no oracle for whether a
-    // given token was logged out or a given user was bumped.
-    if (await this.revocation.isAccessTokenRevoked(payload)) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
-
-    await assertTenantBinding(this.options, bindingInput(handshake), payload.tenantId)
-
-    client.data.user = payload
+    client.data.user = verified.payload
     return true
   }
 }

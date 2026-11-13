@@ -15,17 +15,21 @@
  * the "not installed" test via jest.resetModules() + jest.doMock() + fresh require.
  */
 
+import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
 import type { ExecutionContext } from '@nestjs/common'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { SkipMfa } from '../decorators/skip-mfa.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { AccountStatusService } from '../services/account-status.service'
 import { AuthRevocationService } from '../services/auth-revocation.service'
+import { AuthTokenVerifierService } from '../services/auth-token-verifier.service'
 import { WsTicketService } from '../services/ws-ticket.service'
 import { WsJwtGuard } from './ws-jwt.guard'
 
@@ -45,7 +49,7 @@ function errorCodeOf(err: unknown): string | undefined {
 }
 
 const VALID_PAYLOAD = {
-  jti: 'some-jti-uuid',
+  jti: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
   sub: 'user-1',
   tenantId: 'tenant-1',
   role: 'member',
@@ -75,6 +79,17 @@ const mockOptions = {
   jwt: { algorithm: 'HS256' }
 }
 
+/** The account's current-status check the verifier runs; a usable account by default. */
+const mockAccountStatus = {
+  assertDashboardAccountUsable: jest.fn()
+}
+
+/** What the guard reads off the context to find a decorator: a handler and its class. */
+const HANDLER_AND_CLASS = {
+  getHandler: () => () => undefined,
+  getClass: () => class Gateway {}
+}
+
 // ---------------------------------------------------------------------------
 // Helper — builds a mock WS ExecutionContext
 // ---------------------------------------------------------------------------
@@ -86,6 +101,8 @@ const mockOptions = {
  */
 function makeWsContext(authorizationHeader: string | undefined): {
   context: {
+    getHandler: () => () => void
+    getClass: () => new () => object
     switchToWs: () => {
       getClient: () => {
         handshake: { headers: Record<string, string | undefined> }
@@ -97,6 +114,7 @@ function makeWsContext(authorizationHeader: string | undefined): {
 } {
   const clientData: Record<string, unknown> = {}
   const context = {
+    ...HANDLER_AND_CLASS,
     switchToWs: () => ({
       getClient: () => ({
         handshake: {
@@ -125,6 +143,7 @@ describe('WsJwtGuard', () => {
     // Default: no per-user cutoff, so the bulk-revocation check is a no-op for the
     // existing tests. Cutoff-specific tests override this.
     mockRedis.getUserTokenEpoch.mockResolvedValue(0)
+    mockAccountStatus.assertDashboardAccountUsable.mockResolvedValue(undefined)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -132,6 +151,8 @@ describe('WsJwtGuard', () => {
         { provide: JwtService, useValue: mockJwtService },
         { provide: AuthRedisService, useValue: mockRedis },
         AuthRevocationService,
+        AuthTokenVerifierService,
+        { provide: AccountStatusService, useValue: mockAccountStatus },
         { provide: WsTicketService, useValue: mockWsTickets },
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }
       ]
@@ -186,10 +207,10 @@ describe('WsJwtGuard', () => {
 
       const { WsJwtGuard: FreshGuard } = await import('./ws-jwt.guard')
       const freshGuard = new FreshGuard(
-        mockJwtService as unknown as JwtService,
-        new AuthRevocationService(mockRedis as unknown as AuthRedisService),
+        {} as unknown as AuthTokenVerifierService,
         mockWsTickets as unknown as WsTicketService,
-        mockOptions as unknown as ResolvedOptions
+        mockOptions as unknown as ResolvedOptions,
+        new Reflector()
       )
 
       // Act + Assert
@@ -440,6 +461,93 @@ describe('WsJwtGuard', () => {
     })
   })
 
+  // A socket is the longer-lived credential, so the header path is held to the chain a request is.
+  describe('parity with the HTTP chain', () => {
+    const UUID_JTI = '3f2504e0-4f89-41d3-9a0c-0305e82c3301'
+
+    it.each([
+      ['a jti that is not a UUID', { jti: 'some-jti-uuid' }],
+      ['no tenantId', { tenantId: undefined }],
+      ['MFA enabled and not verified', { mfaEnabled: true, mfaVerified: false }]
+    ])('refuses a token with %s', async (_why, override) => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, jti: UUID_JTI, ...override })
+      mockRedis.get.mockResolvedValue(null)
+      const { context } = makeWsContext('Bearer valid.jwt.token')
+
+      await expect(guard.canActivate(context as never)).rejects.toBeInstanceOf(AuthException)
+    })
+
+    it('refuses a token whose MFA is pending with the MFA code, not an opaque one', async () => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, mfaEnabled: true })
+      const { context } = makeWsContext('Bearer valid.jwt.token')
+
+      await expect(guard.canActivate(context as never)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_REQUIRED } }
+      })
+    })
+
+    // The account's CURRENT status, read from the store: the claim in a token minted before the
+    // account was blocked says nothing about now.
+    it('refuses an account that is blocked now', async () => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD })
+      mockAccountStatus.assertDashboardAccountUsable.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.ACCOUNT_SUSPENDED)
+      )
+      const { context, clientData } = makeWsContext('Bearer valid.jwt.token')
+
+      await expect(guard.canActivate(context as never)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED } }
+      })
+      expect(clientData['user']).toBeUndefined()
+      expect(mockAccountStatus.assertDashboardAccountUsable).toHaveBeenCalledWith({
+        userId: 'user-1',
+        tenantId: 'tenant-1'
+      })
+    })
+
+    // The opt-out, as on HTTP: a handler that has to work while a second factor is being set up.
+    // It lifts the MFA gate and nothing else.
+    it.each([
+      ['a handler', 'handler'],
+      ['a class', 'class']
+    ])('lets @SkipMfa() on %s admit a token whose MFA is pending', async (_why, where) => {
+      class Gateway {
+        handle(): void {}
+      }
+      if (where === 'class') SkipMfa()(Gateway)
+      else
+        SkipMfa()(
+          Gateway.prototype,
+          'handle',
+          Object.getOwnPropertyDescriptor(Gateway.prototype, 'handle')!
+        )
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, mfaEnabled: true })
+      const { context, clientData } = makeWsContext('Bearer valid.jwt.token')
+      const decorated = {
+        ...context,
+        getHandler: () => Gateway.prototype.handle,
+        getClass: () => Gateway
+      }
+
+      await expect(guard.canActivate(decorated as never)).resolves.toBe(true)
+      expect(clientData['user']).toMatchObject({ mfaEnabled: true })
+    })
+
+    it('still refuses a blocked account under @SkipMfa()', async () => {
+      class Gateway {}
+      SkipMfa()(Gateway)
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD })
+      mockAccountStatus.assertDashboardAccountUsable.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.ACCOUNT_SUSPENDED)
+      )
+      const { context } = makeWsContext('Bearer valid.jwt.token')
+
+      await expect(
+        guard.canActivate({ ...context, getClass: () => Gateway } as never)
+      ).rejects.toMatchObject({ response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED } } })
+    })
+  })
+
   // ----------------- Tenant binding -----------------
 
   describe('tenant binding', () => {
@@ -473,7 +581,10 @@ describe('WsJwtGuard', () => {
         },
         data: {} as Record<string, unknown>
       }
-      return { client, context: { switchToWs: () => ({ getClient: () => client }) } }
+      return {
+        client,
+        context: { ...HANDLER_AND_CLASS, switchToWs: () => ({ getClient: () => client }) }
+      }
     }
 
     beforeEach(() => {
@@ -637,7 +748,10 @@ describe('WsJwtGuard', () => {
         handshake: { headers: {}, query, ...(url === undefined ? {} : { url }) },
         data: {} as Record<string, unknown>
       }
-      return { client, context: { switchToWs: () => ({ getClient: () => client }) } }
+      return {
+        client,
+        context: { ...HANDLER_AND_CLASS, switchToWs: () => ({ getClient: () => client }) }
+      }
     }
 
     // Scenario: a valid ticket in the parsed query. Expected: the socket is authorized as the
