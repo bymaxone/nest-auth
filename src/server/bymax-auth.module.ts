@@ -60,6 +60,7 @@ import { AuthOpenApiContributor } from './openapi/auth-openapi.contributor'
 import { CommonPasswordChecker } from './providers/common-password-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
+import { RedisReadinessService } from './redis/redis-readiness.service'
 import { AccountStatusService } from './services/account-status.service'
 import { SystemApiKeyClock } from './services/api-key-clock'
 import { ApiKeyLastUsedService } from './services/api-key-last-used.service'
@@ -625,10 +626,10 @@ export class BymaxAuthModule {
         ...breachCheckerProviders,
         ...hooksProviders,
         // Core services.
-        // AuthRedisService is registered directly (not via AuthRedisModule) so that
-        // BYMAX_AUTH_REDIS_CLIENT and BYMAX_AUTH_OPTIONS provided via extraProviders
-        // are visible in the same module scope.
+        // AuthRedisService is registered directly (not via AuthRedisModule) so that the client and
+        // the options provided via extraProviders are visible in the same module scope.
         AuthRedisService,
+        RedisReadinessService,
         AuthRevocationService,
         AccountStatusService,
         AuthTokenVerifierService,

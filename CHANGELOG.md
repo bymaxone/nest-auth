@@ -20,6 +20,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
+- **The module sends `PING` to your Redis client at bootstrap and refuses to start when it never answers.** It
+  retries every 250 ms for up to 5 seconds, so a Redis still starting during a rolling deploy, or a client
+  built with `lazyConnect` or `enableOfflineQueue: false` whose first command is rejected, passes once
+  the connection is up. A refused connection, a wrong password or a silent Redis for the whole budget
+  stops the application with `[BymaxAuthModule] Redis at <host>:<port> did not answer PING within 5000 ms`,
+  naming only the host and port the client was built with, never a password, a URL or the error ioredis
+  raised; a client that has ended fails at once. Before, a mis-pointed address started fine and failed
+  on the first request. A host whose tests build the module with a client that has no `ping` fails with
+  `BYMAX_AUTH_REDIS_CLIENT must be an ioredis client`; `ioredis-mock` answers it. A client with no
+  `commandTimeout` is warned about at startup, and the README's Configuration section says what to set:
+  with ioredis defaults an unreachable Redis holds each request until the client gives up, which reads
+  as a hang, though every decision still fails closed.
 - **`WsJwtGuard` holds a handshake `Authorization` header to the chain a request is held to.** It now
   verifies through `AuthTokenVerifierService`, so a token with a `jti` that is not a UUID, or with no
   `tenantId`, is refused at the guard, and two gates that were absent are on by default: the account's
