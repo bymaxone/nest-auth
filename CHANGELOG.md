@@ -20,12 +20,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
-- **`workspaces.roles.ownerRole` is checked at startup.** It must be 1 to 32 characters, start with a
-  letter and use only letters, digits and `_ . : -` (`^[A-Za-z][A-Za-z0-9_.:-]{0,31}$`). The owner role is
-  part of the key a `listSoleOwned` cursor is bound to, and a name with a quote, a backslash or a long
-  tail made that cursor longer than any page query would accept. `owner`, `admin`, `member`,
-  `billing_admin` and `org:admin` pass; a name with a space or more than 32 characters is refused, naming
-  the option and the rule. Only the owner role is checked: the other roles of the hierarchy keep any name.
+- **`workspaces.roles.ownerRole` is checked at startup.** It must be 1 to 32 code points of well-formed
+  text with no control character, the rule an id follows, and its characters are free: `owner`,
+  `org:admin`, `team lead` and `proprietário` all pass. The owner role is part of the key a
+  `listSoleOwned` cursor is bound to, and only a name of more than 32 code points, or one with a control
+  character or an unpaired surrogate, is refused, naming the option and the rule. Only the owner role is
+  checked: the other roles of the hierarchy keep any name.
 - **A workspace page cursor may now be up to 4096 characters, not 512.** The wire contract is at version 5:
   `requestFieldBounds.pageLimit.cursor` and the published `WorkspacePageQueryDto` schema say 4096, and the
   contract states the owner-role rule as a new `workspaceOwnerRole` section. During a rolling deploy an
@@ -49,7 +49,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **Workspace cursor codec**, exported next to the membership port: `workspaceQueryKey`,
   `workspacePositionOf`, `readWorkspacePosition`, `encodeWorkspaceCursor`, `decodeWorkspaceCursor` and the
   constants `WORKSPACE_CURSOR_MAX_LENGTH`, `WORKSPACE_CURSOR_PART_MAX_LENGTH`,
-  `WORKSPACE_OWNER_ROLE_MAX_LENGTH` and `WORKSPACE_OWNER_ROLE_PATTERN`. Decoding implements the rule the
+  `WORKSPACE_OWNER_ROLE_MAX_LENGTH`, with `isWorkspaceOwnerRole` for the owner-role rule. Decoding implements the rule the
   port states of every cursor: one that is malformed, longer than the bound, not exactly the bytes the
   encoder writes, not a pair of two strings, issued for another query, or whose position is not an
   instant followed by a well-formed id of 1 to 128 code points without control characters reads as the
@@ -65,7 +65,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   for `listForUser`, 108 for `listForWorkspace` and 105 for `listSoleOwned` with the role `owner`): the
   workspace page query refused a cursor over 512 characters, and a cursor for such ids is longer. The
   bound is now 4096, sized from the longest cursor that ids, tenants and key parts of 128 code points can
-  produce (2178 characters), and the page query and the decoder share one constant.
+  produce (2306 characters), and the page query and the decoder share one constant.
 
 ## [1.5.2] - 2026-11-12
 

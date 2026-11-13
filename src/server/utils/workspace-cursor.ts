@@ -16,9 +16,9 @@
  * Sized for the longest cursor a listing can issue from the ids the library admits: a tenant, a
  * member and a row id of up to {@link WORKSPACE_CURSOR_PART_MAX_LENGTH} code points each, whatever
  * non-control characters they hold (JSON escapes a quote twice, which is the costliest of them), and
- * an owner role of up to {@link WORKSPACE_OWNER_ROLE_MAX_LENGTH} characters: 2178 characters at most.
- * A tenant and a member a host builds from control characters or unpaired surrogates, which JSON
- * escapes at six or seven bytes each, still fit: the longest such cursor is 3202 characters.
+ * an owner role of up to {@link WORKSPACE_OWNER_ROLE_MAX_LENGTH} code points: 2306 characters at
+ * most. A tenant and a member a host builds from control characters or unpaired surrogates, which
+ * JSON escapes at six or seven bytes each, still fit: the longest such cursor is 3330 characters.
  * The HTTP page query and the decoder both use this value, so a cursor the library issues is
  * always one it accepts.
  */
@@ -30,15 +30,14 @@ export const WORKSPACE_CURSOR_MAX_LENGTH = 4096
  */
 export const WORKSPACE_CURSOR_PART_MAX_LENGTH = 128
 
-/** The longest owner role name, in characters; the role is part of the key of `listSoleOwned`. */
-export const WORKSPACE_OWNER_ROLE_MAX_LENGTH = 32
-
 /**
- * What an owner role may be named: a letter, then letters, digits and `_ . : -`, up to
- * {@link WORKSPACE_OWNER_ROLE_MAX_LENGTH} characters. None of them is escaped in JSON, which keeps
- * the longest cursor within {@link WORKSPACE_CURSOR_MAX_LENGTH}.
+ * The longest owner role name, in code points; the role is part of the key of `listSoleOwned`.
+ *
+ * The bound is what keeps that cursor under {@link WORKSPACE_CURSOR_MAX_LENGTH} whatever characters the
+ * role holds. It needs no charset: the costliest role, 32 quote characters or 32 emoji, gives 2306
+ * characters beside a tenant, a member and a row id of 128 well-formed code points.
  */
-export const WORKSPACE_OWNER_ROLE_PATTERN = /^[A-Za-z][A-Za-z0-9_.:-]{0,31}$/
+export const WORKSPACE_OWNER_ROLE_MAX_LENGTH = 32
 
 /** The length of the canonical instant a position starts with, `2026-11-13T12:00:00.000Z`. */
 const INSTANT_LENGTH = 24
@@ -57,6 +56,25 @@ function hasControlCharacter(text: string): boolean {
     if (character <= '\u001f' || (character >= '\u007f' && character <= '\u009f')) return true
   }
   return false
+}
+
+/**
+ * Whether a name may be the owner role: 1 to {@link WORKSPACE_OWNER_ROLE_MAX_LENGTH} code points of
+ * well-formed text with no control character, the rule an id follows. The role is part of the key a
+ * `listSoleOwned` cursor is bound to, so its length is what keeps that cursor within
+ * {@link WORKSPACE_CURSOR_MAX_LENGTH}; its characters are free.
+ *
+ * @param role - The name.
+ * @returns `true` when the name is acceptable.
+ */
+export function isWorkspaceOwnerRole(role: string): boolean {
+  const length = Array.from(role).length
+  return (
+    length >= 1 &&
+    length <= WORKSPACE_OWNER_ROLE_MAX_LENGTH &&
+    !hasControlCharacter(role) &&
+    !UNPAIRED_SURROGATE.test(role)
+  )
 }
 
 /**

@@ -145,29 +145,37 @@ describe('resolveWorkspaceOptions', () => {
       ).toThrow(message)
     })
 
-    // Scenario: owner role names the paging cursor cannot carry. Expected: the boot error names the
-    // option, the value and the rule.
-    it.each(['team lead', 'a"b', 'a\\b', '1owner', 'é', 'x'.repeat(33)])(
+    // Scenario: owner role names the paging cursor cannot carry: over 32 code points, a control
+    // character, an unpaired surrogate. Expected: the boot error names the option, the value and the
+    // rule.
+    it.each(['x'.repeat(33), '😀'.repeat(33), 'a\nb', '\uD800'])(
       'refuses the owner role %j',
       (ownerRole) => {
         const roles = { hierarchy: { [ownerRole]: [] }, ownerRole }
 
         expect(() => resolveWorkspaceOptions(options({ roles }))).toThrow(
-          `workspaces.roles.ownerRole '${ownerRole}' must be 1 to 32 characters, start with a ` +
-            'letter and use only letters, digits and _ . : - (the role is part of a paging cursor).'
+          `workspaces.roles.ownerRole '${ownerRole}' must be 1 to 32 code points of well-formed text ` +
+            'with no control character (the role is part of a paging cursor).'
         )
       }
     )
 
-    // Scenario: realistic owner role names. Expected: each boots.
-    it.each(['owner', 'admin', 'member', 'billing_admin', 'ADMIN', 'org:admin', 'a'.repeat(32)])(
-      'accepts the owner role %s',
-      (ownerRole) => {
-        const roles = { hierarchy: { [ownerRole]: [] }, ownerRole }
+    // Scenario: realistic owner role names, including a space, accents and an emoji. Expected: each
+    // boots.
+    it.each([
+      'owner',
+      'admin',
+      'billing_admin',
+      'org:admin',
+      'team lead',
+      'proprietário',
+      '😀',
+      'a'.repeat(32)
+    ])('accepts the owner role %s', (ownerRole) => {
+      const roles = { hierarchy: { [ownerRole]: [] }, ownerRole }
 
-        expect(resolveWorkspaceOptions(options({ roles }))?.roles.ownerRole).toBe(ownerRole)
-      }
-    )
+      expect(resolveWorkspaceOptions(options({ roles }))?.roles.ownerRole).toBe(ownerRole)
+    })
 
     // Listing itself adds nothing to the owner, so it is not the "role that includes the owner"
     // case the check refuses.

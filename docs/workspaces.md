@@ -99,5 +99,6 @@ const nextCursor = hasMore
   value or logs it never sees a control character or a long id a client invented.
 - `workspaceQueryKey` is `JSON.stringify` of its parts, and is also fit for any key that must stay
   unambiguous, a lock name for example.
-- `workspaces.roles.ownerRole` is checked at startup against `WORKSPACE_OWNER_ROLE_PATTERN`, because it is
-  part of the key of `listSoleOwned`.
+- `workspaces.roles.ownerRole` is checked at startup with `isWorkspaceOwnerRole`: 1 to 32 code points of
+  well-formed text with no control character, because it is part of the key of `listSoleOwned` and its
+  length is what keeps that cursor under the bound. Its characters are free.

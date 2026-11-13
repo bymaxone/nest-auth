@@ -2055,10 +2055,64 @@
     ]
   },
   "workspaceOwnerRole": {
-    "$comment": "The name of the OWNER role of `workspaces.roles` (`ownerRole`), and no other role of the hierarchy: other role names keep whatever shape a host gives them. The owner role is refused at startup, naming the option and the value, unless it matches `pattern`: a letter, then letters, digits and `_ . : -`, at most `maxLength` characters. None of those characters is escaped when a repository writes the role into a JSON cursor key, which is what keeps the longest cursor under the cursor bound of `requestFieldBounds.pageLimit`. The rule is checked against the vectors below.",
-    "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,31}$",
+    "$comment": "The name of the OWNER role of `workspaces.roles` (`ownerRole`), and no other role of the hierarchy: other role names keep whatever shape a host gives them. The owner role is refused at startup, naming the option and the value, unless it is 1 to `maxLength` code points of well-formed text with no control character (the C0 and C1 ranges and DEL): the rule an id follows, and no charset. A code point is counted once, an emoji included. The role is part of the key of a `listSoleOwned` cursor, and its length is what keeps that cursor under the cursor bound of `requestFieldBounds.pageLimit`: with the longest role of the costliest characters the longest cursor of nest-auth's format is 2306 characters. Each `refuses` entry is the string `value`, with the code units of `unpairedSurrogateCodeUnits` appended when it has them, so no ill-formed string appears in this file.",
     "maxLength": 32,
-    "accepts": ["owner", "admin", "member", "viewer", "billing_admin", "ADMIN", "org:admin", "a23456789012345678901234567890ab"],
-    "refuses": ["", "team lead", "a234567890123456789012345678901ab", "1owner", "a\"b", "a\\b", "é", "-owner"]
+    "accepts": [
+      "owner",
+      "admin",
+      "member",
+      "billing_admin",
+      "org:admin",
+      "team lead",
+      "proprietário",
+      "dono_é",
+      "😀",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+    ],
+    "refuses": [
+      {
+        "case": "empty",
+        "value": ""
+      },
+      {
+        "case": "33 code points",
+        "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "case": "33 emoji",
+        "value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      },
+      {
+        "case": "a NUL",
+        "value": "\u0000"
+      },
+      {
+        "case": "a newline",
+        "value": "a\nb"
+      },
+      {
+        "case": "a DEL",
+        "value": "ab"
+      },
+      {
+        "case": "a C1 control",
+        "value": "ab"
+      },
+      {
+        "case": "an unpaired high surrogate",
+        "value": "",
+        "unpairedSurrogateCodeUnits": [
+          55296
+        ]
+      },
+      {
+        "case": "an unpaired low surrogate after a letter",
+        "value": "a",
+        "unpairedSurrogateCodeUnits": [
+          56320
+        ]
+      }
+    ]
   }
 }
