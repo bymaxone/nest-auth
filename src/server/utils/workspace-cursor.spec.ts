@@ -22,8 +22,11 @@ const AT = new Date('2026-11-13T12:00:00.000Z')
 const POSITION = workspacePositionOf(AT, '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d')
 const QUERY = workspaceQueryKey('listForUser', 'acme', 'u1')
 
-/** What the template's own encoder wrote, so a cursor in flight keeps reading after the swap. */
-const TEMPLATE_CURSORS = [
+/**
+ * Cursors in the pair format, base64url of the JSON of `[query, position]`, written by an encoder
+ * independent of this codec: each must decode to its position and re-encode to identical bytes.
+ */
+const PAIR_FORMAT_CURSORS = [
   {
     parts: ['listForUser', 'default', '3f1c2a9e-1b2c-4d5e-8f90-0123456789ab'],
     id: '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d',
@@ -53,8 +56,8 @@ function generator(seed: number): () => number {
   }
 }
 
-/** The template's encoder, restated: base64url of the JSON of `[query, position]`. */
-function templateEncode(query: string, position: string): string {
+/** An encoder independent of the codec: base64url of the JSON of `[query, position]`. */
+function independentEncode(query: string, position: string): string {
   return Buffer.from(JSON.stringify([query, position])).toString('base64url')
 }
 
@@ -64,8 +67,8 @@ function cursorOf(payload: unknown): string {
 }
 
 describe('workspaceQueryKey', () => {
-  // Scenario: fixed inputs. Expected: the exact JSON text. Why: the template also uses this as a
-  // lock key and a map key, so a byte of drift during a rolling deploy would split one lock in two.
+  // Scenario: fixed inputs. Expected: the exact JSON text. Why: a lock name or a map key built from
+  // the key must not move between releases, or two instances would hold two names for one lock.
   it.each([
     [['listForUser', 'acme', 'u1'], '["listForUser","acme","u1"]'],
     [[], '[]'],
@@ -132,14 +135,14 @@ describe('encodeWorkspaceCursor and decodeWorkspaceCursor', () => {
     expect(decodeWorkspaceCursor(encodeWorkspaceCursor(QUERY, POSITION), QUERY)).toBe(POSITION)
   })
 
-  // Scenario: the template's encoder and this one on the same input. Expected: identical bytes.
-  it('writes the same bytes as the template encoder', () => {
-    expect(encodeWorkspaceCursor(QUERY, POSITION)).toBe(templateEncode(QUERY, POSITION))
+  // Scenario: an independent encoder and this one on the same input. Expected: identical bytes.
+  it('writes the same bytes as an independent encoder', () => {
+    expect(encodeWorkspaceCursor(QUERY, POSITION)).toBe(independentEncode(QUERY, POSITION))
   })
 
-  // Scenario: cursors the template issued before the swap. Expected: each still reads as the
-  // position it carried, and this encoder writes the same bytes for it.
-  it.each(TEMPLATE_CURSORS)('reads and rewrites a template cursor for $parts', (entry) => {
+  // Scenario: cursors in the pair format. Expected: each reads as the position it carries, and this
+  // encoder writes the same bytes for it.
+  it.each(PAIR_FORMAT_CURSORS)('reads and rewrites a pair-format cursor for $parts', (entry) => {
     const query = workspaceQueryKey(...entry.parts)
     const position = workspacePositionOf(AT, entry.id)
 
@@ -413,7 +416,7 @@ describe('the longest cursor a valid listing can issue', () => {
   const letters = 'a'.repeat(WORKSPACE_OWNER_ROLE_MAX_LENGTH)
 
   // Scenario: tenant and member of 128 quote characters (each escaped twice) and a row id of 128
-  // emoji (four bytes each), for each listing the template issues. Expected: the length the bound
+  // emoji (four bytes each), for each listing a repository serves. Expected: the length the bound
   // was sized for, under the maximum, and the cursor reads back.
   it.each([
     ['listForUser', ['listForUser', quotes, quotes], emoji, 2126],
