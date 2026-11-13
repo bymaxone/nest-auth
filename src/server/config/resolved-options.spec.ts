@@ -2490,25 +2490,6 @@ describe('resolveOptions — jwt.previousSecrets validation', () => {
     ).toThrow(/must be an array of strings/)
   })
 
-  // Scenario: a retired secret that fails the strength rules, at a position past the first. Expected:
-  // the error names `jwt.previousSecrets[index]`, not `jwt.secret`. Why: the operator fixes the
-  // variable the message names, and a message naming the current secret sends them to the wrong
-  // one while the retired entry stays broken.
-  it.each([
-    ['too short', 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P', /previousSecrets\[1\] must be at least 32/],
-    ['empty', '', /previousSecrets\[1\] is required and must not be empty/],
-    ['low entropy', 'a'.repeat(40), /previousSecrets\[1\] has insufficient entropy/]
-  ])('should name the retired entry when it is %s', (_why, weak, message) => {
-    const attempt = (): unknown =>
-      resolveOptions({
-        ...MINIMAL_OPTIONS,
-        jwt: { secret: VALID_SECRET, previousSecrets: [OTHER_SECRET, weak] }
-      })
-
-    expect(attempt).toThrow(message)
-    expect(attempt).not.toThrow(/\bjwt\.secret\b/)
-  })
-
   // Scenario: the current secret repeated in the retired list, and a duplicate entry. Expected:
   // rejected. Why: a configuration that reads as rotated while nothing changed is worse than
   // one that never claimed to — an operator would believe the old key was retired.

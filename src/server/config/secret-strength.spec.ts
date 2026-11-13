@@ -48,3 +48,27 @@ describe('the secret length floor', () => {
     ).toThrow('jwt.secret must be at least 32 characters long')
   })
 })
+
+describe('a retired signing secret that fails the strength rules', () => {
+  // Scenario: a weak entry at a position past the first. Expected: the error names
+  // `jwt.previousSecrets[index]` and not `jwt.secret`. Why: the operator fixes the variable the
+  // message names, and one naming the current secret leaves the retired entry broken.
+  it.each([
+    ['too short', secretOf(AUTH_SECRET_MIN_LENGTH - 1), /previousSecrets\[1\] must be at least 32/],
+    ['empty', '', /previousSecrets\[1\] is required and must not be empty/],
+    ['low entropy', 'a'.repeat(40), /previousSecrets\[1\] has insufficient entropy/]
+  ])('names the retired entry when it is %s', (_why, weak, message) => {
+    const attempt = (): unknown =>
+      resolveOptions({
+        jwt: {
+          secret: secretOf(48),
+          previousSecrets: [secretOf(40).split('').reverse().join(''), weak]
+        },
+        roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+        rateLimit: { clientIpSource: 'peer' }
+      })
+
+    expect(attempt).toThrow(message)
+    expect(attempt).not.toThrow(/\bjwt\.secret\b/)
+  })
+})
