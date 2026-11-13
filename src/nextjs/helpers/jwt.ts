@@ -276,7 +276,7 @@ export async function verifyJwtToken(
 
   const signatureValid = await verifyAgainstSecrets(headerSegment, payloadSegment, signatureBytes, [
     secret,
-    ...(options?.previousSecrets ?? [])
+    ...retiredSecretsOf(options)
   ])
   if (!signatureValid || !carriesRequiredClaims(payload, options)) return emptyDecoded()
 
@@ -308,6 +308,24 @@ export interface VerifyJwtOptions {
    * A token with none, or without it, is refused. An empty string reads as unconfigured.
    */
   readonly audience?: string | undefined
+}
+
+/**
+ * The retired secrets of the options, read defensively.
+ *
+ * The type says `readonly string[]`, but the value comes from configuration an untyped host or an
+ * environment variable can get wrong, and a string spreads into one-character keys, so a token
+ * signed with a single letter would verify. Anything that is not an array is read as none, and an
+ * entry that is not a string is dropped.
+ *
+ * @param options - The configured claims and secrets.
+ * @returns The string entries of `previousSecrets`, or none.
+ */
+function retiredSecretsOf(options: VerifyJwtOptions | undefined): string[] {
+  const listed: unknown = options?.previousSecrets
+  return Array.isArray(listed)
+    ? listed.filter((entry): entry is string => typeof entry === 'string')
+    : []
 }
 
 /**

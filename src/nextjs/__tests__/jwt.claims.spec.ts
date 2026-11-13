@@ -23,6 +23,11 @@ function claims(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { sub: 'u1', tenantId: 't1', role: 'member', type: 'dashboard', exp: FUTURE, ...extra }
 }
 
+/** A value an untyped caller could hand over as the retired list, which the type would refuse. */
+function untypedList(value: unknown): readonly string[] {
+  return value as readonly string[]
+}
+
 describe('verifyJwtToken — retired secrets', () => {
   // Scenario: a token signed with a secret that is being rotated out, while the backend still lists
   // it. Expected: verified, as the backend verifies it.
@@ -187,5 +192,35 @@ describe('the proxy token state with the backend’s claims configured', () => {
     const token = await signHs256Token(claims(), SECRET)
 
     expect((await stateOf(token, {})).authenticated).toBe(true)
+  })
+})
+
+describe('verifyJwtToken — a misconfigured retired-secret list', () => {
+  // Scenario: a host passes the list as a string, as an environment variable arrives from untyped
+  // code. Expected: read as no retired secrets, never spread into one-character keys, so a token
+  // signed with a single letter that appears in the string does not verify.
+  it.each([['abc'], [RETIRED], [42], [null], [{ 0: RETIRED, length: 1 }]])(
+    'reads a non-array list %p as none',
+    async (previousSecrets) => {
+      const token = await signHs256Token(claims(), 'a')
+
+      const decoded = await verifyJwtToken(token, SECRET, {
+        previousSecrets: untypedList(previousSecrets)
+      })
+
+      expect(decoded.signatureVerified).toBe(false)
+    }
+  )
+
+  // Scenario: an array with entries that are not strings. Expected: they are dropped and the string
+  // entries are still tried, so one bad entry does not disable the rotation window.
+  it('drops a non-string entry and still tries the strings', async () => {
+    const token = await signHs256Token(claims(), RETIRED)
+
+    const decoded = await verifyJwtToken(token, SECRET, {
+      previousSecrets: untypedList([null, 7, RETIRED])
+    })
+
+    expect(decoded.signatureVerified).toBe(true)
   })
 })
