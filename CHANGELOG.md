@@ -44,7 +44,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   whose cooldown store cannot answer answers `503` after the timing floor, the same for every address, and
   pins that a `beforeWorkspaceCreate` hook that fails without refusing creates nothing and answers `500
 auth.internal`. A new `serviceUnavailable` section lists where the 503 is answered, what the library
-  absorbs, and which store failures count as an outage; the classifier's spec reads that list.
+  absorbs, and which store failures count as an outage; the classifier's spec reads the outage part.
 - `AuthException` takes an optional third argument `{ cause }`, kept on the exception and never serialized.
 - `supertest` devDependency floor is `^7.3.1`, and the e2e suite binds its port-only listeners to
   `127.0.0.1`.
