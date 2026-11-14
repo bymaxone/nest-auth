@@ -40,6 +40,10 @@
     "reason": "Parses the service sources with the TypeScript compiler as text; it imports only node modules and typescript and executes no source under src, so the related-test lookup is right to leave it out."
   },
   {
+    "file": "src/shared/__tests__/_scaling.spec.ts",
+    "reason": "Tests the scaling helper the linear-time specs share, which is test tooling under __tests__ and not shipped source; it imports only that helper, so no mutant of src exists for the run to judge."
+  },
+  {
     "file": "src/shared/__tests__/route-interpolation.spec.ts",
     "reason": "Scans the source files as text for hand-filled route placeholders; it imports only node modules and executes no source under src."
   }
