@@ -124,13 +124,13 @@ export class RedisReadinessService implements OnApplicationBootstrap {
           reject(new Error('the client gave up connecting'))
         })
       }
-      // Stryker disable BlockStatement,CallExpression,StringLiteral: equivalent. The attempt's own deadline rejects at the same instant for the same reason, so the `reject` in this branch adds nothing; what the branch adds is the cleanup `settle` does (listeners removed, which the specs count on a real emitter), and the text is never read (the retry loop discards it). The per-line form does not serve here: the two mutants sit on different lines of one callback.
       const timer = setTimeout(() => {
+        // Stryker disable next-line BlockStatement: equivalent. The attempt's own deadline rejects at the same instant for the same reason, so the `reject` below adds nothing; what this branch adds is the cleanup `settle` does (listeners removed, which the specs count on a real emitter), and that call is not disabled.
         settle(() => {
+          // Stryker disable next-line CallExpression,StringLiteral: equivalent. Same reason as above, and the text is never read (the retry loop discards it).
           reject(new Error('the client did not become ready'))
         })
       }, timeoutMs)
-      // Stryker restore BlockStatement,CallExpression,StringLiteral
       this.redis.once('ready', onReady)
       this.redis.once('end', onEnd)
     })
