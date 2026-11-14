@@ -20,6 +20,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
+- **MFA state and its failure counters are keyed by the tenant on the dashboard plane, and the tenant-less
+  duplicates are gone.** Five keys also took a second, tenant-less form that two tenants' user `1` shared:
+  the MFA transition lock (`mfalock:`), the TOTP replay marker (`tu:`), and the failure counters of the
+  `challenge`, `disable` and `reauth` flows. With them, failures counted against user `1` of one tenant
+  locked user `1` of another out of those flows with no credential, a success in one cleared the
+  other's count, a transition in one answered `MFA_STATE_CONFLICT` in the other, and one tenant's TOTP
+  code burnt the other's. A host whose user ids are unique across tenants (UUIDs) was never affected.
+  Only the length-prefixed forms (`userSubject`) are read and written now, the ones the shared keyspace
+  contract names. The tenant-less keys were the compatibility arm of a rolling deploy that the code
+  already said could not be made safe, so drain old instances before new ones serve, as the keyspace
+  contract requires; a lockout counted under a tenant-less key before the upgrade does not carry over.
 - **A provider plugin's code exchange and profile fetch are bounded to 10 seconds together.** The
   callback awaited the plugin with no deadline, so a token or profile endpoint that accepted the
   connection and went silent held the request open with its state already consumed. Past the deadline

@@ -341,18 +341,17 @@ describe('MfaService', () => {
       await expect(service.setup('user-1', 'dashboard', 'wrong', 'tenant-1')).rejects.toThrow(
         AuthException
       )
-      // Two counters, not one: the migration writes the reauth failure under both the legacy
-      // plane-only key and the tenant-scoped key so neither an old nor a new pod can bypass it.
-      expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(2)
+      // One counter: the tenant-scoped one. A tenant-less counter would be shared with the same user
+      // id in another tenant.
+      expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
 
       mockPasswordService.compare.mockResolvedValue(true)
       mockRedis.setIfAbsent.mockResolvedValue(true)
       mockBruteForce.resetFailures.mockClear()
 
       await service.setup('user-1', 'dashboard', 'right', 'tenant-1')
-      // Success clears BOTH counters — resetting only one would leave the other to lock the user
-      // out on the next attempt.
-      expect(mockBruteForce.resetFailures).toHaveBeenCalledTimes(2)
+      // Success clears the one counter the failure was recorded under.
+      expect(mockBruteForce.resetFailures).toHaveBeenCalledTimes(1)
     })
 
     // Scenario: an account provisioned purely through OAuth, which has no local password.
@@ -434,6 +433,9 @@ describe('MfaService', () => {
       await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
 
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
+        hmacSha256('reauth:dashboard:8:tenant-1:user-1', HMAC_KEY)
+      )
+      expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(
         hmacSha256('reauth:dashboard:user-1', HMAC_KEY)
       )
     })
@@ -1030,15 +1032,11 @@ describe('MfaService', () => {
       expect(mockRedis.get).toHaveBeenCalledWith(
         `mfa_setup:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`
       )
-      // The anti-replay marker is dual-written for the migration: both the tenant-scoped key and
-      // the legacy plane-only key are claimed with a 90s TTL, so a code cannot be replayed via
-      // either code path during a rolling upgrade.
+      // The anti-replay marker is the tenant-scoped key with a 90s TTL, and nothing else: a
+      // tenant-less marker would be shared with the same user id in another tenant.
+      expect(mockRedis.setnx).toHaveBeenCalledTimes(1)
       expect(mockRedis.setnx).toHaveBeenCalledWith(
         `tu:${hmacSha256(`dashboard:8:tenant-1:user-1:${validCode}`, HMAC_KEY)}`,
-        90
-      )
-      expect(mockRedis.setnx).toHaveBeenCalledWith(
-        `tu:${hmacSha256(`dashboard:user-1:${validCode}`, HMAC_KEY)}`,
         90
       )
       // The afterMfaEnabled hook must be invoked (kills the BlockStatement emptying at line 461)
@@ -1523,13 +1521,11 @@ describe('MfaService', () => {
       ).rejects.toThrow(AuthException)
 
       const identifiers = mockBruteForce.recordFailure.mock.calls.map((call) => call[0] as string)
-      // Two attempts × the migration's two counters (scoped + legacy) = four records.
-      expect(identifiers).toHaveLength(4)
-      // Each login records the SAME pair of keys — nothing in the login path reset them between —
-      // so both counters accumulate across logins and the lockout engages.
-      expect(identifiers[0]).toBe(identifiers[2]) // scoped counter: login 1 === login 2
-      expect(identifiers[1]).toBe(identifiers[3]) // legacy counter: login 1 === login 2
-      expect(identifiers[0]).not.toBe(identifiers[1]) // scoped and legacy are distinct keys
+      // Two attempts, one counter each.
+      expect(identifiers).toHaveLength(2)
+      // Each login records the SAME key — nothing in the login path reset it between — so the
+      // counter accumulates across logins and the lockout engages.
+      expect(identifiers[0]).toBe(identifiers[1])
       expect(mockBruteForce.resetFailures).not.toHaveBeenCalled()
     })
 
@@ -1717,43 +1713,32 @@ describe('MfaService', () => {
         expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
       })
 
-      // The migration takes two locks on the dashboard plane: the tenant-scoped one first, then the
-      // legacy plane-only one an old pod still uses. If the legacy lock is already held — an old pod
-      // mid-transition on the same account — the scoped lock this call just took must be rolled back
-      // before it refuses, or a refused transition strands a lock for its whole TTL. The rollback is
-      // a compare-and-delete against this call's own nonce, and it touches ONLY the scoped lock: the
-      // legacy lock was never taken here, so deleting it would remove the holder's.
-      it('rolls back the scoped lock when the legacy lock is already held', async () => {
+      // Two tenants' user `user-1` are two accounts. A transition held on the other tenant's account
+      // must not refuse this one, and this call takes exactly one lock: the tenant-scoped key, never
+      // the tenant-less one both accounts would share.
+      it("is not refused by another tenant's transition on the same user id", async () => {
         const { encrypt } = await import('../crypto/aes-gcm')
         const { generateTotpSecret } = await import('../crypto/totp')
         const { base32 } = generateTotpSecret()
         const plainRecovery = '1234-5678-9012'
+        const otherTenantLock = `mfalock:${hmacSha256('dashboard:8:tenant-2:user-1', HMAC_KEY)}`
 
         mockUserRepo.findById.mockResolvedValue({
           ...AUTH_USER_MFA_ENABLED,
           mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
           mfaRecoveryCodes: [hmacSha256(plainRecovery, HMAC_KEY)]
         })
-        // Scoped lock acquired (first call), legacy lock already held by another pod (second call).
-        mockRedis.setIfAbsent.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+        mockRedis.setIfAbsent.mockImplementation((key: string) =>
+          Promise.resolve(key !== otherTenantLock)
+        )
 
         await expect(
           service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
-        ).rejects.toMatchObject({
-          response: { error: { code: AUTH_ERROR_CODES.MFA_STATE_CONFLICT } }
-        })
-        // The scoped lock it took is released; the legacy lock it never took is left alone.
-        expect(mockRedis.eval).toHaveBeenCalledWith(
-          expect.any(String),
-          [`mfalock:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`],
-          [expect.any(String)]
-        )
-        expect(mockRedis.eval).not.toHaveBeenCalledWith(
-          expect.any(String),
-          [`mfalock:${hmacSha256('dashboard:user-1', HMAC_KEY)}`],
-          [expect.any(String)]
-        )
-        expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+        ).resolves.toBeDefined()
+
+        const taken = mockRedis.setIfAbsent.mock.calls.map(([key]) => key)
+        expect(taken).toEqual([`mfalock:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`])
+        expect(taken).not.toContain(`mfalock:${hmacSha256('dashboard:user-1', HMAC_KEY)}`)
       })
 
       // The tenant-scoped lock is taken first: if it is already held, the transition is refused
@@ -1897,16 +1882,11 @@ describe('MfaService', () => {
         await expect(
           service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
         ).rejects.toThrow('repository down')
-        // Both locks the dashboard transition took are released — the tenant-scoped one and the
-        // legacy plane-only one the migration also holds.
+        // The one lock the dashboard transition took is released, and no other key is touched.
+        expect(mockRedis.eval).toHaveBeenCalledTimes(1)
         expect(mockRedis.eval).toHaveBeenCalledWith(
           expect.any(String),
           [`mfalock:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`],
-          [expect.any(String)]
-        )
-        expect(mockRedis.eval).toHaveBeenCalledWith(
-          expect.any(String),
-          [`mfalock:${hmacSha256('dashboard:user-1', HMAC_KEY)}`],
           [expect.any(String)]
         )
       })
@@ -1931,7 +1911,7 @@ describe('MfaService', () => {
 
         await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
 
-        const lockKey = `mfalock:${hmacSha256('dashboard:user-1', HMAC_KEY)}`
+        const lockKey = `mfalock:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`
         const acquire = mockRedis.setIfAbsent.mock.calls.find(([key]) => key === lockKey)
         const release = mockRedis.eval.mock.calls.find(([, keys]) => keys[0] === lockKey)
         expect(acquire).toBeDefined()
@@ -3068,9 +3048,9 @@ describe('MfaService', () => {
         'tenant-1',
         'dashboard'
       )
-      // The disable brute-force identifier must be HMAC('disable:{userId}') — kills line 653.
+      // The disable brute-force identifier is the flow plus the tenant-scoped subject.
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
-        hmacSha256('disable:dashboard:user-1', HMAC_KEY)
+        hmacSha256('disable:dashboard:8:tenant-1:user-1', HMAC_KEY)
       )
       // Pin the success log including the context (line 686).
       expect(logSpy).toHaveBeenCalledWith('disable: MFA disabled userId=user-1 context=dashboard')
@@ -3741,7 +3721,7 @@ describe('MfaService', () => {
         )
       ).rejects.toThrow(AuthException)
       expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(
-        hmacSha256('disable:dashboard:user-1', HMAC_KEY)
+        hmacSha256('disable:dashboard:8:tenant-1:user-1', HMAC_KEY)
       )
       expect(warnSpy).toHaveBeenCalledWith(
         'regenerateRecoveryCodes: invalid MFA code userId=user-1 context=dashboard'

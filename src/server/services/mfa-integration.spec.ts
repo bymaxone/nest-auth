@@ -34,6 +34,7 @@ import {
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { userSubject } from '../constants/user-subject'
 import { encrypt } from '../crypto/aes-gcm'
 import { hmacSha256 } from '../crypto/secure-token'
 import { generateHotp, generateTotpSecret } from '../crypto/totp'
@@ -447,14 +448,14 @@ describe('MFA — integration smoke tests', () => {
       user: {}
     })
 
-    // First challenge: both the scoped and legacy anti-replay markers are unclaimed → succeeds.
-    mockRedis.setnx.mockResolvedValueOnce(true).mockResolvedValueOnce(true)
+    // First challenge: the anti-replay marker is unclaimed → succeeds.
+    mockRedis.setnx.mockResolvedValueOnce(true)
     await expect(
       service.challenge('temp.token', validCode, '1.2.3.4', 'Browser')
     ).resolves.toBeDefined()
 
-    // Second challenge, same code: the scoped marker is already claimed → replay → rejected.
-    mockRedis.setnx.mockResolvedValueOnce(false).mockResolvedValueOnce(false)
+    // Second challenge, same code: the marker is already claimed → replay → rejected.
+    mockRedis.setnx.mockResolvedValueOnce(false)
     await expect(service.challenge('temp.token', validCode, '1.2.3.4', 'Browser')).rejects.toThrow(
       AuthException
     )
@@ -485,12 +486,12 @@ describe('MFA — integration smoke tests', () => {
     })
     mockRedis.setnx.mockResolvedValue(true)
 
-    // First attempt: not locked → wrong code → recordFailure on BOTH migration counters.
+    // First attempt: not locked → wrong code → one failure recorded, on the tenant-scoped counter.
     mockBruteForce.isLockedOut.mockResolvedValueOnce(false)
     await expect(service.challenge('temp.token', '000000', '1.2.3.4', 'Browser')).rejects.toThrow(
       AuthException
     )
-    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(2)
+    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
 
     // Second attempt: now locked → ACCOUNT_LOCKED thrown before TOTP check
     mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
@@ -504,7 +505,7 @@ describe('MFA — integration smoke tests', () => {
     }
     // recordFailure must NOT be called again — lockout check exits early, so the count stays at
     // the two records the first failure wrote.
-    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(2)
+    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
   })
 
   // ---------------------------------------------------------------------------
@@ -537,7 +538,12 @@ describe('MFA — integration smoke tests', () => {
       AuthException
     )
 
-    const expectedBfId = hmacSha256('challenge:dashboard:user-1', HMAC_KEY)
+    const expectedBfId = hmacSha256(
+      `challenge:${userSubject('dashboard', 'user-1', 'tenant-1')}`,
+      HMAC_KEY
+    )
+    // The tenant-less form two tenants' user `user-1` would share: it must never be counted under.
+    const tenantLessBfId = hmacSha256('challenge:dashboard:user-1', HMAC_KEY)
     const plainBfId = hmacSha256('user-1', HMAC_KEY) // login-style identifier
     const disableBfId = hmacSha256('disable:dashboard:user-1', HMAC_KEY) // disable-style identifier
     // The SAME id on the other identity plane. The two id spaces come from different consumer
@@ -548,6 +554,8 @@ describe('MFA — integration smoke tests', () => {
     expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(expectedBfId)
     expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(expectedBfId)
     // Must NOT use the plain (login), disable-namespaced, or other-plane identifiers
+    expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(tenantLessBfId)
+    expect(mockBruteForce.recordFailure).not.toHaveBeenCalledWith(tenantLessBfId)
     expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(plainBfId)
     expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(disableBfId)
     expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(otherPlaneBfId)

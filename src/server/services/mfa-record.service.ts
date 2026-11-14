@@ -207,52 +207,17 @@ export class MfaRecordService {
     tenantId: string | undefined,
     mutate: (current: AuthUser | AuthPlatformUser) => MfaRecordUpdate | null
   ): Promise<boolean> {
-    // Two lock keys: the plane-only key a pod from before tenant scoping still takes, and the
-    // tenant-scoped key. Acquiring BOTH keeps the transition mutually exclusive with such a pod
-    // (via the plane-only key) AND with other pods at this version (via the scoped key); holding
-    // only one would let two pods transition the same account at once, the very race this method
-    // exists to prevent.
+    // One lock per account, keyed by the length-prefixed subject, which carries the tenant on the
+    // dashboard plane: two tenants' user `1` do not share it, so one tenant's transition cannot make
+    // the other's fail with `MFA_STATE_CONFLICT`.
     //
-    // **This does NOT make a rolling upgrade from 1.4.3 safe: do not deploy across that
-    // boundary.** The lock key has three generations of preimage: `dashboard:{userId}` (the
-    // plane-only arm below), `dashboard:{tenantId}:{userId}` (what 1.4.3 shipped) and the
-    // length-prefixed subject `userSubject` builds. A pod running 1.4.3 takes the second, which
-    // this code does not take, so against 1.4.3 the pair provides no exclusion and every
-    // last-write-wins failure the lock exists to prevent is reachable while both are live. Drain
-    // the old pods before the new ones serve; the wire contract states the same obligation for
-    // the keyspace itself, which has no compatibility path either.
-    //
-    // The second generation is deliberately NOT a third arm: it would be compatibility weight for
-    // a deployment that does not exist, and the cutover the contract requires is the stronger
-    // position.
-    //
-    // On the platform plane the two keys coincide (the subject never carried a tenant), so the
-    // plane-only arm is skipped — taking the same lock a second time would always fail and refuse
-    // every platform transition.
-    const scopedLockKey = `mfalock:${hmacSha256(userSubject(context, userId, tenantId), this.options.hmacKey)}`
-    const legacyLockKey = `mfalock:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
-    const acquireLegacy = legacyLockKey !== scopedLockKey
-    // Both locks carry a per-call nonce so each can only be released by the call that took it.
-    // A fixed value made the release unsafe: the TTL is short, and a transition that outlives
-    // it — the repository is the host's, and a read plus a write can stall past ten seconds
-    // under load — has already lost the lock by the time its `finally` runs. Deleting it
-    // unconditionally there removes the *successor's* lock, and a third caller then enters
-    // alongside the second. That is the serialization this method exists to provide, undone
-    // precisely under the load that makes concurrent transitions likely in the first place.
+    // The lock carries a per-call nonce so it can only be released by the call that took it. The TTL
+    // is short and the repository is the host's, so a transition can outlive it: a release that
+    // deleted the key unconditionally would then remove the successor's lock and let a third caller
+    // in beside the second. The release is therefore a compare-and-delete on the nonce.
+    const lockKey = `mfalock:${hmacSha256(userSubject(context, userId, tenantId), this.options.hmacKey)}`
     const lockToken = randomBytes(16).toString('hex')
-    if (
-      !(await this.redis.setIfAbsent(scopedLockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS))
-    ) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT)
-    }
-    if (
-      acquireLegacy &&
-      !(await this.redis.setIfAbsent(legacyLockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS))
-    ) {
-      // Roll back the scoped lock we already hold before refusing — a compare-and-delete, never a
-      // bare DEL, so a scoped lock whose TTL lapsed and was retaken by another caller is left
-      // alone rather than stolen.
-      await this.redis.eval(RELEASE_LOCK_LUA, [scopedLockKey], [lockToken])
+    if (!(await this.redis.setIfAbsent(lockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS))) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT)
     }
     try {
@@ -284,12 +249,8 @@ export class MfaRecordService {
       }
       return true
     } finally {
-      // Compare-and-delete each: release only a lock still holding this call's nonce, and only the
-      // legacy lock if this call actually took it.
-      await this.redis.eval(RELEASE_LOCK_LUA, [scopedLockKey], [lockToken])
-      if (acquireLegacy) {
-        await this.redis.eval(RELEASE_LOCK_LUA, [legacyLockKey], [lockToken])
-      }
+      // Compare-and-delete: release only a lock still holding this call's nonce.
+      await this.redis.eval(RELEASE_LOCK_LUA, [lockKey], [lockToken])
     }
   }
 
@@ -325,18 +286,13 @@ export class MfaRecordService {
     code: string,
     tenantId: string | undefined
   ): Promise<boolean> {
-    // The claim marker is keyed by the tenant-scoped subject, like every other MFA key, so a claim
-    // written under an older preimage is not consulted: deploying alongside pods on an older
-    // version lets the same recovery code be claimed once on each side.
-    //
-    // The transition lock does not bound that. It is keyed by the same subject, so pods that
-    // disagree about the subject disagree about the lock and do not exclude each other (see the
-    // note in `transition`). A double claim then reaches two unserialized read-modify-writes on
-    // the recovery-code list, which is how a spent code comes back.
-    //
-    // The answer is the deployment shape, not a wider key: old pods must be drained before the
-    // new ones serve. The marker is short-lived, so once no older pod is live there is nothing
-    // left to reconcile.
+    // The claim marker is keyed by the tenant-scoped subject, like every other MFA key: one claim per
+    // account and code, never shared with another tenant's account. The transition lock is keyed by
+    // the same subject, so instances that disagree about the subject disagree about the lock and do
+    // not exclude each other, and a double claim would then reach two unserialized read-modify-writes
+    // on the recovery-code list, which is how a spent code comes back. The deployment shape is what
+    // prevents that, not a wider key: instances on a different subject derivation must not serve
+    // together.
     const claimKey = `rcu:${hmacSha256(`${userSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
     return await this.redis.setnx(claimKey, RECOVERY_CODE_CLAIM_TTL_SECONDS)
   }
@@ -349,10 +305,6 @@ export class MfaRecordService {
    * submission of the same code within the TTL is rejected as a replay. Binding the marker to
    * both the subject and the code value prevents code disclosure in Redis and cross-user,
    * cross-tenant and cross-plane replay alike.
-   *
-   * A second marker under the plane-only preimage `{context}:{userId}:{code}` is written and
-   * required alongside it; see the call site for why both must be fresh while pods of two
-   * versions are live.
    *
    * @returns `true` if the code is valid and has not been replayed, `false` otherwise.
    */
@@ -370,18 +322,8 @@ export class MfaRecordService {
     // cross-tenant AND cross-plane replay, and avoiding plaintext code storage in Redis. Two
     // tenants' user `1` do not share a marker, so one cannot burn the other's code.
     const ttl = totpAntiReplayTtlSeconds(window)
-    const scopedReplayKey = `tu:${hmacSha256(`${userSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
-    const legacyReplayKey = `tu:${hmacSha256(`${context}:${userId}:${code}`, this.options.hmacKey)}`
-    // Fresh only when unclaimed on BOTH keys: while pods of two versions are live, an old pod
-    // claims only the plane-only key and a new pod only the scoped one, so consulting a single key
-    // would let the same code pass once on each side. Setting both and requiring both new closes
-    // the replay across the two code paths; a marker left by the losing conjunct expires on its
-    // own. On the platform plane the two keys coincide — claiming the scoped one a second time
-    // would always read as a replay and reject every code — so the second claim is skipped there.
-    const scopedIsNew = await this.redis.setnx(scopedReplayKey, ttl)
-    if (scopedReplayKey === legacyReplayKey) return scopedIsNew
-    const legacyIsNew = await this.redis.setnx(legacyReplayKey, ttl)
-    return scopedIsNew && legacyIsNew
+    const replayKey = `tu:${hmacSha256(`${userSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
+    return await this.redis.setnx(replayKey, ttl)
   }
 
   /**

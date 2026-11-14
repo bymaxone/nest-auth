@@ -45,11 +45,14 @@ async function build(): Promise<{
   return { service: moduleRef.get(ReauthenticationService), redis, brute, password }
 }
 
-/** The two counter ids the `reauth` flow uses for a dashboard account: tenant-scoped and plane-only. */
-function reauthCounters(userId: string, tenantId: string): { scoped: string; legacy: string } {
+/**
+ * The counter id the `reauth` flow uses for a dashboard account, and the tenant-less one it must
+ * never touch: two tenants' user `u1` share the latter and not the former.
+ */
+function reauthCounters(userId: string, tenantId: string): { scoped: string; tenantLess: string } {
   return {
     scoped: hmacSha256(`reauth:${userSubject('dashboard', userId, tenantId)}`, HMAC_KEY),
-    legacy: hmacSha256(`reauth:dashboard:${userId}`, HMAC_KEY)
+    tenantLess: hmacSha256(`reauth:dashboard:${userId}`, HMAC_KEY)
   }
 }
 
@@ -62,8 +65,9 @@ describe('ReauthenticationService', () => {
         service.assertReauthenticated('dashboard', 'u1', 'hash', 'secret', 't1')
       ).resolves.toBeUndefined()
 
-      const { scoped, legacy } = reauthCounters('u1', 't1')
-      expect(brute.resetFailures.mock.calls).toEqual([[scoped], [legacy]])
+      const { scoped, tenantLess } = reauthCounters('u1', 't1')
+      expect(brute.resetFailures.mock.calls).toEqual([[scoped]])
+      expect(brute.resetFailures).not.toHaveBeenCalledWith(tenantLess)
       expect(brute.recordFailure).not.toHaveBeenCalled()
     })
 
@@ -77,8 +81,9 @@ describe('ReauthenticationService', () => {
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
 
-      const { scoped, legacy } = reauthCounters('u1', 't1')
-      expect(brute.recordFailure.mock.calls).toEqual([[scoped], [legacy]])
+      const { scoped, tenantLess } = reauthCounters('u1', 't1')
+      expect(brute.recordFailure.mock.calls).toEqual([[scoped]])
+      expect(brute.recordFailure).not.toHaveBeenCalledWith(tenantLess)
       expect(brute.resetFailures).not.toHaveBeenCalled()
     })
 
@@ -110,13 +115,14 @@ describe('ReauthenticationService', () => {
       ])
     })
 
-    it('reads both counters on the dashboard plane before comparing', async () => {
+    it('reads only the tenant-scoped counter on the dashboard plane before comparing', async () => {
       const { service, brute } = await build()
 
       await service.assertReauthenticated('dashboard', 'u1', 'hash', 'secret', 't1')
 
-      const { scoped, legacy } = reauthCounters('u1', 't1')
-      expect(brute.isLockedOut.mock.calls).toEqual([[scoped], [legacy]])
+      const { scoped, tenantLess } = reauthCounters('u1', 't1')
+      expect(brute.isLockedOut.mock.calls).toEqual([[scoped]])
+      expect(brute.isLockedOut).not.toHaveBeenCalledWith(tenantLess)
     })
   })
 

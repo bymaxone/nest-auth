@@ -29,74 +29,48 @@ export class MfaFlowLockoutService {
   ) {}
 
   /**
-   * The tenant-scoped brute-force identifier for one MFA flow, and the plane-only one that pods on
-   * an older version count under. The two are equal on the platform plane, where the subject
-   * carries no tenant, and distinct on the dashboard plane, where it does.
-   *
-   * A rolling upgrade runs old and new code against one Redis at once: on the dashboard plane an
-   * old pod counts a failure under `{flow}:{plane}:{userId}` while a new pod counts it under
-   * `{flow}:{userSubject}`, and either alone leaves a hole: a lockout an old pod filled would not
-   * stop a new pod, and a success on one would not clear the other. So every read consults both
-   * and every write touches both, and the two move as one; the plane-only arm can be dropped once
-   * no pod writes it. On the platform plane the two ids are identical, so the plane-only arm is
-   * skipped: operating it would be the same key a second time, double-counting a failure and
-   * locking a platform admin out at half the threshold. `{flow}` (`challenge` / `disable` /
-   * `reauth`) keeps the three counters isolated from each other.
+   * The brute-force identifier for one MFA flow: the flow and the account's length-prefixed subject,
+   * which carries the tenant on the dashboard plane. Two tenants' user `1` therefore count under
+   * different identifiers, so one tenant's failures can neither lock the other's account out nor be
+   * cleared by it. `{flow}` (`challenge` / `disable` / `reauth`) keeps the three counters isolated
+   * from each other.
    */
-  private counterIds(
+  private counterId(
     flow: MfaFlow,
     context: MfaFlowPlane,
     userId: string,
     tenantId: string | undefined
-  ): { legacy: string; scoped: string } {
-    return {
-      legacy: hmacSha256(`${flow}:${context}:${userId}`, this.options.hmacKey),
-      scoped: hmacSha256(`${flow}:${userSubject(context, userId, tenantId)}`, this.options.hmacKey)
-    }
+  ): string {
+    return hmacSha256(`${flow}:${userSubject(context, userId, tenantId)}`, this.options.hmacKey)
   }
 
-  /**
-   * Locked out when EITHER the legacy or the tenant-scoped counter has reached the threshold, so
-   * neither a lockout an old pod recorded nor one a new pod recorded can be bypassed mid-migration.
-   */
+  /** Whether the account's counter for this flow has reached the lockout threshold. */
   async isLockedOut(
     flow: MfaFlow,
     context: MfaFlowPlane,
     userId: string,
     tenantId: string | undefined
   ): Promise<boolean> {
-    const { legacy, scoped } = this.counterIds(flow, context, userId, tenantId)
-    if (await this.bruteForce.isLockedOut(scoped)) return true
-    return legacy !== scoped ? this.bruteForce.isLockedOut(legacy) : false
+    return this.bruteForce.isLockedOut(this.counterId(flow, context, userId, tenantId))
   }
 
-  /**
-   * Records the failure under both counters so the budget an attacker spends is seen by old and
-   * new code alike — but under the scoped id ONCE when the two coincide (platform plane).
-   */
+  /** Records a failed attempt against the account's counter for this flow. */
   async recordFailure(
     flow: MfaFlow,
     context: MfaFlowPlane,
     userId: string,
     tenantId: string | undefined
   ): Promise<void> {
-    const { legacy, scoped } = this.counterIds(flow, context, userId, tenantId)
-    await this.bruteForce.recordFailure(scoped)
-    if (legacy !== scoped) await this.bruteForce.recordFailure(legacy)
+    await this.bruteForce.recordFailure(this.counterId(flow, context, userId, tenantId))
   }
 
-  /**
-   * Clears both counters on success — resetting only one would leave the other to lock a
-   * legitimately authenticated user out on the next attempt — collapsing to one when they coincide.
-   */
+  /** Clears the account's counter for this flow, on a success. */
   async reset(
     flow: MfaFlow,
     context: MfaFlowPlane,
     userId: string,
     tenantId: string | undefined
   ): Promise<void> {
-    const { legacy, scoped } = this.counterIds(flow, context, userId, tenantId)
-    await this.bruteForce.resetFailures(scoped)
-    if (legacy !== scoped) await this.bruteForce.resetFailures(legacy)
+    await this.bruteForce.resetFailures(this.counterId(flow, context, userId, tenantId))
   }
 }
