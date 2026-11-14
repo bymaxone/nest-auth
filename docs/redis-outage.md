@@ -75,10 +75,15 @@ the suite pauses and stops itself, under each client configuration a host may us
 | Platform plane                                  | `platform/*`                                                     | 503                                                               | the primitives (`auth-redis.service.outage.spec`); not driven over HTTP                         |
 | A process that boots with Redis down            | `RedisReadinessService`                                          | boot fails with the address in the message                        | `redis-readiness.e2e-spec`                                                                      |
 
-Absorbed on purpose, because the answer to the request does not depend on the cache: the workspace
-membership cache read and fill, the denied-access counter, the session-limit eviction, the
-session-detail rotation after a refresh, and the cache invalidation after verifying an email. A
-failure there is logged and the request carries on.
+Absorbed on purpose. The rule, with its examples, is `serviceUnavailable.absorption` in
+`conformance/wire-contract.json`: a call whose result the answer does not depend on is logged and
+absorbed, and a call the answer does depend on never is. The two cases a literal reader of the path
+table would get wrong are pinned in `test/e2e/outage-absorbed.e2e-spec.ts`: a logout whose
+session-metadata cleanup (`AuthService.revokeSessionMetadata`) fails still answers 204, because the
+revocation writes that decide it already succeeded; and a failed login whose lockout reads after
+`recordFailure` (`AuthService.fireLockoutIfCrossed`, which runs only when the host defines
+`onLockout`) fail still answers its 401. The lockout pre-check before the password is judged is not
+absorbed and answers 503.
 
 ## Three catches that would turn the 503 back
 
