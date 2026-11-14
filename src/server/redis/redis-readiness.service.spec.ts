@@ -5,6 +5,8 @@
  * @layer Test
  */
 
+import { EventEmitter } from 'node:events'
+
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
@@ -89,6 +91,23 @@ describe('RedisReadinessService', () => {
     expect(outcome).toBe('resolved')
     expect(at).toBeLessThan(250)
     expect(redis['ping']).toHaveBeenCalledTimes(1)
+    // The attempt's own deadline is cleared once the PING answers, so nothing is left running.
+    expect(jest.getTimerCount()).toBe(0)
+  })
+
+  // Scenario: a Redis that accepts the connection and then never answers, on a client that is ready.
+  // Expected: ONE command, refused at the end of the budget. The attempt's deadline is the whole time
+  // that is left, so the hung command is not abandoned and repeated while it may still be answered.
+  it('gives a hung PING the whole budget and refuses at its end', async () => {
+    const redis = client({ ping: jest.fn(() => new Promise(() => undefined)) })
+
+    const { outcome, at } = await settle(redis)
+
+    expect(outcome).toBeInstanceOf(Error)
+    expect(at).toBeGreaterThanOrEqual(4950)
+    expect(at).toBeLessThan(5250)
+    expect(redis['ping']).toHaveBeenCalledTimes(1)
+    expect(jest.getTimerCount()).toBe(0)
   })
 
   // Scenario: a Redis still starting during a rolling deploy, which refuses until one second in.
@@ -155,8 +174,9 @@ describe('RedisReadinessService', () => {
         'Check the address, the credentials and the network.'
     )
     expect(message).not.toMatch(/s3cret|svc-user|10\.9\.9\.9|redis:\/\//)
-    // Retried every 250 ms for the whole budget, not given up on at the first refusal.
-    expect((redis['ping'] as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(15)
+    // Retried every 250 ms for the whole budget, not given up on at the first refusal: an attempt at
+    // 0, 250, ... 4750 ms, and no further one once 250 ms or less of the budget is left.
+    expect(redis['ping']).toHaveBeenCalledTimes(20)
   })
 
   // Scenario: a client with neither host nor port to name, such as a cluster. Expected: the message
@@ -245,23 +265,29 @@ describe('RedisReadinessService', () => {
     expect(redis['ping']).not.toHaveBeenCalled()
   })
 
-  // Scenario: a connecting client that becomes ready. Expected: the PING waits for it, then goes.
-  it('waits for a connecting client to become ready before it pings', async () => {
-    let ready: () => void = () => undefined
-    const redis = client({
-      status: 'connecting',
-      once: jest.fn((event: string, listener: () => void) => {
-        if (event === 'ready') ready = listener
+  // Scenario: a client on its way to ready in each state ioredis reports for that: connecting,
+  // connect and reconnecting. Expected: the PING waits for `ready` in all three, then goes, and the
+  // wait leaves no timer running.
+  it.each([['connecting'], ['connect'], ['reconnecting']])(
+    'waits for a %s client to become ready before it pings',
+    async (status) => {
+      let ready: () => void = () => undefined
+      const redis = client({
+        status,
+        once: jest.fn((event: string, listener: () => void) => {
+          if (event === 'ready') ready = listener
+        })
       })
-    })
-    const { outcome } = await settle(redis, () => {
-      expect(redis['ping']).not.toHaveBeenCalled()
-      ready()
-    })
+      const { outcome } = await settle(redis, () => {
+        expect(redis['ping']).not.toHaveBeenCalled()
+        ready()
+      })
 
-    expect(outcome).toBe('resolved')
-    expect(redis['ping']).toHaveBeenCalledTimes(1)
-  })
+      expect(outcome).toBe('resolved')
+      expect(redis['ping']).toHaveBeenCalledTimes(1)
+      expect(jest.getTimerCount()).toBe(0)
+    }
+  )
 
   // Scenario: a client that never becomes ready. Expected: refused at the end of the budget, with no
   // timer or listener left behind.
@@ -279,6 +305,43 @@ describe('RedisReadinessService', () => {
     )
   })
 
+  // Scenario: a client that stays `connecting` past the deadline, on a REAL event emitter, so the
+  // listeners the wait registered are counted and not inferred from a mock's calls. Expected: after
+  // the deadline the client holds the listeners it started with, so a failed boot leaves nothing
+  // attached to a client the host still owns.
+  it('leaves no listener on the client after the deadline', async () => {
+    const emitter = Object.assign(new EventEmitter(), {
+      status: 'connecting',
+      options: { commandTimeout: 500 },
+      ping: jest.fn()
+    })
+    const before = { ready: emitter.listenerCount('ready'), end: emitter.listenerCount('end') }
+
+    const { outcome } = await settle(emitter)
+
+    expect(outcome).toBeInstanceOf(Error)
+    expect(emitter.listenerCount('ready')).toBe(before.ready)
+    expect(emitter.listenerCount('end')).toBe(before.end)
+    expect(emitter.ping).not.toHaveBeenCalled()
+  })
+
+  // Scenario: the same real emitter, ready in time. Expected: the PING goes and no listener is left.
+  it('leaves no listener on the client after it becomes ready', async () => {
+    const emitter = Object.assign(new EventEmitter(), {
+      status: 'connecting',
+      options: { commandTimeout: 500 },
+      ping: jest.fn().mockResolvedValue('PONG')
+    })
+
+    const { outcome } = await settle(emitter, () => {
+      emitter.emit('ready')
+    })
+
+    expect(outcome).toBe('resolved')
+    expect(emitter.listenerCount('ready')).toBe(0)
+    expect(emitter.listenerCount('end')).toBe(0)
+  })
+
   // Scenario: a client that is not an ioredis client at all. Expected: a boot error naming the
   // token, not a TypeError from a missing method.
   it('fails boot, naming the token, for a client that cannot PING', async () => {
@@ -293,6 +356,7 @@ describe('RedisReadinessService', () => {
   // names the option, and boot continues.
   it.each([
     ['a client with no options', undefined],
+    ['a client whose options are null', null],
     ['a client with options and no commandTimeout', { host: 'redis' }],
     ['a cluster whose node options carry none', { redisOptions: {} }]
   ])('warns once for %s', async (_why, options) => {
@@ -300,7 +364,11 @@ describe('RedisReadinessService', () => {
 
     expect(outcome).toBe('resolved')
     expect(warn).toHaveBeenCalledTimes(1)
-    expect(warn.mock.calls[0]?.[0]).toContain('commandTimeout')
+    expect(warn.mock.calls[0]?.[0]).toBe(
+      'The Redis client has no commandTimeout, so a slow or unreachable Redis holds each request ' +
+        'until ioredis gives up. Set commandTimeout, a small maxRetriesPerRequest and a bounded ' +
+        'retryStrategy on the client you provide as BYMAX_AUTH_REDIS_CLIENT.'
+    )
   })
 
   // Scenario: a command timeout on the client, or on a cluster's node options. Expected: no warning.

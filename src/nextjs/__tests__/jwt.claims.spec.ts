@@ -224,3 +224,60 @@ describe('verifyJwtToken — a misconfigured retired-secret list', () => {
     expect(decoded.signatureVerified).toBe(true)
   })
 })
+
+describe('verifyJwtToken — what the options must not change', () => {
+  // Scenario: nothing configured, and a token that carries an issuer and an audience of its own.
+  // Expected: valid. An unset option requires nothing, so a claim the token happens to carry is not
+  // a reason to refuse it.
+  it.each([
+    [undefined],
+    [{}],
+    [{ issuer: '' }],
+    [{ audience: '' }],
+    [{ issuer: '', audience: '' }]
+  ])('accepts a token carrying iss and aud when the options are %j', async (options) => {
+    const token = await signHs256Token(claims({ iss: 'issuer-x', aud: 'aud-x' }), SECRET)
+
+    const decoded = await verifyJwtToken(token, SECRET, options)
+
+    expect(decoded.isValid).toBe(true)
+  })
+
+  // Scenario: only one of the two configured, and the token carries both. Expected: the unconfigured
+  // one is not checked, so a different value in it does not matter.
+  it('checks only the claim that is configured', async () => {
+    const token = await signHs256Token(claims({ iss: 'other-issuer', aud: 'other-aud' }), SECRET)
+
+    expect((await verifyJwtToken(token, SECRET, { issuer: 'other-issuer' })).isValid).toBe(true)
+    expect((await verifyJwtToken(token, SECRET, { audience: 'other-aud' })).isValid).toBe(true)
+  })
+
+  // Scenario: a retired-secret list whose entries coerce to a string that signed the token: an array
+  // holding the secret, which `TextEncoder` turns into that same text. Expected: refused. The entry is
+  // not a string, so it is not a secret, and a coercion must not turn it into one.
+  it.each([[[RETIRED]], [[[RETIRED]]], [[{ toString: (): string => RETIRED }]]])(
+    'refuses a token signed with the text of a non-string retired entry %j',
+    async (entry) => {
+      const token = await signHs256Token(claims(), RETIRED)
+
+      const decoded = await verifyJwtToken(token, SECRET, {
+        previousSecrets: untypedList([entry])
+      })
+
+      expect(decoded.signatureVerified).toBe(false)
+    }
+  )
+
+  // Scenario: a list that is not an array, and a token signed with a text no real list holds. Expected:
+  // refused, so reading a non-array as "no retired secrets" really means none and invents no secret.
+  it.each([['abc'], [42], [null], [{ length: 1, 0: 'x' }]])(
+    'invents no retired secret from a non-array list %j',
+    async (list) => {
+      const token = await signHs256Token(claims(), 'Stryker was here')
+
+      const decoded = await verifyJwtToken(token, SECRET, { previousSecrets: untypedList(list) })
+
+      expect(decoded.signatureVerified).toBe(false)
+    }
+  )
+})
