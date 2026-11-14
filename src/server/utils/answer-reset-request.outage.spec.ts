@@ -64,7 +64,7 @@ describe('answerResetRequest under a store outage', () => {
     expect(findAccount).not.toHaveBeenCalled()
   })
 
-  // Scenario: the cooldown store fails with something that is not an outage. Expected: still the
+  // Scenario: the cooldown store fails with something that is not an outage. Expected: the
   // 500 the contract documents for every other failure before the account is known.
   it('answers 500 for a cooldown failure that is not an outage', async () => {
     redis.setnx.mockRejectedValue(new Error('WRONGTYPE'))

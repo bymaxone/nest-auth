@@ -35,7 +35,7 @@ describe('settlePendingLogout under a store outage', () => {
     )
   })
 
-  // Scenario: the claim fails for a reason that is not an outage. Expected: still the internal
+  // Scenario: the claim fails for a reason that is not an outage. Expected: the internal
   // failure.
   it('keeps the internal failure for a claim that fails otherwise', async () => {
     redis.del.mockRejectedValue(new Error('WRONGTYPE'))
@@ -60,7 +60,7 @@ describe('settlePendingLogout under a store outage', () => {
   })
 
   // Scenario: the second read fails with something that is not an outage. Expected: the internal
-  // failure, as before.
+  // failure.
   it('keeps the internal failure when the second read fails otherwise', async () => {
     redis.del.mockRejectedValue(new Error('Command timed out'))
     redis.get.mockRejectedValue(new Error('WRONGTYPE'))

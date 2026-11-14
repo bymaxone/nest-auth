@@ -8,8 +8,8 @@
  * Only an answer that says this session is not valid signs the user out: a final answer, a 4xx
  * other than 429. A server that is down or restarting (503, 500, 502, 504), a throttle (429) and a
  * network failure (`fetch` rejecting with a `TypeError`) say nothing about the session, so the user
- * and the state stay and the next tick tries again. The first check of a page load has nothing to
- * keep, so it behaves as it always did.
+ * and the state stay and the next tick tries again. The first check of a page load has no
+ * established session to retain, so a failure there reports `unauthenticated`.
  */
 
 import { act, render } from '@testing-library/react'
@@ -80,7 +80,7 @@ describe('AuthProvider revalidation failures of a signed-in user', () => {
   })
 
   // Scenario: another final answer, such as an account that is no longer usable. Expected: signed
-  // out, as before, without telling the host the session expired.
+  // out, without telling the host the session expired.
   it('signs the user out on another final answer', async () => {
     const { onSessionExpired, state } = await tickWith(new AuthClientError('forbidden', 403))
 
