@@ -62,8 +62,14 @@ export class AuthException extends HttpException {
    * @param details - Optional structured payload attached to the error body under
    *   `error.details`. An array where the failure is a list — `auth.validation` renders its
    *   per-field failures that way, matching what rust-auth serializes for the same code.
+   * @param options - `cause`: the error this one reports, kept on the exception for a host's
+   *   logger and never serialized into the body.
    */
-  constructor(code: AuthErrorCode, details?: Record<string, unknown> | readonly unknown[]) {
+  constructor(
+    code: AuthErrorCode,
+    details?: Record<string, unknown> | readonly unknown[],
+    options?: { readonly cause?: unknown }
+  ) {
     super(
       {
         error: {
@@ -78,7 +84,8 @@ export class AuthException extends HttpException {
       // A code with no entry is a programming error on the throwing side, not something the
       // caller did — 500 says so, and says it with a number rather than the `undefined` an
       // unguarded lookup used to hand to Express.
-      STATUS_BY_CODE.get(code) ?? HttpStatus.INTERNAL_SERVER_ERROR
+      STATUS_BY_CODE.get(code) ?? HttpStatus.INTERNAL_SERVER_ERROR,
+      options?.cause === undefined ? undefined : { cause: options.cause }
     )
   }
 }

@@ -201,7 +201,7 @@ const BUDGETS = [
   { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 169 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
-  { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 3.6 * 1024 },
+  { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 3.65 * 1024 },
   { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 9.5 * 1024 }
 ]
 

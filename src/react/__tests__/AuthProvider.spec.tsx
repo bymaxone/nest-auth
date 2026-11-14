@@ -190,19 +190,19 @@ describe('AuthProvider — initial mount', () => {
   })
 
   // SET_ERROR branch behavior contract: when a previously authenticated
-  // session hits a non-401 error during revalidation, the reducer
+  // session hits a final non-401 answer during revalidation, the reducer
   // preserves `lastValidation` rather than clearing it. This is the
   // documented distinction between `CLEAR_SESSION` (resets timestamp)
   // and `SET_ERROR` (preserves it) — a regression that made SET_ERROR
   // null out `lastValidation` would silently break consumers that show
-  // "last checked" UI during transient server errors.
-  it('preserves lastValidation when revalidation hits a non-401 error', async () => {
+  // "last checked" UI after a refused revalidation.
+  it('preserves lastValidation when revalidation hits a final non-401 answer', async () => {
     jest.useFakeTimers()
     try {
       jest.setSystemTime(new Date('2026-04-18T10:00:00.000Z'))
       const client = createMockClient()
       client.getMe.mockResolvedValueOnce(MOCK_USER)
-      client.getMe.mockRejectedValueOnce(new Error('transient 500'))
+      client.getMe.mockRejectedValueOnce(new AuthClientError('forbidden', 403))
       let result: { current: AuthContextValue | null } | undefined
       await act(async () => {
         result = renderContext(client, { revalidateInterval: 1000 }).result
@@ -694,18 +694,18 @@ describe('AuthProvider — revalidation loop', () => {
     warnSpy.mockRestore()
   })
 
-  // A non-401 AuthClientError during revalidation (e.g. a 500) is NOT a
+  // A final non-401 AuthClientError during revalidation (e.g. a 403) is NOT a
   // session expiry: it must route through SET_ERROR, leaving
   // `lastValidation` intact and NOT firing onSessionExpired. This pins
   // the `error.status === 401` half of isSessionExpiredError — if that
-  // comparison were short-circuited to always-true, a 500 would be
+  // comparison were short-circuited to always-true, a 403 would be
   // misclassified as an expiry, firing the callback and clearing the
   // timestamp via CLEAR_SESSION.
-  it('does not fire onSessionExpired for a non-401 AuthClientError during revalidation', async () => {
+  it('does not fire onSessionExpired for a final non-401 AuthClientError during revalidation', async () => {
     jest.setSystemTime(new Date('2026-04-18T10:00:00.000Z'))
     const client = createMockClient()
     client.getMe.mockResolvedValueOnce(MOCK_USER)
-    client.getMe.mockRejectedValueOnce(new AuthClientError('server error', 500))
+    client.getMe.mockRejectedValueOnce(new AuthClientError('forbidden', 403))
     const onSessionExpired = jest.fn()
     let result: { current: AuthContextValue | null } | undefined
     await act(async () => {

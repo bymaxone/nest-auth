@@ -126,7 +126,13 @@ export const AUTH_ERROR_CODES = {
    * An unexpected internal failure. Raised only by the server's optional `AuthExceptionFilter`,
    * which gives unhandled failures the same envelope everything else answers with.
    */
-  INTERNAL: 'auth.internal'
+  INTERNAL: 'auth.internal',
+
+  /**
+   * A store the request depends on, Redis, did not answer in time or could not be reached, so
+   * the request was refused and nothing was admitted. A client may retry later.
+   */
+  SERVICE_UNAVAILABLE: 'auth.service_unavailable'
 } as const
 
 /**
@@ -203,5 +209,6 @@ export const AUTH_ERROR_STATUS: Readonly<Record<AuthErrorCode, number>> = {
   'auth.registration_closed': 403,
   'auth.workspace_limit_reached': 403,
   'auth.workspace_pending_deletion': 409,
-  'auth.internal': 500
+  'auth.internal': 500,
+  'auth.service_unavailable': 503
 }

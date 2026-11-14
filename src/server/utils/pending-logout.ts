@@ -17,6 +17,7 @@ import { describeChannelStatus } from './describe-error'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { AuthRedisService } from '../redis/auth-redis.service'
+import { isServiceUnavailable } from '../redis/redis-outage'
 
 /** The account a logout belongs to, as the marker records it. */
 export interface PendingLogoutOwner {
@@ -99,7 +100,8 @@ export async function settlePendingLogout(
     logger.warn(`logout: the retry marker could not be cleared — ${describeChannelStatus(err)}`)
     // A claim that cannot be made answers an error too: success would keep the client from
     // retrying, and the marker that is left is what lets the retry announce once.
-    if (!fromSession) throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
+    if (!fromSession)
+      throw isServiceUnavailable(err) ? err : new AuthException(AUTH_ERROR_CODES.INTERNAL)
     return confirmNoStaleMarker(redis, key, owner, ttlSeconds, logger)
   }
 }
@@ -108,7 +110,8 @@ export async function settlePendingLogout(
  * Decides whether a stale marker that could not be removed is still there.
  *
  * @returns `true` when a second read finds no marker.
- * @throws {@link AuthException} `INTERNAL` when a marker is left, or when that cannot be told.
+ * @throws {@link AuthException} `SERVICE_UNAVAILABLE` when the store cannot answer, `INTERNAL` when a
+ *   marker is left, or when that cannot be told.
  */
 async function confirmNoStaleMarker(
   redis: AuthRedisService,
@@ -119,8 +122,10 @@ async function confirmNoStaleMarker(
 ): Promise<boolean> {
   try {
     if ((await redis.get(key)) === null) return true
-  } catch {
+  } catch (err: unknown) {
     await rememberPendingLogout(redis, key, owner, ttlSeconds, logger)
+    // A store that cannot answer is a 503 the client retries, not a failure to report as internal.
+    if (isServiceUnavailable(err)) throw err
   }
   throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
 }

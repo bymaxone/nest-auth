@@ -196,10 +196,13 @@ describe('workspace membership cache against Redis', () => {
     const { service, outage } = build(store)
     outage.active = true
 
-    await expect(service.invalidateMembership(REF)).rejects.toThrow('Connection is closed.')
-    await expect(service.invalidateWorkspace(WORKSPACE_REF)).rejects.toThrow(
-      'Connection is closed.'
-    )
+    // The typed 503 the library answers an outage with, carrying the client's own error as `cause`.
+    const refused = {
+      status: 503,
+      cause: expect.objectContaining({ message: 'Connection is closed.' })
+    }
+    await expect(service.invalidateMembership(REF)).rejects.toMatchObject(refused)
+    await expect(service.invalidateWorkspace(WORKSPACE_REF)).rejects.toMatchObject(refused)
   })
 
   // A counter that expires while an entry bearing its value is alive restarts at 1 on the next

@@ -314,7 +314,18 @@ export const AUTH_ERROR_CODES = {
    * answers with. Without the filter the framework's own 500 shape stands, which is the
    * behaviour this library had before it existed.
    */
-  INTERNAL: 'auth.internal'
+  INTERNAL: 'auth.internal',
+
+  /**
+   * A store this request depends on, Redis, did not answer in time or could not be reached, so
+   * the request was refused and nothing was admitted. Retrying later may succeed; nothing here
+   * knows when, so the answer carries no `Retry-After`.
+   *
+   * Raised by the library's Redis wrapper, not only by {@link AuthExceptionFilter}: it is a typed
+   * exception, so any host filter that renders an `HttpException` answers it as a 503. The ioredis
+   * error rides on the exception as `cause` and is never serialized.
+   */
+  SERVICE_UNAVAILABLE: 'auth.service_unavailable'
 } as const
 
 /**
@@ -399,7 +410,8 @@ export const AUTH_ERROR_STATUS: Readonly<Record<AuthErrorCode, number>> = {
   'auth.registration_closed': 403,
   'auth.workspace_limit_reached': 403,
   'auth.workspace_pending_deletion': 409,
-  'auth.internal': 500
+  'auth.internal': 500,
+  'auth.service_unavailable': 503
 }
 
 /**
@@ -464,5 +476,6 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.workspace_limit_reached':
     'Workspace limit reached. Workspaces pending deletion count toward the limit.',
   'auth.workspace_pending_deletion': 'Workspace is scheduled for deletion',
-  'auth.internal': 'Internal server error'
+  'auth.internal': 'Internal server error',
+  'auth.service_unavailable': 'Service temporarily unavailable'
 }

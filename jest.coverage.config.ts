@@ -26,6 +26,8 @@ const config: Config = {
   // Haste module name, which otherwise crashes jest-haste-map with
   // "dupMap.get is not a function" on the `@bymax-one/nest-auth` alias.
   modulePathIgnorePatterns: ['<rootDir>/dist/', '<rootDir>/.stryker-tmp/'],
+  // `test/e2e/real-redis/` needs a container runtime and runs under `jest.e2e.redis.config.ts`.
+  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/test/e2e/real-redis/'],
   // The e2e specs of this run bind their listeners to 127.0.0.1 (see `jest.e2e.config.ts`).
   setupFiles: ['<rootDir>/test/jest.loopback-listen.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],

@@ -42,8 +42,11 @@ const config: Config = {
     // Rate limiting and brute-force counters.
     '<rootDir>/rate-limit.e2e-spec.ts',
     '<rootDir>/negative-paths.e2e-spec.ts',
-    '<rootDir>/platform-auth-flow.e2e-spec.ts'
+    '<rootDir>/platform-auth-flow.e2e-spec.ts',
+    // A store that stops answering: the suite pauses and stops its own container.
+    '<rootDir>/real-redis/redis-outage.e2e-spec.ts'
   ],
+  testPathIgnorePatterns: ['/node_modules/'],
   // The container, the Docker client and one ioredis connection per bootstrap leave handles
   // Jest cannot trace; the run ends when the suites do.
   forceExit: true,
