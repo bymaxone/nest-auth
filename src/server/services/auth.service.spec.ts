@@ -34,6 +34,14 @@ jest.mock('../utils/sleep', () => ({ sleep: jest.fn().mockResolvedValue(undefine
 
 const mockSleep = sleep as jest.MockedFunction<typeof sleep>
 
+/** The arguments `issueTokens` receives from a caller that presented a credential. */
+const provedArgs = (user: unknown, ip: string, userAgent: string): unknown[] => [
+  user,
+  ip,
+  userAgent,
+  { credentialProved: true }
+]
+
 // ---------------------------------------------------------------------------
 // Test doubles
 // ---------------------------------------------------------------------------
@@ -291,10 +299,7 @@ describe('AuthService', () => {
     it('should pass the request ip and user-agent header through to issueTokens', async () => {
       await service.register(dto, mockReq)
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
-        expect.objectContaining({ id: USER.id }),
-        '1.2.3.4',
-        'TestBrowser',
-        { credentialProved: true }
+        ...provedArgs(expect.objectContaining({ id: USER.id }), '1.2.3.4', 'TestBrowser')
       )
     })
 
@@ -627,10 +632,7 @@ describe('AuthService', () => {
       // ip and user-agent absent -> both coalesce to '' -> forwarded to issueTokens. This pins
       // the `?? ''` fallbacks (lines 90:26 ip and 91:59 user-agent) so a non-empty replacement dies.
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
-        expect.objectContaining({ id: USER.id }),
-        '',
-        '',
-        { credentialProved: true }
+        ...provedArgs(expect.objectContaining({ id: USER.id }), '', '')
       )
     })
 
@@ -1137,10 +1139,7 @@ describe('AuthService', () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       await service.login(dto, mockReq)
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
-        expect.objectContaining({ id: USER.id }),
-        '1.2.3.4',
-        'TestBrowser',
-        { credentialProved: true }
+        ...provedArgs(expect.objectContaining({ id: USER.id }), '1.2.3.4', 'TestBrowser')
       )
       expect(logSpy).toHaveBeenCalledWith(`login: success userId=${USER.id} tenantId=tenant-1`)
       expect(mockSessionService.createSession).not.toHaveBeenCalled()
@@ -1424,10 +1423,7 @@ describe('AuthService', () => {
       // ip and user-agent absent -> both coalesce to '' -> forwarded to issueTokens. Pins the
       // `?? ''` fallbacks (lines 179:26 ip and 180:59 user-agent) so a non-empty replacement dies.
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
-        expect.objectContaining({ id: USER.id }),
-        '',
-        '',
-        { credentialProved: true }
+        ...provedArgs(expect.objectContaining({ id: USER.id }), '', '')
       )
     })
 

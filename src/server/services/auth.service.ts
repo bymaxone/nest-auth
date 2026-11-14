@@ -954,11 +954,7 @@ export class AuthService {
    *     instead — issuing tokens with `mfaVerified: false` would let the
    *     dashboard's `MfaRequiredGuard` lock the user out on every request.
    *
-   * A session issued here is not a recent authentication: no credential was presented, so it
-   * does not satisfy a flow that demands one (for example enabling MFA on an account that has
-   * no local password).
-   *
-   * Side effects mirror `login()`:
+   * Unlike `login()`, the session is not a recent authentication. Other side effects mirror it:
    *   - Concurrent-session limit enforced via `sessionService.createSession`
    *     when `sessions.enabled`.
    *   - `userRepo.updateLastLogin` runs non-blocking.

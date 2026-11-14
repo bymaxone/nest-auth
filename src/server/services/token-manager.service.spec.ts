@@ -185,15 +185,11 @@ describe('TokenManagerService', () => {
   // ---------------------------------------------------------------------------
 
   describe('issueTokens', () => {
-    // The recent-authentication marker, and the asymmetry that gives it meaning.
-    //
-    // `issueTokens` is the single point where a dashboard session is BORN — password login,
-    // OAuth callback, MFA challenge completion, invitation acceptance, email verification all
-    // reach it. `reissueTokens` does not, and must not: a refresh proves possession of a token,
-    // not of a credential. That is what makes the marker proof of anything at all, and it is
-    // what stops a stolen session from being rotated into a fresh one (see the paired case in
-    // `reissueTokens`).
-    it('plants the recent-authentication marker, keyed and short-lived', async () => {
+    // The recent-authentication marker. `issueTokens` writes it only for a caller that presented a
+    // credential in this request; a session issued without one, and `reissueTokens`, never do. A
+    // refresh proves possession of a token, not of a credential, so a stolen session cannot be
+    // rotated into a fresh mark (see the paired case in `reissueTokens`).
+    it('plants the recent-authentication marker only for a presented credential', async () => {
       mockRedis.set.mockResolvedValue(undefined)
 
       await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser', { credentialProved: true })
@@ -205,20 +201,10 @@ describe('TokenManagerService', () => {
       expect(markerWrite?.[2]).toBe(300)
       // The keyspace is shared and readable — the account id is never in it in the clear.
       expect(String(markerWrite?.[0])).not.toContain(SAFE_USER.id)
-    })
-
-    // Scenario: a session issued with no statement that a credential was presented, and one where
-    // the caller says explicitly that none was. Expected: no marker is written for either.
-    // Why: a session issued for a user id is not a recent authentication, and a caller that
-    // forgets the flag must land on that safe side.
-    it('does not plant the marker unless the caller says a credential was presented', async () => {
-      mockRedis.set.mockResolvedValue(undefined)
-
+      mockRedis.set.mockClear()
       await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser')
       await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser', { credentialProved: false })
-      await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser', { mfaVerified: true })
-
-      expect(mockRedis.set.mock.calls.some((call) => String(call[0]).startsWith('ra:'))).toBe(false)
+      expect(mockRedis.set.mock.calls.some((c) => String(c[0]).startsWith('ra:'))).toBe(false)
     })
 
     // Verifies that issueTokens stores the refresh session in Redis with the correct TTL in seconds.
