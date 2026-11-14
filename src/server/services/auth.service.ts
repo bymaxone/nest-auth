@@ -12,7 +12,7 @@ import { BruteForceService } from './brute-force.service'
 import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
-import { TokenManagerService } from './token-manager.service'
+import { CREDENTIAL_PROVED, TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { logoutPendingKey, logoutPendingTtlSeconds } from '../constants/logout-pending'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
@@ -293,7 +293,7 @@ export class AuthService {
     }
 
     const safeUser = toSafeUser(newUser)
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
+    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, CREDENTIAL_PROVED)
 
     // Track the session when sessions are enabled (enforces concurrent session limit).
     if (this.options.sessions.enabled) {
@@ -487,7 +487,7 @@ export class AuthService {
     }
 
     const safeUser = toSafeUser(user)
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
+    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, CREDENTIAL_PROVED)
 
     // Track the session when sessions are enabled (enforces concurrent session limit).
     if (this.options.sessions.enabled) {
@@ -953,6 +953,10 @@ export class AuthService {
    *     calling this method and route through `MfaService.challenge`
    *     instead — issuing tokens with `mfaVerified: false` would let the
    *     dashboard's `MfaRequiredGuard` lock the user out on every request.
+   *
+   * A session issued here is not a recent authentication: no credential was presented, so it
+   * does not satisfy a flow that demands one (for example enabling MFA on an account that has
+   * no local password).
    *
    * Side effects mirror `login()`:
    *   - Concurrent-session limit enforced via `sessionService.createSession`

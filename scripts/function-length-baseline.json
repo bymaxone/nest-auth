@@ -61,7 +61,7 @@
     "[\"src/server/services/session.service.ts\",[\"member\",\"SessionService\",\"listSessions\"]]": 58,
     "[\"src/server/services/session.service.ts\",[\"member\",\"SessionService\",\"revokeAllExceptCurrent\"]]": 55,
     "[\"src/server/services/session.service.ts\",[\"member\",\"SessionService\",\"rotateSession\"]]": 64,
-    "[\"src/server/services/token-manager.service.ts\",[\"member\",\"TokenManagerService\",\"issueTokens\"]]": 68,
+    "[\"src/server/services/token-manager.service.ts\",[\"member\",\"TokenManagerService\",\"issueTokens\"]]": 57,
     "[\"src/server/services/token-manager.service.ts\",[\"member\",\"TokenManagerService\",\"reissuePlatformTokens\"]]": 77,
     "[\"src/server/services/token-manager.service.ts\",[\"member\",\"TokenManagerService\",\"reissueTokens\"]]": 78,
     "[\"src/server/services/token-manager.service.ts\",[\"member\",\"TokenManagerService\",\"rotateFromGrace\"]]": 56,

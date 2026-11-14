@@ -483,7 +483,14 @@ describe('InvitationService', () => {
 
       expect(result).toBe(AUTH_RESULT)
       expect(mockUserRepo.create).toHaveBeenCalledTimes(1)
+      // The invitee set a password in this request, so the session counts as a real sign-in.
       expect(mockTokenManager.issueTokens).toHaveBeenCalledTimes(1)
+      expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
+        expect.anything(),
+        TEST_IP,
+        TEST_AGENT,
+        { credentialProved: true }
+      )
       expect(mockHooks.afterInvitationAccepted).toHaveBeenCalledTimes(1)
       // The FIELD NAME, not just that the screen ran: it is what a policy failure names in its
       // `details`, so the argument exists to point the invitee at the input they sent. Accepting

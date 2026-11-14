@@ -804,7 +804,8 @@ describe('OAuthService', () => {
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
         expect.not.objectContaining({ passwordHash: expect.anything() }),
         '1.2.3.4',
-        'TestBrowser/1.0'
+        'TestBrowser/1.0',
+        { credentialProved: true }
       )
       expect(result).toBe(AUTH_RESULT)
     })

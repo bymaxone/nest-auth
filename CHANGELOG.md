@@ -18,6 +18,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- `issueTokensForUserId` no longer marks the session it issues as recently authenticated, matching rust-auth.
+
 ## [1.5.4] - 2026-11-14
 
 A patch release for outages and browsers: a Redis outage answers `503 auth.service_unavailable` instead of

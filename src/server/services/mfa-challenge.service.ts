@@ -323,7 +323,8 @@ export class MfaChallengeService {
   ): Promise<AuthResult> {
     const safeUser = toSafeUser(user)
     const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, {
-      mfaVerified: true
+      mfaVerified: true,
+      credentialProved: true
     })
 
     // Track the session when sessions are enabled (enforces concurrent session limit).

@@ -293,7 +293,8 @@ describe('AuthService', () => {
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
         expect.objectContaining({ id: USER.id }),
         '1.2.3.4',
-        'TestBrowser'
+        'TestBrowser',
+        { credentialProved: true }
       )
     })
 
@@ -628,7 +629,8 @@ describe('AuthService', () => {
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
         expect.objectContaining({ id: USER.id }),
         '',
-        ''
+        '',
+        { credentialProved: true }
       )
     })
 
@@ -1137,7 +1139,8 @@ describe('AuthService', () => {
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
         expect.objectContaining({ id: USER.id }),
         '1.2.3.4',
-        'TestBrowser'
+        'TestBrowser',
+        { credentialProved: true }
       )
       expect(logSpy).toHaveBeenCalledWith(`login: success userId=${USER.id} tenantId=tenant-1`)
       expect(mockSessionService.createSession).not.toHaveBeenCalled()
@@ -1423,7 +1426,8 @@ describe('AuthService', () => {
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
         expect.objectContaining({ id: USER.id }),
         '',
-        ''
+        '',
+        { credentialProved: true }
       )
     })
 

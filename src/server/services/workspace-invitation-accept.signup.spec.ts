@@ -350,7 +350,8 @@ describe('WorkspaceInvitationAcceptService', () => {
       expect(h.tokens.issueTokens).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'new' }),
         '203.0.113.7',
-        'jest'
+        'jest',
+        { credentialProved: true }
       )
     })
 

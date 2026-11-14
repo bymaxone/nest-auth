@@ -10,7 +10,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common'
 import { MembershipService } from './membership.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
-import { TokenManagerService } from './token-manager.service'
+import { CREDENTIAL_PROVED, TokenManagerService } from './token-manager.service'
 import { WorkspaceAccessService } from './workspace-access.service'
 import { WorkspaceEventsService } from './workspace-events.service'
 import { WorkspaceInvitationStore } from './workspace-invitation.store'
@@ -479,7 +479,12 @@ export class WorkspaceInvitationAcceptService {
     request: SignupRequest,
     context: HookContext
   ): Promise<AuthResult> {
-    const result = await this.tokens.issueTokens(user, request.ip, request.userAgent)
+    const result = await this.tokens.issueTokens(
+      user,
+      request.ip,
+      request.userAgent,
+      CREDENTIAL_PROVED
+    )
     if (this.options.sessions.enabled) {
       await this.sessions.createSession({
         userId: user.id,

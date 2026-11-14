@@ -196,7 +196,7 @@ describe('TokenManagerService', () => {
     it('plants the recent-authentication marker, keyed and short-lived', async () => {
       mockRedis.set.mockResolvedValue(undefined)
 
-      await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser')
+      await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser', { credentialProved: true })
 
       const markerWrite = mockRedis.set.mock.calls.find((call) => String(call[0]).startsWith('ra:'))
       expect(markerWrite).toBeDefined()
@@ -205,6 +205,20 @@ describe('TokenManagerService', () => {
       expect(markerWrite?.[2]).toBe(300)
       // The keyspace is shared and readable — the account id is never in it in the clear.
       expect(String(markerWrite?.[0])).not.toContain(SAFE_USER.id)
+    })
+
+    // Scenario: a session issued with no statement that a credential was presented, and one where
+    // the caller says explicitly that none was. Expected: no marker is written for either.
+    // Why: a session issued for a user id is not a recent authentication, and a caller that
+    // forgets the flag must land on that safe side.
+    it('does not plant the marker unless the caller says a credential was presented', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser')
+      await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser', { credentialProved: false })
+      await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser', { mfaVerified: true })
+
+      expect(mockRedis.set.mock.calls.some((call) => String(call[0]).startsWith('ra:'))).toBe(false)
     })
 
     // Verifies that issueTokens stores the refresh session in Redis with the correct TTL in seconds.

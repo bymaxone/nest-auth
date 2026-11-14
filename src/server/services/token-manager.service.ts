@@ -116,6 +116,14 @@ interface RefreshSession {
  *
  * @layer Service
  */
+/**
+ * The `overrides` argument for a caller that presented a credential in this very request.
+ *
+ * Kept as one named value so the call sites state the fact in one short line, and so a caller
+ * cannot half-spell it.
+ */
+export const CREDENTIAL_PROVED = { credentialProved: true } as const
+
 @Injectable()
 export class TokenManagerService {
   private readonly logger = new Logger(TokenManagerService.name)
@@ -219,13 +227,16 @@ export class TokenManagerService {
    * @param userAgent - User-Agent header value (for session description).
    * @param overrides - Optional JWT claim overrides. Use `{ mfaVerified: true }` when
    *   issuing tokens after a successful MFA challenge.
+   *   `credentialProved` says a credential was presented in this very request; only then is the
+   *   recent-authentication mark written. It defaults to `false`, so a caller that forgets it
+   *   cannot manufacture that proof.
    * @returns Full auth result containing access token, raw refresh token, and user.
    */
   async issueTokens(
     user: SafeAuthUser,
     ip: string,
     userAgent: string,
-    overrides?: { mfaVerified?: boolean }
+    overrides?: { mfaVerified?: boolean; credentialProved?: boolean }
   ): Promise<AuthResult> {
     // Stamp the user's current token epoch so a later bump (a password reset) invalidates this
     // token at verification, without the server having to enumerate outstanding tokens.
@@ -274,20 +285,28 @@ export class TokenManagerService {
       refreshTtl: ttl
     })
 
-    // Record that a REAL authentication just completed, for the flows that need to know how
-    // recently rather than merely whether. Written here and nowhere else: this method is the
-    // single point where a dashboard session is born — password login, OAuth callback, MFA
-    // challenge completion, invitation acceptance and email verification all reach it — while
-    // `reissueTokens` deliberately does not, because a refresh proves possession of a token,
-    // not of a credential. That asymmetry is the whole value of the marker: an attacker holding
-    // a stolen session can rotate it forever and never make this mark fresh again.
+    if (overrides?.credentialProved === true) await this.markRecentAuth(user)
+
+    return { user, accessToken, rawRefreshToken }
+  }
+
+  /**
+   * Records that a REAL authentication just completed, for the flows that need to know how
+   * recently rather than merely whether.
+   *
+   * Written only from `issueTokens` and only when the caller says a credential was presented in
+   * this very request (`credentialProved`): password login, registration, OAuth callback, MFA
+   * challenge completion and invitation acceptance. A session minted without a credential
+   * (`AuthService.issueTokensForUserId`) and `reissueTokens` do not write it, because neither
+   * proves possession of a credential. That asymmetry is the whole value of the marker: an
+   * attacker holding a stolen session can rotate it forever and never make this mark fresh.
+   */
+  private async markRecentAuth(user: SafeAuthUser): Promise<void> {
     await this.redis.set(
       recentAuthKey('dashboard', user.id, this.options.hmacKey, user.tenantId),
       '1',
       RECENT_AUTH_TTL_SECONDS
     )
-
-    return { user, accessToken, rawRefreshToken }
   }
 
   // ---------------------------------------------------------------------------
