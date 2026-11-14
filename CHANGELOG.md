@@ -18,7 +18,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
-## [1.5.3] - 2026-11-13
+## [1.5.3] - 2026-11-14
 
 A patch release for workspaces, MFA and the proxy: the paging cursor is a codec the library now exports and
 bounds, the owner role is bounded by length instead of a charset, the websocket guard holds a header credential
