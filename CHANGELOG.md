@@ -18,6 +18,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-11-14
+
+A patch release for outages and browsers: a Redis outage answers `503 auth.service_unavailable` instead of
+`500`, a background revalidation no longer signs a signed-in user out on a failure that says nothing about the
+session, an option-fed timer cannot be given a delay it cannot honor, and the wire contract is at version 7.
+
 ### Fixed
 
 - **A Redis outage answers `503 auth.service_unavailable`, not `500 auth.internal`.** With Redis paused or
@@ -48,6 +54,8 @@ auth.internal`. A new `serviceUnavailable` section lists where the 503 is answer
 - `AuthException` takes an optional third argument `{ cause }`, kept on the exception and never serialized.
 - `supertest` devDependency floor is `^7.3.1`, and the e2e suite binds its port-only listeners to
   `127.0.0.1`.
+- The release workflow builds, verifies and packs once without a publish credential, and the publish job
+  checks the tarball's digest and publishes exactly that file with provenance.
 
 ### Apply to a derived backend
 
@@ -5127,7 +5135,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.3...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.4...HEAD
+[1.5.4]: https://github.com/bymaxone/nest-auth/compare/v1.5.3...v1.5.4
 [1.5.3]: https://github.com/bymaxone/nest-auth/compare/v1.5.2...v1.5.3
 [1.5.2]: https://github.com/bymaxone/nest-auth/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/bymaxone/nest-auth/compare/v1.5.0...v1.5.1
