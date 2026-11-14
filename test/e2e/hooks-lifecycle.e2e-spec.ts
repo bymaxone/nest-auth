@@ -51,6 +51,7 @@ import {
   createMockRedis,
   createMockUserRepository
 } from './setup'
+import { initAndListen } from '../support/init-and-listen'
 
 // ---------------------------------------------------------------------------
 // TOTP helper (minimal)
@@ -189,7 +190,7 @@ async function bootstrapWithSpy(
 
   const app = moduleRef.createNestApplication()
   applyTestMiddleware(app)
-  await app.init()
+  await initAndListen(app)
   return { app, hooks, email }
 }
 

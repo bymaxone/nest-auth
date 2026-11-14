@@ -43,6 +43,7 @@ import {
   createMockUserRepository,
   expectAuthError
 } from './setup'
+import { initAndListen } from '../support/init-and-listen'
 
 const PEPPER = 'pepper-for-e2e-0123456789abcdefABCDEF!!'
 
@@ -188,7 +189,7 @@ async function boot(): Promise<Harness> {
     .compile()
   const app = moduleRef.createNestApplication()
   applyTestMiddleware(app)
-  await app.init()
+  await initAndListen(app)
   return { app, repo, keys: moduleRef.get(ApiKeyService, { strict: false }), events }
 }
 

@@ -32,7 +32,6 @@ describe('encoding refusal and the rate limit (E2E)', () => {
       tokenDelivery: 'bearer',
       rateLimit: { enabled: true, clientIpSource: 'peer' as const }
     })
-    await boot.app.listen(0)
     port = (boot.app.getHttpServer().address() as AddressInfo).port
   })
 
