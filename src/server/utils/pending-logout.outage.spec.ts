@@ -3,7 +3,7 @@
  * client retries, not the internal failure that means a defect.
  */
 
-import type { Logger } from '@nestjs/common'
+import { Logger } from '@nestjs/common'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -16,12 +16,12 @@ const UNAVAILABLE = new AuthException(AUTH_ERROR_CODES.SERVICE_UNAVAILABLE)
 
 describe('settlePendingLogout under a store outage', () => {
   const redis = { set: jest.fn(), del: jest.fn(), get: jest.fn() }
-  const logger = { warn: jest.fn() }
-  const asRedis = redis as unknown as AuthRedisService
-  const asLogger = logger as unknown as Logger
+  const asRedis = redis as object as AuthRedisService
+  const asLogger = new Logger('pending-logout-test')
 
   beforeEach(() => {
     jest.resetAllMocks()
+    jest.spyOn(asLogger, 'warn').mockImplementation(() => undefined)
     redis.set.mockResolvedValue(undefined)
   })
 

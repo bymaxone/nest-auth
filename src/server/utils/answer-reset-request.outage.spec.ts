@@ -7,11 +7,10 @@
  * happens only for a registered address, and a 5xx would answer the enumeration question.
  */
 
-import type { Logger } from '@nestjs/common'
+import { Logger } from '@nestjs/common'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { AuthRedisService } from '../redis/auth-redis.service'
 import { answerResetRequest, type ResetRequest } from './answer-reset-request'
 
 const UNAVAILABLE = new AuthException(AUTH_ERROR_CODES.SERVICE_UNAVAILABLE)
@@ -19,11 +18,8 @@ const FLOOR_MS = 120
 
 describe('answerResetRequest under a store outage', () => {
   const redis = { setnx: jest.fn(), del: jest.fn() }
-  const logger = { error: jest.fn() }
-  const deps = {
-    redis: redis as unknown as Pick<AuthRedisService, 'setnx' | 'del'>,
-    logger: logger as unknown as Logger
-  }
+  const logger = new Logger('answer-reset-request-test')
+  const deps = { redis, logger }
   const findAccount = jest.fn()
   const issue = jest.fn()
 
@@ -43,6 +39,7 @@ describe('answerResetRequest under a store outage', () => {
 
   beforeEach(() => {
     jest.resetAllMocks()
+    jest.spyOn(logger, 'error').mockImplementation(() => undefined)
     redis.del.mockResolvedValue(true)
     findAccount.mockResolvedValue({ id: 'user-1', status: 'ACTIVE' })
     issue.mockResolvedValue(undefined)

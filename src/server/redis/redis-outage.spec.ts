@@ -183,11 +183,15 @@ describe('mappingOutages', () => {
       synchronous: jest.fn()
     }
   }
-  const view = (target: Record<string, unknown>): Record<string, (...args: unknown[]) => unknown> =>
-    mappingOutages(target as unknown as Redis) as unknown as Record<
-      string,
-      (...args: unknown[]) => unknown
-    >
+  /** The proxy over a fake client. */
+  function proxy(target: object): Redis {
+    return mappingOutages(target as Redis)
+  }
+  /** The proxy read as the plain method table it behaves as. */
+  function view(target: object): Record<string, (...args: unknown[]) => unknown> {
+    const proxied: unknown = proxy(target)
+    return proxied as Record<string, (...args: unknown[]) => unknown>
+  }
 
   // Scenario: any method of the client rejects with an outage, a name nobody listed included.
   // Expected: the typed 503 with the cause, because the proxy wraps every method rather than a
@@ -232,9 +236,8 @@ describe('mappingOutages', () => {
     const target = client()
     ;(target['synchronous'] as jest.Mock).mockReturnValue('now')
 
-    const proxied = view(target) as unknown as { status: string }
     expect(view(target)['synchronous']?.()).toBe('now')
-    expect(proxied.status).toBe('ready')
+    expect(Reflect.get(proxy(target), 'status')).toBe('ready')
   })
 
   // Scenario: methods that return null, or an object that is not waited on (a pipeline-like
