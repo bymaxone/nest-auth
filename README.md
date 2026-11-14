@@ -992,7 +992,7 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > answers (nest-core's, for one) records the real reason. The library's own `AuthExceptionFilter`
 > writes no log line for it: your readiness probe, not the request log, is the signal that Redis is
 > down, so put a Redis health check next to it. Two answers keep their meaning: a password-reset
-> request refused because the cooldown store is down is the same `503` for every address, and the
+> request refused because the cooldown store cannot answer is the same `503` for every address, and the
 > OAuth callback redirects to your `errorRedirectUrl` with `error=auth.service_unavailable` when you
 > configured one. A failure to cache an answer the library can recompute (the workspace membership
 > cache, the denied-access counter, the session limit) is still absorbed, not refused.
@@ -1771,12 +1771,12 @@ import { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from '@bymax-one/nest-auth/shared
 > (`auth.otp_invalid`) at one status (`401`) — a `429` on the ceiling would say the address was
 > registered, since only a record that exists can reach one.
 
-> **When a password-reset request fails.** A failure that is the same for every address, the
-> resend-cooldown store or your repository's `findByEmail` throwing, answers `500`
-> (`auth.internal`) after the same timing floor as every other exit. A cooldown store that
-> cannot answer answers `503` (`auth.service_unavailable`) instead, the same for every address,
-> because the cooldown is the first thing every request consults, and a later failure releases
-> the cooldown so the retry is not refused. A failure after the account is known (storing the
+> **When a password-reset request fails.** A failure that is the same for every address answers
+> after the same timing floor as every other exit: `503` (`auth.service_unavailable`) when the
+> resend-cooldown store cannot answer, `500` (`auth.internal`) for any other failure of it and for
+> your repository's `findByEmail` throwing. The answer is the same for every address because the
+> cooldown is the first thing every request consults, and a later failure releases the cooldown so
+> the retry is not refused. A failure after the account is known (storing the
 > code, or the mail provider failing after the response has left) is logged and the `200` stands,
 > because it happens only for a registered address. Two limits are left as they are. A `findByEmail`
 > that takes longer than the cooldown (60 seconds) and then fails releases the cooldown by key, and
