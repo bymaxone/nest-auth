@@ -166,7 +166,7 @@ export class PasswordResetService {
    *
    * A failure that is the same for every address, the resend-cooldown store or the account
    * lookup, throws `INTERNAL` (500) after the floor, or `SERVICE_UNAVAILABLE` (503) when the
-   * cooldown store is unreachable, and the cooldown this call took is released. The response
+   * cooldown store cannot answer, and the cooldown this call took is released. The response
    * cannot be used to probe whether an email address is registered.
    *
    * Timing normalization: the method always takes at least {@link ANTI_ENUM_MIN_MS}
@@ -317,7 +317,7 @@ export class PasswordResetService {
    * Subject to an atomic 60-second cooldown enforced via a Redis NX key to
    * prevent OTP flooding. Resolves the same way whether or not the user exists —
    * anti-enumeration principle; a failure of the cooldown store or the account lookup throws
-   * `INTERNAL` (500), or `SERVICE_UNAVAILABLE` (503) for an unreachable store, and releases it.
+   * `INTERNAL` (500), or `SERVICE_UNAVAILABLE` (503) for a store that cannot answer, and releases it.
    *
    * Timing normalization: always takes at least {@link ANTI_ENUM_MIN_MS} ms.
    *

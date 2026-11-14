@@ -1773,8 +1773,8 @@ import { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from '@bymax-one/nest-auth/shared
 
 > **When a password-reset request fails.** A failure that is the same for every address, the
 > resend-cooldown store or your repository's `findByEmail` throwing, answers `500`
-> (`auth.internal`) after the same timing floor as every other exit. A cooldown store that is
-> unreachable answers `503` (`auth.service_unavailable`) instead, the same for every address,
+> (`auth.internal`) after the same timing floor as every other exit. A cooldown store that
+> cannot answer answers `503` (`auth.service_unavailable`) instead, the same for every address,
 > because the cooldown is the first thing every request consults, and the cooldown that request
 > took is released so the retry is not refused. A failure after the account is known (storing the
 > code, or the mail provider failing after the response has left) is logged and the `200` stands,

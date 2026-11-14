@@ -41,7 +41,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 ### Changed
 
 - **Wire contract version 7.** It adds `auth.service_unavailable` (503), pins that a password-reset request
-  whose cooldown store is unreachable answers `503` after the timing floor, the same for every address, and
+  whose cooldown store cannot answer answers `503` after the timing floor, the same for every address, and
   pins that a `beforeWorkspaceCreate` hook that fails without refusing creates nothing and answers `500
 auth.internal`.
 - `AuthException` takes an optional third argument `{ cause }`, kept on the exception and never serialized.
@@ -54,7 +54,7 @@ auth.internal`.
   `auth.service_unavailable`.** The status table in the README gains the `503` row. A host filter that renders
   `HttpException`s answers it with its own envelope; one that logs 5xx now logs the real reason through `cause`.
   `AuthExceptionFilter` writes no log line for it, so keep a Redis health check next to your readiness probe.
-- **A password-reset request or resend whose cooldown store is down answers `503` instead of `500`.** A failure
+- **A password-reset request or resend whose cooldown store cannot answer answers `503` instead of `500`.** A failure
   after the account is known (storing the code) still answers `200`.
 - **The OAuth callback redirects with `error=auth.service_unavailable`** when `oauth.errorRedirectUrl` is set and
   Redis is down, as it does for any other `AuthException`.

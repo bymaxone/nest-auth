@@ -82,7 +82,7 @@ export class PasswordResetController {
    * is eligible. Answers `200 OK` with an empty JSON object whether or not the account exists
    * (anti-enumeration; the body is pinned by the wire contract). Only a failure that is the same
    * for every address, the cooldown store or the account lookup, answers `500` `auth.internal`,
-   * except an unreachable cooldown store, which answers `503` `auth.service_unavailable`.
+   * except a cooldown store that cannot answer, which answers `503` `auth.service_unavailable`.
    *
    * @param dto - Validated DTO with `email` and `tenantId`.
    * @returns An empty object.
@@ -211,7 +211,7 @@ export class PasswordResetController {
    * Answers `200 OK` with an empty JSON object whether or not the account exists
    * (anti-enumeration; the body is pinned by the wire contract). Only a failure that is the same
    * for every address, the cooldown store or the account lookup, answers `500` `auth.internal`,
-   * except an unreachable cooldown store, which answers `503` `auth.service_unavailable`.
+   * except a cooldown store that cannot answer, which answers `503` `auth.service_unavailable`.
    *
    * @param dto - Validated DTO with `email` and `tenantId`.
    * @returns An empty object.
