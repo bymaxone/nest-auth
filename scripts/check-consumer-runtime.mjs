@@ -93,7 +93,8 @@ function cleanup() {
 
 console.log('Consumer load gate')
 
-if (!existsSync(join(rootDir, 'dist'))) {
+// With `PACKAGE_TARBALL` the gate inspects that file, so a working tree without `dist/` is fine.
+if (!process.env['PACKAGE_TARBALL'] && !existsSync(join(rootDir, 'dist'))) {
   console.error('✗ dist/ is missing — run `pnpm build` first')
   process.exit(1)
 }
@@ -103,26 +104,31 @@ const packDir = mkdtempSync(join(tmpdir(), 'pack-'))
 let failed = false
 
 try {
-  // `--ignore-scripts` keeps `prepublishOnly` from rebuilding underneath the
-  // artifact this gate is meant to inspect.
-  //
-  // `npm publish --dry-run` exports `npm_config_dry_run`, which this nested pack
-  // would inherit — and a dry pack writes no file, so the gate would fail on the
-  // one path it most needs to hold: the publish that runs it. The variable is
-  // dropped for the child only.
-  const packEnv = { ...process.env }
-  delete packEnv['npm_config_dry_run']
-  run('npm', ['pack', '--ignore-scripts', '--silent', '--pack-destination', packDir], {
-    cwd: rootDir,
-    env: packEnv
-  })
-  // Read the directory rather than parse stdout: npm writes notices there too, and
-  // the last line is not reliably the filename.
-  const packed = readdirSync(packDir).filter((name) => name.endsWith('.tgz'))
-  if (packed.length !== 1) {
-    throw new Error(`expected one tarball in ${packDir}, found ${packed.length}`)
+  // `PACKAGE_TARBALL` names the tarball a release gate has already packed, so the file inspected
+  // here is the file that is published. Without it the gate packs one itself.
+  let tarball = process.env['PACKAGE_TARBALL']
+  if (tarball === undefined || tarball === '') {
+    // `--ignore-scripts` keeps `prepublishOnly` from rebuilding underneath the
+    // artifact this gate is meant to inspect.
+    //
+    // `npm publish --dry-run` exports `npm_config_dry_run`, which this nested pack
+    // would inherit — and a dry pack writes no file, so the gate would fail on the
+    // one path it most needs to hold: the publish that runs it. The variable is
+    // dropped for the child only.
+    const packEnv = { ...process.env }
+    delete packEnv['npm_config_dry_run']
+    run('npm', ['pack', '--ignore-scripts', '--silent', '--pack-destination', packDir], {
+      cwd: rootDir,
+      env: packEnv
+    })
+    // Read the directory rather than parse stdout: npm writes notices there too, and
+    // the last line is not reliably the filename.
+    const packed = readdirSync(packDir).filter((name) => name.endsWith('.tgz'))
+    if (packed.length !== 1) {
+      throw new Error(`expected one tarball in ${packDir}, found ${packed.length}`)
+    }
+    tarball = join(packDir, packed[0])
   }
-  const tarball = join(packDir, packed[0])
 
   const packageDir = join(consumerDir, 'node_modules', packageName)
   mkdirSync(packageDir, { recursive: true })
