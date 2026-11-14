@@ -20,7 +20,7 @@
     "src/server/services/invitation.service.spec.ts": 1554,
     "src/server/services/mfa.service.spec.ts": 4636,
     "src/server/services/password-reset.service.spec.ts": 2678,
-    "src/server/services/password-reset.service.ts": 995,
+    "src/server/services/password-reset.service.ts": 990,
     "src/server/services/password.service.spec.ts": 919,
     "src/server/services/platform-auth.service.spec.ts": 1014,
     "src/server/services/session.service.spec.ts": 3023,

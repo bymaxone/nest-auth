@@ -9,8 +9,8 @@ import {
 import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { userSubject } from '../constants/user-subject'
-import { generateSecureToken, hmacSha256, sha256 } from '../crypto/secure-token'
+import { reproofCounterId } from '../constants/reproof-counter'
+import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import type { ChangeEmailDto } from '../dto/change-email.dto'
 import type { ConfirmEmailChangeDto } from '../dto/confirm-email-change.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -162,14 +162,10 @@ export class EmailChangeService implements OnModuleInit {
     // account recovers through, which is persistence rather than a single theft. The per-route
     // IP limit is not that control: a distributed caller sidesteps it, and it is not keyed to
     // the account under attack. Namespaced by flow so it cannot lock the owner out of `login`.
-    // Derived from the tenant-scoped SUBJECT, not the bare id — the same defect and the same
-    // fix as the change-password counter. Tenant-blind, two tenants' user `1` shared one budget,
-    // so failures against one locked the other out of its own address change without a
-    // credential, and either one's success cleared the other's count.
-    const bfIdentifier = hmacSha256(
-      `reauth:email-change:${userSubject('dashboard', userId, tenantId)}`,
-      this.options.hmacKey
-    )
+    // Counted under the tenant-scoped subject, not the bare id: a repository id is unique only
+    // within a tenant, so two tenants' user `1` need two budgets, or failures against one lock the
+    // other out of its own address change without a credential.
+    const bfIdentifier = reproofCounterId('email-change', userId, tenantId, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
       this.logger.warn(`requestChange: account locked userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
