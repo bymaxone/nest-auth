@@ -18,7 +18,7 @@ body.
 ```
 
 - Status `503`. The code is in `AUTH_ERROR_CODES.SERVICE_UNAVAILABLE`, its status in
-  `AUTH_ERROR_STATUS`, and both are pinned in `conformance/wire-contract.json` (version 7), which
+  `AUTH_ERROR_STATUS`, and both are pinned in `conformance/wire-contract.json`, which
   rust-auth shares.
 - The ioredis error is the exception's `cause`. It is never serialized. A host filter that logs 5xx
   answers records the real reason; the library's own `AuthExceptionFilter` writes no line for an
@@ -47,8 +47,8 @@ told it cannot serve writes right now; that clears when the client reconnects to
 
 ## Where it is mapped
 
-Every Redis call goes through `AuthRedisService`, which holds the only client the services use, at
-14 raw call sites. `mappingOutages` wraps that client in a proxy that turns an outage rejection of any
+Every Redis call goes through `AuthRedisService`, which holds the only client the services use.
+`mappingOutages` wraps that client in a proxy that turns an outage rejection of any
 method into the typed 503 and passes every other error through untouched. It wraps every method
 rather than a list of commands, so a command added later is covered without anyone remembering to add
 it. `RedisReadinessService` holds the raw client for the boot probe and is not wrapped: it needs
@@ -58,7 +58,7 @@ it. `RedisReadinessService` holds the raw client for the boot probe and is not w
 
 "Pinned by" names the spec that fails if the outcome changes. `real-redis/redis-outage` is
 `test/e2e/real-redis/redis-outage.e2e-spec.ts`: it boots the full HTTP stack on a Redis container that
-the suite pauses and stops itself, under four client configurations.
+the suite pauses and stops itself, under each client configuration a host may use.
 
 | Path group                                      | Entry points                                                     | Under an outage                                                   | Pinned by                                                                                       |
 | ----------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
