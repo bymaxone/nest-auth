@@ -36,16 +36,19 @@ describe('RedisReadinessService against a real ioredis client (E2E)', () => {
       commandTimeout: 500
     })
     client.on('error', () => undefined)
+    // The pause between two PING attempts is a 250 ms timer; a client that has ended must never
+    // arm one, which says "fails at once" without reading the clock.
+    const timers = jest.spyOn(global, 'setTimeout')
     try {
-      const started = Date.now()
       const attempt = (await check(client)).onApplicationBootstrap()
 
       await expect(attempt).rejects.toThrow(
         '[BymaxAuthModule] Redis at 127.0.0.1:1 did not answer PING'
       )
       await expect(attempt).rejects.not.toThrow(/real-secret/)
-      expect(Date.now() - started).toBeLessThan(4000)
+      expect(timers.mock.calls.filter(([, delay]) => delay === 250)).toHaveLength(0)
     } finally {
+      timers.mockRestore()
       client.disconnect()
     }
   })

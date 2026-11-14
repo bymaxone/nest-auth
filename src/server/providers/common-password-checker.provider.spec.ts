@@ -16,6 +16,7 @@ import {
   reduceToBaseWord
 } from './common-password-checker.provider'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { expectLinearScaling } from '../../shared/__tests__/_scaling'
 
 /** A checker with no consumer-supplied blocklist — the shipped default. */
 function defaultChecker(): CommonPasswordChecker {
@@ -253,13 +254,20 @@ describe('CommonPasswordChecker', () => {
   // route-prefix trimmers, this input IS attacker-supplied — it is a candidate password. The
   // DTO bounds it at 128 characters, but that is a bound living in another file; the scan has
   // to be linear on its own.
-  it('strips a long run of decoration linearly and to the same result', () => {
+  it('strips a long run of decoration linearly and to the same result', async () => {
     expect(reduceToBaseWord('password' + '1'.repeat(500))).toBe('password')
     expect(reduceToBaseWord('password!@#_123')).toBe('password')
 
-    const started = Date.now()
-    reduceToBaseWord('a' + '!'.repeat(200_000))
-    expect(Date.now() - started).toBeLessThan(1_000)
+    // A long run at the end, and a long run followed by a letter, which is the shape that makes a
+    // `$`-anchored pattern backtrack over every suffix of the run.
+    await expectLinearScaling(
+      (size) => {
+        reduceToBaseWord('a' + '!'.repeat(size))
+        reduceToBaseWord('!'.repeat(size) + 'a')
+      },
+      5_000,
+      100_000
+    )
   })
 
   // -------------------------------------------------------------------------

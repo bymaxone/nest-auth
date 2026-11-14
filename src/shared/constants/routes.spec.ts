@@ -3,6 +3,7 @@ import {
   AUTH_REFRESH_SKIP_PATH_SUFFIXES,
   buildAuthRefreshSkipSuffixes
 } from './routes'
+import { expectLinearScaling } from '../__tests__/_scaling'
 
 /**
  * Coverage suite for {@link buildAuthRefreshSkipSuffixes}.
@@ -106,7 +107,7 @@ describe('buildAuthRefreshSkipSuffixes', () => {
   // input is deployment configuration rather than anything a caller sends, so it was never
   // reachable in practice — but the replacement has to trim exactly the same thing, and a long
   // run has to stay fast enough that the quadratic form could not pass this unnoticed.
-  it('trims runs of slashes linearly and to the same result', () => {
+  it('trims runs of slashes linearly and to the same result', async () => {
     expect(buildAuthRefreshSkipSuffixes('///authentication///')).toEqual(
       buildAuthRefreshSkipSuffixes('authentication')
     )
@@ -114,9 +115,16 @@ describe('buildAuthRefreshSkipSuffixes', () => {
       buildAuthRefreshSkipSuffixes('')
     )
 
-    const started = Date.now()
-    buildAuthRefreshSkipSuffixes('/'.repeat(100_000))
-    expect(Date.now() - started).toBeLessThan(1_000)
+    // A run of slashes alone, and one with a character after it, which is the shape that makes a
+    // `$`-anchored pattern backtrack over every prefix of the run.
+    await expectLinearScaling(
+      (size) => {
+        buildAuthRefreshSkipSuffixes('/'.repeat(size))
+        buildAuthRefreshSkipSuffixes(`a${'/'.repeat(size)}b`)
+      },
+      5_000,
+      100_000
+    )
   })
 })
 

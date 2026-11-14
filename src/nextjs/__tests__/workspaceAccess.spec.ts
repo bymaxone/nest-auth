@@ -9,6 +9,7 @@ import { cookies } from 'next/headers'
 import { RequestCookiesAdapter } from 'next/dist/server/web/spec-extension/adapters/request-cookies'
 import { RequestCookies } from 'next/dist/compiled/@edge-runtime/cookies'
 
+import { expectLinearScaling } from '../../shared/__tests__/_scaling'
 import { createWorkspaceAccessReader } from '../helpers/workspaceAccess'
 
 jest.mock('next/headers', () => ({ cookies: jest.fn() }))
@@ -172,24 +173,29 @@ describe('createWorkspaceAccessReader', () => {
     await expect(read('w1')).resolves.toEqual(body)
   })
 
-  // A pattern that backtracks quadratically on a long run of slashes takes seconds here.
+  // A pattern that backtracks quadratically on a long run of slashes grows with the square of the run.
   it('trims a long run of slashes from the prefix in linear time', async () => {
     jest.mocked(cookies).mockResolvedValue(cookieJar(''))
     const send = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>(() =>
       Promise.resolve(reply(200))
     )
-    const hostile = `a${'/'.repeat(80_000)}b`
-    const started = performance.now()
 
-    const read = createWorkspaceAccessReader({
-      apiBase: 'https://api.example.test',
-      routePrefix: hostile,
-      fetch: send
-    })
-    await read('w1')
-
-    expect(performance.now() - started).toBeLessThan(500)
-    expect(send.mock.calls[0]?.[0]).toBe(`https://api.example.test/${hostile}/workspaces/w1/access`)
+    await expectLinearScaling(
+      async (size) => {
+        const hostile = `a${'/'.repeat(size)}b`
+        const read = createWorkspaceAccessReader({
+          apiBase: 'https://api.example.test',
+          routePrefix: hostile,
+          fetch: send
+        })
+        await read('w1')
+        expect(send.mock.calls.at(-1)?.[0]).toBe(
+          `https://api.example.test/${hostile}/workspaces/w1/access`
+        )
+      },
+      5_000,
+      100_000
+    )
   })
 
   it.each([403, 404, 409])(

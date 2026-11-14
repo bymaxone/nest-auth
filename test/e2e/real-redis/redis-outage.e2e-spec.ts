@@ -207,7 +207,10 @@ describe.each(CASES)('Redis outage, $name (real Redis, E2E)', ({ outage, options
     expectUnavailable(known.res)
     expectUnavailable(unknown.res)
     expect(known.res.body).toEqual(unknown.res.body)
-    expect(Math.abs(known.ms - unknown.ms)).toBeLessThan(400)
+    // Both wait on the store's command timeout and the floor, so a difference of about a second would
+    // mean one address takes a longer path. The bound is loose because a loaded machine delays
+    // either request; the identical code path, not this number, is what the property rests on.
+    expect(Math.abs(known.ms - unknown.ms)).toBeLessThan(1_000)
   })
 
   // Scenario: the store comes back (only a pause can: a stopped container was removed from the

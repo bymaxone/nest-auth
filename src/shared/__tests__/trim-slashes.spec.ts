@@ -4,6 +4,7 @@
  */
 
 import { trimSlashes } from '../utils/trim-slashes'
+import { expectLinearScaling } from './_scaling'
 
 describe('trimSlashes', () => {
   it.each([
@@ -43,14 +44,16 @@ describe('trimSlashes', () => {
     expect(trimSlashes(' /a/ ')).toBe(' /a/ ')
   })
 
-  it('takes linear time on a long run of slashes', () => {
-    const hostile = `a${'/'.repeat(200_000)}b`
-    const started = performance.now()
-
-    expect(trimSlashes(hostile)).toBe(hostile)
-    expect(trimSlashes(`${'/'.repeat(200_000)}a${'/'.repeat(200_000)}`)).toBe('a')
-    expect(trimSlashes('/'.repeat(200_000), false)).toBe('')
-
-    expect(performance.now() - started).toBeLessThan(250)
+  it('takes linear time on a long run of slashes', async () => {
+    await expectLinearScaling(
+      (size) => {
+        const hostile = `a${'/'.repeat(size)}b`
+        expect(trimSlashes(hostile)).toBe(hostile)
+        expect(trimSlashes(`${'/'.repeat(size)}a${'/'.repeat(size)}`)).toBe('a')
+        expect(trimSlashes('/'.repeat(size), false)).toBe('')
+      },
+      5_000,
+      100_000
+    )
   })
 })
