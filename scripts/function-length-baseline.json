@@ -12,7 +12,7 @@
     "[\"src/nextjs/createSilentRefreshHandler.ts\",[\"fn\",\"createSilentRefreshHandler\"]]": 98,
     "[\"src/nextjs/createSilentRefreshHandler.ts\",[\"fn\",\"createSilentRefreshHandler\"],[\"anon\"]]": 63,
     "[\"src/nextjs/internal/proxyHandlers.ts\",[\"fn\",\"handleProtectedRoute\"]]": 52,
-    "[\"src/react/AuthProvider.tsx\",[\"fn\",\"AuthProvider\"]]": 301,
+    "[\"src/react/AuthProvider.tsx\",[\"fn\",\"AuthProvider\"]]": 290,
     "[\"src/server/bymax-auth.module.ts\",[\"member\",\"BymaxAuthModule\",\"registerAsync\"]]": 541,
     "[\"src/server/bymax-auth.module.ts\",[\"member\",\"BymaxAuthModule\",\"registerAsync\"],[\"fn\",\"useFactory\"]]": 129,
     "[\"src/server/config/resolved-options.ts\",[\"fn\",\"resolveOptions\"]]": 158,

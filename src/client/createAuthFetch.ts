@@ -20,6 +20,8 @@ import {
   buildAuthRefreshSkipSuffixes
 } from '@bymax-one/nest-auth/shared'
 
+import { isTimerDelay, MAX_TIMER_DELAY_MS } from '../shared/utils/timer-delay'
+
 /**
  * Configuration options for {@link createAuthFetch}.
  *
@@ -97,7 +99,8 @@ export interface AuthFetchConfig {
   /**
    * Per-request timeout in milliseconds.
    *
-   * Default: `30_000` (30s). Pass `0` to disable the timeout.
+   * Default: `30_000` (30s). Pass `0` to disable the timeout. Anything but a number from `0` to
+   * `2147483647` (the largest delay a timer honors) is refused when the wrapper is created.
    * Disabling is appropriate for long-poll endpoints; for normal
    * requests keep the default to avoid hanging UIs on slow networks.
    */
@@ -541,6 +544,24 @@ async function performRefresh(
 }
 
 /**
+ * The per-request timeout a configuration asks for.
+ *
+ * @param timeout - The `timeout` option, `undefined` for the default.
+ * @returns The timeout in milliseconds, `0` for none.
+ * @throws {TypeError} For anything but a number from `0` to `2147483647`: `setTimeout` would give
+ *   `NaN`, `Infinity` and a larger one a 1 ms deadline, which aborts every request.
+ */
+function requestTimeoutOf(timeout: number | undefined): number {
+  const timeoutMs = timeout ?? 30_000
+  if (!isTimerDelay(timeoutMs)) {
+    throw new TypeError(
+      `createAuthFetch: timeout must be a number of milliseconds from 0 to ${MAX_TIMER_DELAY_MS}.`
+    )
+  }
+  return timeoutMs
+}
+
+/**
  * Create a configured fetch wrapper with cookie- and refresh-aware
  * behavior baked in.
  *
@@ -561,7 +582,7 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
   const defaultHeaders = buildDefaultHeaders(config.defaultHeaders)
   const onSessionExpired = config.onSessionExpired
   const onRefreshFailed = config.onRefreshFailed
-  const timeoutMs = config.timeout ?? 30_000
+  const timeoutMs = requestTimeoutOf(config.timeout)
   const skipRefreshSuffixes = buildAuthRefreshSkipSuffixes(config.routePrefix)
 
   /**

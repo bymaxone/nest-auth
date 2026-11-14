@@ -94,6 +94,9 @@ export interface AuthProviderProps {
    * Interval (in milliseconds) between automatic revalidations.
    * Default: {@link DEFAULT_REVALIDATE_INTERVAL_MS} (5 minutes).
    *
+   * A value that is not a number from `0` to `2147483647` (the largest delay a timer honors, so
+   * `NaN` and `Infinity` too) is read as the default, never as a 1 ms loop.
+   *
    * Set to `0` to disable the loop entirely — useful for short-lived
    * flows (sign-up wizards, kiosk screens) where the overhead of a
    * background poll is not worth the freshness guarantee.
@@ -162,6 +165,34 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
  */
 function isSessionExpiredError(error: unknown): boolean {
   return clientErrorStatus(error) === 401
+}
+
+/**
+ * Runs the background revalidation on a period.
+ *
+ * A period that is not a number from `0` to `2147483647` is read as the default: `setInterval` gives
+ * `NaN`, `Infinity` and anything above that ceiling a 1 ms period.
+ *
+ * @param revalidate - The check to run on each tick.
+ * @param interval - The period in milliseconds, `0` for none.
+ */
+function useRevalidationLoop(
+  revalidate: (isInitial: boolean) => Promise<void>,
+  interval: number
+): void {
+  const period =
+    interval >= 0 && interval <= 2_147_483_647 ? interval : DEFAULT_REVALIDATE_INTERVAL_MS
+  useEffect(() => {
+    if (period <= 0) {
+      return undefined
+    }
+    const handle = setInterval(() => {
+      void revalidate(false)
+    }, period)
+    return (): void => {
+      clearInterval(handle)
+    }
+  }, [revalidate, period])
 }
 
 /**
@@ -313,18 +344,7 @@ export function AuthProvider({
     }
   }, [revalidate])
 
-  // Background revalidation loop.
-  useEffect(() => {
-    if (revalidateInterval <= 0) {
-      return undefined
-    }
-    const handle = setInterval(() => {
-      void revalidate(false)
-    }, revalidateInterval)
-    return (): void => {
-      clearInterval(handle)
-    }
-  }, [revalidate, revalidateInterval])
+  useRevalidationLoop(revalidate, revalidateInterval)
 
   const login = useCallback<AuthContextValue['login']>(
     async (email, password, options) => {
