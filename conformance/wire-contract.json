@@ -1581,6 +1581,60 @@
       "auth.service_unavailable": 503
     }
   },
+  "serviceUnavailable": {
+    "$comment": [
+      "Where `auth.service_unavailable` (503) is answered and which store failures count, so the two",
+      "libraries answer one Redis outage the same way on the same path. The code and its status are in",
+      "`errorCatalog`; this section says what raises it. The body is the library envelope with",
+      "`details: null`, nothing of the store's error is in the response, and no `Retry-After` is sent,",
+      "because nothing here knows when the store returns."
+    ],
+    "appliesTo": [
+      "Any request whose handling reads or writes the shared store, when that call cannot answer and nothing below absorbs it.",
+      "Sign-in, registration and refresh, including reuse detection; logout; every authenticated request, whose revocation, epoch and account-status reads come first, so an outage is a 503 and never a 401.",
+      "MFA setup, challenge and management; OTP, password reset and email change; the per-address, per-account and per-IP counters and lockouts.",
+      "Session listing and revocation; workspace and invitation operations that write the store, the membership-cache invalidation after a change included, which refuses rather than report a change as done.",
+      "OAuth initiate and callback, delivered as every other callback failure is; the WebSocket ticket mint and redeem; the platform plane."
+    ],
+    "passwordResetRequest": "A reset or resend request answers 503 when the resend-cooldown store cannot answer, after the timing floor and the same for every address. A store that cannot answer after the account is known leaves the 200, as `passwordResetRequest.failures.after` says.",
+    "absorbed": [
+      "The workspace membership cache read and fill: the repository answers.",
+      "The denied-access event counter.",
+      "The session-limit eviction at sign-in: the limit is not enforced for that sign-in.",
+      "The session-detail rotation after a refresh, and the account-status cache invalidation after an email is verified."
+    ],
+    "outage": {
+      "clientErrors": [
+        "A command that got no reply before the client's command timeout.",
+        "A command refused because the connection is closed, or is down and the client holds no offline queue.",
+        "A command the client gave up on after its allowed retries."
+      ],
+      "networkErrorCodes": [
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "ETIMEDOUT",
+        "EPIPE",
+        "ENOTFOUND",
+        "EAI_AGAIN",
+        "EHOSTUNREACH",
+        "ENETUNREACH"
+      ],
+      "replyPrefixes": [
+        "READONLY",
+        "LOADING",
+        "MASTERDOWN",
+        "CLUSTERDOWN",
+        "TRYAGAIN"
+      ],
+      "notAnOutageReplyPrefixes": [
+        "NOSCRIPT",
+        "WRONGTYPE",
+        "ERR"
+      ],
+      "notAnOutage": "Any other error reply from the server, and any error that is not about the store, answers 500 auth.internal: it is a defect, not a condition that clears.",
+      "open": "BUSY and MISCONF are not classified today and answer 500 auth.internal. Adding either is a change to `replyPrefixes` in both libraries."
+    }
+  },
   "errorEnvelope": {
     "$comment": "The body shape every auth error serializes to. `details` is present and null when the thrower supplied none. For `auth.validation`, each `details[].field` is the WIRE property name, the key the client sent in the request JSON or query (`currentPassword`, never a language-level field name), and a nested field is its dotted path with an array index as a segment (`billing.name`, `items.1.name`), never bracketed. What is normative for an `auth.validation` answer is the status, the code, the top-level message and the SET of distinct `details[].field` values for a given input; the per-entry message text and the number of entries per field are not, and a library words its own, provided no message repeats the client's value or type. An unknown request property is named by the client, so its name is repeated in the answer only when it is at most 128 code points and holds no control character; an unknown property over 128 code points, holding a control character, or empty is reported once under the field `body`, however many there are, while every other failure is still reported by its own name. The answer therefore never grows with the length of a client-chosen key and never carries a control byte.",
     "shape": {

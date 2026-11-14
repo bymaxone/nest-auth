@@ -6,6 +6,9 @@
  * may use, and from a real Redis 8 server for the reply errors.
  */
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import type { Redis } from 'ioredis'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -249,5 +252,65 @@ describe('mappingOutages', () => {
 
     expect(view(target)['synchronous']?.()).toBeNull()
     expect(view(target)['synchronous']?.()).toBe(handle)
+  })
+})
+
+/** The outage list both libraries pin, from the shared wire contract. */
+const contract = JSON.parse(
+  readFileSync(join(__dirname, '../../../conformance/wire-contract.json'), 'utf8')
+) as {
+  serviceUnavailable: {
+    outage: {
+      networkErrorCodes: string[]
+      replyPrefixes: string[]
+      notAnOutageReplyPrefixes: string[]
+    }
+  }
+}
+
+describe('redisOutageKindOf against the shared contract', () => {
+  const { outage } = contract.serviceUnavailable
+
+  // Scenario: each reply the contract lists as "cannot serve". Expected: an outage. The list is
+  // the contract's, so a prefix added there that this classifier does not know fails here.
+  it.each(outage.replyPrefixes)('reads a %s reply as an outage', (prefix) => {
+    expect(
+      redisOutageKindOf(named('ReplyError', `${prefix} the server cannot serve this now`))
+    ).toBe('unavailable')
+  })
+
+  // Scenario: each reply the contract names as a mistake. Expected: not an outage.
+  it.each(outage.notAnOutageReplyPrefixes)('does not read a %s reply as an outage', (prefix) => {
+    expect(
+      redisOutageKindOf(named('ReplyError', `${prefix} a mistake, not a condition`))
+    ).toBeUndefined()
+  })
+
+  // Scenario: each network error code the contract lists. Expected: unreachable.
+  it.each(outage.networkErrorCodes)('reads the network code %s as unreachable', (code) => {
+    expect(redisOutageKindOf(named('Error', `connect ${code}`, { code }))).toBe('unreachable')
+  })
+
+  // Scenario: the classifier's own list against the contract's. Expected: nothing the classifier
+  // treats as a "cannot serve" reply is missing from the contract.
+  it('knows no reply prefix the contract does not list', () => {
+    const known = [
+      'BUSY',
+      'MISCONF',
+      'READONLY',
+      'LOADING',
+      'MASTERDOWN',
+      'CLUSTERDOWN',
+      'TRYAGAIN',
+      'EXECABORT',
+      'NOREPLICAS',
+      'NOAUTH',
+      'NOPERM'
+    ]
+    const classified = known.filter(
+      (prefix) => redisOutageKindOf(named('ReplyError', `${prefix} x`)) === 'unavailable'
+    )
+
+    expect(classified.sort()).toEqual([...outage.replyPrefixes].sort())
   })
 })
