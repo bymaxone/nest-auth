@@ -43,7 +43,6 @@ describe('Compressed request bodies (E2E)', () => {
         controllers: { auth: true, mfa: true, passwordReset: true, sessions: true, platform: true }
       }
     )
-    await boot.app.listen(0)
     port = (boot.app.getHttpServer().address() as AddressInfo).port
   })
 

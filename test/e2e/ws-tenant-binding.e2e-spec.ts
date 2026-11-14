@@ -124,7 +124,6 @@ describe('enforceTenantBinding on the WebSocket guard (E2E)', () => {
       { hostProviders: [ProbeGateway, VerifierGateway] }
     )
     app = boot.app
-    await app.listen(0)
     port = (app.getHttpServer() as { address: () => { port: number } }).address().port
 
     const registered = await request(app.getHttpServer())

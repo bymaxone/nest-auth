@@ -116,7 +116,6 @@ async function boot(
     },
     { hostProviders: [ProbeGateway] }
   )
-  await app.listen(0)
   const port = (app.getHttpServer() as { address: () => { port: number } }).address().port
 
   const registered = await request(app.getHttpServer())

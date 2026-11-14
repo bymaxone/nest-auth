@@ -156,7 +156,6 @@ describe('workspace authorization on a socket and in a job (E2E)', () => {
       }
     )
     app = boot.app
-    await app.listen(0)
     port = (app.getHttpServer() as { address: () => { port: number } }).address().port
   })
 

@@ -221,7 +221,6 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
 
     // A listening server, which no other e2e here needs: supertest drives the HTTP handler
     // directly, but a socket upgrade needs a real port to connect to.
-    await app.listen(0)
     port = (app.getHttpServer() as { address: () => { port: number } }).address().port
 
     const registered = await request(app.getHttpServer()).post('/register').send({
@@ -303,8 +302,6 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
     )
 
     try {
-      await native.app.listen(0)
-
       const nativePort = (
         native.app.getHttpServer() as { address: () => { port: number } }
       ).address().port

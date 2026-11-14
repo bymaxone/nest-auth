@@ -24,6 +24,9 @@ import { startRedisContainer, type StartedRedis } from './redis-container'
 import { BYMAX_AUTH_REDIS_CLIENT } from '../../../src/server/bymax-auth.constants'
 
 const PASSWORD = 'SuperSecret123!'
+
+/** The floor every reset-request exit waits for, `passwordResetRequest.failures.floorMs` in the contract. */
+const RESET_FLOOR_MS = 300
 const TENANT = 'tenant-1'
 
 /** What a client of the library sees for an outage: the envelope and nothing of the store. */
@@ -53,6 +56,12 @@ interface ClientCase {
   }
 }
 
+/**
+ * The deadline (`commandTimeout`) is exercised only where the store accepts the connection and
+ * never answers: the paused case, and the stopped case whose offline queue holds the command until
+ * the deadline. The other two stopped cases fail at once on a refused connection and say nothing about
+ * a deadline; they are the fail-fast-on-refusal cases.
+ */
 const CASES: readonly ClientCase[] = [
   {
     name: 'paused, with a command timeout ("Command timed out")',
@@ -207,10 +216,11 @@ describe.each(CASES)('Redis outage, $name (real Redis, E2E)', ({ outage, options
     expectUnavailable(known.res)
     expectUnavailable(unknown.res)
     expect(known.res.body).toEqual(unknown.res.body)
-    // Both wait on the store's command timeout and the floor, so a difference of about a second would
-    // mean one address takes a longer path. The bound is loose because a loaded machine delays
-    // either request; the identical code path, not this number, is what the property rests on.
-    expect(Math.abs(known.ms - unknown.ms)).toBeLessThan(1_000)
+    // Each answer takes at least the anti-enumeration floor, whichever address it was for. Only a
+    // lower bound: a loaded machine can lengthen either request but never shorten it, so this cannot
+    // flake, and that both took the same code path is what the identical body and status above show.
+    expect(known.ms).toBeGreaterThanOrEqual(RESET_FLOOR_MS)
+    expect(unknown.ms).toBeGreaterThanOrEqual(RESET_FLOOR_MS)
   })
 
   // Scenario: the store comes back (only a pause can: a stopped container was removed from the

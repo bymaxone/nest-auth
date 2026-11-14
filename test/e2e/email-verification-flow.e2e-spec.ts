@@ -36,6 +36,7 @@ import {
   createMockUserRepository,
   expectAuthError
 } from './setup'
+import { initAndListen } from '../support/init-and-listen'
 
 // ---------------------------------------------------------------------------
 // OTP-capturing mock email provider
@@ -160,7 +161,7 @@ async function bootstrapWithVerification(): Promise<VerificationFixture> {
 
   const app = moduleRef.createNestApplication()
   applyTestMiddleware(app)
-  await app.init()
+  await initAndListen(app)
   return { app, email }
 }
 

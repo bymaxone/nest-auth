@@ -82,7 +82,6 @@
     "[\"test/e2e/setup.ts\",[\"fn\",\"applyTestMiddleware\"]]": 57,
     "[\"test/e2e/setup.ts\",[\"fn\",\"bootstrapTestApp\"]]": 85,
     "[\"test/e2e/setup.ts\",[\"fn\",\"createMockPlatformUserRepository\"]]": 55,
-    "[\"test/e2e/setup.ts\",[\"fn\",\"createMockUserRepository\"]]": 171,
-    "[\"test/e2e/ws-guard.e2e-spec.ts\",[\"container\",\"describe\",\"WsJwtGuard under a real handshake (E2E)\"],[\"test\",\"it\",\"delivers the library code over the native ws adapter too\"]]": 51
+    "[\"test/e2e/setup.ts\",[\"fn\",\"createMockUserRepository\"]]": 171
   }
 }

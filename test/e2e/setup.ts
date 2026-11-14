@@ -60,6 +60,7 @@ import type {
 } from '../../src/server/interfaces/user-repository.interface'
 import { AuthExceptionFilter } from '../../src/server/filters/auth-exception.filter'
 import { createAuthValidationPipe } from '../../src/server/pipes/auth-validation.pipe'
+import { initAndListen } from '../support/init-and-listen'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -627,6 +628,8 @@ export interface ExtraBootstrapOptions {
    * ordinary configuration into a 500 on a route that has nothing to do with cookies.
    */
   withoutCookieParser?: boolean
+  /** Leaves the application not listening; see `initAndListen`. Defaults to listening. */
+  listen?: boolean
 }
 
 /**
@@ -713,7 +716,7 @@ export async function bootstrapTestApp(
   const app = moduleRef.createNestApplication()
   applyTestMiddleware(app, extra.withoutCookieParser !== true)
   extra.beforeInit?.(app)
-  await app.init()
+  await (extra.listen === false ? app.init() : initAndListen(app))
   if (usesRealRedis) {
     // A mock holds no connection; a real client does, and the suite that closed the app owns it.
     const close = app.close.bind(app)
