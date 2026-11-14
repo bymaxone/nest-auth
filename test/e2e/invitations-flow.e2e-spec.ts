@@ -184,13 +184,11 @@ describe('invitations flow (E2E)', () => {
       acceptStatus = accept.status
       acceptBody = accept.body as Record<string, unknown>
       const inviteeId = (acceptBody['user'] as { id: string }).id
-      const markKey = recentAuthKey(
-        'dashboard',
-        inviteeId,
-        app.get<{ hmacKey: string }>(BYMAX_AUTH_OPTIONS).hmacKey,
-        'tenant-1'
-      )
-      inviteeMarked = (await redis.keys(`*${markKey}`)).length === 1
+      const resolved = app.get<{ hmacKey: string; redisNamespace: string }>(BYMAX_AUTH_OPTIONS)
+      const markKey = recentAuthKey('dashboard', inviteeId, resolved.hmacKey, 'tenant-1')
+      // The exact key, namespace included: a shared server holds the same mock user id in every
+      // suite's namespace, so a pattern would find another suite's mark.
+      inviteeMarked = (await redis.exists(`${resolved.redisNamespace}:${markKey}`)) === 1
 
       // Step 6 — login as the freshly-created invitee to confirm the password
       // hash was persisted correctly and the account is immediately usable.
