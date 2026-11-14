@@ -57,7 +57,13 @@ overrides:
   # them, as here.
   'minimatch@>=10.0.0 <11.0.1': '>=11.0.1'
   'test-exclude@^7': '^8'
-  'glob@10': '^13.0.6'
+  # GHSA-3g3m-2fjr-6pw4 `glob` >=9.0.0 <14.0.2, fixed in 14.0.2. Reached only through test, coverage
+  # and mutation tooling (testcontainers' archiver-utils and test-exclude). Both callers use only
+  # `glob.sync`/the callback API that glob 14 keeps; the old 10 line is moved to the same floor so no
+  # copy resolves under it. Drop both entries once the parents' own ranges are at or above the floor:
+  # delete the entry, reinstall, and read `pnpm why glob`.
+  'glob@10': '^14.0.2'
+  'glob@13': '^14.0.2'
   'postcss@<8.5.10': '>=8.5.10'
   # Floor the PACKAGE, never a window of it. A selector like `qs@>=6.11.1 <=6.15.1` protects only
   # against the advisory it was written for: once the resolved version leaves that window the
