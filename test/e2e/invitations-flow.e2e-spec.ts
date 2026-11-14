@@ -21,6 +21,8 @@
 import type { INestApplication } from '@nestjs/common'
 import request from 'supertest'
 
+import { BYMAX_AUTH_OPTIONS } from '../../src/server/bymax-auth.constants'
+import { recentAuthKey } from '../../src/server/constants/recent-auth'
 import type { InviteData } from '../../src/server/interfaces/email-provider.interface'
 import type { CapturedEmail, MockEmailProvider, MockUserRepository } from './setup'
 import { bootstrapTestApp } from './setup'
@@ -109,6 +111,7 @@ describe('invitations flow (E2E)', () => {
     let inviteStatus: number
     let acceptStatus: number
     let acceptBody: Record<string, unknown>
+    let inviteeMarked: boolean
     let extractedToken: string
     let inviteeLoginStatus: number
     let inviteeLoginBody: Record<string, unknown>
@@ -130,7 +133,7 @@ describe('invitations flow (E2E)', () => {
           }
         }
       )
-      const { app: _app, repo: _repo, email } = bootstrap
+      const { app: _app, repo: _repo, email, redis } = bootstrap
       app = _app
       repo = _repo
       const sentEmails = instrumentInvitationEmails(email)
@@ -180,6 +183,12 @@ describe('invitations flow (E2E)', () => {
         .send({ token: extractedToken, name: 'Invitee', password: 'StrongPass123!-xyz' })
       acceptStatus = accept.status
       acceptBody = accept.body as Record<string, unknown>
+      const inviteeId = (acceptBody['user'] as { id: string }).id
+      const resolved = app.get<{ hmacKey: string; redisNamespace: string }>(BYMAX_AUTH_OPTIONS)
+      const markKey = recentAuthKey('dashboard', inviteeId, resolved.hmacKey, 'tenant-1')
+      // The exact key, namespace included: a shared server holds the same mock user id in every
+      // suite's namespace, so a pattern would find another suite's mark.
+      inviteeMarked = (await redis.exists(`${resolved.redisNamespace}:${markKey}`)) === 1
 
       // Step 6 — login as the freshly-created invitee to confirm the password
       // hash was persisted correctly and the account is immediately usable.
@@ -231,6 +240,12 @@ describe('invitations flow (E2E)', () => {
       expect(acceptBody['user']).toEqual(
         expect.objectContaining({ email: 'invitee@example.com', name: 'Invitee' })
       )
+    })
+
+    // Verifies that accepting an invitation, where the invitee set a password, counts as a real
+    // sign-in: the invitee's own recent-authentication mark exists.
+    it('should record the invitee as recently authenticated', () => {
+      expect(inviteeMarked).toBe(true)
     })
 
     // Verifies that the persisted invitee record was created with emailVerified: true and role MEMBER.

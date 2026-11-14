@@ -75,7 +75,7 @@ export class ReauthenticationService {
       // live TOTP code, and the reset flow refuses an account with no password. A fifteen-minute
       // token theft would become permanent, unrecoverable loss of the account.
       //
-      // The marker is written by `TokenManagerService.issueTokens` and NOT by `reissueTokens`,
+      // The marker is written by `TokenManagerService.issueTokens` for a presented credential and NOT by `reissueTokens`,
       // which is what makes it proof of anything: an attacker holding a stolen session can
       // rotate it indefinitely and never make the mark fresh again. Producing one requires
       // driving a real sign-in, which requires the provider credentials the theft did not

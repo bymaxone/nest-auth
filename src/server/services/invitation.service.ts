@@ -8,7 +8,7 @@ import {
 } from '../bymax-auth.constants'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
-import { TokenManagerService } from './token-manager.service'
+import { CREDENTIAL_PROVED, TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { generateSecureToken, hmacSha256, sha256 } from '../crypto/secure-token'
 import type { AcceptInvitationDto } from '../dto/accept-invitation.dto'
@@ -762,7 +762,7 @@ export class InvitationService {
     // Matches the pattern used in auth.service.ts and oauth.service.ts.
     const { passwordHash: _ph, mfaSecret: _ms, mfaRecoveryCodes: _mrc, ...safeUser } = authUser
 
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
+    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, CREDENTIAL_PROVED)
 
     // Create a tracked session if session management is enabled.
     // Omitting this would leave the invitation-created account invisible in

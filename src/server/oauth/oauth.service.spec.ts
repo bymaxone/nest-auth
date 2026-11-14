@@ -785,8 +785,7 @@ describe('OAuthService', () => {
       expect(mockTokenManager.issueTokens).toHaveBeenCalled()
     })
 
-    // Verifies that the 'create' action provisions a new user, strips credentials
-    // before calling issueTokens, and returns the full AuthResult.
+    // Verifies 'create' provisions a user, strips credentials before issueTokens, returns AuthResult.
     it("should create a new user and issue tokens for hook action 'create'", async () => {
       setupHappyPathCreate()
 
@@ -804,7 +803,8 @@ describe('OAuthService', () => {
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
         expect.not.objectContaining({ passwordHash: expect.anything() }),
         '1.2.3.4',
-        'TestBrowser/1.0'
+        'TestBrowser/1.0',
+        { credentialProved: true }
       )
       expect(result).toBe(AUTH_RESULT)
     })

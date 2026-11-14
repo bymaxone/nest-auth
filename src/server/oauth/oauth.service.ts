@@ -49,7 +49,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
-import { TokenManagerService } from '../services/token-manager.service'
+import { CREDENTIAL_PROVED, TokenManagerService } from '../services/token-manager.service'
 import {
   WorkspaceInvitationAcceptService,
   type LoadedInvitation
@@ -417,7 +417,7 @@ export class OAuthService {
     // Strip credentials before token issuance — prevents passwordHash / mfaSecret
     // from flowing into the AuthResult.user field that is serialized in the response.
     const safeUser = toSafeUser(authUser)
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
+    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, CREDENTIAL_PROVED)
 
     // Create a tracked session if session management is enabled.
     if (this.options.sessions.enabled) {

@@ -1550,7 +1550,7 @@ describe('MfaService', () => {
         expect.any(Object),
         '1.2.3.4',
         'Browser',
-        { mfaVerified: true }
+        { mfaVerified: true, credentialProved: true }
       )
       expect(result).toBe(MOCK_AUTH_RESULT)
       // A TOTP success must NOT touch the recovery-code list: usedRecoveryIndex stays -1, so the
