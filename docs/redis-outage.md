@@ -99,7 +99,7 @@ and one that does not get the same status, body and floor-bounded timing
 (`real-redis/redis-outage`, "answers a reset request for a known and an unknown address identically").
 A store that fails between the cooldown and the code costs that one mail and nothing else.
 
-Where the route also carries `@AuthRateLimit`, that guard reads the store before the handler runs, so
+Where the route also carries `@AuthRateLimit`, that guard uses the store before the handler runs, so
 under a whole-Redis outage the 503 usually comes from the guard, in milliseconds and without the
 floor, with the same status and body for every address. The floor-then-503 path of the handler is
 the one taken when the rate-limit store answers and the cooldown store does not.
