@@ -26,6 +26,8 @@ const config: Config = {
   // Haste module name, which otherwise crashes jest-haste-map with
   // "dupMap.get is not a function" on the `@bymax-one/nest-auth` alias.
   modulePathIgnorePatterns: ['<rootDir>/dist/', '<rootDir>/.stryker-tmp/'],
+  // The e2e specs of this run bind their listeners to 127.0.0.1 (see `jest.e2e.config.ts`).
+  setupFiles: ['<rootDir>/test/jest.loopback-listen.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],
   // Mirror the subpath aliases declared in tsconfig.json "paths" so tests and
   // production code resolve the same module instance — a dual-package hazard
