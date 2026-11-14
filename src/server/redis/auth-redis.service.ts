@@ -7,22 +7,12 @@ import { Inject, Injectable } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import { mappingOutages } from './redis-outage'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
 import { sessionIndexKey, tokenEpochKey } from '../constants/user-keys'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
-
-/**
- * Lifetime of a token-epoch key, in seconds.
- *
- * Pinned to the {@link TOKEN_EPOCH_RETENTION_SECONDS} store contract rather than repeating the
- * literal: startup validation rejects a `jwt.accessExpiresIn` longer than that bound, so a bump
- * can never lapse while a pre-bump access token is still presentable. Deriving the TTL from the
- * same constant the validation reads is what keeps the two from drifting apart. A small integer
- * per reset-affected user is negligible.
- */
-const EPOCH_TTL_SECONDS = TOKEN_EPOCH_RETENTION_SECONDS
 
 /**
  * Entropy of a freshly-minted WebSocket ticket, in bytes (256-bit, like the opaque refresh
@@ -373,7 +363,7 @@ export class AuthRedisService {
     @Inject(BYMAX_AUTH_REDIS_CLIENT) redis: Redis,
     @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions
   ) {
-    this.#redis = redis
+    this.#redis = mappingOutages(redis)
     this.namespace = options.redisNamespace
     this.#hmacKey = options.hmacKey
   }
@@ -1174,7 +1164,7 @@ export class AuthRedisService {
        redis.call('EXPIRE', KEYS[1], ARGV[1])
        return v`,
       [key],
-      [String(EPOCH_TTL_SECONDS)]
+      [String(TOKEN_EPOCH_RETENTION_SECONDS)]
     )
     return typeof result === 'number' ? result : 0
   }

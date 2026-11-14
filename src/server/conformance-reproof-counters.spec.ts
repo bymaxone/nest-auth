@@ -50,7 +50,7 @@ function subjectOf(tenantId: string, userId: string): string {
 
 describe('the password re-proof counters in the contract', () => {
   it('pins the derivation key and a vector for every case the contract lists', () => {
-    expect(contract.version).toBe(6)
+    expect(contract.version).toBe(7)
     expect(KEY_TEXT).toMatch(/^[0-9a-f]{64}$/)
     expect(VECTORS.length).toBeGreaterThanOrEqual(5)
     expect(new Set(VECTORS.map(({ flow }) => flow))).toEqual(

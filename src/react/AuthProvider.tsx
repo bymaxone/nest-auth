@@ -54,10 +54,10 @@ function clientErrorStatus(error: unknown): number | undefined {
 }
 
 /**
- * Whether a rejected `client.logout()` carries a final server answer: a client error with a
- * status below 500 other than 429. The status 429 is the logout route's throttle, which answers
- * before anything is revoked, so the session is still alive. Anything else (a 5xx, a 429, a
- * network failure, an abort) leaves the logout unconfirmed.
+ * Whether a rejected client call carries a final server answer: a client error with a status below
+ * 500 other than 429. A 429 is a throttle, which answers before anything is decided. Anything else
+ * (a 5xx, a 429, a network failure, an abort) says nothing about what was asked: a logout stays
+ * unconfirmed, and a revalidation leaves the session as it was.
  */
 function isFinalAnswer(error: unknown): boolean {
   const status = clientErrorStatus(error)
@@ -159,9 +159,8 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
 }
 
 /**
- * Type guard for "the request failed because the session is missing
- * or invalid". Any non-401 AuthClientError (e.g. a 500) leaves us in
- * an error state that is not worth triggering `onSessionExpired` for.
+ * Type guard for "the request failed because the session is missing or invalid": a 401. Any other
+ * failure leaves an error state that is not worth triggering `onSessionExpired` for.
  */
 function isSessionExpiredError(error: unknown): boolean {
   return clientErrorStatus(error) === 401
@@ -327,7 +326,7 @@ export function AuthProvider({
           syncedDispatch({ type: 'CLEAR_SESSION' })
           return
         }
-        syncedDispatch({ type: 'SET_ERROR' })
+        if (!wasAuthenticated || isFinalAnswer(error)) syncedDispatch({ type: 'SET_ERROR' })
       }
     },
     [syncedDispatch]

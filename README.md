@@ -956,8 +956,8 @@ cookie cross-site, and it is the only one where the origin check has anything to
 
 > [!IMPORTANT]
 > **Bound your Redis client.** Every authentication and authorization decision here reads Redis and
-> **fails closed**: when Redis is unreachable the request is answered with a `5xx` or a refusal,
-> never admitted. What the library cannot do is bound how long the client waits before it gives
+> **fails closed**: when Redis is unreachable the request is refused with `503
+auth.service_unavailable`, never admitted. What the library cannot do is bound how long the client waits before it gives
 > up, because the client is yours (`BYMAX_AUTH_REDIS_CLIENT`). With ioredis defaults the offline
 > queue is on and a command retries up to 20 times, so a Redis outage reads as requests that hang
 > before they fail, and `maxRetriesPerRequest: null` waits forever. Build the client with a
@@ -965,7 +965,7 @@ cookie cross-site, and it is the only one where the origin check has anything to
 >
 > ```typescript
 > new Redis(url, {
->   commandTimeout: 500, // ms; every command rejects after this, which the guards answer as a 5xx
+>   commandTimeout: 500, // ms; every command rejects after this, which the library answers as a 503
 >   maxRetriesPerRequest: 1, // do not queue a command through repeated reconnects
 >   enableOfflineQueue: false, // refuse a command while disconnected instead of holding it
 >   retryStrategy: (attempt) => Math.min(attempt * 200, 2000) // bounded, never `null` in a server
@@ -979,9 +979,25 @@ cookie cross-site, and it is the only one where the origin check has anything to
 > at bootstrap every quarter second for up to 5 seconds, so a Redis that is still starting does not
 > fail the boot on its first refusal, while a mis-pointed address or a wrong password stops the
 > process from starting, with a message that names only the host and port, instead of surfacing as the first
-> request's `5xx`. Expect `5xx` on login, refresh, rate-limited routes and every guarded route for
-> as long as Redis is down: that is the fail-closed behaviour, and a health check on Redis belongs
-> next to your readiness probe.
+> request's error. While Redis is down, login, refresh, logout, rate-limited routes and every
+> guarded route answer `503` with `error.code` `auth.service_unavailable` and the envelope
+> `{ error: { code, message, details: null } }`; nothing of the store reaches the body, and no
+> `Retry-After` is sent, because nothing here knows when Redis returns. It is the fail-closed
+> behaviour, and a client may retry. A Redis outage is a timeout, a closed or refused connection,
+> or a server that answers it cannot serve (`READONLY` after a failover, `LOADING`, `MASTERDOWN`,
+> `CLUSTERDOWN`); one function classifies them, and any other Redis reply error (a script that is
+> not loaded, a key of the wrong type) is a defect and stays `500 auth.internal`.
+>
+> The 503 is an `AuthException` whose `cause` is the ioredis error, so a host filter that logs 5xx
+> answers (nest-core's, for one) records the real reason. The library's own `AuthExceptionFilter`
+> writes no log line for it: your readiness probe, not the request log, is the signal that Redis is
+> down, so put a Redis health check next to it. Two answers keep their meaning: a password-reset
+> request refused because the cooldown store cannot answer is the same `503` for every address, and the
+> OAuth callback redirects to your `errorRedirectUrl` with `error=auth.service_unavailable` when you
+> configured one. A failure to cache an answer the library can recompute (the workspace membership
+> cache, the denied-access counter, the session limit) is still absorbed, not refused.
+> The paths, the outcome of each and the test that pins it are in
+> [`docs/redis-outage.md`](./docs/redis-outage.md).
 
 The breach check is opt-in for a different reason: it is the only part of the credential path
 that reaches the network, and a library should not start talking to a third party because it was
@@ -1722,6 +1738,7 @@ chosen at the throw site — `AuthException` takes no status argument. A client 
 |  `409` | `auth.email_already_exists` · `auth.mfa_already_enabled` · `auth.mfa_state_conflict` · `auth.oauth_email_mismatch`                                                                                                                                                                                    |
 |  `429` | `auth.account_locked` · `auth.too_many_requests`                                                                                                                                                                                                                                                      |
 |  `500` | `auth.internal`                                                                                                                                                                                                                                                                                       |
+|  `503` | `auth.service_unavailable`                                                                                                                                                                                                                                                                            |
 
 `AUTH_ERROR_STATUS` ships from `@bymax-one/nest-auth/shared`, beside `AUTH_ERROR_CODES`, if you
 need the mapping at runtime — for a typed client, an API document, or a test that asserts against
@@ -1754,10 +1771,12 @@ import { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from '@bymax-one/nest-auth/shared
 > (`auth.otp_invalid`) at one status (`401`) — a `429` on the ceiling would say the address was
 > registered, since only a record that exists can reach one.
 
-> **When a password-reset request fails.** A failure that is the same for every address, the
-> resend-cooldown store or your repository's `findByEmail` throwing, answers `500`
-> (`auth.internal`) after the same timing floor as every other exit, and the cooldown that request
-> took is released so the retry is not refused. A failure after the account is known (storing the
+> **When a password-reset request fails.** A failure that is the same for every address answers
+> after the same timing floor as every other exit: `503` (`auth.service_unavailable`) when the
+> resend-cooldown store cannot answer, `500` (`auth.internal`) for any other failure of it and for
+> your repository's `findByEmail` throwing. The answer is the same for every address because the
+> cooldown is the first thing every request consults, and a later failure releases the cooldown so
+> the retry is not refused. A failure after the account is known (storing the
 > code, or the mail provider failing after the response has left) is logged and the `200` stands,
 > because it happens only for a registered address. Two limits are left as they are. A `findByEmail`
 > that takes longer than the cooldown (60 seconds) and then fails releases the cooldown by key, and

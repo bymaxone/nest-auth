@@ -7,7 +7,9 @@
  * caller only if it cannot tell the caller anything about the address:
  *
  * - a failure BEFORE the account is known (the cooldown store, the account lookup) is the same for
- *   every address, so it answers `auth.internal` (500) after the floor;
+ *   every address, because the cooldown is the first thing every request consults, ahead of any
+ *   step that depends on the account, so it answers after the floor: `auth.service_unavailable` (503) when the
+ *   cooldown store cannot answer, `auth.internal` (500) otherwise;
  * - a failure AFTER the account is known (issuing or storing the code) happens only for a
  *   registered address, so it is logged and the 200 acknowledgement stands;
  * - the cooldown this call took is released when the request itself observes the failure (the lookup
@@ -26,6 +28,7 @@ import { sleep } from './sleep'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { AuthRedisService } from '../redis/auth-redis.service'
+import { isServiceUnavailable } from '../redis/redis-outage'
 
 /** What {@link answerResetRequest} needs from the service that calls it. */
 export interface ResetRequestDeps {
@@ -54,7 +57,8 @@ export interface ResetRequest {
 /**
  * Runs one reset request and waits out the floor on every exit.
  *
- * @throws {@link AuthException} `INTERNAL` when the cooldown store or the account lookup fails.
+ * @throws {@link AuthException} `SERVICE_UNAVAILABLE` when the cooldown store cannot answer,
+ *   `INTERNAL` when it or the account lookup fails otherwise.
  */
 export async function answerResetRequest(
   deps: ResetRequestDeps,
@@ -78,7 +82,7 @@ export async function answerResetRequest(
   } catch (err: unknown) {
     logger.error(`${label}: cooldown store failed: ${describeChannelStatus(err)}`)
     await holdFloor()
-    throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
+    throw isServiceUnavailable(err) ? err : new AuthException(AUTH_ERROR_CODES.INTERNAL)
   }
   // Silent success on a cooldown hit, with the same floor as every other exit, so the throttle
   // does not itself answer whether the account exists.

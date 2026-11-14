@@ -164,10 +164,9 @@ export class PasswordResetService {
    * - The account is blocked.
    * - Issuing or storing the code, or the email provider, fails for an account that exists.
    *
-   * A failure that is the same for every address, the resend-cooldown store or the account
-   * lookup, throws `INTERNAL` (500) after the floor, and the cooldown this call took is
-   * released. This anti-enumeration design ensures the response cannot be used to probe
-   * whether an email address is registered.
+   * What a failure answers, and when the cooldown this call took is released, is decided in one
+   * place, {@link answerResetRequest}. The response cannot be used to probe whether an email
+   * address is registered.
    *
    * Timing normalization: the method always takes at least {@link ANTI_ENUM_MIN_MS}
    * milliseconds to respond, regardless of whether the user was found.
@@ -316,8 +315,8 @@ export class PasswordResetService {
    *
    * Subject to an atomic 60-second cooldown enforced via a Redis NX key to
    * prevent OTP flooding. Resolves the same way whether or not the user exists —
-   * anti-enumeration principle; a failure of the cooldown store or the account lookup
-   * throws `INTERNAL` (500) after the floor and releases the cooldown.
+   * anti-enumeration principle; what a failure answers is decided in one place,
+   * {@link answerResetRequest}.
    *
    * Timing normalization: always takes at least {@link ANTI_ENUM_MIN_MS} ms.
    *

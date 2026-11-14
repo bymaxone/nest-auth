@@ -18,6 +18,50 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Redis outage answers `503 auth.service_unavailable`, not `500 auth.internal`.** With Redis paused or
+  stopped, login, refresh, logout, `GET /me`, every guarded route, MFA, registration and the rate-limited
+  routes answered `500` with a raw ioredis error in the log. Every Redis call of the library now goes through
+  one wrapper: a command that times out, a closed or refused connection, a client that gave up its retries, and
+  a server that replies it cannot serve (`READONLY`, `LOADING`, `MASTERDOWN`, `CLUSTERDOWN`, `TRYAGAIN`) raise
+  an `AuthException` with the new code, the ioredis error as its `cause` and nothing of it in the body. Any
+  other Redis reply error (`NOSCRIPT`, `WRONGTYPE`) stays a `500`. No `Retry-After` is sent.
+- **A background revalidation no longer signs a signed-in user out on a failure that says nothing about the
+  session.** `AuthProvider` kept `SET_ERROR` for every non-401 failure, so a `503`, a `500`, a `429` or a
+  network error dropped the user to `unauthenticated`. Now only a final answer (a 4xx other than 429) does;
+  the user and the state stay through the rest and the next tick tries again. The first check of a page load
+  is unchanged.
+- **An option-fed timer can no longer be given a delay a timer cannot honor.** `createAuthFetch({ timeout })`
+  throws a `TypeError` at creation for a value that is not a number from `0` to `2147483647`
+  (`NaN` and `Infinity` armed every request's abort timer at 1 ms), and `AuthProvider` reads a
+  `revalidateInterval` outside that range as the 5-minute default (it was a revalidation request every
+  millisecond).
+
+### Changed
+
+- **Wire contract version 7.** It adds `auth.service_unavailable` (503), pins that a password-reset request
+  whose cooldown store cannot answer answers `503` after the timing floor, the same for every address, and
+  pins that a `beforeWorkspaceCreate` hook that fails without refusing creates nothing and answers `500
+auth.internal`. A new `serviceUnavailable` section lists where the 503 is answered, the rule for what the library
+  absorbs, and which store failures count as an outage; the classifier's spec reads the outage part.
+- `AuthException` takes an optional third argument `{ cause }`, kept on the exception and never serialized.
+- `supertest` devDependency floor is `^7.3.1`, and the e2e suite binds its port-only listeners to
+  `127.0.0.1`.
+
+### Apply to a derived backend
+
+- **A client that switched on `500` to detect an outage must read `503` and `error.code`
+  `auth.service_unavailable`.** The status table in the README gains the `503` row. A host filter that renders
+  `HttpException`s answers it with its own envelope; one that logs 5xx now logs the real reason through `cause`.
+  `AuthExceptionFilter` writes no log line for it, so keep a Redis health check next to your readiness probe.
+- **A password-reset request or resend whose cooldown store cannot answer answers `503` instead of `500`.** A failure
+  after the account is known (storing the code) still answers `200`.
+- **The OAuth callback redirects with `error=auth.service_unavailable`** when `oauth.errorRedirectUrl` is set and
+  Redis is down, as it does for any other `AuthException`.
+- **`createAuthFetch` throws at creation for an out-of-range `timeout`.** Pass a number of milliseconds from `0`
+  (no timeout) to `2147483647`, or omit it.
+
 ## [1.5.3] - 2026-11-14
 
 A patch release for workspaces, MFA and the proxy: the paging cursor is a codec the library now exports and
