@@ -29,16 +29,47 @@ function sources(dir: string): string[] {
 }
 
 /**
- * The provider methods a boot-time guard demands: the `onModuleInit` refusals written as
- * `if (!this.<provider>.<method>) { throw ... }`.
+ * The provider methods a boot-time guard demands: the refusals written as
+ * `if (!this.<provider>.<send method>) { throw ... }`.
+ *
+ * Read from the syntax tree and not from the text, because a mutation run rewrites the sources
+ * this spec reads: the condition becomes a chain of mutant switches that ends in the original
+ * expression, and the body can move inside a switch of its own. Whichever shape the file has, an
+ * `if` whose condition holds `!this.<x>.<send method>` and whose body throws is the guard.
  *
  * @param source - The text of a source file.
  * @returns The method names the guards in it require.
  */
 export function guardedMethods(source: string): string[] {
-  return [...source.matchAll(/if \(!this\.\w+\.(send\w+)\) \{\s*throw new Error/g)].map(
-    (match) => match[1] ?? ''
-  )
+  const tree = ts.createSourceFile('guard.ts', source, ts.ScriptTarget.Latest, true)
+  const names: string[] = []
+
+  const throws = (node: ts.Node): boolean =>
+    ts.isThrowStatement(node) || ts.forEachChild(node, throws) === true
+
+  const negatedProviderMethods = (node: ts.Node): void => {
+    if (
+      ts.isPrefixUnaryExpression(node) &&
+      node.operator === ts.SyntaxKind.ExclamationToken &&
+      ts.isPropertyAccessExpression(node.operand) &&
+      /^send\w+$/.test(node.operand.name.text) &&
+      ts.isPropertyAccessExpression(node.operand.expression) &&
+      node.operand.expression.expression.kind === ts.SyntaxKind.ThisKeyword
+    ) {
+      names.push(node.operand.name.text)
+      return
+    }
+    ts.forEachChild(node, negatedProviderMethods)
+  }
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isIfStatement(node) && throws(node.thenStatement)) {
+      negatedProviderMethods(node.expression)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(tree)
+  return names
 }
 
 /**
@@ -67,9 +98,31 @@ describe('the bundled email provider', () => {
 
   describe('reads what to check from the sources', () => {
     it('finds the method a boot-time guard demands', () => {
-      const guard = `onModuleInit(): void {\n    if (!this.email.sendThing) {\n      throw new Error('x')\n    }\n  }`
+      const guard = `class A {\n  onModuleInit(): void {\n    if (!this.email.sendThing) {\n      throw new Error('x')\n    }\n  }\n}`
 
       expect(guardedMethods(guard)).toEqual(['sendThing'])
+    })
+
+    // A mutation run rewrites the sources the specs read: the condition becomes a chain of mutant
+    // switches that ends in the original expression, and the body can sit inside a switch of its own.
+    // The guard is still there, so reading it must not depend on the text being untouched.
+    it.each([
+      [
+        'a condition wrapped in mutant switches',
+        `class A {\n  onModuleInit() {\n    if (stryMutAct_9fa48("1") ? false : stryMutAct_9fa48("2") ? true : (stryCov_9fa48("3"), !this.email.sendThing)) {\n      stryCov_9fa48("4");\n      throw new Error('x');\n    }\n  }\n}`
+      ],
+      [
+        'a body inside a block-removal switch',
+        `class A {\n  onModuleInit() {\n    if (!this.email.sendThing) {\n      if (stryMutAct_9fa48("5")) {} else {\n        stryCov_9fa48("6");\n        throw new Error('x');\n      }\n    }\n  }\n}`
+      ]
+    ])('finds the guard behind %s', (_why, guard) => {
+      expect(guardedMethods(guard)).toEqual(['sendThing'])
+    })
+
+    it('does not take a negation that guards no refusal for a guard', () => {
+      const other = `class A {\n  run() {\n    if (!this.email.sendThing) {\n      return\n    }\n  }\n}`
+
+      expect(guardedMethods(other)).toEqual([])
     })
 
     it('finds the optional methods of the interface and no required one', () => {
