@@ -105,8 +105,10 @@ export class RedisReadinessService implements OnApplicationBootstrap {
    */
   private whenReachable(timeoutMs: number): Promise<void> {
     const { status } = this.redis
-    // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
-    if (status === 'end') return Promise.reject(new Error('the client is closed'))
+    if (status === 'end') {
+      // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
+      return Promise.reject(new Error('the client is closed'))
+    }
     if (!CONNECTING_STATES.includes(status)) return Promise.resolve()
     return new Promise((resolve, reject) => {
       const settle = (done: () => void): void => {
