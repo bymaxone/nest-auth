@@ -105,7 +105,10 @@ export class RedisReadinessService implements OnApplicationBootstrap {
    */
   private whenReachable(timeoutMs: number): Promise<void> {
     const { status } = this.redis
-    if (status === 'end') return Promise.reject(new Error('the client is closed'))
+    if (status === 'end') {
+      // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
+      return Promise.reject(new Error('the client is closed'))
+    }
     if (!CONNECTING_STATES.includes(status)) return Promise.resolve()
     return new Promise((resolve, reject) => {
       const settle = (done: () => void): void => {
@@ -119,11 +122,14 @@ export class RedisReadinessService implements OnApplicationBootstrap {
       }
       const onEnd = (): void => {
         settle(() => {
+          // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
           reject(new Error('the client gave up connecting'))
         })
       }
       const timer = setTimeout(() => {
+        // Stryker disable next-line BlockStatement: equivalent. The attempt's own deadline rejects at the same instant for the same reason, so the `reject` below adds nothing; what this branch adds is the cleanup `settle` does (listeners removed, which the specs count on a real emitter), and that call is not disabled.
         settle(() => {
+          // Stryker disable next-line CallExpression,StringLiteral: equivalent. Same reason as above, and the text is never read (the retry loop discards it).
           reject(new Error('the client did not become ready'))
         })
       }, timeoutMs)
@@ -142,6 +148,7 @@ export class RedisReadinessService implements OnApplicationBootstrap {
     let timer: NodeJS.Timeout | undefined
     const expiry = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
+        // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
         reject(new Error('the PING did not complete in time'))
       }, timeoutMs)
     })
