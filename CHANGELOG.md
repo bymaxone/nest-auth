@@ -18,8 +18,43 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-11-13
+
+A patch release for workspaces, MFA and the proxy: the paging cursor is a codec the library now exports and
+bounds, the owner role is bounded by length instead of a charset, the websocket guard holds a header credential
+to the chain a request is held to, MFA state and its failure counters are keyed by the tenant only, the module
+probes Redis at startup, a provider plugin's calls have a deadline, the Next.js proxy checks the backend's issuer,
+audience and retired secrets, and the wire contract is at version 6.
+
 ### Apply to a derived backend
 
+- **`workspaces.roles.ownerRole` is checked at startup.** It must be 1 to 32 code points of well-formed
+  text with no control character, the rule an id follows, and its characters are free: `owner`,
+  `org:admin`, `team lead` and `proprietário` all pass. The owner role is part of the key a
+  `listSoleOwned` cursor is bound to, and only an empty name, one of more than 32 code points, or one with a control
+  character or an unpaired surrogate, is refused, naming the option and the rule. Only the owner role is
+  checked: the other roles of the hierarchy keep any name.
+- **A workspace page cursor may now be up to 4096 characters, not 512.** The wire contract is at version 6:
+  `requestFieldBounds.pageLimit.cursor` and the published `WorkspacePageQueryDto` schema say 4096, and the
+  contract states the owner-role rule as a new `workspaceOwnerRole` section. During a rolling deploy an
+  instance still on 1.5.2 or earlier answers `400` to a cursor longer than 512 characters that this
+  release issued, which needs ids of about 105 characters or more (see Fixed), and only until every
+  instance has been replaced.
+- **A host adapter can drop its own cursor codec.** A cursor in the format the template's hand-written
+  codec writes (base64url of the JSON of the query key and the position) keeps reading, which the spec
+  pins with cursors that codec issued. Replace `keyOf`, `positionOf`, `encodeCursor`, `decodeCursor` and
+  `readPosition` with `workspaceQueryKey`, `workspacePositionOf`, `encodeWorkspaceCursor`,
+  `decodeWorkspaceCursor` and `readWorkspacePosition`, and delete the local copy and its spec.
+  `workspaceQueryKey` is
+  `JSON.stringify` of its parts, byte for byte, so a lock or map key built from it does not move.
+  `encodeWorkspaceCursor` throws a `RangeError` for a position the decoder would read as none and for a
+  cursor over 4096 characters (a key part over 128 code points), instead of issuing a cursor the next
+  request could never follow. Every id you issue must be 1 to 128 code points of well-formed text with no
+  control character.
+- **`verifyAccessToken` with a `workspaceId` while workspaces are off now throws `AuthException` (validation),
+  not a `TypeError`, and only after the token is verified: an invalid, expired or revoked token still gets
+  `TOKEN_INVALID`.** The refusal names the field `workspaceId`, so a handler maps it to a `400` like any
+  other refused input. A platform-plane token still throws a `TypeError`, which is a programming error.
 - **The wire contract is at version 6: the two password re-proof counters are pinned.** `userSubjectDerivedKeys`
   gains `changePasswordFailureCounter` and `emailChangeFailureCounter` (`lf:` over `reauth:change-password:` or
   `reauth:email-change:` and the tenant-scoped user subject), and the new `reproofCounterVectors` section gives
@@ -83,49 +118,6 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   host that subclasses or constructs the guard by hand must update the call; a host that applies it with
   `@UseGuards(WsJwtGuard)` needs nothing, because the module already exports the verifier.
 
-### Fixed
-
-- **A weak retired signing secret is reported under its own name.** A `jwt.previousSecrets` entry that is
-  empty, shorter than 32 characters or too repetitive was refused with an error that named `jwt.secret`,
-  so an operator fixed the current secret while the retired one stayed broken. The error now names
-  `jwt.previousSecrets[<index>]`. The rules are unchanged.
-
-## [1.5.3] - 2026-11-13
-
-A patch release for workspace paging and the verifier: the paging cursor is a codec the library now exports and
-bounds, the owner role is bounded by length instead of a charset, and the verifier refuses a workspace id
-with a validation error when workspaces are off.
-
-### Apply to a derived backend
-
-- **`workspaces.roles.ownerRole` is checked at startup.** It must be 1 to 32 code points of well-formed
-  text with no control character, the rule an id follows, and its characters are free: `owner`,
-  `org:admin`, `team lead` and `proprietário` all pass. The owner role is part of the key a
-  `listSoleOwned` cursor is bound to, and only an empty name, one of more than 32 code points, or one with a control
-  character or an unpaired surrogate, is refused, naming the option and the rule. Only the owner role is
-  checked: the other roles of the hierarchy keep any name.
-- **A workspace page cursor may now be up to 4096 characters, not 512.** The wire contract is at version 5:
-  `requestFieldBounds.pageLimit.cursor` and the published `WorkspacePageQueryDto` schema say 4096, and the
-  contract states the owner-role rule as a new `workspaceOwnerRole` section. During a rolling deploy an
-  instance still on 1.5.2 or earlier answers `400` to a cursor longer than 512 characters that this
-  release issued, which needs ids of about 105 characters or more (see Fixed), and only until every
-  instance has been replaced.
-- **A host adapter can drop its own cursor codec.** A cursor in the format the template's hand-written
-  codec writes (base64url of the JSON of the query key and the position) keeps reading, which the spec
-  pins with cursors that codec issued. Replace `keyOf`, `positionOf`, `encodeCursor`, `decodeCursor` and
-  `readPosition` with `workspaceQueryKey`, `workspacePositionOf`, `encodeWorkspaceCursor`,
-  `decodeWorkspaceCursor` and `readWorkspacePosition`, and delete the local copy and its spec.
-  `workspaceQueryKey` is
-  `JSON.stringify` of its parts, byte for byte, so a lock or map key built from it does not move.
-  `encodeWorkspaceCursor` throws a `RangeError` for a position the decoder would read as none and for a
-  cursor over 4096 characters (a key part over 128 code points), instead of issuing a cursor the next
-  request could never follow. Every id you issue must be 1 to 128 code points of well-formed text with no
-  control character.
-- **`verifyAccessToken` with a `workspaceId` while workspaces are off now throws `AuthException` (validation),
-  not a `TypeError`, and only after the token is verified: an invalid, expired or revoked token still gets
-  `TOKEN_INVALID`.** The refusal names the field `workspaceId`, so a handler maps it to a `400` like any
-  other refused input. A platform-plane token still throws a `TypeError`, which is a programming error.
-
 ### Added
 
 - **`AUTH_SECRET_MIN_LENGTH`** (32), the floor the boot check applies to every secret option,
@@ -153,6 +145,10 @@ with a validation error when workspaces are off.
   workspace page query refused a cursor over 512 characters, and a cursor for such ids is longer. The
   bound is now 4096, sized from the longest cursor that ids and tenants of 128 code points and an owner role of 32
   can produce (2306 characters), and the page query and the decoder share one constant.
+- **A weak retired signing secret is reported under its own name.** A `jwt.previousSecrets` entry that is
+  empty, shorter than 32 characters or too repetitive was refused with an error that named `jwt.secret`,
+  so an operator fixed the current secret while the retired one stayed broken. The error now names
+  `jwt.previousSecrets[<index>]`. The rules are unchanged.
 
 ## [1.5.2] - 2026-11-12
 
