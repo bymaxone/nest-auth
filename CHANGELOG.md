@@ -43,7 +43,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **Wire contract version 7.** It adds `auth.service_unavailable` (503), pins that a password-reset request
   whose cooldown store cannot answer answers `503` after the timing floor, the same for every address, and
   pins that a `beforeWorkspaceCreate` hook that fails without refusing creates nothing and answers `500
-auth.internal`. A new `serviceUnavailable` section lists where the 503 is answered, what the library
+auth.internal`. A new `serviceUnavailable` section lists where the 503 is answered, the rule for what the library
   absorbs, and which store failures count as an outage; the classifier's spec reads the outage part.
 - `AuthException` takes an optional third argument `{ cause }`, kept on the exception and never serialized.
 - `supertest` devDependency floor is `^7.3.1`, and the e2e suite binds its port-only listeners to

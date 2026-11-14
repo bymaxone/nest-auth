@@ -1590,19 +1590,23 @@
       "because nothing here knows when the store returns."
     ],
     "appliesTo": [
-      "Any request whose handling reads or writes the shared store, when that call cannot answer and nothing below absorbs it.",
+      "Any request whose handling reads or writes the shared store, when that call cannot answer and `absorption` does not absorb it.",
       "Sign-in, registration and refresh, including reuse detection; logout; every authenticated request, whose revocation, epoch and account-status reads come first, so an outage is a 503 and never a 401.",
       "MFA setup, challenge and management; OTP, password reset and email change; the per-address, per-account and per-IP counters and lockouts.",
       "Session listing and revocation; workspace and invitation operations that write the store, the membership-cache invalidation after a change included, which refuses rather than report a change as done.",
       "OAuth initiate and callback, delivered as every other callback failure is; the WebSocket ticket mint and redeem; the platform plane."
     ],
     "passwordResetRequest": "A reset or resend request answers 503 when the resend-cooldown store cannot answer, after the timing floor and the same for every address. A store that cannot answer after the account is known leaves the 200, as `passwordResetRequest.failures.after` says.",
-    "absorbed": [
-      "The workspace membership cache read and fill: the repository answers.",
-      "The denied-access event counter.",
-      "The session-limit eviction at sign-in: the limit is not enforced for that sign-in.",
-      "The session-detail rotation after a refresh, and the account-status cache invalidation after an email is verified."
-    ],
+    "absorption": {
+      "rule": "A call whose result the answer does not depend on is logged and absorbed: it never changes the status or the body. A call the answer does depend on is never absorbed, whatever its kind: a counter, a revocation read and a write that decides the operation all answer 503.",
+      "examples": [
+        "The workspace membership cache read and fill: the repository answers.",
+        "The denied-access event counter.",
+        "The lockout reads after a failed login that only feed the `onLockout` hook: the login still answers its 401. The lockout pre-check before the password is judged is not absorbed and answers 503.",
+        "Cleanup after a decision already made: a logout whose revocation writes succeeded and whose session-metadata cleanup fails still answers 204; the write of the logout retry marker; a best-effort delete that rolls back after a failure that is itself the answer.",
+        "Work that follows the answer's cause: the session-limit eviction at sign-in, which leaves the limit unenforced for that sign-in; the session-detail rotation after a refresh; the prune of dead index entries after a session listing; the opportunistic re-encryption of an MFA secret; the account-status cache invalidation after an email is verified."
+      ]
+    },
     "outage": {
       "clientErrors": [
         "A command that got no reply before the client's command timeout.",

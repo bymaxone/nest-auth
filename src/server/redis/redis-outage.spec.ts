@@ -16,8 +16,10 @@ import { AuthException } from '../errors/auth-exception'
 import {
   isServiceUnavailable,
   mappingOutages,
+  NETWORK_CODES,
   redisOutageKindOf,
-  rethrowAsOutage
+  rethrowAsOutage,
+  UNAVAILABLE_REPLIES
 } from './redis-outage'
 
 /** An error with the given name and message, as ioredis and its reply parser build them. */
@@ -30,7 +32,7 @@ const MAX_RETRIES = named(
   'Reached the max retries per request limit (which is 1). Refer to "maxRetriesPerRequest" option for details.'
 )
 
-const NETWORK_CODES = [
+const NETWORK_CODES_UNDER_TEST = [
   'ECONNREFUSED',
   'ECONNRESET',
   'ETIMEDOUT',
@@ -60,7 +62,7 @@ const OUTAGES: readonly Case[] = [
     kind: 'closed'
   },
   { label: 'a bounded retry count', error: MAX_RETRIES, kind: 'unreachable' },
-  ...NETWORK_CODES.map((code) => ({
+  ...NETWORK_CODES_UNDER_TEST.map((code) => ({
     label: `a ${code} network error`,
     error: named('Error', `connect ${code}`, { code }),
     kind: 'unreachable'
@@ -291,26 +293,10 @@ describe('redisOutageKindOf against the shared contract', () => {
     expect(redisOutageKindOf(named('Error', `connect ${code}`, { code }))).toBe('unreachable')
   })
 
-  // Scenario: the classifier's own list against the contract's. Expected: nothing the classifier
-  // treats as a "cannot serve" reply is missing from the contract.
-  it('knows no reply prefix the contract does not list', () => {
-    const known = [
-      'BUSY',
-      'MISCONF',
-      'READONLY',
-      'LOADING',
-      'MASTERDOWN',
-      'CLUSTERDOWN',
-      'TRYAGAIN',
-      'EXECABORT',
-      'NOREPLICAS',
-      'NOAUTH',
-      'NOPERM'
-    ]
-    const classified = known.filter(
-      (prefix) => redisOutageKindOf(named('ReplyError', `${prefix} x`)) === 'unavailable'
-    )
-
-    expect(classified.sort()).toEqual([...outage.replyPrefixes].sort())
+  // Scenario: the classifier's own sets against the contract's lists, in both directions. Expected:
+  // equal, so a prefix or a code added on either side alone fails here, not in production.
+  it('holds exactly the contract lists', () => {
+    expect([...UNAVAILABLE_REPLIES].sort()).toEqual([...outage.replyPrefixes].sort())
+    expect([...NETWORK_CODES].sort()).toEqual([...outage.networkErrorCodes].sort())
   })
 })

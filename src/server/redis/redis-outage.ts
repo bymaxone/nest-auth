@@ -38,7 +38,7 @@ const MESSAGE_KINDS: ReadonlyMap<string, RedisOutageKind> = new Map([
 ])
 
 /** The network errors Node reports on a failed connection, in `error.code`. */
-const NETWORK_CODES: ReadonlySet<string> = new Set([
+export const NETWORK_CODES: ReadonlySet<string> = new Set([
   'ECONNREFUSED',
   'ECONNRESET',
   'ETIMEDOUT',
@@ -54,7 +54,7 @@ const NETWORK_CODES: ReadonlySet<string> = new Set([
  * error that is a mistake (`NOSCRIPT`, `WRONGTYPE`, `ERR ...`) is not in the list, so it stays the
  * internal failure it is.
  */
-const UNAVAILABLE_REPLIES: ReadonlySet<string> = new Set([
+export const UNAVAILABLE_REPLIES: ReadonlySet<string> = new Set([
   'READONLY',
   'LOADING',
   'MASTERDOWN',
