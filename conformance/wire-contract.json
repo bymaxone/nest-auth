@@ -68,7 +68,7 @@
       "password, where there is nothing to re-prove and a stolen access token was otherwise",
       "enough to enrol a factor the attacker holds — irreversibly, since disable and",
       "regenerate both demand a live TOTP and the reset flow refuses a passwordless account.",
-      "Keyed hmac_sha256('{plane}:{userId}') like every other user-derived key, and",
+      "Keyed hmac_sha256(hmacKey, userSubject) like every other user-derived key, and",
       "plane-bound so ids colliding across the two repositories cannot satisfy each other.",
       "",
       "Since v8 the key ends in `:{sid}`, the refresh family id the session carries in its access",
