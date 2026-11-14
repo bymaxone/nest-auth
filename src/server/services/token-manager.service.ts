@@ -102,6 +102,14 @@ interface RefreshSession {
 }
 
 /**
+ * The `overrides` argument for a caller that presented a credential in this very request.
+ *
+ * Kept as one named value so the call sites state the fact in one short line, and so a caller
+ * cannot half-spell it.
+ */
+export const CREDENTIAL_PROVED = { credentialProved: true } as const
+
+/**
  * Manages JWT access tokens, opaque refresh tokens, and MFA temp tokens.
  *
  * @remarks
@@ -116,14 +124,6 @@ interface RefreshSession {
  *
  * @layer Service
  */
-/**
- * The `overrides` argument for a caller that presented a credential in this very request.
- *
- * Kept as one named value so the call sites state the fact in one short line, and so a caller
- * cannot half-spell it.
- */
-export const CREDENTIAL_PROVED = { credentialProved: true } as const
-
 @Injectable()
 export class TokenManagerService {
   private readonly logger = new Logger(TokenManagerService.name)
