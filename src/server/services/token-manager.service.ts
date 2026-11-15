@@ -374,9 +374,7 @@ export class TokenManagerService {
   /**
    * Writes the per-session detail record for a platform session under `psd:{hash}`.
    *
-   * The dashboard plane gets the equivalent `sd:{hash}` record from {@link SessionService},
-   * but platform sessions never had one, so a session listing had nothing to describe them
-   * with. The field set and the Unix-millisecond timestamps mirror the dashboard record
+   * The field set and the Unix-millisecond timestamps mirror the dashboard record
    * exactly, so either backend sharing this Redis reads the same shape.
    *
    * @param tokenHash - SHA-256 of the raw refresh token; the key's `{hash}` segment.
