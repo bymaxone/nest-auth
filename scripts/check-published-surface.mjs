@@ -355,6 +355,16 @@ async function checkLinks() {
           console.log(`  note: ${url} is not live yet — expected until the first publish`)
           return null
         }
+        // A host that answers 5xx, or 429 again after the GET above, is in trouble of its own, and a link
+        // check cannot tell that from a dead link. Reported like a transport error, never fatal: this gate
+        // also guards `prepublishOnly`, and someone else's outage must not block a release. 404, 410 and the
+        // other client errors still fail.
+        if (res.status >= 500 || res.status === 429) {
+          console.log(
+            `  note: ${url} answered HTTP ${res.status}, the host's trouble and not proof that the link is dead`
+          )
+          return null
+        }
         return `${url} → HTTP ${res.status}`
       } catch (err) {
         // A refused redirect is a finding about the link itself, not someone
