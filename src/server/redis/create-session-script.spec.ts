@@ -101,7 +101,9 @@ describe('sessionExtraArgs', () => {
     ['an infinite lifetime', { key: 'k', value: 'v', ttl: Infinity }],
     ['a lifetime that is not a number', { key: 'k', value: 'v', ttl: Number.NaN }]
   ])('refuses %s', (_name, extra) => {
-    expect(() => sessionExtraArgs([extra])).toThrow(TypeError)
+    expect(() => sessionExtraArgs([extra])).toThrow(
+      /needs a key, a value and a positive whole-second TTL/
+    )
   })
 
   it('refuses the whole list when one record is bad', () => {
