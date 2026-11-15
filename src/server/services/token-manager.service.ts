@@ -261,8 +261,8 @@ export class TokenManagerService {
     )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
-    // One atomic step: the session, its index and family, the mark and the detail commit together
-    // or not at all, so a failed login leaves no live session behind. rust-auth writes the same
+    // One atomic step: the session, its index and family, the mark and the detail are written by
+    // one script, ordered so a failure leaves no live session behind. rust-auth writes the same
     // records in one `MULTI/EXEC`; see `CREATE_SESSION_LUA`.
     const proved = overrides?.credentialProved === true
     await this.redis.writeNewSession({

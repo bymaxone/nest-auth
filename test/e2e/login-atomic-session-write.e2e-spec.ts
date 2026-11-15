@@ -8,6 +8,7 @@
 import request from 'supertest'
 
 import { BYMAX_AUTH_OPTIONS } from '../../src/server/bymax-auth.constants'
+import { sessionIndexKey } from '../../src/server/constants/user-keys'
 import { AuthRedisService } from '../../src/server/redis/auth-redis.service'
 import type { BootstrappedTestApp } from './setup'
 import { bootstrapTestApp } from './setup'
@@ -57,6 +58,27 @@ describe('a session is born whole or not at all (E2E)', () => {
 
     if (res.status >= 400) expect(after).toBe(before)
     else expect(after).toBe(before + 1)
+  })
+
+  // Scenario: the account's session index holds a value of the wrong type, so adding the new
+  // session to it fails inside the script. Expected: the login is answered with an error and no
+  // refresh record was left behind. Why: Redis does not undo the writes a script made before one of
+  // its commands fails, so the commands that can fail on a wrong type must run before the session
+  // record exists.
+  it('leaves no live session behind when the index write fails inside the script', async () => {
+    const boot = await appWithAccount()
+    const opts = boot.app.get<{ hmacKey: string; redisNamespace: string }>(BYMAX_AUTH_OPTIONS)
+    const index = `${opts.redisNamespace}:${sessionIndexKey('dashboard', 'user-1', opts.hmacKey, 'tenant-1')}`
+    await boot.redis.del(index)
+    await boot.redis.set(index, 'not-a-set')
+    const before = await count(boot, 'rt')
+
+    const res = await request(boot.app.getHttpServer()).post('/login').send(CREDENTIALS)
+    const after = await count(boot, 'rt')
+    await boot.app.close()
+
+    expect(res.status).toBeGreaterThanOrEqual(400)
+    expect(after).toBe(before)
   })
 
   // Scenario: an ordinary login. Expected: the refresh record, the session detail and the

@@ -24,7 +24,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   the session detail (`sd:` on the dashboard plane, `psd:` on the platform plane) used to be written after the session
   itself, so a failure between the two answered an error while a refresh session nobody held stayed live. They are now
   written in the same Redis script as the session, each keeping its own lifetime (the mark five minutes, the detail the
-  refresh lifetime), so a login leaves every record or none. The records and their bytes are unchanged.
+  refresh lifetime). The script runs the commands that can fail on a wrong-typed key before it writes the refresh
+  record, so a failed login leaves no live session. The records and their bytes are unchanged.
 
 ### Apply to a derived backend
 
