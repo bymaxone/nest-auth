@@ -83,8 +83,8 @@ describe('a session is born whole or not at all (E2E)', () => {
 
   // Scenario: an ordinary login. Expected: the refresh record, the session detail and the
   // recent-authentication mark all exist; the first two live as long as the refresh token and the
-  // mark for the five minutes it counts as recent. Why: the records that used to follow the session
-  // now commit with it, and a mark that lived as long as the refresh token would undo its freshness.
+  // mark for the five minutes it counts as recent. Why: the mark, the detail and the session commit
+  // together, and a mark that lived as long as the refresh token would undo its freshness.
   it('writes the refresh record, the detail and the mark together, each with its own lifetime', async () => {
     const boot = await appWithAccount()
     const known = new Set(await boot.redis.keys('*'))

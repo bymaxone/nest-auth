@@ -13,22 +13,20 @@ export interface SessionExtra {
 
 /**
  * Writes a freshly-issued refresh session: the record, the `rt:` member in the owner's session
- * index, and the family membership — each with the refresh TTL, in ONE step.
+ * index, and the family membership, each with the refresh TTL, in ONE step.
  *
  * Held equivalent to rust-auth's `create_session_inner`, which does the same work in a
- * `MULTI/EXEC` transaction. This side issued the five commands loose, and the gap is the exact
- * window the rest of this file was written to close:
+ * `MULTI/EXEC` transaction. The records must be written in one step, for two reasons:
  *
- * - Between the `SET rt:` and the `SADD sess:` there existed a live session that no index named.
- *   `invalidateUserSessions` — run by a password reset, a ban, or an MFA enable — walks only the
- *   index, so a login landing in that window survived a revocation the user was told had
- *   happened, and the `SADD` then rebuilt the index around it. The surviving session keeps
+ * - A live session that no index names escapes `invalidateUserSessions`, run by a password reset,
+ *   a ban, or an MFA enable, which walks only the index. Such a session survives a revocation the
+ *   user was told had happened, and the next `SADD` rebuilds the index around it. It keeps
  *   rotating, and `buildRotatedResult` re-reads the CURRENT epoch, so its next refresh mints a
- *   fully valid access token under the post-bump epoch. An attacker who knows the password —
- *   the reason the victim is resetting — can keep logins in flight to aim at it.
- * - Between the `SADD` and the `EXPIRE` a dropped connection or a failover left
- *   `sess:{userId}` with **no expiry at all**. Its members die with the refresh lifetime; the
- *   set does not. For an account that never signs in again, the key is permanent.
+ *   fully valid access token under the post-bump epoch. An attacker who knows the password, the
+ *   reason the victim is resetting, can keep logins in flight to aim at it.
+ * - A dropped connection or a failover between the `SADD` and the `EXPIRE` leaves `sess:{userId}`
+ *   with **no expiry at all**. Its members die with the refresh lifetime; the set does not. For an
+ *   account that never signs in again, the key would be permanent.
  *
  * ```text
  * KEYS[1] = rt:{hash}   KEYS[2] = sess:{userId}   KEYS[3] = fam:{familyId}
@@ -68,7 +66,7 @@ return 1
 `
 
 /**
- * The keys and arguments the script takes for the records beyond the three it always writes.
+ * The keys and arguments the script takes for the records beyond the three it writes for every session.
  *
  * A TTL of zero, a fractional or a negative one would make `SET ... EX` fail inside the script and
  * abort the whole birth of a session. That is a bug in the caller, so it is refused here, before

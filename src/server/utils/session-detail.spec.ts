@@ -2,10 +2,8 @@
  * @fileoverview The per-session detail records written beside a refresh session, and the
  * User-Agent description they carry.
  *
- * The expected bytes below were captured from the code that wrote these records before they moved
- * into the step that creates the session (`SessionService.createSession` for `sd:` and
- * `TokenManagerService` for `psd:`), with the clock fixed. They are the bytes the sibling backend
- * sharing the Redis reads, so they are pinned as captured and not derived again.
+ * The expected bytes below are fixed values taken with the clock fixed. They are the bytes the
+ * sibling backend sharing the Redis reads, so they are pinned as written and not derived again.
  */
 
 import {
@@ -52,14 +50,14 @@ const PLATFORM: Array<[string, string, string]> = [
 
 describe('session detail records', () => {
   it.each(DASHBOARD)(
-    'writes the dashboard record for %s as it always has',
+    'writes the dashboard record for %s byte for byte as pinned',
     (ip, userAgent, expected) => {
       expect(dashboardSessionDetail(ip, userAgent, NOW)).toBe(expected)
     }
   )
 
   it.each(PLATFORM)(
-    'writes the platform record for %s as it always has',
+    'writes the platform record for %s byte for byte as pinned',
     (ip, userAgent, expected) => {
       expect(platformSessionDetail(ip, userAgent, NOW)).toBe(expected)
     }
