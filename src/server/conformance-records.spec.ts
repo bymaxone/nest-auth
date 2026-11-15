@@ -225,6 +225,8 @@ async function build<T>(service: new (...args: never[]) => T): Promise<T> {
   return module.get(service)
 }
 
+type ExtraRecord = { key: string; value: string; ttl: number }
+
 /** The first call's argument at `index`, for a doubled Redis method. */
 function firstCallArg(fn: jest.Mock, index: number): unknown {
   const call = fn.mock.calls[0] as unknown[] | undefined
@@ -362,23 +364,20 @@ describe('wire contract: sessionDetail record', () => {
   const HASH = sha256('raw-refresh-token')
   const NEW_HASH = sha256('rotated-refresh-token')
 
-  // Scenario: SessionService.createSession records a new session. Expected: the `sd:` key
-  // carries the contract's prefix and the value's keys equal the declared set. Why: the
-  // session list evicts a member whose detail fails to parse.
-  it('createSession stores exactly the declared fields under the declared prefix', async () => {
-    const service = await build(SessionService)
+  // Scenario: a new dashboard session is issued with sessions enabled. Expected: the `sd:` record
+  // written with it carries the contract's prefix and the value's keys equal the declared set. Why:
+  // the session list evicts a member whose detail fails to parse.
+  it('issueTokens stores exactly the declared fields under the declared prefix', async () => {
+    const service = await build(TokenManagerService)
 
-    await service.createSession({
-      userId: 'user-1',
-      tenantId: 'tenant-1',
-      rawRefreshToken: 'raw-refresh-token',
-      ip: '1.2.3.4',
-      userAgent: 'Mozilla/5.0 Chrome/123.0'
-    })
+    await service.issueTokens(ACCOUNT, '1.2.3.4', 'Mozilla/5.0 Chrome/123.0')
 
-    const key = firstCallArg(mockRedis.set, 0) as string
-    expect(key).toBe(`${prefixOf('dashboardSessionDetail')}:${HASH}`)
-    expect(keysOf(firstCallArg(mockRedis.set, 1))).toEqual(sorted([...fields, ...optionalFields]))
+    const extras = (firstCallArg(mockRedis.writeNewSession, 0) as { extras: ExtraRecord[] }).extras
+    const record = extras.find(({ key }) =>
+      key.startsWith(`${prefixOf('dashboardSessionDetail')}:`)
+    )
+    expect(record?.key).toMatch(new RegExp(`^${prefixOf('dashboardSessionDetail')}:[0-9a-f]{64}$`))
+    expect(keysOf(record?.value)).toEqual(sorted([...fields, ...optionalFields]))
   })
 
   // Scenario: a rotation re-keys the detail record. Expected: the record written for the new
@@ -423,9 +422,9 @@ describe('wire contract: sessionDetail record, platform writer', () => {
 
     await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Chrome')
 
-    const [key, value] = detailWrite()
-    expect(key).toMatch(new RegExp(`^${PREFIX}:[0-9a-f]{64}$`))
-    expect(keysOf(value)).toEqual(sorted([...fields, ...optionalFields]))
+    const extras = (firstCallArg(mockRedis.writeNewSession, 0) as { extras: ExtraRecord[] }).extras
+    expect(extras[0]?.key).toMatch(new RegExp(`^${PREFIX}:[0-9a-f]{64}$`))
+    expect(keysOf(extras[0]?.value)).toEqual(sorted([...fields, ...optionalFields]))
   })
 
   // Scenario: a platform refresh token is rotated. Expected: the record written for the new hash

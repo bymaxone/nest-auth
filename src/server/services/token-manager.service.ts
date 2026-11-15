@@ -26,23 +26,18 @@ import type {
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import type { SessionExtra } from '../redis/create-session-script'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { ownerFragment } from '../utils/owner-fragment'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { serializeSession } from '../utils/serialize-session'
+import { dashboardSessionDetail, platformSessionExtra } from '../utils/session-detail'
 import { readStampedEpoch } from '../utils/stamped-epoch'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 
 /** TTL in seconds for MFA temp tokens (5 minutes). */
 const MFA_TEMP_TOKEN_TTL_SECONDS = 300
-
-/**
- * Ceiling on the stored device and IP strings in a session detail record. Both are
- * attacker-controlled request headers, so they are truncated before they reach Redis. 45
- * characters is the longest possible textual IPv6 address (IPv4-mapped form).
- */
-const MAX_SESSION_FIELD_LENGTH = 45
 
 /**
  * Session record stored in Redis for each active refresh token.
@@ -266,11 +261,10 @@ export class TokenManagerService {
     )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
-    // One atomic step, not five. Loose, this left two windows: a `revoke_all` arriving between
-    // the record write and the index `SADD` swept an index the new session was not in yet — so
-    // it survived a revocation the user was told had happened — and a dropped connection
-    // between the `SADD` and the `EXPIRE` left the index with no TTL at all, permanently.
-    // rust-auth has always written this in one `MULTI/EXEC`; see `CREATE_SESSION_LUA`.
+    // One atomic step: the session, its index and family, the mark and the detail commit together
+    // or not at all, so a failed login leaves no live session behind. rust-auth writes the same
+    // records in one `MULTI/EXEC`; see `CREATE_SESSION_LUA`.
+    const proved = overrides?.credentialProved === true
     await this.redis.writeNewSession({
       kind: 'dashboard',
       tenantId: user.tenantId,
@@ -278,27 +272,36 @@ export class TokenManagerService {
       sessionJson: serializeSession(session),
       familyId,
       userId: user.id,
-      refreshTtl: ttl
+      refreshTtl: ttl,
+      extras: this.dashboardExtras(user, familyId, tokenHash, ttl, ip, userAgent, proved)
     })
-
-    if (overrides?.credentialProved === true) await this.markRecentAuth(user, familyId)
 
     return { user, accessToken, rawRefreshToken }
   }
 
   /**
-   * Records that the session just born presented a credential.
+   * The records a new dashboard session is written with, beyond the session itself.
    *
-   * Only a credential presented in this request proves a recent authentication; a refresh proves
-   * possession of a token, so `reissueTokens` never writes this mark. The key names the session, so
-   * another session of the same account cannot use it.
+   * The recent-authentication mark is there only when a credential was presented in this request;
+   * a refresh proves possession of a token, so `reissueTokens` never writes it. It keeps its own
+   * short lifetime and its key names the session, so another session of the same account cannot
+   * use it. The session detail is there only when sessions are enabled.
    */
-  private async markRecentAuth(user: SafeAuthUser, sid: string): Promise<void> {
-    await this.redis.set(
-      recentAuthKey('dashboard', user.id, this.options.hmacKey, user.tenantId, sid),
-      '1',
-      RECENT_AUTH_TTL_SECONDS
-    )
+  private dashboardExtras(
+    user: SafeAuthUser,
+    sid: string,
+    tokenHash: string,
+    ttl: number,
+    ip: string,
+    userAgent: string,
+    proved: boolean
+  ): SessionExtra[] {
+    const markKey = recentAuthKey('dashboard', user.id, this.options.hmacKey, user.tenantId, sid)
+    const detail = dashboardSessionDetail(ip, userAgent, Date.now())
+    return [
+      ...(proved ? [{ key: markKey, value: '1', ttl: RECENT_AUTH_TTL_SECONDS }] : []),
+      ...(this.options.sessions.enabled ? [{ key: `sd:${tokenHash}`, value: detail, ttl }] : [])
+    ]
   }
 
   // ---------------------------------------------------------------------------
@@ -361,9 +364,9 @@ export class TokenManagerService {
       sessionJson: serializeSession(session),
       familyId,
       userId: admin.id,
-      refreshTtl: ttl
+      refreshTtl: ttl,
+      extras: [platformSessionExtra(tokenHash, ip, userAgent, ttl)]
     })
-    await this.writePlatformSessionDetail(tokenHash, ip, userAgent, ttl)
 
     return { admin, accessToken, rawRefreshToken }
   }
@@ -387,14 +390,8 @@ export class TokenManagerService {
     userAgent: string,
     ttl: number
   ): Promise<void> {
-    const now = Date.now()
-    const detail = {
-      device: userAgent.slice(0, MAX_SESSION_FIELD_LENGTH),
-      ip: ip.slice(0, MAX_SESSION_FIELD_LENGTH),
-      createdAt: now,
-      lastActivityAt: now
-    }
-    await this.redis.set(`psd:${tokenHash}`, JSON.stringify(detail), ttl)
+    const extra = platformSessionExtra(tokenHash, ip, userAgent, ttl)
+    await this.redis.set(extra.key, extra.value, extra.ttl)
   }
 
   // ---------------------------------------------------------------------------

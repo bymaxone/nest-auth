@@ -33,6 +33,8 @@ const FIXED_REFRESH_TOKEN = '11'.repeat(32)
 /** SHA-256 of the minted refresh token — the hash keying every new refresh session. */
 const NEW_HASH = sha256(FIXED_REFRESH_TOKEN)
 
+type ExtraRecord = { key: string; value: string; ttl: number }
+
 const mockJwtService = {
   sign: jest.fn().mockReturnValue(FIXED_JWT),
   decode: jest.fn(),
@@ -86,7 +88,8 @@ const mockOptions = {
     secret: JWT_SECRET
   },
   hmacKey: HMAC_KEY,
-  previousHmacKeys: []
+  previousHmacKeys: [],
+  sessions: { enabled: false }
 }
 
 const SAFE_USER = {
@@ -190,21 +193,19 @@ describe('TokenManagerService', () => {
     // refresh proves possession of a token, not of a credential, so a stolen session cannot be
     // rotated into a fresh mark (see the paired case in `reissueTokens`).
     it('plants the recent-authentication marker only for a presented credential', async () => {
-      mockRedis.set.mockResolvedValue(undefined)
+      const extrasOf = (): Array<{ key: string; value: string; ttl: number }> =>
+        (mockRedis.writeNewSession.mock.calls.at(-1) as [{ extras: [] }])[0].extras
 
       await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser', { credentialProved: true })
 
-      const markerWrite = mockRedis.set.mock.calls.find((call) => String(call[0]).startsWith('ra:'))
-      expect(markerWrite).toBeDefined()
-      // Presence is the whole meaning; the value carries nothing.
-      expect(markerWrite?.[1]).toBe('1')
-      expect(markerWrite?.[2]).toBe(300)
+      const marker = extrasOf().find(({ key }) => key.startsWith('ra:'))
+      // Presence is the whole meaning; the value carries nothing, and it counts as recent for 5 min.
+      expect(marker).toMatchObject({ value: '1', ttl: 300 })
       // The keyspace is shared and readable — the account id is never in it in the clear.
-      expect(String(markerWrite?.[0])).not.toContain(SAFE_USER.id)
-      mockRedis.set.mockClear()
+      expect(marker?.key).not.toContain(SAFE_USER.id)
       await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser')
       await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser', { credentialProved: false })
-      expect(mockRedis.set.mock.calls.some((c) => String(c[0]).startsWith('ra:'))).toBe(false)
+      expect(mockRedis.writeNewSession.mock.calls.slice(1).flatMap(([p]) => p.extras)).toEqual([])
     })
 
     // Verifies that issueTokens stores the refresh session in Redis with the correct TTL in seconds.
@@ -414,15 +415,12 @@ describe('TokenManagerService', () => {
     // Unix-millisecond timestamps. Why: the sibling Rust backend reads psd: when listing
     // platform sessions; without this write it would find nothing for a nest-created session.
     it('writes the psd: detail record with epoch-millisecond timestamps', async () => {
-      mockRedis.set.mockResolvedValue(undefined)
-
       await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
 
-      const detailCall = mockRedis.set.mock.calls.find(
-        (call) => (call[0] as string) === `psd:${NEW_HASH}`
-      )
-      expect(detailCall).toBeDefined()
-      const detail = JSON.parse(detailCall![1] as string) as Record<string, unknown>
+      const extras = (mockRedis.writeNewSession.mock.calls[0] as [{ extras: ExtraRecord[] }])[0]
+        .extras
+      const detail = JSON.parse(extras[0]?.value ?? '') as Record<string, unknown>
+      expect(extras[0]?.key).toBe(`psd:${NEW_HASH}`)
       expect(detail).toMatchObject({ device: 'Firefox', ip: '1.2.3.4' })
       expect(typeof detail['createdAt']).toBe('number')
       expect(typeof detail['lastActivityAt']).toBe('number')
@@ -433,16 +431,11 @@ describe('TokenManagerService', () => {
     // could push arbitrarily large values into a Redis value on every login — the record is
     // written per session and never validated downstream, so the cap is the only limit.
     it('truncates the device and IP before they reach the psd: record', async () => {
-      mockRedis.set.mockResolvedValue(undefined)
-      const hugeAgent = 'A'.repeat(500)
-      const hugeIp = '1'.repeat(500)
+      await service.issuePlatformTokens(SAFE_ADMIN, '1'.repeat(500), 'A'.repeat(500))
 
-      await service.issuePlatformTokens(SAFE_ADMIN, hugeIp, hugeAgent)
-
-      const detailCall = mockRedis.set.mock.calls.find(
-        (call) => (call[0] as string) === `psd:${NEW_HASH}`
-      )
-      const detail = JSON.parse(detailCall![1] as string) as { device: string; ip: string }
+      const extras = (mockRedis.writeNewSession.mock.calls[0] as [{ extras: ExtraRecord[] }])[0]
+        .extras
+      const detail = JSON.parse(extras[0]?.value ?? '') as { device: string; ip: string }
       expect(detail.device.length).toBe(45)
       expect(detail.ip.length).toBe(45)
     })

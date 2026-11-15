@@ -18,6 +18,22 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A login no longer leaves a live session behind when a later write fails.** The recent-authentication mark and
+  the session detail (`sd:` on the dashboard plane, `psd:` on the platform plane) used to be written after the session
+  itself, so a failure between the two answered an error while a refresh session nobody held stayed live. They are now
+  written in the same Redis script as the session, each keeping its own lifetime (the mark five minutes, the detail the
+  refresh lifetime), so a login leaves every record or none. The records and their bytes are unchanged.
+
+### Apply to a derived backend
+
+- **`SessionService.createSession` no longer writes `sd:{hash}`.** With `sessions.enabled`, `TokenManagerService.issueTokens`
+  writes it with the session; `createSession` keeps the session-limit enforcement and the `onNewSession` hook. A host that
+  calls `createSession` for a session it did not create through `issueTokens` gets no detail record from it.
+- **Redis Cluster is not supported**, as it never was: the session scripts touch keys in different slots. The README now
+  says so.
+
 ## [1.5.6] - 2026-11-15
 
 A patch release. The wire contract is at version 8.

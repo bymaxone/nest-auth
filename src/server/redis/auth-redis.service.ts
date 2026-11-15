@@ -7,6 +7,8 @@ import { Inject, Injectable } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import { CREATE_SESSION_LUA, sessionExtraArgs } from './create-session-script'
+import type { SessionExtra } from './create-session-script'
 import { mappingOutages } from './redis-outage'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
@@ -129,45 +131,6 @@ end
 redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
 redis.call('SADD', KEYS[2], ARGV[4] .. ':' .. ARGV[5])
 redis.call('EXPIRE', KEYS[2], ARGV[2])
-if ARGV[3] ~= '' then
-  redis.call('SADD', KEYS[3], ARGV[5])
-  redis.call('EXPIRE', KEYS[3], ARGV[2])
-end
-return 1
-`
-
-/**
- * Writes a freshly-issued refresh session: the record, the `rt:` member in the owner's session
- * index, and the family membership — each with the refresh TTL, in ONE step.
- *
- * Held equivalent to rust-auth's `create_session_inner`, which does the same work in a
- * `MULTI/EXEC` transaction. This side issued the five commands loose, and the gap is the exact
- * window the rest of this file was written to close:
- *
- * - Between the `SET rt:` and the `SADD sess:` there existed a live session that no index named.
- *   `invalidateUserSessions` — run by a password reset, a ban, or an MFA enable — walks only the
- *   index, so a login landing in that window survived a revocation the user was told had
- *   happened, and the `SADD` then rebuilt the index around it. The surviving session keeps
- *   rotating, and `buildRotatedResult` re-reads the CURRENT epoch, so its next refresh mints a
- *   fully valid access token under the post-bump epoch. An attacker who knows the password —
- *   the reason the victim is resetting — can keep logins in flight to aim at it.
- * - Between the `SADD` and the `EXPIRE` a dropped connection or a failover left
- *   `sess:{userId}` with **no expiry at all**. Its members die with the refresh lifetime; the
- *   set does not. For an account that never signs in again, the key is permanent.
- *
- * ```text
- * KEYS[1] = rt:{hash}   KEYS[2] = sess:{userId}   KEYS[3] = fam:{familyId}
- * ARGV[1] = session JSON   ARGV[2] = refresh TTL
- * ARGV[3] = family id, or '' for a session belonging to no lineage
- * ARGV[4] = live prefix   ARGV[5] = token hash
- * ```
- */
-const CREATE_SESSION_LUA = `
-redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
-redis.call('SADD', KEYS[2], ARGV[4] .. ':' .. ARGV[5])
-redis.call('EXPIRE', KEYS[2], ARGV[2])
--- The family index holds bare hashes: it only ever tracks live sessions, so the prefix is
--- implied. A session with no lineage skips it rather than writing an unkeyed member.
 if ARGV[3] ~= '' then
   redis.call('SADD', KEYS[3], ARGV[5])
   redis.call('EXPIRE', KEYS[3], ARGV[2])
@@ -622,8 +585,11 @@ export class AuthRedisService {
     familyId: string
     userId: string
     refreshTtl: number
+    /** Records written in the same step, each with its own TTL; see {@link CREATE_SESSION_LUA}. */
+    extras?: readonly SessionExtra[]
   }): Promise<void> {
     const p = prefixesFor(params.kind)
+    const extra = sessionExtraArgs(params.extras ?? [])
     await this.eval(
       CREATE_SESSION_LUA,
       [
@@ -631,9 +597,17 @@ export class AuthRedisService {
         sessionIndexKey(params.kind, params.userId, this.#hmacKey, params.tenantId),
         // Always passed, even with no family: a Lua script's key list is fixed at the call
         // site, and the script skips the key rather than the caller skipping the argument.
-        `${p.family}:${params.familyId}`
+        `${p.family}:${params.familyId}`,
+        ...extra.keys
       ],
-      [params.sessionJson, String(params.refreshTtl), params.familyId, p.live, params.tokenHash]
+      [
+        params.sessionJson,
+        String(params.refreshTtl),
+        params.familyId,
+        p.live,
+        params.tokenHash,
+        ...extra.argv
+      ]
     )
   }
 
