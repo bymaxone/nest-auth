@@ -3,8 +3,8 @@
  * and `psd:{hash}` for the platform.
  *
  * Both use the same four fields and Unix-millisecond timestamps, so either backend sharing the
- * Redis reads the same shape. The two planes have always differed in how the device is described,
- * and that difference is part of the bytes both sides read, so it is kept.
+ * Redis reads the same shape. The two planes describe the device differently, and that difference
+ * is part of the bytes both sides read, so it is kept.
  *
  * @layer Utils
  */

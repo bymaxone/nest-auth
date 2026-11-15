@@ -39,13 +39,13 @@ export interface SessionExtra {
  * ARGV[6 + 2i] = value   ARGV[7 + 2i] = its TTL, for the extra whose key is KEYS[4 + i]
  * ```
  *
- * The extras are the recent-authentication mark and the session detail: they used to be written
- * after this script, and a failure there left a live session no caller had been told about. They
- * live in the same step now, so no other command runs between them. A failing command does not
- * undo what the script wrote before it, so the order matters: the index and the family, the only
- * keys that can fail on a wrong type, come before the refresh record. The extras are plain `SET`s
- * with a validated lifetime and cannot fail that way. They keep their own lifetimes: the mark
- * counts as recent for a few minutes, not for as long as the refresh token.
+ * The extras are the recent-authentication mark and the session detail. They belong in the same
+ * step as the refresh record, because a write that can fail after the session exists leaves a live
+ * session no caller was told about; no other command runs between them. A failing command does
+ * not undo what the script wrote before it, so the index and the family, the only keys that can
+ * fail on a wrong type, come before the refresh record. The extras are plain `SET`s with a
+ * validated lifetime and cannot fail that way. They keep their own lifetimes: the mark counts as
+ * recent for a few minutes, not for as long as the refresh token.
  */
 export const CREATE_SESSION_LUA = `
 -- The commands that can fail on a key of the wrong type come FIRST: Redis does not undo the
