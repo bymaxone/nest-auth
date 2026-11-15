@@ -29,21 +29,23 @@ export const RECENT_AUTH_TTL_SECONDS = 300
  *
  * The preimage is the tenant-scoped {@link userSubject}, shared with every other MFA key: a
  * dashboard user `1` in one tenant must not satisfy the freshness check of user `1` in another.
- * The marker is written and read in the same release, so it takes a hard cutover — a marker under
- * the old plane-only key is simply not found after the upgrade, which costs an OAuth-only caller
- * mid-flow one extra sign-in, not a security hole.
+ * The key ends in the session id, so the mark belongs to the session that earned it and another
+ * session of the same account cannot use it. A mark under an older key shape is simply not found
+ * after an upgrade, which costs an OAuth-only caller mid-flow one extra sign-in, not a security hole.
  *
  * @param plane - The authentication plane the marker belongs to.
  * @param userId - The account that authenticated.
  * @param hmacKey - The library's identifier-HMAC key.
  * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
+ * @param sid - The session that authenticated: its `sid` claim, appended as it is, never hashed.
  * @returns The fully-qualified Redis key.
  */
 export function recentAuthKey(
   plane: 'dashboard' | 'platform',
   userId: string,
   hmacKey: string,
-  tenantId: string | undefined
+  tenantId: string | undefined,
+  sid: string
 ): string {
-  return `ra:${hmacSha256(userSubject(plane, userId, tenantId), hmacKey)}`
+  return `ra:${hmacSha256(userSubject(plane, userId, tenantId), hmacKey)}:${sid}`
 }

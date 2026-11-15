@@ -11,7 +11,8 @@ import type { AuthUser, IUserRepository } from '../interfaces/user-repository.in
 import type { ReauthenticationService } from './reauthentication.service'
 import { WorkspaceCallerService } from './workspace-caller.service'
 
-const CALLER = { sub: 'u1', tenantId: 't1' }
+const SID = '11111111-2222-4333-8444-555555555555'
+const CALLER = { sub: 'u1', tenantId: 't1', sid: SID }
 const USER: AuthUser = {
   id: 'u1',
   email: 'a@b.c',
@@ -81,7 +82,7 @@ describe('WorkspaceCallerService', () => {
 
       await service.reauthenticate(CALLER, 'pw')
 
-      expect(assertReauthenticated).toHaveBeenCalledWith('dashboard', 'u1', 'hash', 'pw', 't1')
+      expect(assertReauthenticated).toHaveBeenCalledWith('dashboard', 'u1', 'hash', 'pw', 't1', SID)
     })
 
     it('passes an absent password through, for the re-proof to refuse', async () => {
@@ -89,7 +90,14 @@ describe('WorkspaceCallerService', () => {
 
       await service.reauthenticate(CALLER, undefined)
 
-      expect(assertReauthenticated).toHaveBeenCalledWith('dashboard', 'u1', 'hash', undefined, 't1')
+      expect(assertReauthenticated).toHaveBeenCalledWith(
+        'dashboard',
+        'u1',
+        'hash',
+        undefined,
+        't1',
+        SID
+      )
     })
 
     it('hands a passwordless account to the re-proof with a null hash', async () => {
@@ -97,7 +105,14 @@ describe('WorkspaceCallerService', () => {
 
       await service.reauthenticate(CALLER, undefined)
 
-      expect(assertReauthenticated).toHaveBeenCalledWith('dashboard', 'u1', null, undefined, 't1')
+      expect(assertReauthenticated).toHaveBeenCalledWith(
+        'dashboard',
+        'u1',
+        null,
+        undefined,
+        't1',
+        SID
+      )
     })
 
     it('answers an invalid token, and proves nothing, when the account no longer exists', async () => {

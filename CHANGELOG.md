@@ -18,6 +18,27 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Changed
+
+- **The recent-authentication mark belongs to the session that earned it.** Access tokens carry a new signed `sid`
+  claim, the refresh family id of the session, kept through every rotation. The mark is written under
+  `ra:{hmac_sha256(hmacKey, userSubject)}:{sid}` and read under the caller's own `sid`, so another session of the same
+  account cannot use a mark it did not earn. The TTL is unchanged (300 seconds). The mark expires with its TTL and is not deleted by
+  logout or session revocation; only a token carrying its `sid` can read it.
+- **Mixed deployments fail closed.** A mark written under the older account-wide key is not honoured after the upgrade, a
+  token minted before `sid` existed earns no proof, and a reader that does not know `sid` never finds the new key.
+  In each case the answer is a request to re-authenticate, never a pass.
+
+### Apply to a derived backend
+
+- **A user with no local password is asked to re-authenticate once** for a sensitive action (enrolling MFA, and the
+  workspace actions that re-prove the account) after the upgrade: until the session's next sign-in or refresh the token
+  has no `sid`, and a mark written before the upgrade is not read.
+- **A host that mints tokens itself must pass the session.** Sign `sid` as the refresh family id of the session
+  (`sessionId()` accepts only 36 lowercase hexadecimal characters and hyphens in 8-4-4-4-12) and write the mark with the
+  same id; a token without a usable `sid` never satisfies the gate. `MfaService.setup` takes the caller's `sid` as a
+  trailing argument, and `ReauthenticationService.assertReauthenticated` takes it after `tenantId`.
+
 ## [1.5.5] - 2026-11-14
 
 A patch release.

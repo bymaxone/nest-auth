@@ -17,6 +17,8 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthRedisService } from '../redis/auth-redis.service'
 
 const HMAC_KEY = 'k'.repeat(48)
+const SID = '11111111-2222-4333-8444-555555555555'
+const OTHER_SID = '99999999-2222-4333-8444-555555555555'
 
 /** Builds the service over mocks, returning the mocks the tests drive. */
 async function build(): Promise<{
@@ -62,7 +64,7 @@ describe('ReauthenticationService', () => {
       const { service, brute } = await build()
 
       await expect(
-        service.assertReauthenticated('dashboard', 'u1', 'hash', 'secret', 't1')
+        service.assertReauthenticated('dashboard', 'u1', 'hash', 'secret', 't1', undefined)
       ).resolves.toBeUndefined()
 
       const { scoped, tenantLess } = reauthCounters('u1', 't1')
@@ -76,7 +78,7 @@ describe('ReauthenticationService', () => {
       password.compare.mockResolvedValue(false)
 
       await expect(
-        service.assertReauthenticated('dashboard', 'u1', 'hash', 'wrong', 't1')
+        service.assertReauthenticated('dashboard', 'u1', 'hash', 'wrong', 't1', undefined)
       ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
@@ -92,7 +94,7 @@ describe('ReauthenticationService', () => {
       password.compare.mockResolvedValue(false)
 
       await expect(
-        service.assertReauthenticated('dashboard', 'u1', 'hash', undefined, 't1')
+        service.assertReauthenticated('dashboard', 'u1', 'hash', undefined, 't1', undefined)
       ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
@@ -105,7 +107,7 @@ describe('ReauthenticationService', () => {
       brute.isLockedOut.mockResolvedValue(true)
 
       await expect(
-        service.assertReauthenticated('platform', 'a1', 'hash', 'secret', undefined)
+        service.assertReauthenticated('platform', 'a1', 'hash', 'secret', undefined, undefined)
       ).rejects.toMatchObject({ response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } } })
 
       expect(password.compare).not.toHaveBeenCalled()
@@ -118,7 +120,7 @@ describe('ReauthenticationService', () => {
     it('reads only the tenant-scoped counter on the dashboard plane before comparing', async () => {
       const { service, brute } = await build()
 
-      await service.assertReauthenticated('dashboard', 'u1', 'hash', 'secret', 't1')
+      await service.assertReauthenticated('dashboard', 'u1', 'hash', 'secret', 't1', undefined)
 
       const { scoped, tenantLess } = reauthCounters('u1', 't1')
       expect(brute.isLockedOut.mock.calls).toEqual([[scoped]])
@@ -132,17 +134,17 @@ describe('ReauthenticationService', () => {
       redis.get.mockResolvedValue('1')
 
       await expect(
-        service.assertReauthenticated('dashboard', 'u1', null, undefined, 't1')
+        service.assertReauthenticated('dashboard', 'u1', null, undefined, 't1', SID)
       ).resolves.toBeUndefined()
 
-      expect(redis.get).toHaveBeenCalledWith(recentAuthKey('dashboard', 'u1', HMAC_KEY, 't1'))
+      expect(redis.get).toHaveBeenCalledWith(recentAuthKey('dashboard', 'u1', HMAC_KEY, 't1', SID))
     })
 
     it('refuses with REAUTHENTICATION_REQUIRED when the marker is absent', async () => {
       const { service, password } = await build()
 
       await expect(
-        service.assertReauthenticated('dashboard', 'u1', null, undefined, 't1')
+        service.assertReauthenticated('dashboard', 'u1', null, undefined, 't1', SID)
       ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED } }
       })
@@ -150,14 +152,71 @@ describe('ReauthenticationService', () => {
       expect(password.compare).not.toHaveBeenCalled()
     })
 
+    // Scenario: the proof was earned by another session of the same account (its key exists), and
+    // the caller names its own session. Expected: refused, and only the caller's own key is read.
+    // Why: the mark belongs to the session that earned it.
+    it('does not accept a mark that another session earned', async () => {
+      const { service, redis } = await build()
+      redis.get.mockImplementation((key: string) =>
+        Promise.resolve(
+          key === recentAuthKey('dashboard', 'u1', HMAC_KEY, 't1', OTHER_SID) ? '1' : null
+        )
+      )
+
+      await expect(
+        service.assertReauthenticated('dashboard', 'u1', null, undefined, 't1', SID)
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED } }
+      })
+
+      expect(redis.get.mock.calls).toEqual([
+        [recentAuthKey('dashboard', 'u1', HMAC_KEY, 't1', SID)]
+      ])
+    })
+
+    // Scenario: only a mark under the older, account-wide key exists. Expected: refused.
+    // Why: a mark planted before an upgrade names no session, so it is not honoured after one.
+    it('does not honour a mark under the old account-wide key', async () => {
+      const { service, redis } = await build()
+      const oldKey = `ra:${hmacSha256(userSubject('dashboard', 'u1', 't1'), HMAC_KEY)}`
+      redis.get.mockImplementation((key: string) => Promise.resolve(key === oldKey ? '1' : null))
+
+      await expect(
+        service.assertReauthenticated('dashboard', 'u1', null, undefined, 't1', SID)
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED } }
+      })
+    })
+
+    // Scenario: a token with no `sid`, one minted before the claim, or one whose `sid` is not in the
+    // contract's shape. Expected: refused without reading any key. Why: a token that names no
+    // session cannot have earned a mark, and a caller-shaped value must not steer the key.
+    it.each([undefined, '', 'not-a-session', `${SID}:x`, 'AAAAAAAA-2222-4333-8444-555555555555'])(
+      'refuses a caller whose sid is %j without reading a mark',
+      async (sid) => {
+        const { service, redis } = await build()
+        redis.get.mockResolvedValue('1')
+
+        await expect(
+          service.assertReauthenticated('dashboard', 'u1', null, undefined, 't1', sid)
+        ).rejects.toMatchObject({
+          response: { error: { code: AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED } }
+        })
+
+        expect(redis.get).not.toHaveBeenCalled()
+      }
+    )
+
     it('reads the marker under the tenant-scoped key, not another tenant’s', async () => {
       const { service, redis } = await build()
 
       await expect(
-        service.assertReauthenticated('dashboard', 'u1', null, undefined, 't1')
+        service.assertReauthenticated('dashboard', 'u1', null, undefined, 't1', SID)
       ).rejects.toBeDefined()
 
-      expect(redis.get).not.toHaveBeenCalledWith(recentAuthKey('dashboard', 'u1', HMAC_KEY, 't2'))
+      expect(redis.get).not.toHaveBeenCalledWith(
+        recentAuthKey('dashboard', 'u1', HMAC_KEY, 't2', SID)
+      )
     })
   })
 })

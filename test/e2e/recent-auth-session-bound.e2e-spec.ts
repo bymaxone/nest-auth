@@ -5,6 +5,7 @@
  * minutes ago. That proof must be the caller's own. Another session of the same account, one that
  * presented no credential itself, must not borrow it.
  */
+import { JwtService } from '@nestjs/jwt'
 import request from 'supertest'
 
 import { AuthService } from '../../src/server/services/auth.service'
@@ -58,6 +59,33 @@ describe('recent-authentication proof is session-bound (E2E)', () => {
     await boot.app.close()
 
     expect(status).toBe(403)
+  })
+
+  // Scenario: the second session's token with the earning session's `sid` written into its claims
+  // and re-signed with a key that is not the server's. Expected: rejected before the gate is asked.
+  // Why: the session id is a signed claim, so a caller cannot choose which session it speaks for.
+  it('rejects a token whose sid was rewritten to another session', async () => {
+    const { boot, userId, earned } = await registerPasswordless()
+    const other = await boot.app
+      .get(AuthService)
+      .issueTokensForUserId(userId, 'tenant-1', '127.0.0.1', 'jest')
+    const decode = (token: string): Record<string, unknown> =>
+      JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString()) as Record<
+        string,
+        unknown
+      >
+    const claims = { ...decode(other.accessToken), sid: decode(earned.accessToken)['sid'] }
+    const forged = new JwtService({ secret: 'not-the-servers-key-not-the-servers-key' }).sign(
+      claims
+    )
+
+    const res = await request(boot.app.getHttpServer())
+      .post('/mfa/setup')
+      .set('Authorization', `Bearer ${forged}`)
+      .send({})
+    await boot.app.close()
+
+    expect(res.status).toBe(401)
   })
 
   // Scenario: the session that earned the proof, as issued and after a refresh. Expected: allowed.

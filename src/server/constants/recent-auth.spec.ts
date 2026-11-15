@@ -8,14 +8,15 @@ import { RECENT_AUTH_TTL_SECONDS, recentAuthKey } from './recent-auth'
  */
 describe('recentAuthKey', () => {
   const HMAC_KEY = 'a-test-hmac-key-of-sufficient-length'
+  const SID = '11111111-2222-4333-8444-555555555555'
 
   // The keyspace is shared with rust-auth and readable by anyone with access to the store. A
   // bare id there is an account identifier in the clear, which is why every user-derived key in
   // this library is keyed rather than plain.
   it('never puts the account id in the key', () => {
-    const key = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1')
+    const key = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1', SID)
 
-    expect(key).toMatch(/^ra:[0-9a-f]{64}$/)
+    expect(key).toMatch(/^ra:[0-9a-f]{64}:[0-9a-f-]{36}$/)
     expect(key).not.toContain('user-1')
   })
 
@@ -23,8 +24,8 @@ describe('recentAuthKey', () => {
   // carry the same id. Without the plane in the preimage one could satisfy the other's
   // freshness check — the same collision the `lf:` lockout identifier was fixed for.
   it('binds the marker to its authentication plane', () => {
-    const dashboard = recentAuthKey('dashboard', 'shared-id', HMAC_KEY, 'tenant-1')
-    const platform = recentAuthKey('platform', 'shared-id', HMAC_KEY, undefined)
+    const dashboard = recentAuthKey('dashboard', 'shared-id', HMAC_KEY, 'tenant-1', SID)
+    const platform = recentAuthKey('platform', 'shared-id', HMAC_KEY, undefined, SID)
 
     expect(dashboard).not.toBe(platform)
   })
@@ -33,8 +34,8 @@ describe('recentAuthKey', () => {
   // tenant gives every tenant a user `1`. Without the tenant in the preimage, one tenant's user
   // would satisfy another tenant's freshness check.
   it('binds a dashboard marker to its tenant', () => {
-    const tenantA = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-a')
-    const tenantB = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-b')
+    const tenantA = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-a', SID)
+    const tenantB = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-b', SID)
 
     expect(tenantA).not.toBe(tenantB)
   })
@@ -42,8 +43,8 @@ describe('recentAuthKey', () => {
   // The platform plane has no tenant, and the derivation is driven by the plane rather than by
   // whether a tenant was supplied — so a tenant passed on the platform plane cannot move the key.
   it('ignores a tenant supplied on the platform plane', () => {
-    const withTenant = recentAuthKey('platform', 'admin-1', HMAC_KEY, 'tenant-1')
-    const withoutTenant = recentAuthKey('platform', 'admin-1', HMAC_KEY, undefined)
+    const withTenant = recentAuthKey('platform', 'admin-1', HMAC_KEY, 'tenant-1', SID)
+    const withoutTenant = recentAuthKey('platform', 'admin-1', HMAC_KEY, undefined, SID)
 
     expect(withTenant).toBe(withoutTenant)
   })
@@ -51,20 +52,36 @@ describe('recentAuthKey', () => {
   // Keyed, not hashed: an id carries far too little entropy for a plain digest to hide it, so a
   // key change must change every derived key.
   it('derives from the HMAC key, so a rotation invalidates the keyspace', () => {
-    const first = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1')
+    const first = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1', SID)
     const second = recentAuthKey(
       'dashboard',
       'user-1',
       'a-different-key-of-sufficient-length',
-      'tenant-1'
+      'tenant-1',
+      SID
     )
 
     expect(first).not.toBe(second)
   })
 
+  // The key ends in the session id as it is, so two sessions of one account never share a mark.
+  it('binds the marker to the session that earned it', () => {
+    const first = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1', SID)
+    const second = recentAuthKey(
+      'dashboard',
+      'user-1',
+      HMAC_KEY,
+      'tenant-1',
+      SID.replace('1111', '2222')
+    )
+
+    expect(first.endsWith(`:${SID}`)).toBe(true)
+    expect(second).not.toBe(first)
+  })
+
   it('is deterministic for the same inputs', () => {
-    expect(recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1')).toBe(
-      recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1')
+    expect(recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1', SID)).toBe(
+      recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1', SID)
     )
   })
 

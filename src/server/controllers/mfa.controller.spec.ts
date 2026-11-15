@@ -49,6 +49,7 @@ const SAFE_ADMIN = {
 
 const JWT_PAYLOAD = {
   jti: 'test-jti',
+  sid: '11111111-2222-4333-8444-555555555555',
   sub: 'user-1',
   tenantId: 'tenant-1',
   role: 'member',
@@ -164,14 +165,13 @@ describe('MfaController', () => {
     // Verifies that setup delegates to mfaService.setup with the authenticated user's sub.
     it('should call mfaService.setup with the user sub and return the setup result', async () => {
       mockMfaService.setup.mockResolvedValue(MFA_SETUP_RESULT)
-
       const result = await controller.setup(JWT_PAYLOAD as never, { password: 'pw' })
-
       expect(mockMfaService.setup).toHaveBeenCalledWith(
         JWT_PAYLOAD.sub,
         'dashboard',
         'pw',
-        JWT_PAYLOAD.tenantId
+        JWT_PAYLOAD.tenantId,
+        JWT_PAYLOAD.sid
       )
       expect(result).toBe(MFA_SETUP_RESULT)
     })

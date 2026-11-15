@@ -184,6 +184,7 @@ const PASSWORD = 'correct horse battery staple'
  * `mockResolvedValue` would feed `'1'` to the setup-record parser too. Keyed on the `ra:`
  * prefix so each test says exactly which lookup it is arranging.
  */
+const SID = '11111111-2222-4333-8444-555555555555'
 function onlyRecentAuth(present: boolean) {
   return async (key: string) => (present && key.startsWith('ra:') ? '1' : null)
 }
@@ -372,9 +373,8 @@ describe('MfaService', () => {
       mockRedis.setIfAbsent.mockResolvedValue(true)
       // The marker `issueTokens` plants: a real authentication completed within the window.
       mockRedis.get.mockImplementation(onlyRecentAuth(true))
-
       await expect(
-        service.setup('user-1', 'dashboard', undefined, 'tenant-1')
+        service.setup('user-1', 'dashboard', undefined, 'tenant-1', SID)
       ).resolves.toMatchObject({
         secret: expect.any(String)
       })

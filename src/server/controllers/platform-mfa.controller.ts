@@ -89,7 +89,7 @@ export class PlatformMfaController {
     @CurrentUser() user: PlatformJwtPayload,
     @Body() dto: MfaSetupDto
   ): Promise<MfaSetupResult> {
-    return this.mfaService.setup(user.sub, 'platform', dto.password)
+    return this.mfaService.setup(user.sub, 'platform', dto.password, undefined, user.sid)
   }
 
   /**

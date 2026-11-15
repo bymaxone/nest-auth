@@ -827,6 +827,7 @@ export class AuthService {
       rotated.mfaEnabled !== user.mfaEnabled
     ) {
       authoritative = this.tokenManager.issueAccess({
+        sid: rotated.sid,
         sub: user.id,
         tenantId: user.tenantId,
         role: user.role,
@@ -834,8 +835,7 @@ export class AuthService {
         status: user.status,
         mfaEnabled: user.mfaEnabled,
         // Carried across from the token the rotation just produced: a second factor already
-        // cleared on this session stays cleared, and re-stamping the authority must not
-        // silently demand it again.
+        // cleared on this session stays cleared, and re-stamping must not demand it again.
         mfaVerified: rotated.mfaVerified,
         epoch: await this.redis.getUserTokenEpoch(user.id, user.tenantId, 'dashboard')
       })

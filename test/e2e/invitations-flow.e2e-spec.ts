@@ -185,7 +185,11 @@ describe('invitations flow (E2E)', () => {
       acceptBody = accept.body as Record<string, unknown>
       const inviteeId = (acceptBody['user'] as { id: string }).id
       const resolved = app.get<{ hmacKey: string; redisNamespace: string }>(BYMAX_AUTH_OPTIONS)
-      const markKey = recentAuthKey('dashboard', inviteeId, resolved.hmacKey, 'tenant-1')
+      // The mark is the invitee's session's own: its `sid` is read from the token it was issued.
+      const { sid } = JSON.parse(
+        Buffer.from(String(acceptBody['accessToken']).split('.')[1] ?? '', 'base64url').toString()
+      ) as { sid: string }
+      const markKey = recentAuthKey('dashboard', inviteeId, resolved.hmacKey, 'tenant-1', sid)
       // The exact key, namespace included: a shared server holds the same mock user id in every
       // suite's namespace, so a pattern would find another suite's mark.
       inviteeMarked = (await redis.exists(`${resolved.redisNamespace}:${markKey}`)) === 1
