@@ -34,10 +34,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **A user with no local password is asked to re-authenticate once** for a sensitive action (enrolling MFA, and the
   workspace actions that re-prove the account) after the upgrade: until the session's next sign-in or refresh the token
   has no `sid`, and a mark written before the upgrade is not read.
-- **A host that mints tokens itself must pass the session.** Sign `sid` as the refresh family id of the session
-  (`sessionId()` accepts only 36 lowercase hexadecimal characters and hyphens in 8-4-4-4-12) and write the mark with the
-  same id; a token without a usable `sid` never satisfies the gate. `MfaService.setup` takes the caller's `sid` as a
-  trailing argument, and `ReauthenticationService.assertReauthenticated` takes it after `tenantId`.
+- **A host that signs its own access tokens must add `sid`.** Set it to the refresh family id of the session, 36
+  characters of lowercase hexadecimal and hyphens in 8-4-4-4-12; a token without a usable `sid` never satisfies the
+  re-authentication gate. A host that calls `TokenManagerService.issueTokens` needs no change, because the token it
+  returns carries `sid`. `MfaService.setup` takes the caller's `sid` as a trailing argument, and
+  `ReauthenticationService.assertReauthenticated` takes it after `tenantId`.
 
 ## [1.5.5] - 2026-11-14
 
