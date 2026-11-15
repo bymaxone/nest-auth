@@ -143,6 +143,7 @@ export class MfaService {
    *
    * @param userId - Internal ID of the user enabling MFA.
    * @param context - Which repository to use: `'dashboard'` (default) or `'platform'`.
+   * @param sid - The caller's session (its token's `sid`), for an account with no local password.
    * @returns Setup result containing the secret, QR URI, and plain recovery codes.
    * @throws `MFA_ALREADY_ENABLED` if MFA is already active on the account.
    * @throws `MFA_NOT_ENABLED` if `context === 'platform'` and the platform user
@@ -154,18 +155,17 @@ export class MfaService {
     userId: string,
     context: 'dashboard' | 'platform' = 'dashboard',
     password?: string,
-    tenantId?: string
+    tenantId?: string,
+    sid?: string
   ): Promise<MfaSetupResult> {
     assertPlaneTenant(context, tenantId)
     if (context === 'platform' && !this.platformUserRepo) {
-      // Misconfiguration: caller asked for a platform setup but the host
-      // application did not register BYMAX_AUTH_PLATFORM_USER_REPOSITORY.
-      // Failing fast here surfaces the bug at the first request rather than
-      // letting the flow silently fall back to the dashboard repo (which
-      // would persist the platform admin's MFA secret on a tenant user row).
+      // Misconfiguration: a platform setup was asked for but the host did not register
+      // BYMAX_AUTH_PLATFORM_USER_REPOSITORY. Failing fast surfaces the bug at the first request
+      // rather than falling back to the dashboard repo (which would persist the platform admin's
+      // MFA secret on a tenant user row).
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
     }
-
     const user = await this.records.loadAccount(context, userId, tenantId)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
@@ -175,19 +175,20 @@ export class MfaService {
     // enable then invalidates the sessions and bumps the epoch — locking the real owner out
     // of the account they still know the password to, with the recovery codes displayed only
     // to the attacker. ASVS requires re-authentication before changing an authentication
-    // factor; `disable` already honours that by demanding a TOTP code. Gating `setup` rather
-    // than `verify-enable` means the attacker cannot even obtain a secret they control, and
-    // it costs the user one prompt at the natural moment.
+    // factor; `disable` already honours that by demanding a TOTP code. Gating `setup` rather than
+    // `verify-enable` means the attacker cannot even obtain a secret they control, at the cost of
+    // one prompt for the user.
     //
-    // An account with no local password — provisioned purely through OAuth — has nothing to
-    // re-authenticate against here, and refusing it would make MFA unreachable for those
-    // users. Their credential is the provider's, which this library cannot re-verify inline.
+    // An account with no local password (provisioned through OAuth) has nothing to re-authenticate
+    // against here, and refusing it would make MFA unreachable for those users. Their credential
+    // is the provider's, which this library cannot re-verify inline.
     await this.reauthentication.assertReauthenticated(
       context,
       userId,
       user.passwordHash,
       password,
-      tenantId
+      tenantId,
+      sid
     )
 
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.

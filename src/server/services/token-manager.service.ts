@@ -7,6 +7,7 @@ import type { JwtSignOptions } from '@nestjs/jwt'
 import { BYMAX_AUTH_HOOKS, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { RECENT_AUTH_TTL_SECONDS, recentAuthKey } from '../constants/recent-auth'
+import { sessionId } from '../constants/session-id'
 import { sessionIndexKey } from '../constants/user-keys'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -29,6 +30,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { ownerFragment } from '../utils/owner-fragment'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
+import { serializeSession } from '../utils/serialize-session'
 import { readStampedEpoch } from '../utils/stamped-epoch'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 
@@ -233,7 +235,12 @@ export class TokenManagerService {
     // Stamp the user's current token epoch so a later bump (a password reset) invalidates this
     // token at verification, without the server having to enumerate outstanding tokens.
     const epoch = await this.redis.getUserTokenEpoch(user.id, user.tenantId, 'dashboard')
+    // A fresh login opens a new refresh-token family; every rotation inherits this id, so the
+    // whole lineage can be revoked together the moment one of its tokens is replayed. The token
+    // names it as its session.
+    const familyId = randomUUID()
     const accessToken = this.issueAccess({
+      sid: familyId,
       sub: user.id,
       tenantId: user.tenantId,
       role: user.role,
@@ -246,9 +253,6 @@ export class TokenManagerService {
 
     const rawRefreshToken = generateSecureToken()
     const tokenHash = sha256(rawRefreshToken)
-    // A fresh login opens a new refresh-token family; every rotation inherits this id, so the
-    // whole lineage can be revoked together the moment one of its tokens is replayed.
-    const familyId = randomUUID()
     const session = this.buildSession(
       user.id,
       user.tenantId,
@@ -271,23 +275,30 @@ export class TokenManagerService {
       kind: 'dashboard',
       tenantId: user.tenantId,
       tokenHash,
-      sessionJson: this.serializeSession(session),
+      sessionJson: serializeSession(session),
       familyId,
       userId: user.id,
       refreshTtl: ttl
     })
 
-    // Only a credential presented in this request proves a recent authentication; a refresh
-    // proves possession of a token, so `reissueTokens` never writes this mark.
-    if (overrides?.credentialProved === true) {
-      await this.redis.set(
-        recentAuthKey('dashboard', user.id, this.options.hmacKey, user.tenantId),
-        '1',
-        RECENT_AUTH_TTL_SECONDS
-      )
-    }
+    if (overrides?.credentialProved === true) await this.markRecentAuth(user, familyId)
 
     return { user, accessToken, rawRefreshToken }
+  }
+
+  /**
+   * Records that the session just born presented a credential.
+   *
+   * Only a credential presented in this request proves a recent authentication; a refresh proves
+   * possession of a token, so `reissueTokens` never writes this mark. The key names the session, so
+   * another session of the same account cannot use it.
+   */
+  private async markRecentAuth(user: SafeAuthUser, sid: string): Promise<void> {
+    await this.redis.set(
+      recentAuthKey('dashboard', user.id, this.options.hmacKey, user.tenantId, sid),
+      '1',
+      RECENT_AUTH_TTL_SECONDS
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -313,7 +324,10 @@ export class TokenManagerService {
     overrides?: { mfaVerified?: boolean }
   ): Promise<PlatformAuthResult> {
     const epoch = await this.redis.getUserTokenEpoch(admin.id, undefined, 'platform')
+    // A fresh platform login opens its own refresh-token family, indexed under `pfam:`.
+    const familyId = randomUUID()
     const accessToken = this.issuePlatformAccess({
+      sid: familyId,
       sub: admin.id,
       role: admin.role,
       type: 'platform',
@@ -321,11 +335,8 @@ export class TokenManagerService {
       mfaVerified: overrides?.mfaVerified ?? false,
       epoch
     })
-
     const rawRefreshToken = generateSecureToken()
     const tokenHash = sha256(rawRefreshToken)
-    // A fresh platform login opens its own refresh-token family, indexed under `pfam:`.
-    const familyId = randomUUID()
     const session = this.buildSession(
       admin.id,
       '',
@@ -347,7 +358,7 @@ export class TokenManagerService {
       kind: 'platform',
       tenantId: undefined,
       tokenHash,
-      sessionJson: this.serializeSession(session),
+      sessionJson: serializeSession(session),
       familyId,
       userId: admin.id,
       refreshTtl: ttl
@@ -453,7 +464,7 @@ export class TokenManagerService {
       tenantId: seed.tenantId,
       oldHash,
       newHash,
-      newSessionJson: this.serializeSession(newSession),
+      newSessionJson: serializeSession(newSession),
       familyId: seed.familyId,
       userId: seed.userId,
       refreshTtl,
@@ -717,7 +728,7 @@ export class TokenManagerService {
       kind: 'dashboard',
       tenantId: graceSession.tenantId,
       newHash: anotherNewHash,
-      newSessionJson: this.serializeSession(anotherSession),
+      newSessionJson: serializeSession(anotherSession),
       familyId: graceSession.familyId,
       userId: graceSession.userId,
       refreshTtl
@@ -809,22 +820,6 @@ export class TokenManagerService {
   }
 
   /**
-   * Serializes a session record for storage, omitting an empty `familyId`.
-   *
-   * rust-auth skips the field when empty (`skip_serializing_if`), so emitting `"familyId":""`
-   * here would make the same session serialize to different bytes on each side and break the
-   * shared-Redis contract. A record with no family simply has no key.
-   *
-   * @param session - The record to store.
-   * @returns The JSON string written under an `rt:`/`prt:` key.
-   */
-  private serializeSession(session: RefreshSession): string {
-    if (session.familyId !== '') return JSON.stringify(session)
-    const { familyId: _omitted, familyCreatedAt: _alsoOmitted, ...rest } = session
-    return JSON.stringify(rest)
-  }
-
-  /**
    * Constructs a session record from identity fields and request metadata.
    *
    * @param userId - Internal user ID for whom the session is being created.
@@ -901,6 +896,7 @@ export class TokenManagerService {
     // by the very next rotation rather than being carried over from the old token.
     const epoch = await this.redis.getUserTokenEpoch(session.userId, session.tenantId, 'dashboard')
     const accessToken = this.issueAccess({
+      sid: sessionId(session.familyId),
       sub: session.userId,
       tenantId: session.tenantId,
       role: session.role,
@@ -964,7 +960,7 @@ export class TokenManagerService {
       tenantId: undefined,
       oldHash,
       newHash,
-      newSessionJson: this.serializeSession(newSession),
+      newSessionJson: serializeSession(newSession),
       familyId: seed.familyId,
       userId: seed.userId,
       refreshTtl,
@@ -1083,7 +1079,7 @@ export class TokenManagerService {
       kind: 'platform',
       tenantId: undefined,
       newHash: anotherNewHash,
-      newSessionJson: this.serializeSession(anotherSession),
+      newSessionJson: serializeSession(anotherSession),
       familyId: graceSession.familyId,
       userId: graceSession.userId,
       refreshTtl
@@ -1115,6 +1111,7 @@ export class TokenManagerService {
   ): Promise<RotatedTokenResult> {
     const epoch = await this.redis.getUserTokenEpoch(session.userId, undefined, 'platform')
     const accessToken = this.issuePlatformAccess({
+      sid: sessionId(session.familyId),
       sub: session.userId,
       role: session.role,
       type: 'platform',
@@ -1157,6 +1154,7 @@ export class TokenManagerService {
     mfaEnabled: boolean
   ): Promise<string> {
     return this.issuePlatformAccess({
+      sid: claims.sid,
       sub: claims.sub,
       role,
       type: 'platform',

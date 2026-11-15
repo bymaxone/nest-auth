@@ -26,6 +26,8 @@ const MINIMAL_OPTIONS: BymaxAuthModuleOptions = {
   rateLimit: { clientIpSource: 'peer' }
 }
 
+const SID = '11111111-2222-4333-8444-555555555555'
+
 describe('resolveOptions — identifierKey', () => {
   const NEW_SECRET = 'Qw3$eR6%tY9&uI2*oP5(aS8)dF1!gH4@jK7zXcVbNm'
 
@@ -132,7 +134,10 @@ describe('resolveOptions — identifierKey', () => {
       ['platform session index', (k) => sessionIndexKey('platform', 'admin-1', k, undefined)],
       ['token epoch', (k) => tokenEpochKey('dashboard', 'user-1', k, 'tenant-1')],
       ['platform token epoch', (k) => tokenEpochKey('platform', 'admin-1', k, undefined)],
-      ['recent-authentication marker', (k) => recentAuthKey('dashboard', 'user-1', k, 'tenant-1')],
+      [
+        'recent-authentication marker',
+        (k) => recentAuthKey('dashboard', 'user-1', k, 'tenant-1', SID)
+      ],
       [
         'MFA setup and lock keys',
         (k) =>

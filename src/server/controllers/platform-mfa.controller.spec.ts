@@ -22,6 +22,7 @@ import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 const PLATFORM_JWT_PAYLOAD = {
   jti: 'platform-jti',
+  sid: '11111111-2222-4333-8444-555555555555',
   sub: 'admin-1',
   role: 'super-admin',
   type: 'platform' as const,
@@ -94,7 +95,13 @@ describe('PlatformMfaController', () => {
 
       const result = await controller.setup(PLATFORM_JWT_PAYLOAD as never, { password: 'pw' })
 
-      expect(mockMfaService.setup).toHaveBeenCalledWith(PLATFORM_JWT_PAYLOAD.sub, 'platform', 'pw')
+      expect(mockMfaService.setup).toHaveBeenCalledWith(
+        PLATFORM_JWT_PAYLOAD.sub,
+        'platform',
+        'pw',
+        undefined,
+        PLATFORM_JWT_PAYLOAD.sid
+      )
       expect(result).toBe(MFA_SETUP_RESULT)
     })
 

@@ -186,7 +186,7 @@ export class MfaController {
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaSetupDto
   ): Promise<MfaSetupResult> {
-    return this.mfaService.setup(user.sub, 'dashboard', dto.password, user.tenantId)
+    return this.mfaService.setup(user.sub, 'dashboard', dto.password, user.tenantId, user.sid)
   }
 
   /**

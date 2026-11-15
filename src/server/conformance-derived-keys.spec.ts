@@ -27,6 +27,7 @@ const contract = JSON.parse(
 ) as DerivedKeyContract
 
 const HMAC_KEY = 'a'.repeat(64)
+const SID = '11111111-2222-4333-8444-555555555555'
 
 type Plane = 'dashboard' | 'platform'
 
@@ -73,6 +74,7 @@ function renderDerivedKey(
       plane === 'dashboard' ? dashboard : platform
     )
     .replace('{hmac_sha256(hmacKey, userSubject)}', digest)
+    .replace('{sid}', SID)
 }
 
 describe('account-derived keys rendered from the contract', () => {
@@ -106,7 +108,7 @@ describe('account-derived keys rendered from the contract', () => {
       input
     )
 
-    expect(recentAuthKey(input.plane, input.userId, HMAC_KEY, input.tenantId)).toBe(rendered)
+    expect(recentAuthKey(input.plane, input.userId, HMAC_KEY, input.tenantId, SID)).toBe(rendered)
   })
 
   // Scenario: two tenants whose ids make the same string under a bare delimiter. Expected: the

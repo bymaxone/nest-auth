@@ -53,7 +53,7 @@ export class WorkspaceCallerService {
    *   sign-in.
    */
   async reauthenticate(
-    caller: Pick<DashboardJwtPayload, 'sub' | 'tenantId'>,
+    caller: Pick<DashboardJwtPayload, 'sub' | 'tenantId' | 'sid'>,
     password: string | undefined
   ): Promise<void> {
     const user = await this.find(caller)
@@ -62,7 +62,8 @@ export class WorkspaceCallerService {
       user.id,
       user.passwordHash,
       password,
-      caller.tenantId
+      caller.tenantId,
+      caller.sid
     )
   }
 

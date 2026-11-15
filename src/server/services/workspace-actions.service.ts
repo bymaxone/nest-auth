@@ -17,7 +17,7 @@ import type { AuthMembership } from '../interfaces/membership-repository.interfa
 import type { AuthWorkspace, WorkspaceRef } from '../interfaces/workspace-repository.interface'
 
 /** The verified token of the caller: who they are and the tenant they belong to. */
-type Caller = Pick<DashboardJwtPayload, 'sub' | 'tenantId'>
+type Caller = Pick<DashboardJwtPayload, 'sub' | 'tenantId' | 'sid'>
 
 /** What a hand-over of ownership names: the receiver, the role the giver keeps, and the giver's proof. */
 export interface HandOver {

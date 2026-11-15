@@ -12,6 +12,7 @@ import { PasswordService } from './password.service'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { recentAuthKey } from '../constants/recent-auth'
+import { sessionId } from '../constants/session-id'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -49,6 +50,8 @@ export class ReauthenticationService {
    * @param userId - The account being changed, part of the counter's key.
    * @param passwordHash - The account's stored hash, or `null` for an OAuth-only account.
    * @param password - The password the caller submitted, if any.
+   * @param tenantId - The caller's tenant on the dashboard plane, part of the key.
+   * @param sid - The caller's session, from its token; only an account with no password reads it.
    * @throws {@link AuthException} `ACCOUNT_LOCKED` once the failure budget for this flow is
    *   spent, or `INVALID_CREDENTIALS` when the account has a password and the submitted one is
    *   absent or wrong. The latter is deliberately the same code a failed login returns: an
@@ -59,7 +62,8 @@ export class ReauthenticationService {
     userId: string,
     passwordHash: string | null,
     password: string | undefined,
-    tenantId: string | undefined
+    tenantId: string | undefined,
+    sid: string | undefined
   ): Promise<void> {
     if (passwordHash === null) {
       // No local password to re-prove — the account was provisioned through OAuth and its
@@ -80,9 +84,7 @@ export class ReauthenticationService {
       // rotate it indefinitely and never make the mark fresh again. Producing one requires
       // driving a real sign-in, which requires the provider credentials the theft did not
       // include.
-      const recent = await this.redis.get(
-        recentAuthKey(context, userId, this.options.hmacKey, tenantId)
-      )
+      const recent = await this.recentMark(context, userId, tenantId, sid)
       if (recent === null) {
         this.logger.warn(
           `reauthenticate: no recent authentication userId=${logSafe(userId)} context=${context}`
@@ -109,5 +111,25 @@ export class ReauthenticationService {
     }
 
     await this.lockout.reset('reauth', context, userId, tenantId)
+  }
+
+  /**
+   * The recent-authentication mark of the caller's own session, or `null` when there is none.
+   *
+   * The proof is the caller's own: the mark is keyed by the session that earned it, so another
+   * session of the same account cannot borrow it. A token with no usable `sid`, one minted before
+   * the claim existed, names no session and earns nothing, so no key is read for it.
+   */
+  private async recentMark(
+    context: MfaFlowPlane,
+    userId: string,
+    tenantId: string | undefined,
+    sid: string | undefined
+  ): Promise<string | null> {
+    const bound = sessionId(sid)
+    if (bound === undefined) return null
+    return await this.redis.get(
+      recentAuthKey(context, userId, this.options.hmacKey, tenantId, bound)
+    )
   }
 }

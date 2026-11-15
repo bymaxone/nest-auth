@@ -33,7 +33,7 @@ describe('MFA log context', () => {
     const service = new ReauthenticationService(OPTIONS, {} as never, {} as never, LOCKED)
 
     await expect(
-      service.assertReauthenticated('dashboard', 'u1', 'hash', 'secret', 't1')
+      service.assertReauthenticated('dashboard', 'u1', 'hash', 'secret', 't1', undefined)
     ).rejects.toBeDefined()
 
     expect(contextOf(warn)).toBe('MfaService')
