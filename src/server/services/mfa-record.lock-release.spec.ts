@@ -9,6 +9,7 @@
 import { Logger } from '@nestjs/common'
 
 import { MfaRecordService } from './mfa-record.service'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 
 const OPTIONS = { hmacKey: 'k'.repeat(48), blockedStatuses: [] } as never
 const USER = { id: 'u1', tenantId: 't1', status: 'active', mfaEnabled: false }
@@ -101,5 +102,29 @@ describe('MfaRecordService.transition lock release', () => {
     expect(keys[0]).toMatch(/^mfalock:[0-9a-f]{64}$/)
     expect(args[0]).toMatch(/^[0-9a-f]{32}$/)
     expect(warn).not.toHaveBeenCalled()
+  })
+  // Scenario: a release failed, so the lock is still held, and a second transition on the same
+  // account arrives; the lock then expires and a third arrives. Expected: the second is refused with
+  // MFA_STATE_CONFLICT (try again), the third succeeds, and the lock was taken for ten seconds.
+  // Why: this is the cost of swallowing a failed release, and it is bounded by the TTL.
+  it('refuses a second transition while the lock stays held, until its TTL ends it', async () => {
+    const { service, redis } = build()
+    let held = false
+    redis.setIfAbsent.mockImplementation(() => {
+      const taken = !held
+      held = true
+      return Promise.resolve(taken)
+    })
+    redis.eval.mockRejectedValue(new Error('connection lost'))
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation()
+
+    await expect(service.transition('dashboard', 'u1', 't1', () => WRITE)).resolves.toBe(true)
+    await expect(service.transition('dashboard', 'u1', 't1', () => WRITE)).rejects.toMatchObject({
+      response: { error: { code: AUTH_ERROR_CODES.MFA_STATE_CONFLICT } }
+    })
+    held = false
+    await expect(service.transition('dashboard', 'u1', 't1', () => WRITE)).resolves.toBe(true)
+
+    expect(redis.setIfAbsent.mock.calls.every((call) => call[2] === 10)).toBe(true)
   })
 })
