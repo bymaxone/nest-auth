@@ -37,7 +37,10 @@ function build(): {
 }
 
 describe('MfaRecordService.transition lock release', () => {
-  afterEach(() => jest.restoreAllMocks())
+  afterEach(() => {
+    jest.useRealTimers()
+    jest.restoreAllMocks()
+  })
 
   // Scenario: the write commits and the store then fails the release. Expected: the transition
   // answers true, as it wrote. Why: an error here would tell the caller an MFA change that is in the
@@ -104,27 +107,33 @@ describe('MfaRecordService.transition lock release', () => {
     expect(warn).not.toHaveBeenCalled()
   })
   // Scenario: a release failed, so the lock is still held, and a second transition on the same
-  // account arrives; the lock then expires and a third arrives. Expected: the second is refused with
-  // MFA_STATE_CONFLICT (try again), the third succeeds, and the lock was taken for ten seconds.
-  // Why: this is the cost of swallowing a failed release, and it is bounded by the TTL.
-  it('refuses a second transition while the lock stays held, until its TTL ends it', async () => {
+  // account arrives; the store then honours the ten seconds the service asked for and a third arrives.
+  // Expected: the second is refused with MFA_STATE_CONFLICT (try again) and still refused at nine
+  // seconds, and the third succeeds after ten. Why: this is the cost of swallowing a failed release,
+  // and it is bounded by the TTL the lock was taken with.
+  it('refuses a second transition while the lock is held, until its ten seconds are over', async () => {
+    jest.useFakeTimers()
     const { service, redis } = build()
-    let held = false
-    redis.setIfAbsent.mockImplementation(() => {
-      const taken = !held
-      held = true
+    const expiries = new Map<string, number>()
+    redis.setIfAbsent.mockImplementation((key: string, _value: string, ttl: number) => {
+      const taken = (expiries.get(key) ?? 0) <= Date.now()
+      if (taken) expiries.set(key, Date.now() + ttl * 1000)
       return Promise.resolve(taken)
     })
     redis.eval.mockRejectedValue(new Error('connection lost'))
     jest.spyOn(Logger.prototype, 'warn').mockImplementation()
 
     await expect(service.transition('dashboard', 'u1', 't1', () => WRITE)).resolves.toBe(true)
-    await expect(service.transition('dashboard', 'u1', 't1', () => WRITE)).rejects.toMatchObject({
-      response: { error: { code: AUTH_ERROR_CODES.MFA_STATE_CONFLICT } }
-    })
-    held = false
+    const refused = { response: { error: { code: AUTH_ERROR_CODES.MFA_STATE_CONFLICT } } }
+    await expect(service.transition('dashboard', 'u1', 't1', () => WRITE)).rejects.toMatchObject(
+      refused
+    )
+    jest.advanceTimersByTime(9_000)
+    await expect(service.transition('dashboard', 'u1', 't1', () => WRITE)).rejects.toMatchObject(
+      refused
+    )
+    jest.advanceTimersByTime(1_000)
     await expect(service.transition('dashboard', 'u1', 't1', () => WRITE)).resolves.toBe(true)
-
-    expect(redis.setIfAbsent.mock.calls.every((call) => call[2] === 10)).toBe(true)
+    jest.useRealTimers()
   })
 })
