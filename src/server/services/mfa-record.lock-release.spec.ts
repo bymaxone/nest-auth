@@ -100,10 +100,12 @@ describe('MfaRecordService.transition lock release', () => {
 
     await service.transition('dashboard', 'u1', 't1', () => WRITE)
 
+    // The lock this call took, and what it released: the same key and the same nonce.
+    const [lockKey, lockToken] = redis.setIfAbsent.mock.calls[0] as [string, string, number]
+    expect(lockKey).toMatch(/^mfalock:[0-9a-f]{64}$/)
+    expect(lockToken).toMatch(/^[0-9a-f]{32}$/)
     expect(redis.eval).toHaveBeenCalledTimes(1)
-    const [, keys, args] = redis.eval.mock.calls[0] as [string, string[], string[]]
-    expect(keys[0]).toMatch(/^mfalock:[0-9a-f]{64}$/)
-    expect(args[0]).toMatch(/^[0-9a-f]{32}$/)
+    expect(redis.eval).toHaveBeenCalledWith(expect.any(String), [lockKey], [lockToken])
     expect(warn).not.toHaveBeenCalled()
   })
   // Scenario: a release failed, so the lock is still held, and a second transition on the same
