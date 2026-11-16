@@ -156,6 +156,10 @@ pnpm add next react server-only
 ```
 
 > [!NOTE]
+> The server subpath needs one Redis that every request reaches: a single node, a Sentinel setup or a replica set.
+> Redis Cluster is not supported, because the scripts that write a session touch keys that hash to different slots.
+
+> [!NOTE]
 > `server-only` is what makes importing the Next.js JWT helper from a Client Component a
 > **build error**. That module receives the HS256 secret, and a secret in a client chunk is a
 > secret published to every visitor — with nothing downstream to notice. It is a marker package

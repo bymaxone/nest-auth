@@ -29,7 +29,8 @@ const redis = {
 const options = {
   jwt: { accessExpiresIn: '15m', refreshExpiresInDays: 7, refreshGraceWindowSeconds: 30 },
   hmacKey: HMAC_KEY,
-  previousHmacKeys: []
+  previousHmacKeys: [],
+  sessions: { enabled: false }
 }
 const USER = {
   id: 'user-1',
@@ -101,11 +102,14 @@ describe('the session claim of minted access tokens', () => {
     const familyId = (redis.writeNewSession.mock.calls[0] as [{ familyId: string }])[0].familyId
     expect(lastClaims()['sid']).toBe(familyId)
     expect(familyId).toMatch(SESSION_ID)
-    expect(redis.set).toHaveBeenCalledWith(
-      recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1', familyId),
-      '1',
-      300
-    )
+    const extras = (redis.writeNewSession.mock.calls[0] as [{ extras: unknown[] }])[0].extras
+    expect(extras).toEqual([
+      {
+        key: recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1', familyId),
+        value: '1',
+        ttl: 300
+      }
+    ])
   })
 
   it('names a new platform session by the family it is stored under', async () => {

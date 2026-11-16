@@ -21,6 +21,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { runDetached } from '../utils/run-detached'
+import { parseUserAgent } from '../utils/session-detail'
 import { raiseFirst } from '../utils/settle-writes'
 
 // ---------------------------------------------------------------------------
@@ -158,54 +159,6 @@ function parseStoredDetail(raw: string): StoredSessionDetail | null {
   } catch {
     return null
   }
-}
-
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Parses a raw User-Agent string into a short human-readable description.
- *
- * Uses only regex — no external libraries. Detects the browser and OS
- * from the most common UA patterns and returns a string of the form
- * "BrowserName on OSName" (e.g. "Chrome on macOS").
- *
- * @param ua - Raw `User-Agent` header value.
- * @returns Human-readable device description.
- */
-function parseUserAgent(ua: string): string {
-  // --- Browser detection (order matters: Edge > Opera > Chrome > Firefox > Safari) ---
-  let browser = 'Unknown Browser'
-
-  if (/Edg\//.test(ua)) {
-    browser = 'Edge'
-  } else if (/OPR\/|Opera/.test(ua)) {
-    browser = 'Opera'
-  } else if (/Chrome\//.test(ua)) {
-    browser = 'Chrome'
-  } else if (/Firefox\//.test(ua)) {
-    browser = 'Firefox'
-  } else if (/Safari\//.test(ua) && /Version\//.test(ua)) {
-    browser = 'Safari'
-  }
-
-  // --- OS detection ---
-  let os = 'Unknown OS'
-
-  if (/Android/.test(ua)) {
-    os = 'Android'
-  } else if (/iPhone|iPad|iPod/.test(ua)) {
-    os = 'iOS'
-  } else if (/Windows/.test(ua)) {
-    os = 'Windows'
-  } else if (/Macintosh|Mac OS X/.test(ua)) {
-    os = 'macOS'
-  } else if (/Linux/.test(ua)) {
-    os = 'Linux'
-  }
-
-  return `${browser} on ${os}`
 }
 
 // ---------------------------------------------------------------------------
@@ -364,10 +317,10 @@ export class SessionService {
   /**
    * Records a new session in Redis and enforces the concurrent session limit.
    *
-   * Stores device and activity metadata under `sd:{hash}` with the same TTL
-   * as the refresh token. Calls `enforceSessionLimit` to evict the oldest
-   * session when the user has exceeded their limit. Fires the `onNewSession`
-   * hook (fire-and-forget) after the session is recorded.
+   * The device and activity record under `sd:{hash}` is written with the session itself, by
+   * `TokenManagerService.issueTokens`, so it cannot be missing for a session that exists. This
+   * method calls `enforceSessionLimit` to evict the oldest session when the user has exceeded
+   * their limit, and fires the `onNewSession` hook (fire-and-forget).
    *
    * @remarks
    * **Caller ordering contract:** This method must be called **after**
@@ -391,19 +344,6 @@ export class SessionService {
     this.assertTenant(tenantId)
     const hash = sha256(rawRefreshToken)
     const device = parseUserAgent(userAgent)
-    const now = Date.now()
-    const ttl = this.options.jwt.refreshExpiresInDays * 86_400
-
-    const detail: StoredSessionDetail = {
-      device,
-      // Truncate to MAX_IP_LENGTH before storage to guard against oversized
-      // attacker-controlled values arriving via X-Forwarded-For.
-      ip: ip.slice(0, MAX_IP_LENGTH),
-      createdAt: now,
-      lastActivityAt: now
-    }
-
-    await this.redis.set(`sd:${hash}`, JSON.stringify(detail), ttl)
 
     await this.enforceSessionLimit(userId, tenantId, hash, ip, userAgent)
 

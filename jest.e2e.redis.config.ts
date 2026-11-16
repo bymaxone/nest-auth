@@ -25,6 +25,8 @@ const config: Config = {
     '<rootDir>/session-eviction.e2e-spec.ts',
     '<rootDir>/sessions-flow.e2e-spec.ts',
     '<rootDir>/live-session-required.e2e-spec.ts',
+    // A session born in one script: the records written with it, each with its own lifetime.
+    '<rootDir>/login-atomic-session-write.e2e-spec.ts',
     // Revocation and the token epoch across a password change.
     '<rootDir>/password-reset-flow.e2e-spec.ts',
     '<rootDir>/auth-flow.e2e-spec.ts',

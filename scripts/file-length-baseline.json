@@ -14,7 +14,7 @@
     "src/server/oauth/oauth.service.spec.ts": 1543,
     "src/server/providers/default-auth-email.provider.spec.ts": 1205,
     "src/server/redis/auth-redis.service.spec.ts": 1363,
-    "src/server/redis/auth-redis.service.ts": 1254,
+    "src/server/redis/auth-redis.service.ts": 1228,
     "src/server/services/auth.service.spec.ts": 3664,
     "src/server/services/auth.service.ts": 1483,
     "src/server/services/invitation.service.spec.ts": 1554,
@@ -23,11 +23,11 @@
     "src/server/services/password-reset.service.ts": 989,
     "src/server/services/password.service.spec.ts": 919,
     "src/server/services/platform-auth.service.spec.ts": 1014,
-    "src/server/services/session.service.spec.ts": 3023,
-    "src/server/services/session.service.ts": 1130,
+    "src/server/services/session.service.spec.ts": 2754,
+    "src/server/services/session.service.ts": 1070,
     "src/server/services/token-delivery.service.spec.ts": 1176,
-    "src/server/services/token-manager.service.spec.ts": 2703,
-    "src/server/services/token-manager.service.ts": 1408,
+    "src/server/services/token-manager.service.spec.ts": 2696,
+    "src/server/services/token-manager.service.ts": 1403,
     "test/e2e/oauth-flow.e2e-spec.ts": 1289
   }
 }

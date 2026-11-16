@@ -54,7 +54,8 @@ const mockOptions = {
     secret: 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long'
   },
   hmacKey: createHash('sha256').update('bymax-auth:hmac-key:v1:x', 'utf8').digest('hex'),
-  previousHmacKeys: []
+  previousHmacKeys: [],
+  sessions: { enabled: false }
 }
 
 const USER = {

@@ -171,10 +171,9 @@ describe('SessionService', () => {
       })
     })
 
-    // Verifies that stores sd:{hash} in Redis with the correct TTL.
-    it('stores sd:{hash} in Redis with the correct TTL', async () => {
-      const hash = sha256(rawToken)
-
+    // Scenario: a session is created. Expected: no detail record is written here. Why: it is written
+    // with the session itself, so this step only enforces the limit and fires the hook.
+    it('writes no detail record, which the session creation already holds', async () => {
       await service.createSession({
         userId: userId,
         tenantId: 'tenant-1',
@@ -183,7 +182,7 @@ describe('SessionService', () => {
         userAgent: userAgent
       })
 
-      expect(mockRedis.set).toHaveBeenCalledWith(`sd:${hash}`, expect.any(String), TTL)
+      expect(mockRedis.set).not.toHaveBeenCalled()
     })
 
     // Verifies that returns the sha256 hash of the raw refresh token.
@@ -201,63 +200,8 @@ describe('SessionService', () => {
       expect(result).toBe(expected)
     })
 
-    // Verifies that truncates IP to 45 characters before storage.
-    it('truncates IP to 45 characters before storage', async () => {
-      const longIp = 'a'.repeat(60)
-
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: longIp,
-        userAgent: userAgent
-      })
-
-      expect(mockRedis.set).toHaveBeenCalledTimes(1)
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        ip: string
-      }
-      expect(stored.ip).toHaveLength(45)
-    })
-
-    // Verifies that stores the parsed device string (non-empty) in the detail record.
-    it('stores the parsed device string (non-empty) in the detail record', async () => {
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: userAgent
-      })
-
-      expect(mockRedis.set).toHaveBeenCalledTimes(1)
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toBeTruthy()
-    })
-
-    // Verifies that stores createdAt and lastActivityAt as numbers in the detail record.
-    it('stores createdAt and lastActivityAt as numbers in the detail record', async () => {
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: userAgent
-      })
-
-      expect(mockRedis.set).toHaveBeenCalledTimes(1)
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        createdAt: unknown
-        lastActivityAt: unknown
-      }
-      expect(typeof stored.createdAt).toBe('number')
-      expect(typeof stored.lastActivityAt).toBe('number')
-    })
-
-    // Verifies that calls enforceSessionLimit after storing the detail (smembers called).
-    it('calls enforceSessionLimit after storing the detail (smembers called)', async () => {
+    // Verifies that calls enforceSessionLimit (smembers called).
+    it('calls enforceSessionLimit (smembers called)', async () => {
       await service.createSession({
         userId: userId,
         tenantId: 'tenant-1',
@@ -901,219 +845,6 @@ describe('SessionService', () => {
 
       // Assert — error was logged, not thrown
       expect(Logger.prototype.error).toHaveBeenCalledWith('onSessionEvicted hook threw: <error>')
-    })
-
-    // Verifies that a user-agent containing Edg/ is stored with an Edge browser label.
-    it('detects Edge browser from Edg/ token', async () => {
-      const edgeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/123.0'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: edgeUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('Edge')
-    })
-
-    // Verifies that a user-agent containing OPR/ is stored with an Opera browser label.
-    it('detects Opera browser from OPR/ token', async () => {
-      const operaUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 OPR/123.0'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: operaUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('Opera')
-    })
-
-    // Verifies that a Safari user-agent (Version + Safari tokens, no Chrome/Edg/OPR) is stored with a Safari browser label.
-    it('detects Safari browser (Safari + Version tokens, no Chrome/Edg/OPR)', async () => {
-      const safariUA =
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: safariUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('Safari')
-    })
-
-    // Verifies that a user-agent containing the Android token is stored with an Android OS label.
-    it('detects Android OS', async () => {
-      const androidUA =
-        'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 Chrome/112.0 Mobile Safari/537.36'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: androidUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('Android')
-    })
-
-    // Verifies that a user-agent containing the iPhone token is stored with an iOS OS label.
-    it('detects iOS from iPhone token', async () => {
-      const iosUA =
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 Version/16.4 Mobile Safari/604.1'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: iosUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('iOS')
-    })
-
-    // Verifies that a user-agent containing the Windows NT token is stored with a Windows OS label.
-    it('detects Windows OS', async () => {
-      const windowsUA =
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/112.0 Safari/537.36'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: windowsUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('Windows')
-    })
-
-    // Verifies that a user-agent containing the Linux token (non-Android desktop) is stored with a Linux OS label.
-    it('detects Linux OS', async () => {
-      const linuxUA =
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/112.0 Safari/537.36'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: linuxUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('Linux')
-    })
-
-    // Scenario: a clean Chrome UA (no Edg/OPR/Firefox, Safari token but no Version token).
-    // Expected: device contains 'Chrome'. Why: kills the Chrome-branch mutants on line 138
-    // (`else if (false)`), 138:35 (empty block), and 139 (`browser = ''`) — the Chrome browser
-    // label is never asserted by the existing OS-focused tests.
-    it('detects Chrome browser from Chrome/ token', async () => {
-      const chromeUA =
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: chromeUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('Chrome')
-    })
-
-    // Scenario: a Firefox UA (no Edg/OPR/Chrome).
-    // Expected: device contains 'Firefox'. Why: kills the Firefox-branch mutants on line 140
-    // (`else if (false)`), 140:36 (empty block), and 141 (`browser = ''`).
-    it('detects Firefox browser from Firefox/ token', async () => {
-      const firefoxUA = 'Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: firefoxUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('Firefox')
-    })
-
-    // Scenario: a desktop macOS UA must yield the 'macOS' OS label.
-    // Expected: device contains 'macOS'. Why: kills the macOS-branch mutants on line 155
-    // (`else if (false)`), 155:45 (empty block), and 156 (`os = ''`) — the macOS label is never
-    // asserted by the existing tests (which assert browser labels for Mac UAs).
-    it('detects macOS from a Macintosh UA', async () => {
-      const macUA =
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: macUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('macOS')
-    })
-
-    // Scenario: an unrecognised UA matches no browser and no OS pattern.
-    // Expected: device === 'Unknown Browser on Unknown OS'. Why: kills the StringLiteral defaults on
-    // line 132 (`'Unknown Browser'` → '') and 147 (`'Unknown OS'` → ''), the Safari `if (true)` mutant
-    // on line 142 and the Linux `if (true)` mutant on line 157 — both would mislabel an unknown UA.
-    it('labels an unrecognised user-agent as Unknown Browser on Unknown OS', async () => {
-      const unknownUA = 'curl/7.88.1'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: unknownUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toBe('Unknown Browser on Unknown OS')
-    })
-
-    // Scenario: a UA with a Safari/ token but NO Version/ token (and no Chrome/Edg/OPR/Firefox).
-    // Expected: device contains 'Unknown Browser', NOT 'Safari'. Why: kills the LogicalOperator mutant
-    // on line 142 (`/Safari\//.test(ua) && /Version\//.test(ua)` → `||`) which would label this as
-    // Safari despite the missing Version token.
-    it('does not label a Safari-token-only UA (no Version) as Safari', async () => {
-      const safariNoVersionUA = 'Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Safari/605.1.15'
-      await service.createSession({
-        userId: userId,
-        tenantId: 'tenant-1',
-        rawRefreshToken: rawToken,
-        ip: ip,
-        userAgent: safariNoVersionUA
-      })
-      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
-        device: string
-      }
-      expect(stored.device).toContain('Unknown Browser')
     })
 
     // Scenario: the onNewSession hook receives a short (8-char) sessionHash, not the full hash.
