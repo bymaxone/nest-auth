@@ -122,7 +122,9 @@ Both are settled deliberately, and reopening either costs a round trip and chang
   referenced by the `@v1` alias on purpose: a fix has to land once and reach every repository, the
   tag is immutable and the alias moves only on a release, and pinning was measured to cost ~58
   dependency pull requests to propagate one change. Third-party actions are the opposite case and
-  **are** pinned by SHA.
+  **are** pinned by SHA. The one exception among the `bymaxone/.github` reusables is `agents-sync.yml`:
+  it is handed the sync App's private key, so a caller pins it to a release commit; do not propose
+  moving it back to `@v1`.
 
 **Safe path:** if you believe a settled decision is now wrong, say so as a question in the pull
 request rather than as a finding.
@@ -130,8 +132,7 @@ request rather than as a finding.
 ### Suppressions are refusals, not exceptions
 
 `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, `eslint-disable` in any form,
-`as unknown as` laundering a real type error (`scripts/check-double-assertions.mjs` fails a new site
-and a baselined file that gains one), `istanbul ignore`, and in Rust `#[allow(...)]` over a
+`as unknown as` laundering a real type error, `istanbul ignore`, and in Rust `#[allow(...)]` over a
 lint gate or `unsafe` without a `// SAFETY:` comment are blocking findings.
 
 Anything a configured gate already reports belongs to the gate, not to a review: where a repository
@@ -168,6 +169,8 @@ will hit on the other path — what the alternative did, what it costs in number
 constraint it supports, however it was obtained. What ages is the part that cannot recur for them:
 what a previous version of this code did, a version number, a registry state, a review round, a
 failure that has since been fixed. Flag those; keep the measurement.
+
+A test's title states only what its assertions establish; a title that names a behaviour no assertion checks is a finding.
 
 ### Size and layering
 
@@ -217,21 +220,19 @@ rewrite published history.
 
 <!--
   BYTE BUDGET. Codex reads this file per directory, root to changed file, and stops at
-  `project_doc_max_bytes` — 32768 by default — counting the root file and any nested
-  `AGENTS.md` together. Past that it truncates silently: no error, no warning, and the tail
-  of this file simply stops being guidance.
+  `project_doc_max_bytes` (32768 by default), counting the root file and any nested `AGENTS.md`
+  together. Past that it truncates silently: no error, and the tail of this file stops being
+  guidance.
 
   The shared block above is centrally managed and grows when the org adds a rule, so the
-  headroom is not yours alone to spend. Check `wc -c AGENTS.md` before adding a section, and
-  prefer `docs/guidelines/` for anything a reviewer does not need in the diff.
+  headroom is not yours alone. Check `wc -c AGENTS.md` before adding a section, and prefer
+  `docs/guidelines/` for anything a reviewer does not need in the diff.
 
-  A nested `AGENTS.md` is guidance for its directory, loaded automatically whenever Codex works
-  there or below, and it costs nothing on any other path. That makes it the right home for a rule
-  true only under one directory — and the reason a FIXTURE, TEMPLATE or consumer-facing example
-  must never carry that name: under it, sample content becomes real guidance for every change in
-  its directory and spends the cap of every chain that passes through. Add one deliberately or
-  not at all, and measure the worst CHAIN — root plus the nested files on one path — never the
-  sum of every such file, since siblings are never loaded together.
+  A nested `AGENTS.md` is guidance for its directory and costs nothing on any other path, so it is
+  the home for a rule true only under one directory. Never give a FIXTURE, TEMPLATE or
+  consumer-facing example that name: sample content would become real guidance and spend the cap
+  of every chain through it. Measure the worst CHAIN (root plus the nested files on one path),
+  never the sum of every such file, since siblings are never loaded together.
 -->
 
 Only the rules a reviewer of **this** repository gets wrong. Each one has cost something real here.
@@ -304,11 +305,10 @@ there and say why in the reason.
 
 ## Frontend patterns
 
-The four subpaths and what each exports are documented in the README's
-[Frontend](./README.md) sections, and in depth in
-[REACT-GUIDELINES](./docs/guidelines/REACT-GUIDELINES.md) and
-[NEXTJS-GUIDELINES](./docs/guidelines/NEXTJS-GUIDELINES.md). Only the rules that
-bite without warning are repeated here:
+The subpaths are documented in the README's Frontend sections, in
+[REACT-GUIDELINES](./docs/guidelines/REACT-GUIDELINES.md) and in
+[NEXTJS-GUIDELINES](./docs/guidelines/NEXTJS-GUIDELINES.md). Only the rules that bite without
+warning are repeated here:
 
 - **React** — hooks only; memoize the context value; `AbortController` on unmount.
 - **Next.js 16** — `cookies()` is async, `params`/`searchParams` are Promises, and the proxy
@@ -327,9 +327,8 @@ bite without warning are repeated here:
 not a target.
 
 **Mutation testing is the deeper gate** (Stryker `break: 100`, currently holding 100%). Only a
-cold `pnpm mutation:full` verdict may be reported, for the reason given under the review rules
-above; `pnpm mutation` and any `--mutate` run reuse recorded verdicts. Survivors are a missing
-test or an equivalent mutant carrying its reason. Full methodology, config rationale and the
+cold `pnpm mutation:full` verdict may be reported (see the review rules above). Survivors are a
+missing test or an equivalent mutant carrying its reason. Full methodology, config rationale and the
 per-file workflow: [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md); results:
 [docs/mutation_testing_results.md](./docs/mutation_testing_results.md).
 
