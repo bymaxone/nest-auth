@@ -74,6 +74,22 @@ function isFinalAnswer(error: unknown): boolean {
 }
 
 /**
+ * Runs the host's `onSessionExpired` callback.
+ *
+ * A consumer-side error must not mask the session-state transition, so it is surfaced to the console,
+ * where the broken handler is debuggable, and the auth flow goes on.
+ *
+ * @param callback - The host's callback, when it gave one.
+ */
+function signalSessionExpired(callback: (() => void) | undefined): void {
+  try {
+    callback?.()
+  } catch (callbackError) {
+    console.warn('[nest-auth] onSessionExpired callback threw:', callbackError)
+  }
+}
+
+/**
  * A revalidation the server did not answer: a 5xx, a throttle, a network failure or an abort, over a
  * session that was authenticated. The state was left as it was, and `refresh()` hands the failure to
  * its caller. The wrapper keeps a thrown `undefined` distinct from no failure.
@@ -338,16 +354,7 @@ export function AuthProvider({
         if (sessionGenerationRef.current !== generation) return undefined
         const wasAuthenticated = statusRef.current === 'authenticated'
         if (isSessionExpiredError(error)) {
-          if (!isInitial && wasAuthenticated) {
-            try {
-              onSessionExpiredRef.current?.()
-            } catch (callbackError) {
-              // Consumer-side errors must not mask the session-state
-              // transition; surface to the console so the broken
-              // handler is debuggable without breaking auth flow.
-              console.warn('[nest-auth] onSessionExpired callback threw:', callbackError)
-            }
-          }
+          if (!isInitial && wasAuthenticated) signalSessionExpired(onSessionExpiredRef.current)
           syncedDispatch({ type: 'CLEAR_SESSION' })
           return undefined
         }
