@@ -291,7 +291,7 @@ describe('an unset option means its default', () => {
       const both = dropUnset(
         withGroup('workspaces', {
           accessDeniedEvents: { max: undefined, windowSeconds: 5 },
-          invitations: { accountStatus: null, other: 1 }
+          roles: { owner: null }
         })
       )
 
@@ -299,7 +299,25 @@ describe('an unset option means its default', () => {
       expect(Reflect.get(scalar, 'workspaces')).toEqual({ accessDeniedEvents: 3 })
       expect(Reflect.get(both, 'workspaces')).toEqual({
         accessDeniedEvents: { windowSeconds: 5 },
-        invitations: { other: 1 }
+        roles: { owner: null }
+      })
+    })
+
+    // Scenario: `workspaces.accessDeniedEvents` as a class whose two settings are getters on its prototype.
+    // Expected: both are read, as the class group case does for the other groups.
+    it('reads the prototype getters of the accessDeniedEvents sub-group', () => {
+      class Events {
+        get max(): number {
+          return 4
+        }
+        get windowSeconds(): number {
+          return 9
+        }
+      }
+      const cleaned = dropUnset(withGroup('workspaces', { accessDeniedEvents: new Events() }))
+
+      expect(Reflect.get(cleaned, 'workspaces')).toEqual({
+        accessDeniedEvents: { max: 4, windowSeconds: 9 }
       })
     })
 

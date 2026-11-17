@@ -154,8 +154,7 @@ const GROUP_KEYS = {
 
 /** The `workspaces` sub-groups that hold plain settings, each with its keys. */
 const WORKSPACE_SUBGROUP_KEYS: Readonly<Record<string, readonly string[]>> = {
-  accessDeniedEvents: ['max', 'windowSeconds'],
-  invitations: []
+  accessDeniedEvents: ['max', 'windowSeconds']
 }
 
 /** Whether a value can be a group: an object, a class instance included, and not an array. */

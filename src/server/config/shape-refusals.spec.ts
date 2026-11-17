@@ -74,7 +74,7 @@ describe('a value that cannot be read is refused by name', () => {
     [
       'mfa.totpWindow symbol',
       { mfa: { encryptionKey: MFA_KEY, issuer: 'x', totpWindow: Symbol('x') } },
-      'mfa.totpWindow must be between 0 and'
+      '2N + 1 codes would be valid at once'
     ],
     [
       'mfa.totpWindow bigint',
