@@ -74,6 +74,22 @@ function isFinalAnswer(error: unknown): boolean {
 }
 
 /**
+ * Runs the host's `onSessionExpired` callback.
+ *
+ * A consumer-side error must not mask the session-state transition, so it is surfaced to the console,
+ * where the broken handler is debuggable, and the auth flow goes on.
+ *
+ * @param callback - The host's callback, when it gave one.
+ */
+function signalSessionExpired(callback: (() => void) | undefined): void {
+  try {
+    callback?.()
+  } catch (callbackError) {
+    console.warn('[nest-auth] onSessionExpired callback threw:', callbackError)
+  }
+}
+
+/**
  * Props accepted by {@link AuthProvider}.
  */
 export interface AuthProviderProps {
@@ -312,9 +328,12 @@ export function AuthProvider({
    * (where a 401 means "not signed in") or a revalidation
    * (where a 401 after a prior `authenticated` status means
    * "session expired" and should fire `onSessionExpired`).
+   *
+   * A failure the server did not decide (a 5xx, a 429, a network failure, an abort) over an
+   * authenticated session leaves the state as it was, and is thrown only when `rethrow` is set.
    */
   const revalidate = useCallback(
-    async (isInitial: boolean): Promise<void> => {
+    async (isInitial: boolean, rethrow = false): Promise<void> => {
       // Captured before the request; compared after it. A deliberate transition that lands in
       // between makes this result stale, and a stale result must not be applied in either
       // direction — not the user on success, and not `onSessionExpired` on a 401 for a
@@ -328,20 +347,12 @@ export function AuthProvider({
         if (sessionGenerationRef.current !== generation) return
         const wasAuthenticated = statusRef.current === 'authenticated'
         if (isSessionExpiredError(error)) {
-          if (!isInitial && wasAuthenticated) {
-            try {
-              onSessionExpiredRef.current?.()
-            } catch (callbackError) {
-              // Consumer-side errors must not mask the session-state
-              // transition; surface to the console so the broken
-              // handler is debuggable without breaking auth flow.
-              console.warn('[nest-auth] onSessionExpired callback threw:', callbackError)
-            }
-          }
+          if (!isInitial && wasAuthenticated) signalSessionExpired(onSessionExpiredRef.current)
           syncedDispatch({ type: 'CLEAR_SESSION' })
           return
         }
         if (!wasAuthenticated || isFinalAnswer(error)) syncedDispatch({ type: 'SET_ERROR' })
+        else if (rethrow) throw error
       }
     },
     [syncedDispatch]
@@ -458,7 +469,7 @@ export function AuthProvider({
   }, [clearSession])
 
   const refresh = useCallback<AuthContextValue['refresh']>(async () => {
-    await revalidate(false)
+    await revalidate(false, true)
   }, [revalidate])
   // Stryker restore ArrayDeclaration
 

@@ -106,7 +106,7 @@ describe('AccountStatusService cache fill', () => {
   })
 
   // Scenario: a cache read that fails (not a fill). Expected: the error propagates. Why: a store
-  // that cannot answer a read is an outage, and only a write after the decision is best effort.
+  // that cannot answer a read is an outage, and only the write that follows a read is best effort.
   it('fails when the cache READ fails', async () => {
     const { service, redis } = build({ status: 'ACTIVE', emailVerified: true })
     redis.get.mockRejectedValue(new Error('connection lost'))

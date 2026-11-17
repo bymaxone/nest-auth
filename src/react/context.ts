@@ -123,6 +123,11 @@ export interface AuthContextValue {
    * may have changed the user's role server-side). Not required for
    * routine session maintenance — the provider handles that
    * automatically via the configured interval.
+   *
+   * @throws The error `client.getMe` raised when the server could not confirm the session: a 5xx,
+   *   a 429, a network failure or an abort, over a session that was authenticated. The state is
+   *   left as it was, so the user it holds was not re-checked; catch the rejection and offer a
+   *   retry. A final answer (a 401 included) is a state change and resolves.
    */
   refresh: () => Promise<void>
 

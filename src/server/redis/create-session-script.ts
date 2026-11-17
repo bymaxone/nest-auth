@@ -66,7 +66,7 @@ return 1
 `
 
 /**
- * The keys and arguments the script takes for the records beyond the three it writes for every session.
+ * The keys and arguments the script takes for the records beyond the ones it writes for every session.
  *
  * A TTL of zero, a fractional or a negative one would make `SET ... EX` fail inside the script and
  * abort the whole birth of a session. That is a bug in the caller, so it is refused here, before

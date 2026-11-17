@@ -189,6 +189,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // key, the unmount cleanup and the revalidation of the session before a broadcast reloads the list,
 // each of which keeps another account's or a dead provider's state from being shown. The per-subpath
 // notes above are point-in-time calibration records; the two arrays below hold the budgets.
+// The three react lines hold the measured brotli size plus about 30 bytes: the auth surface 1.25 KiB
+// (1247 B), the workspace surface 2.54 KiB (2568 B) and the entry file 3.71 KiB (3767 B). A budget is
+// a measured size plus headroom, so a change that crosses it states the new measurement here.
 //
 // WHY THE SURFACES CAN BE TRUSTED. A consumer's bundler can only drop what it can prove unused, and a
 // top-level `__name(...)` call, which `keepNames` adds after every function, cannot be proven unused.
@@ -201,7 +204,7 @@ const BUDGETS = [
   { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 169 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
-  { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 3.65 * 1024 },
+  { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 3.71 * 1024 },
   { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 9.5 * 1024 }
 ]
 
@@ -220,7 +223,7 @@ const SURFACES = [
     name: 'react   auth surface (AuthProvider, useSession)',
     from: 'dist/react/index.mjs',
     exports: ['AuthProvider', 'useSession'],
-    brotli: 1.2 * 1024
+    brotli: 1.25 * 1024
   },
   {
     name: 'client  workspace surface (+ createWorkspaceClient)',
@@ -232,7 +235,7 @@ const SURFACES = [
     name: 'react   workspace surface (+ WorkspaceProvider)',
     from: 'dist/react/index.mjs',
     exports: ['AuthProvider', 'useSession', 'WorkspaceProvider', 'useWorkspaces'],
-    brotli: 2.5 * 1024
+    brotli: 2.54 * 1024
   }
 ]
 

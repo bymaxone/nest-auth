@@ -49,7 +49,8 @@ describe('AuthProvider — a revalidation that fails with a foreign-copy client 
     expect(result.current?.status).toBe('authenticated')
     client.getMe.mockRejectedValueOnce(failure)
     await act(async () => {
-      await result.current?.refresh()
+      // A failure the server did not decide rejects; what these cases pin is the state and the callback.
+      await result.current?.refresh().catch(() => undefined)
     })
     return { result, onSessionExpired }
   }
