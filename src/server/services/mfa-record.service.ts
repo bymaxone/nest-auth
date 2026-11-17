@@ -249,8 +249,28 @@ export class MfaRecordService {
       }
       return true
     } finally {
-      // Compare-and-delete: release only a lock still holding this call's nonce.
+      await this.releaseLock(lockKey, lockToken)
+    }
+  }
+
+  /**
+   * Releases the transition lock this call took, whatever the store answers.
+   *
+   * A compare-and-delete: only a lock still holding this call's nonce is removed. A release that
+   * fails is logged and swallowed, because the transition has already been decided by then: an
+   * error here would replace the transition's own result, answering failure for a write that
+   * committed or hiding the error that did occur. The lock's short TTL ends it on its own.
+   *
+   * @param lockKey - The account's lock key.
+   * @param lockToken - The nonce this call wrote when it took the lock.
+   */
+  private async releaseLock(lockKey: string, lockToken: string): Promise<void> {
+    try {
       await this.redis.eval(RELEASE_LOCK_LUA, [lockKey], [lockToken])
+    } catch (err: unknown) {
+      this.logger.warn(
+        `MFA transition lock release failed, the lock expires on its own: ${describeChannelStatus(err)}`
+      )
     }
   }
 
