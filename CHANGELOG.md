@@ -27,7 +27,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   reauthentication cap that only `0` may switch off. The bounds on `passwordReset.otpLength`, `mfa.totpWindow`,
   `mfa.recoveryCodeCount` and `jwt.refreshGraceWindowSeconds` accepted `NaN` and a fraction too, and failed at runtime
   instead of at boot; other numeric options had no check at all. One module, `config/numeric-options.ts`, now tests each
-  value as a whole number (for the lifetime in days, a finite one) before it applies any range.
+  value as a whole number (for the lifetime in days, a finite one) before it applies a range with a ceiling, because
+  `Number.isInteger(1e300)` is true and a value that large overflows the expiry Redis accepts or the lifetime the cap compares to.
 - `userStatusCacheTtlSeconds` has a ceiling of 3600 seconds. It is the window in which a suspended account still passes
   the dashboard guards, so it is a security bound and not a tuning knob.
 
@@ -35,12 +36,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 A configuration that booted before is refused at startup when it sets any of these, and the message names the option:
 
-- `sessions.defaultMaxSessions`: anything but a whole number of at least 1.
-- `jwt.absoluteSessionLifetimeDays`: anything but `0` (which switches the cap off) or a positive finite number.
-- `jwt.accessCookieMaxAgeMs`, `passwordReset.tokenTtlSeconds`, `passwordReset.otpTtlSeconds`,
-  `emailVerification.otpTtlSeconds`, `emailChange.tokenTtlSeconds`, `invitations.tokenTtlSeconds`: anything but a whole
-  number of at least 1.
+- `sessions.defaultMaxSessions`: anything but a whole number from 1 to 1000.
+- `jwt.absoluteSessionLifetimeDays`: anything but `0` (which switches the cap off) or a number of days from one hour
+  (`0.0417`) to 3650. A value so large that its length in milliseconds overflows would otherwise skip the cap.
+- `jwt.refreshExpiresInDays`: more than 3650, or a value whose length in seconds is not a whole number (`1.1` is
+  `95040.00000000001` seconds, which Redis refuses on every login).
+- `passwordReset.tokenTtlSeconds`, `passwordReset.otpTtlSeconds`, `emailVerification.otpTtlSeconds`,
+  `emailChange.tokenTtlSeconds`, `invitations.tokenTtlSeconds`: anything but a whole number from 1 to 315360000 (ten
+  years). `jwt.accessCookieMaxAgeMs`: from 1 to ten years in milliseconds.
+- `bruteForce.windowSeconds`: anything but a whole number from 1 to 604800 (one week).
 - `userStatusCacheTtlSeconds`: anything but a whole number from 1 to 3600.
+- `password.parallelization`: more than 16. Node refuses scrypt parameters it cannot run on the first derivation, which is
+  the first login after deploy, and each unit of `p` is a linear cost an unauthenticated request pays.
 - `passwordReset.otpLength` (4 to 8), `mfa.totpWindow`, `mfa.recoveryCodeCount` (1 to 50) and
   `jwt.refreshGraceWindowSeconds` (0 to 300): a fraction, `NaN`, `Infinity` or a string, which the range checks let
   through.

@@ -951,6 +951,7 @@ SHALL and puts it at no more than 30 days for AAL1. Without a cap, a client refr
 fifteen minutes keeps a session alive forever, and a refresh token stolen once becomes permanent
 access. Raise it to a value the product can justify, or set `0` to accept unbounded sessions
 deliberately.
+Any other value is from one hour (`0.0417` days) to `3650` days.
 
 Lowering the value ends sessions that are already older than the new one, at their next rotation;
 raising it or setting `0` ends nothing. Sessions established before the cap existed carry no

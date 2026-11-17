@@ -1149,7 +1149,7 @@ describe('resolveOptions — grace window and brute-force bounds', () => {
   it('should refuse a zero or negative brute-force window', () => {
     for (const windowSeconds of [0, -1, 1.5]) {
       expect(() => resolveOptions({ ...MINIMAL_OPTIONS, bruteForce: { windowSeconds } })).toThrow(
-        /windowSeconds must be a whole number of at least 1/
+        /windowSeconds must be a whole number between 1 and 604800 inclusive/
       )
     }
   })

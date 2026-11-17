@@ -27,6 +27,21 @@ const GROUPS: Record<string, Record<string, unknown>> = {
   passwordReset: { passwordReset: { method: 'token' } },
   emailVerification: { emailVerification: { required: true } },
   emailChange: { emailChange: {} },
+  bruteForce: { bruteForce: {} },
+  password: { password: {} },
+  workspaces: {
+    workspaces: {
+      enabled: true,
+      roles: { hierarchy: { owner: ['editor'], editor: [] }, ownerRole: 'owner' }
+    }
+  },
+  apiKeys: {
+    apiKeys: {
+      enabled: true,
+      pepper: 'Zt8#vB3@nM6$qL9%wE2^rY5&uI1*oP4(aS7)dF0!gH',
+      scopes: ['read']
+    }
+  },
   invitations: { invitations: { enabled: true } }
 }
 
@@ -53,7 +68,9 @@ const HOSTILE: [string, unknown][] = [
   ['-1', -1],
   ['0', 0],
   ['1.5', 1.5],
-  ["'3'", '3']
+  ["'3'", '3'],
+  ['1e300', 1e300],
+  ['MAX_VALUE', Number.MAX_VALUE]
 ]
 
 interface Rule {
@@ -67,8 +84,24 @@ interface Rule {
 }
 
 const RULES: Rule[] = [
-  { path: 'jwt.accessCookieMaxAgeMs', accepts: [1, 900_000] },
-  { path: 'jwt.absoluteSessionLifetimeDays', accepts: [0, 1, 30], tolerates: ['0', '1.5'] },
+  {
+    path: 'jwt.accessCookieMaxAgeMs',
+    accepts: [1, 900_000, 315_360_000_000],
+    refusesAlso: [315_360_000_001, 2 ** 53]
+  },
+  {
+    path: 'jwt.absoluteSessionLifetimeDays',
+    accepts: [0, 1 / 24, 1, 30, 3650],
+    tolerates: ['0', '1.5'],
+    refusesAlso: [3651, 0.01]
+  },
+  {
+    path: 'jwt.refreshExpiresInDays',
+    accepts: [1, 1.5, 7, 3650],
+    tolerates: ['1.5'],
+    refusesAlso: [3651, 1.1, 0.0001]
+  },
+  { path: 'bruteForce.windowSeconds', accepts: [1, 900, 604_800], refusesAlso: [604_801, 2 ** 53] },
   {
     path: 'jwt.refreshGraceWindowSeconds',
     accepts: [0, 30, 300],
@@ -83,12 +116,32 @@ const RULES: Rule[] = [
   },
   { path: 'mfa.recoveryCodeCount', accepts: [1, 8, 50], refusesAlso: [51] },
   { path: 'passwordReset.otpLength', accepts: [4, 6, 8], refusesAlso: [3, 9] },
-  { path: 'sessions.defaultMaxSessions', accepts: [1, 5, 1000] },
-  { path: 'passwordReset.tokenTtlSeconds', accepts: [1, 600] },
-  { path: 'passwordReset.otpTtlSeconds', accepts: [1, 600] },
-  { path: 'emailVerification.otpTtlSeconds', accepts: [1, 600] },
-  { path: 'emailChange.tokenTtlSeconds', accepts: [1, 3600] },
-  { path: 'invitations.tokenTtlSeconds', accepts: [1, 172_800] },
+  { path: 'sessions.defaultMaxSessions', accepts: [1, 5, 1000], refusesAlso: [1001, 2 ** 53] },
+  {
+    path: 'passwordReset.tokenTtlSeconds',
+    accepts: [1, 600, 315_360_000],
+    refusesAlso: [315_360_001, 2 ** 53]
+  },
+  {
+    path: 'passwordReset.otpTtlSeconds',
+    accepts: [1, 600, 315_360_000],
+    refusesAlso: [315_360_001, 2 ** 53]
+  },
+  {
+    path: 'emailVerification.otpTtlSeconds',
+    accepts: [1, 600, 315_360_000],
+    refusesAlso: [315_360_001, 2 ** 53]
+  },
+  {
+    path: 'emailChange.tokenTtlSeconds',
+    accepts: [1, 3600, 315_360_000],
+    refusesAlso: [315_360_001, 2 ** 53]
+  },
+  {
+    path: 'invitations.tokenTtlSeconds',
+    accepts: [1, 172_800, 315_360_000],
+    refusesAlso: [315_360_001, 2 ** 53]
+  },
   { path: 'userStatusCacheTtlSeconds', accepts: [1, 60, 3600], refusesAlso: [3601] }
 ]
 
@@ -123,7 +176,7 @@ describe('numeric options at boot', () => {
   // `slice(0, NaN)` is empty, so with NaN as the limit no session is ever evicted and the cap does not exist.
   it('refuses a NaN session cap, which would evict no session', () => {
     expect(() => resolveOptions(optionsWith('sessions.defaultMaxSessions', NaN))).toThrow(
-      /sessions\.defaultMaxSessions must be a whole number of at least 1/
+      /sessions\.defaultMaxSessions must be a whole number between 1 and 1000 inclusive/
     )
   })
 
@@ -132,7 +185,7 @@ describe('numeric options at boot', () => {
   // being asked to.
   it('refuses a NaN or negative absolute lifetime and keeps 0 as the way to switch it off', () => {
     expect(() => resolveOptions(optionsWith('jwt.absoluteSessionLifetimeDays', NaN))).toThrow(
-      /jwt\.absoluteSessionLifetimeDays must be 0 or a positive finite number/
+      /jwt\.absoluteSessionLifetimeDays must be 0 or between/
     )
     expect(() => resolveOptions(optionsWith('jwt.absoluteSessionLifetimeDays', -1))).toThrow(
       /jwt\.absoluteSessionLifetimeDays/
@@ -166,7 +219,7 @@ describe('numeric options at boot', () => {
     [
       'passwordReset.tokenTtlSeconds',
       0,
-      'It is a Redis expiry in seconds: zero or a negative deletes the record as it is written, and NaN, a fraction or Infinity is refused by Redis on every request.'
+      'It is a Redis expiry in seconds: zero or a negative deletes the record as it is written, and NaN, a fraction, Infinity or a value past what Redis can hold is refused by Redis on every request.'
     ],
     [
       'userStatusCacheTtlSeconds',
@@ -176,7 +229,7 @@ describe('numeric options at boot', () => {
     [
       'jwt.absoluteSessionLifetimeDays',
       NaN,
-      '(current: NaN). Only 0 switches the cap off; NaN or a negative would skip it without being asked to, and Infinity is a cap that never fires. Set 0 to accept unbounded sessions deliberately.'
+      '(current: NaN). Only 0 switches the cap off; NaN, a negative or a value so large that its length in milliseconds overflows would skip it without being asked to, and a value under an hour refuses every rotation. Set 0 to accept unbounded sessions deliberately.'
     ],
     [
       'passwordReset.otpLength',
@@ -192,5 +245,54 @@ describe('numeric options at boot', () => {
     ]
   ])('explains the refusal of %s', (path, value, explanation) => {
     expect(() => resolveOptions(optionsWith(path, value))).toThrow(explanation)
+  })
+
+  // Scenario: a lifetime so long that days * 86_400_000 overflows to Infinity. Expected: refused. Why: with
+  // an Infinity lifetime `age > lifetime` is never true, so the absolute cap would be off again.
+  it.each([1e306, Number.MAX_VALUE, 3651])('refuses an absolute lifetime of %s days', (days) => {
+    expect(() => resolveOptions(optionsWith('jwt.absoluteSessionLifetimeDays', days))).toThrow(
+      /jwt\.absoluteSessionLifetimeDays must be 0 or between/
+    )
+  })
+
+  // Scenario: a Redis TTL of 1e300 seconds, which Number.isInteger accepts. Expected: refused at boot.
+  // Why: Redis answers "invalid expire time" to an expiry past its 64-bit millisecond range, on every request.
+  it('refuses a TTL beyond what Redis can hold, which is also an integer', () => {
+    expect(() => resolveOptions(optionsWith('passwordReset.tokenTtlSeconds', 1e300))).toThrow(
+      /passwordReset\.tokenTtlSeconds must be a whole number between 1 and 315360000 inclusive/
+    )
+  })
+
+  // Scenario: every other numeric option, handed values past any range. Expected: refused at boot.
+  // Why: `Number.isInteger(1e300)` is true, so an option whose check has no ceiling takes it, and the
+  // expiry, the memory or the comparison it feeds then fails or is skipped.
+  it.each([
+    'password.costFactor',
+    'password.minLength',
+    'password.blockSize',
+    'password.parallelization',
+    'bruteForce.maxAttempts',
+    'workspaces.maxWorkspacesPerUser',
+    'workspaces.invitationTtlSeconds',
+    'workspaces.maxPendingInvitationsPerWorkspace',
+    'workspaces.membershipCacheTtlSeconds',
+    'workspaces.deletionGraceDays',
+    'workspaces.accessDeniedEvents.max',
+    'workspaces.accessDeniedEvents.windowSeconds',
+    'apiKeys.lastUsedFlushSeconds'
+  ])('refuses 1e300, MAX_VALUE and 2 ** 53 for %s', (path) => {
+    for (const value of [1e300, Number.MAX_VALUE, 2 ** 53]) {
+      expect(() => resolveOptions(optionsWith(path, value))).toThrow(
+        path.split('.').pop() as string
+      )
+    }
+  })
+
+  // Scenario: the scrypt parallelism at and just over its ceiling. Expected: 16 resolves, 17 is refused.
+  it('bounds password.parallelization at 16', () => {
+    expect(() => resolveOptions(optionsWith('password.parallelization', 16))).not.toThrow()
+    expect(() => resolveOptions(optionsWith('password.parallelization', 17))).toThrow(
+      "password.parallelization must be at most 16 (current: 17). scrypt's CPU cost grows linearly with it and an unauthenticated login derives a hash even for an address that does not exist."
+    )
   })
 })

@@ -25,33 +25,66 @@ import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.i
 export const MAX_USER_STATUS_CACHE_TTL_SECONDS = 3600
 
 /**
+ * The longest Redis expiry any option may set, in seconds (ten years).
+ *
+ * Redis refuses an expiry whose millisecond value overflows 64 bits with "invalid expire time", on
+ * every command that carries it, and a token that outlives a decade is a credential that never
+ * expires. `Number.isInteger` is true for `1e300`, so the ceiling is what keeps such a value out.
+ */
+const MAX_REDIS_TTL_SECONDS = 315_360_000
+
+/** The same ten years in milliseconds, for the access cookie's `Max-Age`. */
+const MAX_COOKIE_MAX_AGE_MS = MAX_REDIS_TTL_SECONDS * 1000
+
+/**
+ * The most concurrent sessions per user the cap accepts. One refresh record and one index member
+ * exist per session, so a cap above this is no cap, and a value near the largest integer reads as
+ * "no limit" without saying so.
+ */
+const MAX_SESSIONS_PER_USER = 1000
+
+/** The longest lifetime in days that `jwt.refreshExpiresInDays` and the absolute cap accept (ten years). */
+const MAX_LIFETIME_DAYS = 3650
+
+/**
+ * The shortest absolute session lifetime in days that is not `0` (one hour). A smaller positive
+ * value rounds the cap to zero and refuses every rotation the moment it is issued.
+ */
+const MIN_ABSOLUTE_LIFETIME_DAYS = 1 / 24
+
+/**
+ * The largest `password.parallelization` (`p`) the module accepts. scrypt's CPU cost grows linearly with
+ * it and an unauthenticated login derives a hash for an address that does not exist, so a `p` past this
+ * is a request that costs seconds; Node refuses `p * r` at 2 ** 30 on the first derivation, which is
+ * the first login after deploy.
+ */
+const MAX_SCRYPT_PARALLELIZATION = 16
+
+/** The longest `bruteForce.windowSeconds` in seconds (one week): a longer window locks an account for a month over five typos. */
+const MAX_BRUTE_FORCE_WINDOW_SECONDS = 604_800
+
+/**
  * Refuses a value that is not a whole number inside `[min, max]`.
  *
  * @param path - The option's dotted path, for the message.
  * @param value - The configured value, if any.
  * @param min - The smallest accepted value.
- * @param max - The largest accepted value, or `undefined` for no ceiling.
+ * @param max - The largest accepted value.
  * @param why - What the option bounds, for the message.
- * @throws {Error} when `value` is present and is not a whole number in range.
+ * @throws {Error} when `value` is present and is not a safe whole number in range.
  */
 function assertWholeNumber(
   path: string,
   value: unknown,
   min: number,
-  max: number | undefined,
+  max: number,
   why: string
 ): void {
   if (value === undefined) return
-  if (
-    Number.isInteger(value) &&
-    (value as number) >= min &&
-    (max === undefined || (value as number) <= max)
-  ) {
-    return
-  }
-  const range = max === undefined ? `of at least ${min}` : `between ${min} and ${max} inclusive`
+  if (Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max) return
   throw new Error(
-    `[BymaxAuthModule] ${path} must be a whole number ${range} (current: ${String(value)}). ${why}`
+    `[BymaxAuthModule] ${path} must be a whole number between ${min} and ${max} inclusive ` +
+      `(current: ${String(value)}). ${why}`
   )
 }
 
@@ -67,7 +100,7 @@ function validateWholeNumberOptions(userOptions: BymaxAuthModuleOptions): void {
     'jwt.accessCookieMaxAgeMs',
     userOptions.jwt.accessCookieMaxAgeMs,
     1,
-    undefined,
+    MAX_COOKIE_MAX_AGE_MS,
     'It is the cookie Max-Age; zero deletes the cookie and NaN is ignored by the browser, ' +
       'so the session would end with the tab.'
   )
@@ -75,10 +108,35 @@ function validateWholeNumberOptions(userOptions: BymaxAuthModuleOptions): void {
     'sessions.defaultMaxSessions',
     userOptions.sessions?.defaultMaxSessions,
     1,
-    undefined,
+    MAX_SESSIONS_PER_USER,
     'It caps concurrent sessions: with NaN the comparison is false in both directions, no ' +
       'session is ever evicted, and the cap does not exist.'
   )
+  assertWholeNumber(
+    'bruteForce.windowSeconds',
+    userOptions.bruteForce?.windowSeconds,
+    1,
+    MAX_BRUTE_FORCE_WINDOW_SECONDS,
+    'It is the Redis expiry of each failure counter: Redis deletes a key on `EXPIRE key 0`, so a ' +
+      'zero or negative window destroys each counter as it is created and the lockout never ' +
+      'engages, silently; a window past a week locks an account for a month over a few typos.'
+  )
+  assertWholeNumber(
+    'userStatusCacheTtlSeconds',
+    userOptions.userStatusCacheTtlSeconds,
+    1,
+    MAX_USER_STATUS_CACHE_TTL_SECONDS,
+    'It is how long a suspended account keeps passing the dashboard guards, so it has a ceiling.'
+  )
+}
+
+/**
+ * Bounds the five Redis expiries a feature sets, each a whole number of seconds from 1 to ten years.
+ *
+ * @param userOptions - The user-supplied options.
+ * @throws {Error} naming the first expiry that is not usable.
+ */
+function validateRedisTtls(userOptions: BymaxAuthModuleOptions): void {
   const ttls: [string, unknown][] = [
     ['passwordReset.tokenTtlSeconds', userOptions.passwordReset?.tokenTtlSeconds],
     ['passwordReset.otpTtlSeconds', userOptions.passwordReset?.otpTtlSeconds],
@@ -91,38 +149,41 @@ function validateWholeNumberOptions(userOptions: BymaxAuthModuleOptions): void {
       path,
       value,
       1,
-      undefined,
+      MAX_REDIS_TTL_SECONDS,
       'It is a Redis expiry in seconds: zero or a negative deletes the record as it is written, ' +
-        'and NaN, a fraction or Infinity is refused by Redis on every request.'
+        'and NaN, a fraction, Infinity or a value past what Redis can hold is refused by Redis on ' +
+        'every request.'
     )
   }
-  assertWholeNumber(
-    'userStatusCacheTtlSeconds',
-    userOptions.userStatusCacheTtlSeconds,
-    1,
-    MAX_USER_STATUS_CACHE_TTL_SECONDS,
-    'It is how long a suspended account keeps passing the dashboard guards, so it has a ceiling.'
-  )
 }
 
 /**
  * Bounds `jwt.absoluteSessionLifetimeDays`, the hard cap on how long rotation can extend a login.
  *
- * `0` switches the cap off on purpose and nothing else may: with `NaN` the comparisons that decide
- * whether a session is too old are false, so the cap would be skipped without being asked to. A
- * fraction of a day is a meaningful lifetime, so the value is tested as finite and not as whole.
+ * `0` switches the cap off on purpose and nothing else may. `NaN` makes the comparisons that decide
+ * whether a session is too old false, and so does an overflow: past about 1e300 days
+ * `days * 86_400_000` is `Infinity`, `age > Infinity` is never true, and the cap is off again. The
+ * value is therefore `0` or a finite number of days from one hour to ten years. A fraction of a day
+ * is a meaningful lifetime, so it is tested as finite and not as whole.
  *
  * @param jwt - The configured `jwt` group.
- * @throws {Error} when the value is present and is not `0` or a positive finite number.
+ * @throws {Error} when the value is present and is neither `0` nor a finite number inside the range.
  */
 function validateAbsoluteSessionLifetime(jwt: BymaxAuthModuleOptions['jwt']): void {
   const days = jwt.absoluteSessionLifetimeDays
-  if (days === undefined || (Number.isFinite(days) && days >= 0)) return
+  if (
+    days === undefined ||
+    days === 0 ||
+    (Number.isFinite(days) && days >= MIN_ABSOLUTE_LIFETIME_DAYS && days <= MAX_LIFETIME_DAYS)
+  ) {
+    return
+  }
   throw new Error(
-    `[BymaxAuthModule] jwt.absoluteSessionLifetimeDays must be 0 or a positive finite number ` +
-      `(current: ${String(days)}). Only 0 switches the cap off; NaN or a negative would skip it ` +
-      `without being asked to, and Infinity is a cap that never fires. Set 0 to accept unbounded ` +
-      `sessions deliberately.`
+    `[BymaxAuthModule] jwt.absoluteSessionLifetimeDays must be 0 or between ` +
+      `${MIN_ABSOLUTE_LIFETIME_DAYS.toFixed(4)} and ${MAX_LIFETIME_DAYS} days (current: ${String(days)}). ` +
+      `Only 0 switches the cap off; NaN, a negative or a value so large that its length in ` +
+      `milliseconds overflows would skip it without being asked to, and a value under an hour ` +
+      `refuses every rotation. Set 0 to accept unbounded sessions deliberately.`
   )
 }
 
@@ -201,11 +262,18 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
   const refreshExpiresInDays = jwt.refreshExpiresInDays ?? DEFAULT_OPTIONS.jwt.refreshExpiresInDays
   const refreshLifetimeSeconds = refreshExpiresInDays * 86_400
 
-  if (!Number.isFinite(refreshExpiresInDays) || refreshExpiresInDays <= 0) {
+  if (
+    !Number.isFinite(refreshExpiresInDays) ||
+    refreshExpiresInDays <= 0 ||
+    refreshExpiresInDays > MAX_LIFETIME_DAYS ||
+    !Number.isInteger(refreshLifetimeSeconds)
+  ) {
     throw new Error(
       `[BymaxAuthModule] jwt.refreshExpiresInDays must be a positive finite number. ` +
         `Got: ${refreshExpiresInDays}. Zero, negative, NaN, and Infinity are all rejected — ` +
-        `any of these would produce an invalid Redis TTL and cause all token rotations to fail at runtime.`
+        `any of these would produce an invalid Redis TTL and cause all token rotations to fail at runtime. ` +
+        `It is also at most ${MAX_LIFETIME_DAYS} days, and its length in seconds must be a whole ` +
+        `number, because Redis takes an integer expiry: 1.1 days is 95040.00000000001 s.`
     )
   }
 
@@ -239,6 +307,29 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
 }
 
 /**
+ * Bounds `password.parallelization` from above. The check that it is a whole number of at least 1
+ * stays with the other scrypt parameters; this adds the ceiling its floor never had.
+ *
+ * @param password - The configured `password` group.
+ * @throws {Error} when the value is a finite number above the ceiling.
+ */
+function validateScryptParallelizationCeiling(password: BymaxAuthModuleOptions['password']): void {
+  const parallelization = password?.parallelization
+  if (
+    parallelization === undefined ||
+    !Number.isFinite(parallelization) ||
+    parallelization <= MAX_SCRYPT_PARALLELIZATION
+  ) {
+    return
+  }
+  throw new Error(
+    `[BymaxAuthModule] password.parallelization must be at most ${MAX_SCRYPT_PARALLELIZATION} ` +
+      `(current: ${parallelization}). scrypt's CPU cost grows linearly with it and an ` +
+      `unauthenticated login derives a hash even for an address that does not exist.`
+  )
+}
+
+/**
  * Runs every numeric-option bound.
  *
  * @param userOptions - The user-supplied options.
@@ -249,5 +340,7 @@ export function validateNumericOptions(userOptions: BymaxAuthModuleOptions): voi
   validateMfaVerificationParameters(userOptions.mfa)
   validateRefreshGraceWindow(userOptions.jwt)
   validateAbsoluteSessionLifetime(userOptions.jwt)
+  validateScryptParallelizationCeiling(userOptions.password)
   validateWholeNumberOptions(userOptions)
+  validateRedisTtls(userOptions)
 }

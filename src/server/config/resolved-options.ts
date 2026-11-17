@@ -833,16 +833,6 @@ function validatePasswordCostFactor(password: BymaxAuthModuleOptions['password']
  * @throws If either value falls outside its range.
  */
 function validateBruteForce(bruteForce: BymaxAuthModuleOptions['bruteForce']): void {
-  const windowSeconds = bruteForce?.windowSeconds
-  if (windowSeconds !== undefined && (!Number.isInteger(windowSeconds) || windowSeconds < 1)) {
-    throw new Error(
-      `[BymaxAuthModule] bruteForce.windowSeconds must be a whole number of at least 1 ` +
-        `(current: ${windowSeconds}). Redis deletes a key on \`EXPIRE key 0\`, so a zero or ` +
-        `negative window destroys each failure counter as it is created and the account ` +
-        `lockout never engages — silently, with the configuration still reading as enabled.`
-    )
-  }
-
   const maxAttempts = bruteForce?.maxAttempts
   if (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
     throw new Error(
