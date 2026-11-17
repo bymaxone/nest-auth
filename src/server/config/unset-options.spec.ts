@@ -11,6 +11,7 @@ import { runInNewContext } from 'node:vm'
 
 import { DEFAULT_OPTIONS } from './default-options'
 import { resolveOptions } from './resolved-options'
+import { dropUnset } from './unset-options'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
 const SECRET = 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B'
@@ -175,5 +176,98 @@ describe('an unset option means its default', () => {
     const resolved = resolveOptions(options)
 
     expect(Reflect.get(resolved.controllers, 'enabled')).toBe(true)
+  })
+
+  describe('dropUnset', () => {
+    /** The options a call needs beyond the group under test. */
+    const withGroup = (name: string, value: unknown): BymaxAuthModuleOptions => ({
+      jwt: { secret: SECRET },
+      roles: { hierarchy: {} },
+      rateLimit: { enabled: false },
+      ...{ [name]: value }
+    })
+
+    // Scenario: every fixed-key group, holding an unset key beside a set one. Expected: the unset key is
+    // gone from each, the set key is kept: the allowlist names every group.
+    it.each([
+      'jwt',
+      'password',
+      'cookies',
+      'sessions',
+      'bruteForce',
+      'passwordReset',
+      'emailVerification',
+      'platform',
+      'invitations',
+      'emailChange',
+      'controllers',
+      'rateLimit',
+      'mfa',
+      'apiKeys',
+      'workspaces'
+    ])('cleans the %s group', (name) => {
+      const cleaned = dropUnset(withGroup(name, { unset: undefined, nothing: null, kept: 1 }))
+
+      expect(Reflect.get(cleaned, name)).toEqual({ kept: 1 })
+    })
+
+    // Scenario: a host-defined map holding null, and a group named like none of the fixed ones.
+    // Expected: left exactly as given.
+    it.each(['oauth', 'roles', 'somethingElse'])('leaves the %s map as given', (name) => {
+      const cleaned = dropUnset(withGroup(name, { entry: null }))
+
+      expect(Reflect.get(cleaned, name)).toEqual({ entry: null })
+    })
+
+    // Scenario: a fixed-key group given something that is not a plain data bag. Expected: kept as it
+    // is, the same reference for a class instance and the same value for a scalar, an array or a function.
+    it('leaves a value that is not a plain data bag untouched', () => {
+      class Flags {
+        enabled = true
+      }
+      const instance = new Flags()
+      const fn = (): number => 1
+      const values = [instance, 'text', 7, true, ['x'], fn]
+
+      for (const value of values) {
+        expect(Reflect.get(dropUnset(withGroup('controllers', value)), 'controllers')).toBe(value)
+      }
+    })
+
+    // Scenario: `workspaces` without either sub-group, with a non-object sub-group, and with both.
+    // Expected: no error, and only the two named sub-groups are cleaned.
+    it('cleans the workspaces sub-groups only when they are plain groups', () => {
+      const absent = dropUnset(withGroup('workspaces', { enabled: true }))
+      const scalar = dropUnset(withGroup('workspaces', { accessDeniedEvents: 3 }))
+      const both = dropUnset(
+        withGroup('workspaces', {
+          accessDeniedEvents: { max: undefined, windowSeconds: 5 },
+          invitations: { accountStatus: null, other: 1 }
+        })
+      )
+
+      expect(Reflect.get(absent, 'workspaces')).toEqual({ enabled: true })
+      expect(Reflect.get(scalar, 'workspaces')).toEqual({ accessDeniedEvents: 3 })
+      expect(Reflect.get(both, 'workspaces')).toEqual({
+        accessDeniedEvents: { windowSeconds: 5 },
+        invitations: { other: 1 }
+      })
+    })
+
+    // Scenario: a group that is not `workspaces` and holds keys named like its sub-groups. Expected: only
+    // the group's own unset keys are dropped; what it holds under those names is left as given.
+    it('does not look for sub-groups outside workspaces', () => {
+      const cleaned = dropUnset(
+        withGroup('sessions', {
+          invitations: { keep: undefined },
+          accessDeniedEvents: { keep: null }
+        })
+      )
+
+      expect(Reflect.get(cleaned, 'sessions')).toEqual({
+        invitations: { keep: undefined },
+        accessDeniedEvents: { keep: null }
+      })
+    })
   })
 })
