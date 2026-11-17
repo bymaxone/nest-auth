@@ -46,8 +46,8 @@ each line says what was accepted until now:
   and then every login failed, because Redis refuses `95040.00000000001` seconds; `1e300` booted too.
 - `passwordReset.tokenTtlSeconds`, `passwordReset.otpTtlSeconds`, `emailVerification.otpTtlSeconds`,
   `emailChange.tokenTtlSeconds`, `invitations.tokenTtlSeconds`: anything but a whole number from 1 to 315360000 (ten
-  years). `jwt.accessCookieMaxAgeMs`: from 1 to ten years in milliseconds. Any number booted, and Redis refused the
-  expiry on every request.
+  years). Any number booted, and Redis refused the expiry on every request.
+- `jwt.accessCookieMaxAgeMs`: from 1 to ten years in milliseconds.
 - `bruteForce.windowSeconds`: anything but a whole number from 1 to 604800 (one week). A window of months or years
   booted and locked an account out for that long.
 - `userStatusCacheTtlSeconds`: anything but a whole number from 1 to 3600. Any number booted.
