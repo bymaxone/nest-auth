@@ -940,6 +940,10 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > [Invalidating the account cache](./docs/server-services.md#invalidating-the-account-cache--accountstatusserviceinvalidate)).
 > `bumpUserTokenEpoch` is the heavier lever: it ends every session the user has. Lower
 > `userStatusCacheTtlSeconds` if a faster answer matters more than the repository reads it costs.
+>
+> `userStatusCacheTtlSeconds` is a whole number of seconds from **1 to 3600**. It is the window in which a
+> suspended account keeps passing the guard, so the module refuses a longer one (and a fraction, `NaN`
+> or a string) at boot.
 
 `jwt.absoluteSessionLifetimeDays` caps how long one login can be extended by rotation, and is
 **on by default at 30 days** — NIST SP 800-63B-4 §3 makes a definite reauthentication timeout a
@@ -947,6 +951,7 @@ SHALL and puts it at no more than 30 days for AAL1. Without a cap, a client refr
 fifteen minutes keeps a session alive forever, and a refresh token stolen once becomes permanent
 access. Raise it to a value the product can justify, or set `0` to accept unbounded sessions
 deliberately.
+Any other value is from one hour (`0.0417` days) to `3650` days.
 
 Lowering the value ends sessions that are already older than the new one, at their next rotation;
 raising it or setting `0` ends nothing. Sessions established before the cap existed carry no

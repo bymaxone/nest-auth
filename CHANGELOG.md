@@ -18,6 +18,48 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A numeric option that is `NaN`, a fraction, a negative or a string is refused at startup, where two of them switched
+  a security bound off.** A bound written as `x < min || x > max` accepts `NaN`, because a comparison with `NaN` is false
+  both ways. `sessions.defaultMaxSessions: NaN` evicted no session (`length <= NaN` is false and `slice(0, NaN)` is empty),
+  so the concurrent-session cap did not exist, and `jwt.absoluteSessionLifetimeDays: NaN` skipped the 30-day
+  reauthentication cap that only `0` may switch off. The bounds on `passwordReset.otpLength`, `mfa.totpWindow`,
+  `mfa.recoveryCodeCount` and `jwt.refreshGraceWindowSeconds` accepted `NaN` and a fraction too, and failed at runtime
+  instead of at boot; other numeric options had no check at all. One module, `config/numeric-options.ts`, now tests each
+  value as a whole number (for the lifetime in days, a finite one) before it applies a range with a ceiling, because
+  `Number.isInteger(1e300)` is true and a value that large overflows the expiry Redis accepts or the lifetime the cap compares to.
+- `userStatusCacheTtlSeconds` has a ceiling of 3600 seconds. It is the window in which a suspended account still passes
+  the dashboard guards, so it is a security bound and not a tuning knob.
+
+### Apply to a derived backend
+
+A configuration that booted before is refused at startup when it sets any of these. The message names the option, and
+each line says what was accepted until now:
+
+- `sessions.defaultMaxSessions`: anything but a whole number from 1 to 1000. Any number booted, including `NaN` (no
+  session was ever evicted), `0` and a negative.
+- `jwt.absoluteSessionLifetimeDays`: anything but `0` (which switches the cap off) or a number of days from one hour
+  (`0.0417`) to 3650. Any number booted, including `NaN`, a negative, `Infinity` and `1e306`, whose length in
+  milliseconds overflows, so the cap was skipped.
+- `jwt.refreshExpiresInDays`: more than 3650, or a value whose length in seconds is not a whole number. `1.1` days booted
+  and then every login failed, because Redis refuses `95040.00000000001` seconds; `1e300` booted too.
+- `passwordReset.tokenTtlSeconds`, `passwordReset.otpTtlSeconds`, `emailVerification.otpTtlSeconds`,
+  `emailChange.tokenTtlSeconds`, `invitations.tokenTtlSeconds`: anything but a whole number from 1 to 315360000 (ten
+  years). Any number booted, and Redis refused the expiry on every request.
+- `jwt.accessCookieMaxAgeMs`: from 1 to ten years in milliseconds.
+- `bruteForce.windowSeconds`: anything but a whole number from 1 to 604800 (one week). A window of months or years
+  booted and locked an account out for that long.
+- `userStatusCacheTtlSeconds`: anything but a whole number from 1 to 3600. Any number booted.
+- `password.parallelization`: more than 16. Any integer from 1 booted, and Node refuses scrypt parameters it cannot run
+  on the first derivation, which is the first login after deploy; each unit of `p` is a linear cost an unauthenticated
+  request pays.
+- `passwordReset.otpLength` (4 to 8), `mfa.totpWindow`, `mfa.recoveryCodeCount` (1 to 50) and
+  `jwt.refreshGraceWindowSeconds` (0 to 300): a fraction, `NaN`, `Infinity` or a string, which the range checks let
+  through.
+
+A value read from an environment variable must be converted with `Number(...)` before it is passed, and checked for `NaN`.
+
 ## [1.5.8] - 2026-11-17
 
 A patch release.

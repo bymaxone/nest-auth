@@ -584,7 +584,7 @@ export interface BymaxAuthModuleOptions {
     enabled?: boolean
 
     /**
-     * Default maximum number of concurrent sessions per user.
+     * Default maximum number of concurrent sessions per user, a whole number of at least `1`.
      * Default: `5`. When `maxSessionsResolver` is provided, this value is ignored.
      */
     defaultMaxSessions?: number
@@ -927,8 +927,8 @@ export interface BymaxAuthModuleOptions {
   controllers?: ControllerFlags
 
   /**
-   * TTL in seconds for the user status Redis cache.
-   * Status is cached per user to avoid a database query on every authenticated request.
+   * TTL in seconds for the user status Redis cache, a whole number from `1` to `3600`: it is how
+   * long a suspended account keeps passing the guards. Cached per user to skip a query per request.
    * Default: `60`
    */
   userStatusCacheTtlSeconds?: number
