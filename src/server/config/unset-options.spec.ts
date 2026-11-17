@@ -31,6 +31,11 @@ function build(group: string, key: string, value: unknown): BymaxAuthModuleOptio
   return options
 }
 
+/** A value read back as the type a test needs it to be, for options a typed call would refuse. */
+function untyped<T>(value: unknown): T {
+  return value as T
+}
+
 /** Whether the built object still carries the three groups every module configuration needs. */
 function isOptions(
   value: Record<string, unknown>
@@ -201,19 +206,81 @@ describe('an unset option means its default', () => {
       expect(Reflect.get(cleaned, name)).toEqual({ entry: null })
     })
 
-    // Scenario: a fixed-key group given something that is not a plain data bag. Expected: kept as it
-    // is, the same reference for a class instance and the same value for a scalar, an array or a function.
-    it('leaves a value that is not a plain data bag untouched', () => {
-      class Flags {
-        enabled = true
-      }
-      const instance = new Flags()
+    // Scenario: a fixed-key group given something that cannot be a group. Expected: kept as it is, the same
+    // value for a scalar, an array or a function.
+    it('leaves a value that cannot be a group untouched', () => {
       const fn = (): number => 1
-      const values = [instance, 'text', 7, true, ['x'], fn]
+      const values = ['text', 7, true, ['x'], fn]
 
       for (const value of values) {
         expect(Reflect.get(dropUnset(withGroup('controllers', value)), 'controllers')).toBe(value)
       }
+    })
+
+    // Scenario: a group that is a class instance, with a getter on its prototype, a field that holds
+    // `undefined` and one that holds `null`. Expected: read into a plain object with the getter's value
+    // and the set field, and without the unset ones, so a typed configuration class is read like a literal.
+    it('reads a class instance by property access', () => {
+      class Settings {
+        enabled = true
+        defaultMaxSessions: number | undefined = undefined
+        maxSessionsResolver = null
+        get ignored(): string {
+          return 'unknown key, not an own property'
+        }
+      }
+      const cleaned = dropUnset(withGroup('sessions', new Settings()))
+      const group = Reflect.get(cleaned, 'sessions')
+
+      expect(group).toEqual({ enabled: true })
+      expect(Object.getPrototypeOf(group)).toBe(Object.prototype)
+    })
+
+    // Scenario: a class whose getter supplies a known key. Expected: the getter's value is read.
+    it('reads a known key that is a getter on the prototype', () => {
+      class Settings {
+        get defaultMaxSessions(): number {
+          return 3
+        }
+      }
+
+      expect(Reflect.get(dropUnset(withGroup('sessions', new Settings())), 'sessions')).toEqual({
+        defaultMaxSessions: 3
+      })
+    })
+
+    // Scenario: an own enumerable getter for a known key, whose value changes on each read. Expected: read
+    // exactly once, so the value the host's getter first returns is the one that is configured.
+    it('reads a known own getter once', () => {
+      let reads = 0
+      const sessions = {}
+      Object.defineProperty(sessions, 'defaultMaxSessions', {
+        enumerable: true,
+        get: () => (++reads === 1 ? 2 : undefined)
+      })
+
+      const cleaned = dropUnset(withGroup('sessions', sessions))
+
+      expect(reads).toBe(1)
+      expect(Reflect.get(cleaned, 'sessions')).toEqual({ defaultMaxSessions: 2 })
+    })
+
+    // Scenario: the options themselves are a class instance, as a typed configuration class produces.
+    // Expected: the same cleaning, getters included.
+    it('reads options that are a class instance', () => {
+      class AppOptions {
+        jwt = { secret: SECRET }
+        roles = { hierarchy: {} }
+        rateLimit = { enabled: false }
+        sessions = { enabled: true, defaultMaxSessions: undefined }
+        get environment(): string {
+          return 'test'
+        }
+      }
+      const cleaned = dropUnset(untyped<BymaxAuthModuleOptions>(new AppOptions()))
+
+      expect(Reflect.get(cleaned, 'sessions')).toEqual({ enabled: true })
+      expect(Reflect.get(cleaned, 'environment')).toBe('test')
     })
 
     // Scenario: `workspaces` without either sub-group, with a non-object sub-group, and with both.
@@ -224,7 +291,7 @@ describe('an unset option means its default', () => {
       const both = dropUnset(
         withGroup('workspaces', {
           accessDeniedEvents: { max: undefined, windowSeconds: 5 },
-          invitations: { accountStatus: null, other: 1 }
+          roles: { owner: null }
         })
       )
 
@@ -232,7 +299,25 @@ describe('an unset option means its default', () => {
       expect(Reflect.get(scalar, 'workspaces')).toEqual({ accessDeniedEvents: 3 })
       expect(Reflect.get(both, 'workspaces')).toEqual({
         accessDeniedEvents: { windowSeconds: 5 },
-        invitations: { other: 1 }
+        roles: { owner: null }
+      })
+    })
+
+    // Scenario: `workspaces.accessDeniedEvents` as a class whose two settings are getters on its prototype.
+    // Expected: both are read, as the class group case does for the other groups.
+    it('reads the prototype getters of the accessDeniedEvents sub-group', () => {
+      class Events {
+        get max(): number {
+          return 4
+        }
+        get windowSeconds(): number {
+          return 9
+        }
+      }
+      const cleaned = dropUnset(withGroup('workspaces', { accessDeniedEvents: new Events() }))
+
+      expect(Reflect.get(cleaned, 'workspaces')).toEqual({
+        accessDeniedEvents: { max: 4, windowSeconds: 9 }
       })
     })
 
@@ -251,5 +336,29 @@ describe('an unset option means its default', () => {
         accessDeniedEvents: { keep: null }
       })
     })
+  })
+
+  // Scenario: a typed configuration class as a group, the common Nest pattern, with a field that is
+  // undefined. Expected: the default cap applies, as it does for an object literal.
+  it('keeps the session cap and the absolute lifetime when their groups are class instances', () => {
+    class SessionSettings {
+      enabled = true
+      defaultMaxSessions: number | undefined = undefined
+    }
+    class JwtSettings {
+      secret = SECRET
+      absoluteSessionLifetimeDays: number | undefined = undefined
+    }
+    const options = {
+      ...build('sessions', 'enabled', true),
+      sessions: new SessionSettings(),
+      jwt: new JwtSettings()
+    }
+    if (!isOptions(options)) throw new Error('the base options lost a required group')
+
+    const resolved = resolveOptions(options)
+
+    expect(resolved.sessions.defaultMaxSessions).toBe(5)
+    expect(resolved.jwt.absoluteSessionLifetimeDays).toBe(30)
   })
 })
