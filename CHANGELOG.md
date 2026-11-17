@@ -36,9 +36,9 @@ A patch release.
 - **An option that holds `undefined` or `null` is unset, so its default applies, never "no bound".** The defaults were
   spread under the host's group, so an own key holding `undefined` replaced the default: `Number(process.env.X) || undefined`
   switched the session cap (`sessions.defaultMaxSessions`) and the absolute lifetime cap off, which is the `NaN` bug reached
-  through a different value. The options are now read once with the unset keys dropped, in every group, so every
-  default and every validator sees the same thing. `null` follows the same rule: twelve options refused it and two took it
-  through `??`; all of them now read it as unset.
+  through a different value. The options are now read once with the unset keys dropped, at the top level and in each option group (the role
+  hierarchies are left as given), so every default and every validator sees the same thing. `null` follows the same
+  rule: some options refused it and some took it through `??`; all of them now read it as unset.
 - `jwt.accessCookieMaxAgeMs` has a floor of 1000: the cookie `Max-Age` is sent in whole seconds, so 1 to 999 became
   `Max-Age=0`, which deletes the cookie.
 - A refusal names the type of a value that is not a number (`received a string`) and never prints it, so a secret passed to
@@ -75,7 +75,7 @@ each line says what was accepted until now:
   `jwt.refreshGraceWindowSeconds` (0 to 300): `NaN`, a fraction, and a numeric string, which the range checks let
   through. `Infinity` was already refused by the range.
 
-`null` and `undefined` mean "unset" for every option now: a host that passed `null` to one of the twelve options that refused it
+`null` and `undefined` mean "unset" for every option now: a host that passed `null` to an option that used to refuse it
 boots with the default, and one that relied on an own key holding `undefined` to remove a cap gets the default cap. In
 `jwt.absoluteSessionLifetimeDays` a numeric string such as `'30'` is newly refused; a string was already refused for
 `jwt.refreshExpiresInDays`, which now also refuses more than 3650 days and a length that is not whole seconds.
