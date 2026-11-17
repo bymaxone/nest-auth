@@ -44,6 +44,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   The write is now best effort: the decision is taken from the record just read, and the next request reads the repository
   again. A failing cache read is still an outage.
 
+- **A tiny `revalidateInterval` is no longer honoured.** `AuthProvider` polled `GET /me` at whatever positive period it was
+  given, so a value such as `1.5` (or `5` written as seconds) issued a request every few milliseconds from every open tab.
+  A positive value below 5000 milliseconds is now read as 5000. `0` still disables the loop, and a value that is not a
+  number from 0 to 2147483647 is still read as the default (five minutes).
+
 ### Apply to a derived backend
 
 - **`SessionService.createSession` no longer writes `sd:{hash}`.** With `sessions.enabled`, `TokenManagerService.issueTokens`
@@ -53,6 +58,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   says so.
 - **Nothing is required for `isServiceUnavailable`.** The export is new; import it from `@bymax-one/nest-auth` where a
   handler needs it.
+- **A positive `revalidateInterval` below 5000 runs at 5000.** A test that gives `AuthProvider` a small interval to exercise
+  the loop must advance 5 seconds, or pass `0` to turn the loop off.
 
 ## [1.5.6] - 2026-11-15
 
