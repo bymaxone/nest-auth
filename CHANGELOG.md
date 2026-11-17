@@ -26,10 +26,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   check still read it as enabled, `emailVerification.required: ''` let login skip the verification, and `'false'` was
   truthy. An option compared with `===` fell through to its default branch on a typo: `environment: 'prodution'` was read
   as not production and dropped `Secure` from every cookie with no error, a misspelled `tokenDelivery` issued cookies, and a
-  misspelled `passwordReset.method` silently used the token flow. Every flag (`secureCookies`, `enforceTenantBinding`,
-  `*.enabled`, `emailVerification.required`, `workspaces.allowCreate` as a boolean or a function, and each `controllers`
-  flag passed to `registerAsync`) must be exactly `true` or `false`, and `tokenDelivery`, `environment`,
-  `cookies.sameSite` and `passwordReset.method` must be one of their documented values, with no case folding. The refusal
+  misspelled `passwordReset.method` silently used the token flow. Every flag (a `controllers` flag passed to
+  `registerAsync` included; `workspaces.allowCreate` may also be a function) must be exactly `true` or `false`, and an
+  option with a documented set of values must be one of them, with no case folding. The refusal
   names the type of a string and never prints it. A spec reads the option interfaces and fails when a new flag or
   documented-set option is declared and not listed in the validator.
 - `registerAsync` inspects the hooks and the email provider when they are ready-made `useValue` objects: a hook that is
@@ -38,12 +37,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
-A configuration that booted before is refused at startup when it sets a flag or one of the four documented-set options to
+A configuration that booted before is refused at startup when it sets a flag or an option with a documented set of values to
 anything else. `undefined` and `null` still mean the default. An environment variable must be converted before it is passed
 (`process.env.X === 'true'`), and `environment` must be spelled exactly `'production'`, `'development'` or `'test'`. A
-`BYMAX_AUTH_EMAIL_PROVIDER` registered as an object needs `sendPasswordResetToken`, `sendPasswordResetOtp`,
-`sendEmailVerificationOtp`, `sendMfaEnabledNotification`, `sendMfaDisabledNotification` and `sendInvitation`; the other
-methods stay optional.
+`BYMAX_AUTH_EMAIL_PROVIDER` registered as an object needs the email methods the library calls without a guard; the
+other methods stay optional.
 
 ## [1.5.9] - 2026-11-17
 
