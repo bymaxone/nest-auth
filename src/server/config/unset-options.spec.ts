@@ -7,6 +7,8 @@
  * @layer Test
  */
 
+import { runInNewContext } from 'node:vm'
+
 import { DEFAULT_OPTIONS } from './default-options'
 import { resolveOptions } from './resolved-options'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
@@ -131,4 +133,47 @@ describe('an unset option means its default', () => {
       })
     }
   )
+
+  // Scenario: an option group that is a plain data bag of another shape: no prototype (what several
+  // configuration parsers return) or made in another realm. Expected: its unset keys are dropped too,
+  // so the cap is the default.
+  it.each([
+    [
+      'no prototype',
+      () => Object.assign(Object.create(null), { enabled: true, defaultMaxSessions: undefined })
+    ],
+    ['another realm', () => runInNewContext('({ enabled: true, defaultMaxSessions: undefined })')]
+  ])('drops the unset keys of a group with %s', (_label, make) => {
+    const options = { ...build('sessions', 'enabled', true), sessions: make() }
+    if (!isOptions(options)) throw new Error('the base options lost a required group')
+
+    expect(resolveOptions(options).sessions.defaultMaxSessions).toBe(5)
+  })
+
+  // Scenario: a host-defined map holding null: an OAuth provider block. Expected: refused, never
+  // silently dropped, because a provider that vanishes before its fields are checked leaves OAuth
+  // requests failing at runtime.
+  it.each([null, undefined])('refuses an OAuth provider block that is %s', (block) => {
+    const options = { ...build('sessions', 'enabled', undefined), oauth: { google: block } }
+    if (!isOptions(options)) throw new Error('the base options lost a required group')
+
+    expect(() => resolveOptions(options)).toThrow()
+  })
+
+  // Scenario: a class instance given where a group is expected. Expected: left as it is, with its
+  // methods, because only plain data bags are copied.
+  it('leaves a class instance alone', () => {
+    class Flags {
+      readonly enabled = true
+      isOn(): boolean {
+        return this.enabled
+      }
+    }
+    const options = { ...build('sessions', 'enabled', undefined), controllers: new Flags() }
+    if (!isOptions(options)) throw new Error('the base options lost a required group')
+
+    const resolved = resolveOptions(options)
+
+    expect(Reflect.get(resolved.controllers, 'enabled')).toBe(true)
+  })
 })
