@@ -33,19 +33,22 @@ A patch release.
   instead of at boot; other numeric options had no check at all. One module, `config/numeric-options.ts`, now tests each
   value as a whole number (for the lifetime in days, a finite one) before it applies a range with a ceiling, because
   `Number.isInteger(1e300)` is true and a value that large overflows the expiry Redis accepts or the lifetime the cap compares to.
-- **An option that holds `undefined` or `null` is unset, so its default applies, never "no bound".** The defaults were
+- **An option that has a default and holds `undefined` or `null` is unset, so its default applies, never "no bound".** The defaults were
   spread under the host's group, so an own key holding `undefined` replaced the default: `Number(process.env.X) || undefined`
   switched the session cap (`sessions.defaultMaxSessions`) and the absolute lifetime cap off, which is the `NaN` bug reached
   through a different value. The options are read once, by property access, into a plain object without the unset keys, at the top level and in
-  each option group, so a group that is a typed configuration class is read like an object literal and every default and
+  each option group with fixed keys, so a group that is a typed configuration class is read like an object literal and every default and
   every validator sees the same thing. `null` follows the same rule: some options refused it and some took it through
   `??`. The options that hold a host-defined map or a required value are the exception, and refuse `null` by name:
   `oauth.successRedirectUrl`, `oauth.mfaRedirectUrl`, `oauth.errorRedirectUrl`, `oauth.<provider>`, each
-  `roles.hierarchy.<role>` and each `workspaces.permissions.<action>`.
+  `roles.hierarchy.<role>` and each `workspaces.permissions.<action>`. `oauth.<provider>` and
+  `roles.hierarchy.<role>` refuse `undefined` as well. `jwt.secret` and `roles.hierarchy` have no default, so a
+  `null` or `undefined` there is refused as required.
 - `jwt.accessCookieMaxAgeMs` has a floor of 1000: the cookie `Max-Age` is sent in whole seconds, so 1 to 999 became
   `Max-Age=0`, which deletes the cookie.
-- A refusal names the type of a value (`received a string`) and never prints it, so a secret passed to the wrong option does
-  not reach a log. A number is the exception, because `NaN` or `1e300` is what an operator needs to see. A message that said `Got: 1.1` for `jwt.refreshExpiresInDays` states the rule:
+- A refusal that receives a value that is not a number, `null` or `undefined` names its type (`received a string`) and does not print it, so a secret
+  passed to the wrong option does not reach a log; a number is printed, because `NaN` or `1e300` is what an operator needs to see.
+  `jwt.accessExpiresIn`'s refusal still quotes its value; it is fixed in 1.5.10. A message that said `Got: 1.1` for `jwt.refreshExpiresInDays` states the rule:
   days × 86400 must be a whole number of seconds when computed in floating point; 1.5 and 0.25 are, 1.1 and 0.7 are not.
 - A message override of `DefaultAuthEmailProvider` that holds `undefined` keeps the default copy; it threw a `TypeError`
   (`is not a function`) when the message was built.
@@ -78,10 +81,20 @@ each line says what was accepted until now:
   `jwt.refreshGraceWindowSeconds` (0 to 300): `NaN`, a fraction, and a numeric string, which the range checks let
   through. `Infinity` was already refused by the range.
 
-`null` and `undefined` mean "unset" for every option now: a host that passed `null` to an option that used to refuse it
+`null` and `undefined` mean "unset" for every option that has a default: a host that passed `null` to an option that used to refuse it
 boots with the default, and one that relied on an own key holding `undefined` to remove a cap gets the default cap. In
 `jwt.absoluteSessionLifetimeDays` a numeric string such as `'30'` is newly refused; a string was already refused for
 `jwt.refreshExpiresInDays`, which now also refuses more than 3650 days and a length that is not whole seconds.
+
+Also refused or changed:
+
+- `jwt.accessCookieMaxAgeMs` must be a whole number: `1500.5` booted before.
+- `password.parallelization` has a ceiling of 16, and `sessions.defaultMaxSessions` one of 1000.
+- A group or the options given as a class instance now take effect through their getters and prototype; those values
+  were ignored before, so a configuration that relied on the defaults for them now applies the values it declares.
+- Refusal messages read `(received …)` where they read `(current: …)` or `(got: …)`, and a string is no longer quoted
+  (the OAuth `callbackUrl`, `rateLimit.clientIpSource` and the redirect URLs); a test or a log filter that matches
+  the old text must change.
 
 A value read from an environment variable must be converted with `Number(...)` before it is passed, and checked for `NaN`.
 

@@ -323,7 +323,7 @@ export interface BymaxAuthModuleOptions {
     blockSize?: number
 
     /**
-     * scrypt parallelization parameter (p).
+     * scrypt parallelization parameter (p), a whole number from `1` to `16`.
      * Default: `1`
      */
     parallelization?: number
@@ -584,7 +584,7 @@ export interface BymaxAuthModuleOptions {
     enabled?: boolean
 
     /**
-     * Default maximum number of concurrent sessions per user, a whole number of at least `1`.
+     * Default maximum number of concurrent sessions per user, a whole number from `1` to `1000`.
      * Default: `5`. When `maxSessionsResolver` is provided, this value is ignored.
      */
     defaultMaxSessions?: number

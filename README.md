@@ -905,7 +905,7 @@ a cap off, use the documented value (`0` for `jwt.absoluteSessionLifetimeDays`),
 > be `0..=2`: the window counts 30-second steps on _either_ side of now, so `2n + 1` codes are
 > valid at once (three at the default of 1). `mfa.recoveryCodeCount` must be `1..=50`,
 > because zero enrols an account with no way back if the authenticator is lost.
-> `password.blockSize` must be at least 8 and `password.parallelization` at least 1: scrypt's memory
+> `password.blockSize` must be at least 8 and `password.parallelization` between 1 and 16: scrypt's memory
 > cost is `128 * N * r`, so a smaller block size divides the hardness `password.costFactor`'s floor
 > exists to guarantee.
 
