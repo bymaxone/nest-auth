@@ -18,6 +18,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.8] - 2026-11-17
+
+A patch release.
+
 ### Fixed
 
 - **`refresh()` no longer resolves over a revalidation the server did not answer.** `AuthProvider` caught every failure of
@@ -5251,7 +5255,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.7...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.8...HEAD
+[1.5.8]: https://github.com/bymaxone/nest-auth/compare/v1.5.7...v1.5.8
 [1.5.7]: https://github.com/bymaxone/nest-auth/compare/v1.5.6...v1.5.7
 [1.5.6]: https://github.com/bymaxone/nest-auth/compare/v1.5.5...v1.5.6
 [1.5.5]: https://github.com/bymaxone/nest-auth/compare/v1.5.4...v1.5.5
