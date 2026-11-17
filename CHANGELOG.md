@@ -33,6 +33,19 @@ A patch release.
   instead of at boot; other numeric options had no check at all. One module, `config/numeric-options.ts`, now tests each
   value as a whole number (for the lifetime in days, a finite one) before it applies a range with a ceiling, because
   `Number.isInteger(1e300)` is true and a value that large overflows the expiry Redis accepts or the lifetime the cap compares to.
+- **An option that holds `undefined` or `null` is unset, so its default applies, never "no bound".** The defaults were
+  spread under the host's group, so an own key holding `undefined` replaced the default: `Number(process.env.X) || undefined`
+  switched the session cap (`sessions.defaultMaxSessions`) and the absolute lifetime cap off, which is the `NaN` bug reached
+  through a different value. The options are now read once with the unset keys dropped, in every group, so every
+  default and every validator sees the same thing. `null` follows the same rule: twelve options refused it and two took it
+  through `??`; all of them now read it as unset.
+- `jwt.accessCookieMaxAgeMs` has a floor of 1000: the cookie `Max-Age` is sent in whole seconds, so 1 to 999 became
+  `Max-Age=0`, which deletes the cookie.
+- A refusal names the type of a value that is not a number (`received a string`) and never prints it, so a secret passed to
+  the wrong option does not reach a log. A message that said `Got: 1.1` for `jwt.refreshExpiresInDays` states the rule:
+  days × 86400 must be a whole number of seconds; 1.5 and 0.25 are, 1.1 is not.
+- A message override of `DefaultAuthEmailProvider` that holds `undefined` keeps the default copy instead of sending a
+  message with no body.
 - `userStatusCacheTtlSeconds` has a ceiling of 3600 seconds. It is the window in which a suspended account still passes
   the dashboard guards, so it is a security bound and not a tuning knob.
 
@@ -51,7 +64,7 @@ each line says what was accepted until now:
 - `passwordReset.tokenTtlSeconds`, `passwordReset.otpTtlSeconds`, `emailVerification.otpTtlSeconds`,
   `emailChange.tokenTtlSeconds`, `invitations.tokenTtlSeconds`: anything but a whole number from 1 to 315360000 (ten
   years). Any number booted, and Redis refused the expiry on every request.
-- `jwt.accessCookieMaxAgeMs`: from 1 to ten years in milliseconds.
+- `jwt.accessCookieMaxAgeMs`: from 1000 to ten years in milliseconds. Any number booted, and 1 to 999 sent `Max-Age=0`.
 - `bruteForce.windowSeconds`: anything but a whole number from 1 to 604800 (one week). A window of months or years
   booted and locked an account out for that long.
 - `userStatusCacheTtlSeconds`: anything but a whole number from 1 to 3600. Any number booted.
@@ -59,8 +72,13 @@ each line says what was accepted until now:
   on the first derivation, which is the first login after deploy; each unit of `p` is a linear cost an unauthenticated
   request pays.
 - `passwordReset.otpLength` (4 to 8), `mfa.totpWindow`, `mfa.recoveryCodeCount` (1 to 50) and
-  `jwt.refreshGraceWindowSeconds` (0 to 300): a fraction, `NaN`, `Infinity` or a string, which the range checks let
-  through.
+  `jwt.refreshGraceWindowSeconds` (0 to 300): `NaN`, a fraction, and a numeric string, which the range checks let
+  through. `Infinity` was already refused by the range.
+
+`null` and `undefined` mean "unset" for every option now: a host that passed `null` to one of the twelve options that refused it
+boots with the default, and one that relied on an own key holding `undefined` to remove a cap gets the default cap. In
+`jwt.absoluteSessionLifetimeDays` a numeric string such as `'30'` is newly refused; a string was already refused for
+`jwt.refreshExpiresInDays`, which now also refuses more than 3650 days and a length that is not whole seconds.
 
 A value read from an environment variable must be converted with `Number(...)` before it is passed, and checked for `NaN`.
 

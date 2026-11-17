@@ -40,6 +40,7 @@
 import { Logger } from '@nestjs/common'
 
 import { DEFAULT_MESSAGES } from './default-auth-email.messages'
+import { dropUnsetKeys } from '../config/unset-options'
 import type {
   IEmailProvider,
   InviteData,
@@ -486,7 +487,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     private readonly sink: AuthEmailSink,
     options?: DefaultAuthEmailProviderOptions
   ) {
-    this.messages = { ...DEFAULT_MESSAGES, ...options?.messages }
+    this.messages = { ...DEFAULT_MESSAGES, ...dropUnsetKeys(options?.messages ?? {}) }
     // A bare policy is expanded to cover every message, so the resolution below reads one shape.
     // Expanding here rather than branching at the throw site keeps the per-send path free of the
     // question "which form did the deployment use", which is where a wrong answer would be silent.

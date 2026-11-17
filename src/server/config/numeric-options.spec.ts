@@ -94,8 +94,8 @@ interface Rule {
 const RULES: Rule[] = [
   {
     path: 'jwt.accessCookieMaxAgeMs',
-    accepts: [1, 900_000, 315_360_000_000],
-    refusesAlso: [315_360_000_001, 2 ** 53]
+    accepts: [1000, 900_000, 315_360_000_000],
+    refusesAlso: [999, 1, 315_360_000_001, 2 ** 53]
   },
   {
     path: 'jwt.absoluteSessionLifetimeDays',
@@ -217,12 +217,12 @@ describe('numeric options at boot', () => {
     [
       'jwt.accessCookieMaxAgeMs',
       0,
-      'It is the cookie Max-Age; zero deletes the cookie and NaN is ignored by the browser, so the session would end with the tab.'
+      'It is the cookie Max-Age in milliseconds, sent in whole seconds: under 1000 it becomes Max-Age=0, which deletes the cookie, and NaN is ignored by the browser, so the session would end with the tab.'
     ],
     [
       'sessions.defaultMaxSessions',
       NaN,
-      'It caps concurrent sessions: with NaN the comparison is false in both directions, no session is ever evicted, and the cap does not exist.'
+      'It caps concurrent sessions per user, counted in whole sessions: NaN evicts no session, zero or a negative value evicts them all, a fraction cannot be counted, and a value above 1000 is no cap.'
     ],
     [
       'passwordReset.tokenTtlSeconds',
@@ -237,7 +237,7 @@ describe('numeric options at boot', () => {
     [
       'jwt.absoluteSessionLifetimeDays',
       NaN,
-      '(current: NaN). Only 0 switches the cap off; NaN, a negative or a value so large that its length in milliseconds overflows would skip it without being asked to, and a value under an hour ends every session at its first rotation after that age, minutes after login. Set 0 to accept unbounded sessions deliberately.'
+      '(received NaN). Only 0 switches the cap off; NaN, a negative or a value so large that its length in milliseconds overflows would skip it without being asked to, and a value under an hour ends every session at its first rotation after that age, minutes after login. Set 0 to accept unbounded sessions deliberately.'
     ],
     [
       'passwordReset.otpLength',
@@ -249,7 +249,7 @@ describe('numeric options at boot', () => {
     [
       'jwt.refreshExpiresInDays',
       1.1,
-      'It is also at most 3650 days, and its length in seconds must be a whole number, because Redis takes an integer expiry: 1.1 days is 95040.00000000001 s.'
+      'It is at most 3650 days, and days × 86400 must be a whole number of seconds, because Redis takes an integer expiry: 1.5 and 0.25 are, 1.1 is not.'
     ],
     [
       'jwt.refreshGraceWindowSeconds',
@@ -305,7 +305,22 @@ describe('numeric options at boot', () => {
   it('bounds password.parallelization at 16', () => {
     expect(() => resolveOptions(optionsWith('password.parallelization', 16))).not.toThrow()
     expect(() => resolveOptions(optionsWith('password.parallelization', 17))).toThrow(
-      "password.parallelization must be at most 16 (current: 17). scrypt's CPU cost grows linearly with it and an unauthenticated login derives a hash even for an address that does not exist."
+      "password.parallelization must be at most 16 (received 17). scrypt's CPU cost grows linearly with it and an unauthenticated login derives a hash even for an address that does not exist."
     )
+  })
+
+  // Scenario: a secret passed to a numeric option by mistake. Expected: the refusal names the type
+  // (`received a string`) and never contains the value, because a boot error is logged.
+  it.each(RULES.map((rule) => rule.path))('does not print a string given to %s', (path) => {
+    const secret = 'hunter2-not-a-number'
+    let message = ''
+    try {
+      resolveOptions(optionsWith(path, secret))
+    } catch (error) {
+      message = error instanceof Error ? error.message : ''
+    }
+
+    expect(message).toContain('received a string')
+    expect(message).not.toContain(secret)
   })
 })
