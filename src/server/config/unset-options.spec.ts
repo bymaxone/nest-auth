@@ -249,6 +249,22 @@ describe('an unset option means its default', () => {
       })
     })
 
+    // Scenario: an own enumerable getter for a known key, whose value changes on each read. Expected: read
+    // exactly once, so the value the host's getter first returns is the one that is configured.
+    it('reads a known own getter once', () => {
+      let reads = 0
+      const sessions = {}
+      Object.defineProperty(sessions, 'defaultMaxSessions', {
+        enumerable: true,
+        get: () => (++reads === 1 ? 2 : undefined)
+      })
+
+      const cleaned = dropUnset(withGroup('sessions', sessions))
+
+      expect(reads).toBe(1)
+      expect(Reflect.get(cleaned, 'sessions')).toEqual({ defaultMaxSessions: 2 })
+    })
+
     // Scenario: the options themselves are a class instance, as a typed configuration class produces.
     // Expected: the same cleaning, getters included.
     it('reads options that are a class instance', () => {

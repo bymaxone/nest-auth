@@ -174,7 +174,7 @@ function isObjectGroup(value: unknown): value is object {
  */
 function readSetKeys(group: object, keys: readonly string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {}
-  for (const key of [...keys, ...Object.keys(group)]) {
+  for (const key of new Set([...keys, ...Object.keys(group)])) {
     const entry: unknown = Reflect.get(group, key)
     if (entry !== undefined && entry !== null) out[key] = entry
   }
