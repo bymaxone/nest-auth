@@ -20,7 +20,6 @@ export default [
       'scripts/check-double-assertions.mjs',
       'scripts/check-function-length.mjs',
       'scripts/function-length-key.mjs',
-      'scripts/commitlint-no-ai-attribution.cjs',
       'src/check-double-assertions.spec.ts',
       'src/check-function-length.spec.ts',
       'src/check-function-length.baseline.spec.ts',
