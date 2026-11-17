@@ -309,8 +309,8 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
 }
 
 /**
- * Bounds `password.parallelization` from above. The check that it is a whole number of at least 1
- * stays with the other scrypt parameters; this adds the ceiling its floor never had.
+ * Bounds `password.parallelization` from above. That it is a whole number of at least 1 is checked
+ * by the scrypt parameter validator in `resolved-options.ts`; this function holds only the ceiling.
  *
  * @param password - The configured `password` group.
  * @throws {Error} when the value is a finite number above the ceiling.
