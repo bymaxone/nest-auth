@@ -205,13 +205,13 @@ describe('AuthProvider — initial mount', () => {
       client.getMe.mockRejectedValueOnce(new AuthClientError('forbidden', 403))
       let result: { current: AuthContextValue | null } | undefined
       await act(async () => {
-        result = renderContext(client, { revalidateInterval: 1000 }).result
+        result = renderContext(client, { revalidateInterval: 5000 }).result
       })
       const firstValidation = result?.current?.lastValidation?.getTime()
       expect(firstValidation).toBeDefined()
       jest.setSystemTime(new Date('2026-04-18T10:00:05.000Z'))
       await act(async () => {
-        jest.advanceTimersByTime(1000)
+        jest.advanceTimersByTime(5000)
         await Promise.resolve()
       })
       expect(result?.current?.status).toBe('unauthenticated')
@@ -585,11 +585,11 @@ describe('AuthProvider — revalidation loop', () => {
     const client = createMockClient()
     client.getMe.mockResolvedValue(MOCK_USER)
     await act(async () => {
-      renderContext(client, { revalidateInterval: 1000 })
+      renderContext(client, { revalidateInterval: 5000 })
     })
     expect(client.getMe).toHaveBeenCalledTimes(1)
     await act(async () => {
-      jest.advanceTimersByTime(1000)
+      jest.advanceTimersByTime(5000)
       await Promise.resolve()
     })
     expect(client.getMe).toHaveBeenCalledTimes(2)
@@ -618,7 +618,7 @@ describe('AuthProvider — revalidation loop', () => {
     client.getMe.mockResolvedValue(MOCK_USER)
     let unmount: (() => void) | undefined
     await act(async () => {
-      const rendered = renderContext(client, { revalidateInterval: 1000 })
+      const rendered = renderContext(client, { revalidateInterval: 5000 })
       unmount = rendered.unmount
     })
     expect(client.getMe).toHaveBeenCalledTimes(1)
@@ -637,11 +637,11 @@ describe('AuthProvider — revalidation loop', () => {
     const onSessionExpired = jest.fn()
     let result: { current: AuthContextValue | null } | undefined
     await act(async () => {
-      result = renderContext(client, { revalidateInterval: 1000, onSessionExpired }).result
+      result = renderContext(client, { revalidateInterval: 5000, onSessionExpired }).result
     })
     expect(result?.current?.status).toBe('authenticated')
     await act(async () => {
-      jest.advanceTimersByTime(1000)
+      jest.advanceTimersByTime(5000)
       await Promise.resolve()
     })
     expect(onSessionExpired).toHaveBeenCalledTimes(1)
@@ -676,10 +676,10 @@ describe('AuthProvider — revalidation loop', () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined)
     let result: { current: AuthContextValue | null } | undefined
     await act(async () => {
-      result = renderContext(client, { revalidateInterval: 1000, onSessionExpired }).result
+      result = renderContext(client, { revalidateInterval: 5000, onSessionExpired }).result
     })
     await act(async () => {
-      jest.advanceTimersByTime(1000)
+      jest.advanceTimersByTime(5000)
       await Promise.resolve()
     })
     expect(result?.current?.status).toBe('unauthenticated')
@@ -709,13 +709,13 @@ describe('AuthProvider — revalidation loop', () => {
     const onSessionExpired = jest.fn()
     let result: { current: AuthContextValue | null } | undefined
     await act(async () => {
-      result = renderContext(client, { revalidateInterval: 1000, onSessionExpired }).result
+      result = renderContext(client, { revalidateInterval: 5000, onSessionExpired }).result
     })
     const firstValidation = result?.current?.lastValidation?.getTime()
     expect(firstValidation).toBeDefined()
     jest.setSystemTime(new Date('2026-04-18T10:00:05.000Z'))
     await act(async () => {
-      jest.advanceTimersByTime(1000)
+      jest.advanceTimersByTime(5000)
       await Promise.resolve()
     })
     expect(onSessionExpired).not.toHaveBeenCalled()
@@ -735,12 +735,12 @@ describe('AuthProvider — revalidation loop', () => {
     const onSessionExpired = jest.fn()
     let result: { current: AuthContextValue | null } | undefined
     await act(async () => {
-      result = renderContext(client, { revalidateInterval: 1000, onSessionExpired }).result
+      result = renderContext(client, { revalidateInterval: 5000, onSessionExpired }).result
     })
     expect(result?.current?.status).toBe('unauthenticated')
     expect(onSessionExpired).not.toHaveBeenCalled()
     await act(async () => {
-      jest.advanceTimersByTime(1000)
+      jest.advanceTimersByTime(5000)
       await Promise.resolve()
     })
     expect(client.getMe).toHaveBeenCalledTimes(2)
@@ -761,16 +761,16 @@ describe('AuthProvider — revalidation loop', () => {
     const onSessionExpired = jest.fn()
     let result: { current: AuthContextValue | null } | undefined
     await act(async () => {
-      result = renderContext(client, { revalidateInterval: 1000, onSessionExpired }).result
+      result = renderContext(client, { revalidateInterval: 5000, onSessionExpired }).result
     })
     expect(result?.current?.status).toBe('authenticated')
     await act(async () => {
-      jest.advanceTimersByTime(1000)
+      jest.advanceTimersByTime(5000)
       await Promise.resolve()
     })
     expect(onSessionExpired).toHaveBeenCalledTimes(1)
     await act(async () => {
-      jest.advanceTimersByTime(1000)
+      jest.advanceTimersByTime(5000)
       await Promise.resolve()
     })
     expect(client.getMe).toHaveBeenCalledTimes(3)
@@ -797,7 +797,7 @@ describe('AuthProvider — revalidation loop', () => {
     const onSessionExpired = jest.fn()
     let result: { current: AuthContextValue | null } | undefined
     await act(async () => {
-      result = renderContext(client, { revalidateInterval: 1000, onSessionExpired }).result
+      result = renderContext(client, { revalidateInterval: 5000, onSessionExpired }).result
     })
     expect(result?.current?.status).toBe('authenticated')
     let loginPromise: Promise<unknown> | undefined
@@ -806,7 +806,7 @@ describe('AuthProvider — revalidation loop', () => {
     })
     expect(result?.current?.status).toBe('loading')
     await act(async () => {
-      jest.advanceTimersByTime(1000)
+      jest.advanceTimersByTime(5000)
       await Promise.resolve()
     })
     expect(onSessionExpired).not.toHaveBeenCalled()
@@ -832,10 +832,10 @@ describe('AuthProvider — revalidation loop', () => {
     jest.advanceTimersByTime(5000)
     expect(client.getMe).toHaveBeenCalledTimes(1)
     await act(async () => {
-      harness?.rerender({ client, revalidateInterval: 1000 })
+      harness?.rerender({ client, revalidateInterval: 5000 })
     })
     await act(async () => {
-      jest.advanceTimersByTime(1000)
+      jest.advanceTimersByTime(5000)
       await Promise.resolve()
     })
     expect(client.getMe).toHaveBeenCalledTimes(2)
@@ -856,16 +856,16 @@ describe('AuthProvider — revalidation loop', () => {
     await act(async () => {
       harness = renderProvider({
         client,
-        revalidateInterval: 1000,
+        revalidateInterval: 5000,
         onSessionExpired: firstCallback
       })
     })
     expect(capturedContext?.status).toBe('authenticated')
     await act(async () => {
-      harness?.rerender({ client, revalidateInterval: 1000, onSessionExpired: secondCallback })
+      harness?.rerender({ client, revalidateInterval: 5000, onSessionExpired: secondCallback })
     })
     await act(async () => {
-      jest.advanceTimersByTime(1000)
+      jest.advanceTimersByTime(5000)
       await Promise.resolve()
     })
     expect(secondCallback).toHaveBeenCalledTimes(1)

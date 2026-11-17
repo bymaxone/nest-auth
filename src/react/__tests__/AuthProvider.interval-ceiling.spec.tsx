@@ -54,8 +54,8 @@ describe('AuthProvider revalidateInterval ceiling', () => {
     expect(await revalidationsOver(value, DEFAULT_MS)).toBe(1)
   })
 
-  it('still honors a period inside the range', async () => {
-    expect(await revalidationsOver(1000, 3000)).toBe(3)
+  it('honors a period inside the range', async () => {
+    expect(await revalidationsOver(10_000, 30_000)).toBe(3)
   })
 
   it('still honors the ceiling itself as given', async () => {

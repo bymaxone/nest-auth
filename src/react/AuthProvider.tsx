@@ -29,6 +29,15 @@ import { AuthContext, type AuthContextValue, type AuthStatus } from './context'
  */
 const DEFAULT_REVALIDATE_INTERVAL_MS = 300_000
 
+/**
+ * The shortest period a positive `revalidateInterval` runs at, in milliseconds.
+ *
+ * A background poll that fires every few milliseconds costs a request per tick per open tab, and a
+ * value written in the wrong unit (`5` meant as seconds) is exactly that. A positive value below this
+ * floor is read as the floor, its nearest valid value; `0` still disables the loop.
+ */
+const MIN_REVALIDATE_INTERVAL_MS = 5_000
+
 /** The lowest status the provider takes for an HTTP answer. */
 const HTTP_STATUS_MIN = 100
 
@@ -96,6 +105,9 @@ export interface AuthProviderProps {
    *
    * A value that is not a number from `0` to `2147483647` (the largest delay a timer honors, so
    * `NaN` and `Infinity` too) is read as the default, never as a 1 ms loop.
+   *
+   * A positive value below `5000` (5 seconds) is read as `5000`: a background poll has no use for a
+   * shorter period, and a value in the wrong unit would otherwise be a request every few milliseconds.
    *
    * Set to `0` to disable the loop entirely — useful for short-lived
    * flows (sign-up wizards, kiosk screens) where the overhead of a
@@ -171,6 +183,7 @@ function isSessionExpiredError(error: unknown): boolean {
  *
  * A period that is not a number from `0` to `2147483647` is read as the default: `setInterval` gives
  * `NaN`, `Infinity` and anything above that ceiling a 1 ms period.
+ * A positive period below {@link MIN_REVALIDATE_INTERVAL_MS} is read as that floor.
  *
  * @param revalidate - The check to run on each tick.
  * @param interval - The period in milliseconds, `0` for none.
@@ -179,8 +192,10 @@ function useRevalidationLoop(
   revalidate: (isInitial: boolean) => Promise<void>,
   interval: number
 ): void {
-  const period =
-    interval >= 0 && interval <= 2_147_483_647 ? interval : DEFAULT_REVALIDATE_INTERVAL_MS
+  const inRange = interval >= 0 && interval <= 2_147_483_647
+  const period = inRange
+    ? Math.max(interval, interval > 0 ? MIN_REVALIDATE_INTERVAL_MS : 0)
+    : DEFAULT_REVALIDATE_INTERVAL_MS
   useEffect(() => {
     if (period <= 0) {
       return undefined

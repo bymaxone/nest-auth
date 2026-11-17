@@ -32,7 +32,7 @@ async function tickWith(error: unknown) {
   client.getMe.mockResolvedValueOnce(MOCK_USER)
   const onSessionExpired = jest.fn()
   const view = render(
-    <AuthProvider client={client} onSessionExpired={onSessionExpired} revalidateInterval={1000}>
+    <AuthProvider client={client} onSessionExpired={onSessionExpired} revalidateInterval={5000}>
       <Probe />
     </AuthProvider>
   )
@@ -41,7 +41,7 @@ async function tickWith(error: unknown) {
   })
   client.getMe.mockRejectedValueOnce(error)
   await act(async () => {
-    jest.advanceTimersByTime(1000)
+    jest.advanceTimersByTime(5000)
     await Promise.resolve()
   })
   return { onSessionExpired, state: () => view.getByTestId('state').textContent }

@@ -20,7 +20,7 @@ async function withRevalidationInFlight() {
   client.getMe.mockResolvedValueOnce(MOCK_USER)
   const onSessionExpired = jest.fn()
   const view = render(
-    <AuthProvider client={client} onSessionExpired={onSessionExpired} revalidateInterval={1000}>
+    <AuthProvider client={client} onSessionExpired={onSessionExpired} revalidateInterval={5000}>
       <div />
     </AuthProvider>
   )
@@ -35,7 +35,7 @@ async function withRevalidationInFlight() {
       )
   )
   await act(async () => {
-    jest.advanceTimersByTime(1000)
+    jest.advanceTimersByTime(5000)
     await Promise.resolve()
   })
   const answer = async (): Promise<void> => {
