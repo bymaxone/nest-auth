@@ -1,6 +1,6 @@
 /**
  * @fileoverview An option that is `null`, a symbol or a bigint is refused by name, with the type and
- * never the content, instead of surfacing as a raw `TypeError` from the code that reads it.
+ * never the content.
  *
  * @layer Test
  */
@@ -34,8 +34,8 @@ function refusal(given: BymaxAuthModuleOptions): { type: string; message: string
 }
 
 describe('a value that cannot be read is refused by name', () => {
-  // Scenario: each option holding a value that used to reach a read that throws a raw TypeError.
-  // Expected: a plain Error that names the option, the type received, and nothing of the content.
+  // Scenario: each option holding a value its reader cannot use. Expected: a plain Error that names the
+  // option and the type received.
   it.each([
     ['oauth.google', { oauth: { google: null } }, 'oauth.google must be an object (received null)'],
     [
@@ -103,7 +103,7 @@ describe('a value that cannot be read is refused by name', () => {
     expect(result.message).toContain(message)
   })
 
-  // Scenario: a credential pasted into an option that echoed it. Expected: the refusal never contains it.
+  // Scenario: a credential pasted into an option that holds a string. Expected: the refusal never contains it.
   it.each([
     ['rateLimit.clientIpSource', { rateLimit: { clientIpSource: 'hunter2-secret' } }],
     [
@@ -131,7 +131,7 @@ describe('a value that cannot be read is refused by name', () => {
     expect(result.message).not.toContain('hunter2-secret')
   })
 
-  // Scenario: the platform role map set to null with the platform on. Expected: refused by name already.
+  // Scenario: the platform role map set to null with the platform on. Expected: refused by name.
   it('roles.platformHierarchy null is refused by name', () => {
     const result = refusal(
       options({

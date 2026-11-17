@@ -136,6 +136,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     169 KiB sits about 5% above the measured 161.05 KiB, which also holds the OAuth acceptance of a
 //     workspace invitation, the closed-registration gate, the workspace verifier option, the socket
 //     guard, the live job check and the workspace name encoder.
+//     Raised to 169.5 KiB: measured 169.47 KiB after the option-reading fix (the compile-checked key
+//     tables of `unset-options.ts`, the named refusals of `shape-checks.ts`) against 169.00; the 0.03
+//     KiB of headroom is deliberate, so the next growth is measured and set in its own change.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
@@ -201,7 +204,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 169 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 169.5 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 3.71 * 1024 },

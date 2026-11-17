@@ -2742,7 +2742,7 @@ describe('resolveOptions — rateLimit.clientIpSource', () => {
       rateLimit: { clientIpSource: 'trusted_proxy' }
     } as unknown as BymaxAuthModuleOptions
 
-    expect(() => resolveOptions(options)).toThrow(/received a string\)/)
+    expect(() => resolveOptions(options)).toThrow(/^(?!.*trusted_proxy).*received a string\)/s)
   })
 
   // The message has to be actionable: an operator reading it must be able to pick the right
