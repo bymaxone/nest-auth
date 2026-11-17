@@ -229,7 +229,7 @@ describe('numeric options at boot', () => {
     [
       'jwt.absoluteSessionLifetimeDays',
       NaN,
-      '(current: NaN). Only 0 switches the cap off; NaN, a negative or a value so large that its length in milliseconds overflows would skip it without being asked to, and a value under an hour refuses every rotation. Set 0 to accept unbounded sessions deliberately.'
+      '(current: NaN). Only 0 switches the cap off; NaN, a negative or a value so large that its length in milliseconds overflows would skip it without being asked to, and a value under an hour ends every session at its first rotation after that age, minutes after login. Set 0 to accept unbounded sessions deliberately.'
     ],
     [
       'passwordReset.otpLength',

@@ -47,8 +47,9 @@ const MAX_SESSIONS_PER_USER = 1000
 const MAX_LIFETIME_DAYS = 3650
 
 /**
- * The shortest absolute session lifetime in days that is not `0` (one hour). A smaller positive
- * value rounds the cap to zero and refuses every rotation the moment it is issued.
+ * The shortest absolute session lifetime in days that is not `0` (one hour). The token manager
+ * compares a session's age with the cap at each rotation, so a smaller positive value ends every
+ * session at its first rotation after that age, minutes after login.
  */
 const MIN_ABSOLUTE_LIFETIME_DAYS = 1 / 24
 
@@ -183,7 +184,8 @@ function validateAbsoluteSessionLifetime(jwt: BymaxAuthModuleOptions['jwt']): vo
       `${MIN_ABSOLUTE_LIFETIME_DAYS.toFixed(4)} and ${MAX_LIFETIME_DAYS} days (current: ${String(days)}). ` +
       `Only 0 switches the cap off; NaN, a negative or a value so large that its length in ` +
       `milliseconds overflows would skip it without being asked to, and a value under an hour ` +
-      `refuses every rotation. Set 0 to accept unbounded sessions deliberately.`
+      `ends every session at its first rotation after that age, minutes after login. Set 0 to ` +
+      `accept unbounded sessions deliberately.`
   )
 }
 
