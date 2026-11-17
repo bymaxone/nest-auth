@@ -75,6 +75,8 @@ function cacheKeysFor(
  */
 @Injectable()
 export class AccountStatusService {
+  private readonly logger = new Logger(AccountStatusService.name)
+
   /**
    * @param redis - The auth module's Redis service, holding the status and verified caches.
    * @param userRepo - The consumer's dashboard user repository, read on a cache miss.
@@ -83,8 +85,6 @@ export class AccountStatusService {
    *   `controllers.platform` is on, which is also the only configuration that can mint a
    *   platform token — so its absence is never a gap, and is refused rather than skipped.
    */
-  private readonly logger = new Logger(AccountStatusService.name)
-
   constructor(
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
