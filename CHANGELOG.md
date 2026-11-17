@@ -37,7 +37,7 @@ A patch release.
   spread under the host's group, so an own key holding `undefined` replaced the default: `Number(process.env.X) || undefined`
   switched the session cap (`sessions.defaultMaxSessions`) and the absolute lifetime cap off, which is the `NaN` bug reached
   through a different value. The options are read once, by property access, into a plain object without the unset keys, at the top level and in
-  each option group, so a group that is a typed configuration class is read like an object literal and every default and
+  each option group with fixed keys, so a group that is a typed configuration class is read like an object literal and every default and
   every validator sees the same thing. `null` follows the same rule: some options refused it and some took it through
   `??`. The options that hold a host-defined map or a required value are the exception, and refuse `null` by name:
   `oauth.successRedirectUrl`, `oauth.mfaRedirectUrl`, `oauth.errorRedirectUrl`, `oauth.<provider>`, each
