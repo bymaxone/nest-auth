@@ -3,10 +3,9 @@
  * default and never "no bound".
  *
  * A spread of the defaults and a user's group lets an own key holding `undefined` override the
- * default: `{ ...DEFAULT.sessions, ...{ defaultMaxSessions: undefined } }` has no session cap, and
- * the validators treat `undefined` as unset and accept it. `Number(process.env.X) || undefined`
- * produces exactly that value. Dropping the keys once, before anything reads the options, makes every
- * validator and every merge see the same thing.
+ * default, and the validators treat `undefined` as unset and accept it, so a value such as
+ * `Number(process.env.X) || undefined` would leave a cap with no bound. The keys are dropped once,
+ * before anything reads the options, so every validator and every merge sees the same thing.
  *
  * @layer Config
  */
@@ -19,7 +18,7 @@ import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.i
  * return, and still excludes a class instance, whose prototype chain continues past its class.
  */
 function isGroup(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null) return false
+  if (Object(value) !== value) return false
   const prototype: unknown = Object.getPrototypeOf(value)
   return prototype === null || Object.getPrototypeOf(prototype) === null
 }

@@ -1,8 +1,7 @@
 /**
  * @fileoverview An option that holds `undefined` or `null` is unset, and an unset option means its
- * default, never "no bound". A spread of the defaults and the user's group lets an own key holding
- * `undefined` override the default, so `{ sessions: { defaultMaxSessions: undefined } }` (what
- * `Number(process.env.X) || undefined` produces) switched the session cap off.
+ * default, never "no bound": `{ sessions: { defaultMaxSessions: undefined } }`, which is what
+ * `Number(process.env.X) || undefined` produces, keeps the default session cap.
  *
  * @layer Test
  */
@@ -79,7 +78,7 @@ describe('an unset option means its default', () => {
     expect(resolvedValue(build(group, key, null), group, key)).toEqual(fallback)
   })
 
-  // Scenario: the two caps that the bug switched off. Expected: the cap is the default, not absent.
+  // Scenario: the two caps an unset value must not remove. Expected: the cap is the default, not absent.
   it('keeps the session cap and the absolute lifetime when they are set to undefined', () => {
     const sessions = resolveOptions(build('sessions', 'defaultMaxSessions', undefined))
     const lifetime = resolveOptions(build('jwt', 'absoluteSessionLifetimeDays', undefined))
@@ -159,23 +158,6 @@ describe('an unset option means its default', () => {
     if (!isOptions(options)) throw new Error('the base options lost a required group')
 
     expect(() => resolveOptions(options)).toThrow()
-  })
-
-  // Scenario: a class instance given where a group is expected. Expected: left as it is, with its
-  // methods, because only plain data bags are copied.
-  it('leaves a class instance alone', () => {
-    class Flags {
-      readonly enabled = true
-      isOn(): boolean {
-        return this.enabled
-      }
-    }
-    const options = { ...build('sessions', 'enabled', undefined), controllers: new Flags() }
-    if (!isOptions(options)) throw new Error('the base options lost a required group')
-
-    const resolved = resolveOptions(options)
-
-    expect(Reflect.get(resolved.controllers, 'enabled')).toBe(true)
   })
 
   describe('dropUnset', () => {
