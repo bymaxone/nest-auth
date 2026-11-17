@@ -239,6 +239,11 @@ describe('numeric options at boot', () => {
     ['mfa.totpWindow', NaN, 'is never silently clamped. It must be a whole number.'],
     ['mfa.recoveryCodeCount', NaN, 'authenticator is lost. The count must be a whole number.'],
     [
+      'jwt.refreshExpiresInDays',
+      1.1,
+      'It is also at most 3650 days, and its length in seconds must be a whole number, because Redis takes an integer expiry: 1.1 days is 95040.00000000001 s.'
+    ],
+    [
       'jwt.refreshGraceWindowSeconds',
       NaN,
       'The window is how long an already-consumed refresh token recovers a session, so it is exactly the replay window for a stolen one. It covers a client that rotated but never received the response — a retry, not a policy. 0 disables grace recovery entirely. The value must be a whole number: Redis takes an integer expiry, so a fraction or NaN would fail every rotation.'
