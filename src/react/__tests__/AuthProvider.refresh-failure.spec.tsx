@@ -134,15 +134,24 @@ describe('AuthProvider refresh() when the server could not confirm', () => {
   })
 
   // Scenario: the user ends the session while a refresh is in flight, and the refresh then fails.
-  // Expected: it resolves. Why: the result is stale and applies to nothing the caller still holds.
+  // Expected: it resolves. Why: the result is stale and applies to nothing the caller holds.
   it('resolves when the session was ended while the refresh was in flight', async () => {
-    const { result } = await signedInThenFailing(new TypeError('Failed to fetch'))
+    const client = createMockClient()
+    client.getMe.mockResolvedValueOnce(MOCK_USER)
+    const { result } = mount(client)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    let fail: (error: unknown) => void = () => undefined
+    client.getMe.mockReturnValueOnce(new Promise((_resolve, reject) => (fail = reject)))
     let pending: Promise<void> = Promise.resolve()
     await act(async () => {
       pending = result.current.refresh()
-      await result.current.logout().catch(() => undefined)
+      await result.current.logout()
+      fail(new TypeError('Failed to fetch'))
     })
 
     await expect(pending).resolves.toBeUndefined()
+    expect(result.current.status).toBe('unauthenticated')
   })
 })

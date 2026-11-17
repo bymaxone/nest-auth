@@ -278,7 +278,11 @@ export function useBroadcastReload(
   return useCallback((): void => {
     if (statusRef.current !== 'authenticated') return
     const heardAs = identityRef.current
-    void sessionRefresh().then(() => setRequest({ heardAs }))
+    // A revalidation the server could not confirm rejects; the reload follows either way, and the
+    // `heardAs` check holds it back when the account it reloads for is not the one that heard.
+    void sessionRefresh()
+      .catch(() => undefined)
+      .then(() => setRequest({ heardAs }))
   }, [sessionRefresh, statusRef, identityRef])
 }
 

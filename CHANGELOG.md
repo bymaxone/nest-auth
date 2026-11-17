@@ -18,6 +18,34 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **`refresh()` no longer resolves over a revalidation the server did not answer.** `AuthProvider` caught every failure of
+  its `GET /me` check, so an explicit `await refresh()` resolved on a 5xx, a 429, a network failure or an abort while the
+  state kept the user it had not re-checked. A caller that refreshes after an action that may have changed the account (a
+  role change) then read a stale user as fresh. `refresh()` now rejects with the error `getMe` raised in those cases and
+  leaves the state as it was. A 401 or another final answer is a state change and still resolves, and so does a refresh
+  that fails while no session was established. The background interval and the first probe are unchanged: they never
+  reject.
+- Two comments say what the code does without a count that can drift (the keys `CREATE_SESSION_LUA` writes for every
+  session, and the status-cache fill spec's note on the best-effort write).
+
+### Apply to a derived backend
+
+- **A frontend that awaits `refresh()` without a `catch` now has an unhandled rejection on an outage.** Wrap it where the
+  result matters, and where it does not, say so:
+
+  ```ts
+  try {
+    await refresh()
+  } catch {
+    // The server could not confirm the session: `user` is what it was, not a fresh read. Offer a retry.
+  }
+  ```
+
+  A handler that fires it as `void refresh()` needs `.catch(() => undefined)`. The library's own cross-tab workspace reload
+  already does.
+
 ## [1.5.7] - 2026-11-17
 
 A patch release.

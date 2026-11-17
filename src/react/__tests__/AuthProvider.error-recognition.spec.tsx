@@ -61,7 +61,8 @@ async function expiryCallsAfterRefreshFailing(failure: unknown): Promise<number>
   const result = await mountAuthenticated(client, onSessionExpired)
   client.getMe.mockRejectedValueOnce(failure)
   await act(async () => {
-    await result.current?.refresh()
+    // A failure the server did not decide rejects; what these cases pin is the state and the callback.
+    await result.current?.refresh().catch(() => undefined)
   })
   return onSessionExpired.mock.calls.length
 }

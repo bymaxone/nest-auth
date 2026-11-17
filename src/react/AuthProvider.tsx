@@ -74,6 +74,15 @@ function isFinalAnswer(error: unknown): boolean {
 }
 
 /**
+ * A revalidation the server did not answer: a 5xx, a throttle, a network failure or an abort, over a
+ * session that was authenticated. The state was left as it was, and `refresh()` hands the failure to
+ * its caller. The wrapper keeps a thrown `undefined` distinct from no failure.
+ */
+interface Unconfirmed {
+  readonly error: unknown
+}
+
+/**
  * Props accepted by {@link AuthProvider}.
  */
 export interface AuthProviderProps {
@@ -189,7 +198,7 @@ function isSessionExpiredError(error: unknown): boolean {
  * @param interval - The period in milliseconds, `0` for none.
  */
 function useRevalidationLoop(
-  revalidate: (isInitial: boolean) => Promise<void>,
+  revalidate: (isInitial: boolean) => Promise<Unconfirmed | undefined>,
   interval: number
 ): void {
   const inRange = interval >= 0 && interval <= 2_147_483_647
@@ -314,7 +323,7 @@ export function AuthProvider({
    * "session expired" and should fire `onSessionExpired`).
    */
   const revalidate = useCallback(
-    async (isInitial: boolean): Promise<void> => {
+    async (isInitial: boolean): Promise<Unconfirmed | undefined> => {
       // Captured before the request; compared after it. A deliberate transition that lands in
       // between makes this result stale, and a stale result must not be applied in either
       // direction — not the user on success, and not `onSessionExpired` on a 401 for a
@@ -322,10 +331,11 @@ export function AuthProvider({
       const generation = sessionGenerationRef.current
       try {
         const user = await clientRef.current.getMe()
-        if (sessionGenerationRef.current !== generation) return
+        if (sessionGenerationRef.current !== generation) return undefined
         syncedDispatch({ type: 'SET_USER', payload: { user, timestamp: new Date() } })
+        return undefined
       } catch (error) {
-        if (sessionGenerationRef.current !== generation) return
+        if (sessionGenerationRef.current !== generation) return undefined
         const wasAuthenticated = statusRef.current === 'authenticated'
         if (isSessionExpiredError(error)) {
           if (!isInitial && wasAuthenticated) {
@@ -339,9 +349,13 @@ export function AuthProvider({
             }
           }
           syncedDispatch({ type: 'CLEAR_SESSION' })
-          return
+          return undefined
         }
-        if (!wasAuthenticated || isFinalAnswer(error)) syncedDispatch({ type: 'SET_ERROR' })
+        if (!wasAuthenticated || isFinalAnswer(error)) {
+          syncedDispatch({ type: 'SET_ERROR' })
+          return undefined
+        }
+        return { error }
       }
     },
     [syncedDispatch]
@@ -458,7 +472,8 @@ export function AuthProvider({
   }, [clearSession])
 
   const refresh = useCallback<AuthContextValue['refresh']>(async () => {
-    await revalidate(false)
+    const unconfirmed = await revalidate(false)
+    if (unconfirmed !== undefined) throw unconfirmed.error
   }, [revalidate])
   // Stryker restore ArrayDeclaration
 
