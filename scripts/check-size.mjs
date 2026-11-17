@@ -136,9 +136,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     169 KiB sits about 5% above the measured 161.05 KiB, which also holds the OAuth acceptance of a
 //     workspace invitation, the closed-registration gate, the workspace verifier option, the socket
 //     guard, the live job check and the workspace name encoder.
-//     Raised to 169.5 KiB: measured 169.47 KiB after the option-reading fix (the compile-checked key
-//     tables of `unset-options.ts`, the named refusals of `shape-checks.ts`) against 169.00; the 0.03
-//     KiB of headroom is deliberate, so the next growth is measured and set in its own change.
+//     169.5 KiB sits 0.03 KiB above the measured 169.47 KiB, which holds the compile-checked key
+//     tables of `unset-options.ts` and the named refusals of `shape-checks.ts`. The headroom is
+//     deliberate: the next growth is measured and set in the change that causes it.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
