@@ -34,20 +34,26 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Apply to a derived backend
 
-A configuration that booted before is refused at startup when it sets any of these, and the message names the option:
+A configuration that booted before is refused at startup when it sets any of these. The message names the option, and
+each line says what was accepted until now:
 
-- `sessions.defaultMaxSessions`: anything but a whole number from 1 to 1000.
+- `sessions.defaultMaxSessions`: anything but a whole number from 1 to 1000. Any number booted, including `NaN` (no
+  session was ever evicted), `0` and a negative.
 - `jwt.absoluteSessionLifetimeDays`: anything but `0` (which switches the cap off) or a number of days from one hour
-  (`0.0417`) to 3650. A value so large that its length in milliseconds overflows would otherwise skip the cap.
-- `jwt.refreshExpiresInDays`: more than 3650, or a value whose length in seconds is not a whole number (`1.1` is
-  `95040.00000000001` seconds, which Redis refuses on every login).
+  (`0.0417`) to 3650. Any number booted, including `NaN`, a negative, `Infinity` and `1e306`, whose length in
+  milliseconds overflows, so the cap was skipped.
+- `jwt.refreshExpiresInDays`: more than 3650, or a value whose length in seconds is not a whole number. `1.1` days booted
+  and then every login failed, because Redis refuses `95040.00000000001` seconds; `1e300` booted too.
 - `passwordReset.tokenTtlSeconds`, `passwordReset.otpTtlSeconds`, `emailVerification.otpTtlSeconds`,
   `emailChange.tokenTtlSeconds`, `invitations.tokenTtlSeconds`: anything but a whole number from 1 to 315360000 (ten
-  years). `jwt.accessCookieMaxAgeMs`: from 1 to ten years in milliseconds.
-- `bruteForce.windowSeconds`: anything but a whole number from 1 to 604800 (one week).
-- `userStatusCacheTtlSeconds`: anything but a whole number from 1 to 3600.
-- `password.parallelization`: more than 16. Node refuses scrypt parameters it cannot run on the first derivation, which is
-  the first login after deploy, and each unit of `p` is a linear cost an unauthenticated request pays.
+  years). `jwt.accessCookieMaxAgeMs`: from 1 to ten years in milliseconds. Any number booted, and Redis refused the
+  expiry on every request.
+- `bruteForce.windowSeconds`: anything but a whole number from 1 to 604800 (one week). A window of months or years
+  booted and locked an account out for that long.
+- `userStatusCacheTtlSeconds`: anything but a whole number from 1 to 3600. Any number booted.
+- `password.parallelization`: more than 16. Any integer from 1 booted, and Node refuses scrypt parameters it cannot run
+  on the first derivation, which is the first login after deploy; each unit of `p` is a linear cost an unauthenticated
+  request pays.
 - `passwordReset.otpLength` (4 to 8), `mfa.totpWindow`, `mfa.recoveryCodeCount` (1 to 50) and
   `jwt.refreshGraceWindowSeconds` (0 to 300): a fraction, `NaN`, `Infinity` or a string, which the range checks let
   through.
