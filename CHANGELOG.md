@@ -45,7 +45,7 @@ A patch release.
 - `jwt.accessCookieMaxAgeMs` has a floor of 1000: the cookie `Max-Age` is sent in whole seconds, so 1 to 999 became
   `Max-Age=0`, which deletes the cookie.
 - A refusal names the type of a value (`received a string`) and never prints it, so a secret passed to the wrong option does
-  not reach a log. That covers `rateLimit.clientIpSource` and the `oauth` URLs, and a symbol or a bigint is refused by name. A message that said `Got: 1.1` for `jwt.refreshExpiresInDays` states the rule:
+  not reach a log. A number is the exception, because `NaN` or `1e300` is what an operator needs to see. A message that said `Got: 1.1` for `jwt.refreshExpiresInDays` states the rule:
   days × 86400 must be a whole number of seconds when computed in floating point; 1.5 and 0.25 are, 1.1 and 0.7 are not.
 - A message override of `DefaultAuthEmailProvider` that holds `undefined` keeps the default copy; it threw a `TypeError`
   (`is not a function`) when the message was built.
