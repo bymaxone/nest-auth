@@ -807,6 +807,9 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 
 An option that is omitted, or that holds `undefined` or `null`, is unset and takes its default; it never means "no limit". To switch
 a cap off, use the documented value (`0` for `jwt.absoluteSessionLifetimeDays`), not an absent one. A host-defined map or a required value (`oauth.<provider>`, the `oauth` redirect URLs, `roles.hierarchy.<role>`, `workspaces.permissions.<action>`) refuses `null` by name.
+A flag must be exactly `true` or `false`, and `tokenDelivery`, `environment`, `cookies.sameSite` and
+`passwordReset.method` exactly one of their documented values: anything else, an empty string and `'false'` included, is
+refused at startup naming the option, never read as off or as a default.
 
 > [!NOTE]
 > When a feature is not enabled (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead. A feature is enabled by `controllers.<name>: true` on the `registerAsync()` call together with its configuration group (`mfa.encryptionKey` and `mfa.issuer`, `sessions.enabled`, `platform.enabled`); either half alone leaves it unregistered or fails at startup.

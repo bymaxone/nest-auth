@@ -18,6 +18,33 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A flag that is not `true` or `false`, and an option that is not one of its documented values, are refused at startup.**
+  A flag is read as `if (x)` in some places and `=== false` in others, so a value that is neither was decided by whichever
+  reader saw it: `rateLimit.enabled: ''` (an unset environment variable) switched the rate-limit guard off while the boot
+  check still read it as enabled, `emailVerification.required: ''` let login skip the verification, and `'false'` was
+  truthy. An option compared with `===` fell through to its default branch on a typo: `environment: 'prodution'` was read
+  as not production and dropped `Secure` from every cookie with no error, a misspelled `tokenDelivery` issued cookies, and a
+  misspelled `passwordReset.method` silently used the token flow. Every flag (`secureCookies`, `enforceTenantBinding`,
+  `*.enabled`, `emailVerification.required`, `workspaces.allowCreate` as a boolean or a function, and each `controllers`
+  flag passed to `registerAsync`) must be exactly `true` or `false`, and `tokenDelivery`, `environment`,
+  `cookies.sameSite` and `passwordReset.method` must be one of their documented values, with no case folding. The refusal
+  names the type of a string and never prints it. A spec reads the option interfaces and fails when a new flag or
+  documented-set option is declared and not listed in the validator.
+- `registerAsync` inspects the hooks and the email provider when they are ready-made `useValue` objects: a hook that is
+  present and not a function, and an email provider without a method the library calls unguarded, are refused when it is
+  called instead of at the first event that fires them. A class, a factory or an alias is not inspected.
+
+### Apply to a derived backend
+
+A configuration that booted before is refused at startup when it sets a flag or one of the four documented-set options to
+anything else. `undefined` and `null` still mean the default. An environment variable must be converted before it is passed
+(`process.env.X === 'true'`), and `environment` must be spelled exactly `'production'`, `'development'` or `'test'`. A
+`BYMAX_AUTH_EMAIL_PROVIDER` registered as an object needs `sendPasswordResetToken`, `sendPasswordResetOtp`,
+`sendEmailVerificationOtp`, `sendMfaEnabledNotification`, `sendMfaDisabledNotification` and `sendInvitation`; the other
+methods stay optional.
+
 ## [1.5.9] - 2026-11-17
 
 A patch release.

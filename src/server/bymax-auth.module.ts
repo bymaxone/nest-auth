@@ -24,6 +24,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from './bymax-auth.constants'
+import { validateRegistrationShapes } from './config/provider-shape'
 import { resolveOptions, type ResolvedOptions } from './config/resolved-options'
 import { assertInvitationControllers, assertWorkspaceProviders } from './config/workspace-options'
 import { AuthController } from './controllers/auth.controller'
@@ -252,11 +253,12 @@ export class BymaxAuthModule {
    */
   static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
     const extraProviders = options.extraProviders ?? []
+    validateRegistrationShapes(options.controllers, extraProviders)
 
     // BYMAX_AUTH_USER_REPOSITORY is required by AuthService, AccountStatusService (and through
     // it UserStatusGuard), SessionService, MfaService, OAuthService, InvitationService, and
-    // PasswordResetService. Without it every
-    // request that touches user data fails with a NestJS injection error at runtime. Catching
+    // PasswordResetService. Without it every request that touches user data fails with a NestJS
+    // injection error at runtime. Catching
     // the omission here — at synchronous module-build time — gives a clear startup error
     // instead of a cryptic "No provider for BYMAX_AUTH_USER_REPOSITORY" from NestJS internals.
     if (!hasProviderToken(extraProviders, BYMAX_AUTH_USER_REPOSITORY)) {
@@ -267,10 +269,9 @@ export class BymaxAuthModule {
       )
     }
 
-    // BYMAX_AUTH_REDIS_CLIENT is required by AuthRedisService and therefore by every
-    // downstream service (token rotation, brute-force, OTP, sessions, MFA setup). The
-    // same synchronous check as above gives a clear startup error instead of a cryptic
-    // NestJS DI failure at the first request.
+    // BYMAX_AUTH_REDIS_CLIENT is required by AuthRedisService and therefore by every downstream
+    // service (token rotation, brute-force, OTP, sessions, MFA setup); the same synchronous check
+    // as above gives a clear startup error instead of a cryptic NestJS DI failure at the first request.
     if (!hasProviderToken(extraProviders, BYMAX_AUTH_REDIS_CLIENT)) {
       throw new Error(
         '[BymaxAuthModule] BYMAX_AUTH_REDIS_CLIENT is required in extraProviders. ' +

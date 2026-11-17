@@ -14,7 +14,7 @@ import { resolveApiKeys, validateApiKeys } from './api-key-options'
 import { DEFAULT_OPTIONS } from './default-options'
 import { describeReceived } from './describe-received'
 import { durationToSeconds } from './duration'
-import { validateNumericOptions } from './numeric-options'
+import { validateOptionValues } from './option-values'
 import { validateSecretStrength } from './secret-strength'
 import { assertArray, assertObject } from './shape-checks'
 import { dropUnset } from './unset-options'
@@ -206,7 +206,7 @@ export function resolveOptions(given: BymaxAuthModuleOptions): ResolvedOptions {
   validateMfaEncryptionKey(userOptions.mfa)
   validateRolesHierarchy(userOptions.roles)
   validatePlatformAdmin(userOptions.platform, userOptions.roles)
-  validateNumericOptions(userOptions)
+  validateOptionValues(userOptions)
   validatePasswordMinLength(userOptions.password)
   validatePasswordCostFactor(userOptions.password)
   validatePasswordMemoryParameters(userOptions.password)
