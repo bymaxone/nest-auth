@@ -18,6 +18,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **`isServiceUnavailable(error)` is exported from the package.** It is a type guard for the `503 auth.service_unavailable`
+  the library answers during a Redis outage: it returns `true` for an `AuthException` carrying that code and narrows the
+  value to `AuthException`. A host filter or interceptor can now tell the outage apart from every other `AuthException`
+  without comparing codes by hand.
+
 ### Fixed
 
 - **A login no longer leaves a live session behind when a later write fails.** The recent-authentication mark and
@@ -26,6 +33,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   written in the same Redis script as the session, each keeping its own lifetime (the mark five minutes, the detail the
   refresh lifetime). The script runs the commands that can fail on a wrong-typed key before it writes the refresh
   record, so a failed login leaves no live session. The records and their bytes are unchanged.
+- **A failed release of the MFA transition lock no longer changes what the transition answers.** The lock is released in a
+  `finally`; when the store could not answer the release after the repository write had committed, the rejection replaced
+  the result, so the caller was told an MFA change had failed that was in fact written, and a transition's own error was
+  hidden. The release failure is now logged and swallowed. The lock's ten-second TTL ends it on its own; a second
+  transition on the account is refused with `MFA_STATE_CONFLICT` until then.
+- **A failed write to the account-status cache no longer decides the check.** On a cache miss the account is read from the
+  repository and the cache is filled; a store that could not take the write rejected a check the repository had already
+  decided, answering an outage for an active account and the store's error instead of its own refusal for a blocked one.
+  The write is now best effort: the decision is taken from the record just read, and the next request reads the repository
+  again. A failing cache read is still an outage.
 
 ### Apply to a derived backend
 
@@ -34,6 +51,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   calls `createSession` for a session it did not create through `issueTokens` gets no detail record from it.
 - **Redis Cluster is not supported**, as it never was: the session scripts touch keys in different slots. The README now
   says so.
+- **Nothing is required for `isServiceUnavailable`.** The export is new; import it from `@bymax-one/nest-auth` where a
+  handler needs it.
 
 ## [1.5.6] - 2026-11-15
 

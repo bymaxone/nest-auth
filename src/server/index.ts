@@ -87,6 +87,7 @@ export type {
 } from './openapi/document-security'
 export type { AuthErrorCode } from './errors'
 export { AuthException } from './errors'
+export { isServiceUnavailable } from './redis/redis-outage'
 
 // ---------------------------------------------------------------------------
 // Hooks

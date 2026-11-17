@@ -993,7 +993,9 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > not loaded, a key of the wrong type) is a defect and stays `500 auth.internal`.
 >
 > The 503 is an `AuthException` whose `cause` is the ioredis error, so a host filter that logs 5xx
-> answers (nest-core's, for one) records the real reason. The library's own `AuthExceptionFilter`
+> answers (nest-core's, for one) records the real reason; `isServiceUnavailable(error)`, exported from
+> the package, tells that 503 apart from every other `AuthException` and narrows it, so a host filter
+> or interceptor can handle it without comparing codes. The library's own `AuthExceptionFilter`
 > writes no log line for it: your readiness probe, not the request log, is the signal that Redis is
 > down, so put a Redis health check next to it. Two answers keep their meaning: a password-reset
 > request refused because the cooldown store cannot answer is the same `503` for every address, and the
