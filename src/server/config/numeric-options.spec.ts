@@ -45,6 +45,13 @@ const GROUPS: Record<string, Record<string, unknown>> = {
   invitations: { invitations: { enabled: true } }
 }
 
+/** Whether the built object still carries the three groups every module configuration needs. */
+function isOptions(
+  value: Record<string, unknown>
+): value is Record<string, unknown> & BymaxAuthModuleOptions {
+  return 'jwt' in value && 'roles' in value && 'rateLimit' in value
+}
+
 /** Options with `value` set at `path`, a dotted path whose first segment names the group. */
 function optionsWith(path: string, value: unknown): BymaxAuthModuleOptions {
   const parts = path.split('.')
@@ -58,7 +65,8 @@ function optionsWith(path: string, value: unknown): BymaxAuthModuleOptions {
     node = node[part] as Record<string, unknown>
   }
   node[parts[parts.length - 1] as string] = value
-  return options as unknown as BymaxAuthModuleOptions
+  if (!isOptions(options)) throw new Error('the base options lost a required group')
+  return options
 }
 
 /** The six values an option can arrive as from JSON, an environment variable or untyped JavaScript. */
