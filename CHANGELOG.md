@@ -46,7 +46,7 @@ A patch release.
   `null` or `undefined` there is refused as required.
 - `jwt.accessCookieMaxAgeMs` has a floor of 1000: the cookie `Max-Age` is sent in whole seconds, so 1 to 999 became
   `Max-Age=0`, which deletes the cookie.
-- A refusal that receives a value that is not a number names its type (`received a string`) and does not print it, so a secret
+- A refusal that receives a value that is not a number, `null` or `undefined` names its type (`received a string`) and does not print it, so a secret
   passed to the wrong option does not reach a log; a number is printed, because `NaN` or `1e300` is what an operator needs to see.
   `jwt.accessExpiresIn`'s refusal still quotes its value; it is fixed in 1.5.10. A message that said `Got: 1.1` for `jwt.refreshExpiresInDays` states the rule:
   days × 86400 must be a whole number of seconds when computed in floating point; 1.5 and 0.25 are, 1.1 and 0.7 are not.
