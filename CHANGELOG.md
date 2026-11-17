@@ -26,7 +26,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   so the concurrent-session cap did not exist, and `jwt.absoluteSessionLifetimeDays: NaN` skipped the 30-day
   reauthentication cap that only `0` may switch off. The bounds on `passwordReset.otpLength`, `mfa.totpWindow`,
   `mfa.recoveryCodeCount` and `jwt.refreshGraceWindowSeconds` accepted `NaN` and a fraction too, and failed at runtime
-  instead of at boot; eight more options had no check at all. One module, `config/numeric-options.ts`, now tests each
+  instead of at boot; other numeric options had no check at all. One module, `config/numeric-options.ts`, now tests each
   value as a whole number (for the lifetime in days, a finite one) before it applies any range.
 - `userStatusCacheTtlSeconds` has a ceiling of 3600 seconds. It is the window in which a suspended account still passes
   the dashboard guards, so it is a security bound and not a tuning knob.
