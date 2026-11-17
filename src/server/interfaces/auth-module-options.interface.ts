@@ -210,8 +210,7 @@ export interface BymaxAuthModuleOptions {
 
     /**
      * Hard cap on how long one login can be extended by rotation, in days.
-     * Default: `30`. Set to `0` to disable the cap. Any other value must be a positive finite
-     * number; `NaN` and a negative are refused at startup, because they would skip the cap unasked.
+     * Default: `30`. Set to `0` to disable the cap.
      *
      * `refreshExpiresInDays` bounds how long a single refresh token lives, not how long a
      * *session* lives: a client that rotates every fifteen minutes renews that lifetime
@@ -928,10 +927,8 @@ export interface BymaxAuthModuleOptions {
   controllers?: ControllerFlags
 
   /**
-   * TTL in seconds for the user status Redis cache.
-   * Status is cached per user to avoid a database query on every authenticated request.
-   * A whole number from `1` to `3600`: it is how long a suspended account keeps passing the guards,
-   * so a longer value is refused at startup.
+   * TTL in seconds for the user status Redis cache, a whole number from `1` to `3600`: it is how
+   * long a suspended account keeps passing the guards. Cached per user to skip a query per request.
    * Default: `60`
    */
   userStatusCacheTtlSeconds?: number
