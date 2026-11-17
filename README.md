@@ -940,6 +940,10 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > [Invalidating the account cache](./docs/server-services.md#invalidating-the-account-cache--accountstatusserviceinvalidate)).
 > `bumpUserTokenEpoch` is the heavier lever: it ends every session the user has. Lower
 > `userStatusCacheTtlSeconds` if a faster answer matters more than the repository reads it costs.
+>
+> `userStatusCacheTtlSeconds` is a whole number of seconds from **1 to 3600**. It is the window in which a
+> suspended account keeps passing the guard, so the module refuses a longer one (and a fraction, `NaN`
+> or a string) at boot.
 
 `jwt.absoluteSessionLifetimeDays` caps how long one login can be extended by rotation, and is
 **on by default at 30 days** — NIST SP 800-63B-4 §3 makes a definite reauthentication timeout a

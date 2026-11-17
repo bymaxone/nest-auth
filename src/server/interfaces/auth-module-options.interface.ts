@@ -210,7 +210,8 @@ export interface BymaxAuthModuleOptions {
 
     /**
      * Hard cap on how long one login can be extended by rotation, in days.
-     * Default: `30`. Set to `0` to disable the cap.
+     * Default: `30`. Set to `0` to disable the cap. Any other value must be a positive finite
+     * number; `NaN` and a negative are refused at startup, because they would skip the cap unasked.
      *
      * `refreshExpiresInDays` bounds how long a single refresh token lives, not how long a
      * *session* lives: a client that rotates every fifteen minutes renews that lifetime
@@ -584,7 +585,7 @@ export interface BymaxAuthModuleOptions {
     enabled?: boolean
 
     /**
-     * Default maximum number of concurrent sessions per user.
+     * Default maximum number of concurrent sessions per user, a whole number of at least `1`.
      * Default: `5`. When `maxSessionsResolver` is provided, this value is ignored.
      */
     defaultMaxSessions?: number
@@ -929,6 +930,8 @@ export interface BymaxAuthModuleOptions {
   /**
    * TTL in seconds for the user status Redis cache.
    * Status is cached per user to avoid a database query on every authenticated request.
+   * A whole number from `1` to `3600`: it is how long a suspended account keeps passing the guards,
+   * so a longer value is refused at startup.
    * Default: `60`
    */
   userStatusCacheTtlSeconds?: number

@@ -18,6 +18,35 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A numeric option that is `NaN`, a fraction, a negative or a string is refused at startup, where two of them switched
+  a security bound off.** A bound written as `x < min || x > max` accepts `NaN`, because a comparison with `NaN` is false
+  both ways. `sessions.defaultMaxSessions: NaN` evicted no session (`length <= NaN` is false and `slice(0, NaN)` is empty),
+  so the concurrent-session cap did not exist, and `jwt.absoluteSessionLifetimeDays: NaN` skipped the 30-day
+  reauthentication cap that only `0` may switch off. The bounds on `passwordReset.otpLength`, `mfa.totpWindow`,
+  `mfa.recoveryCodeCount` and `jwt.refreshGraceWindowSeconds` accepted `NaN` and a fraction too, and failed at runtime
+  instead of at boot; eight more options had no check at all. One module, `config/numeric-options.ts`, now tests each
+  value as a whole number (for the lifetime in days, a finite one) before it applies any range.
+- `userStatusCacheTtlSeconds` has a ceiling of 3600 seconds. It is the window in which a suspended account still passes
+  the dashboard guards, so it is a security bound and not a tuning knob.
+
+### Apply to a derived backend
+
+A configuration that booted before is refused at startup when it sets any of these, and the message names the option:
+
+- `sessions.defaultMaxSessions`: anything but a whole number of at least 1.
+- `jwt.absoluteSessionLifetimeDays`: anything but `0` (which switches the cap off) or a positive finite number.
+- `jwt.accessCookieMaxAgeMs`, `passwordReset.tokenTtlSeconds`, `passwordReset.otpTtlSeconds`,
+  `emailVerification.otpTtlSeconds`, `emailChange.tokenTtlSeconds`, `invitations.tokenTtlSeconds`: anything but a whole
+  number of at least 1.
+- `userStatusCacheTtlSeconds`: anything but a whole number from 1 to 3600.
+- `passwordReset.otpLength` (4 to 8), `mfa.totpWindow`, `mfa.recoveryCodeCount` (1 to 50) and
+  `jwt.refreshGraceWindowSeconds` (0 to 300): a fraction, `NaN`, `Infinity` or a string, which the range checks let
+  through.
+
+A value read from an environment variable must be converted with `Number(...)` before it is passed, and checked for `NaN`.
+
 ## [1.5.8] - 2026-11-17
 
 A patch release.

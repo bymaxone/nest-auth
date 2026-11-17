@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto'
 import { resolveApiKeys, validateApiKeys } from './api-key-options'
 import { DEFAULT_OPTIONS } from './default-options'
 import { durationToSeconds } from './duration'
+import { validateNumericOptions } from './numeric-options'
 import { validateSecretStrength } from './secret-strength'
 import {
   resolveRegistration,
@@ -20,7 +21,6 @@ import {
   type ResolvedWorkspaceOptions
 } from './workspace-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
-import { MAX_VERIFY_WINDOW } from '../crypto/totp'
 import type {
   BymaxAuthModuleOptions,
   ClientIpSource
@@ -202,11 +202,10 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateMfaEncryptionKey(userOptions.mfa)
   validateRolesHierarchy(userOptions.roles)
   validatePlatformAdmin(userOptions.platform, userOptions.roles)
-  validatePasswordResetOtpLength(userOptions.passwordReset)
+  validateNumericOptions(userOptions)
   validatePasswordMinLength(userOptions.password)
   validatePasswordCostFactor(userOptions.password)
   validatePasswordMemoryParameters(userOptions.password)
-  validateMfaVerificationParameters(userOptions.mfa)
   validateBruteForce(userOptions.bruteForce)
   validateOAuthProviders(userOptions.oauth, isProductionDeployment(userOptions))
   validateClientIpSource(userOptions.rateLimit)
@@ -225,7 +224,6 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateProductionCookiesAreSecure(userOptions)
   validateCookiePrefixes(userOptions)
   validateTrustedOrigins(userOptions)
-  validateRefreshGraceWindow(userOptions.jwt)
   validateAccessLifetimeAgainstEpochRetention(userOptions.jwt)
 
   // Destructure mfa out so the base spread does not inject the raw optional-field shape.
@@ -741,21 +739,6 @@ function validatePlatformAdmin(
   }
 }
 
-function validatePasswordResetOtpLength(
-  passwordReset: BymaxAuthModuleOptions['passwordReset']
-): void {
-  const otpLength = passwordReset?.otpLength
-  if (otpLength === undefined) return
-
-  if (otpLength < 4 || otpLength > 8) {
-    throw new Error(
-      `[BymaxAuthModule] passwordReset.otpLength must be between 4 and 8 inclusive ` +
-        `(current: ${otpLength}). Values below 4 are too easily guessable; ` +
-        `values above 8 are not required for security and degrade user experience.`
-    )
-  }
-}
-
 /**
  * Rejects a scrypt parameter that is not a whole number.
  *
@@ -959,44 +942,6 @@ function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['pass
         `timing oracle. So the resident working set a login flood can pin is ` +
         `threadpool * that figure. Lower costFactor, or raise the ceiling deliberately if the ` +
         `host is sized for it.`
-    )
-  }
-}
-
-/**
- * Bounds the two MFA parameters that decide how much a second factor is worth.
- *
- * `totpWindow` is counted in 30-second steps on either side of now, so the number of codes
- * valid at any moment is `2 * totpWindow + 1`. At the default of 1 that is three; at 60 it
- * is 121, and a six-digit code is then a hundred times easier to guess than the digits
- * suggest. The ceiling here is deliberately generous — it is not a recommendation, it is the
- * line past which the value is a mistake rather than a tolerance for clock skew.
- *
- * `recoveryCodeCount` of zero enrols an account with no recovery path at all: lose the
- * authenticator and the account is gone, with the library reporting nothing wrong.
- *
- * @param mfa - The configured MFA group, if any.
- * @throws If either value falls outside its range.
- */
-function validateMfaVerificationParameters(mfa: BymaxAuthModuleOptions['mfa']): void {
-  const totpWindow = mfa?.totpWindow
-  if (totpWindow !== undefined && (totpWindow < 0 || totpWindow > MAX_VERIFY_WINDOW)) {
-    throw new Error(
-      `[BymaxAuthModule] mfa.totpWindow must be between 0 and ${MAX_VERIFY_WINDOW} inclusive ` +
-        `(current: ${totpWindow}). The window is counted in 30-second steps on either side ` +
-        `of now, so ${2 * totpWindow + 1} codes would be valid at once. RFC 6238 §5.2 ` +
-        `recommends at most one step of tolerance; the default of 1 accepts three codes. ` +
-        `The bound matches the drift window the verifier actually applies, so a configured ` +
-        `value always means what it says instead of being silently clamped.`
-    )
-  }
-
-  const recoveryCodeCount = mfa?.recoveryCodeCount
-  if (recoveryCodeCount !== undefined && (recoveryCodeCount < 1 || recoveryCodeCount > 50)) {
-    throw new Error(
-      `[BymaxAuthModule] mfa.recoveryCodeCount must be between 1 and 50 inclusive ` +
-        `(current: ${recoveryCodeCount}). Zero enrols an account with no way back if the ` +
-        `authenticator is lost.`
     )
   }
 }
@@ -1332,52 +1277,6 @@ function isAbsoluteOrigin(value: string): boolean {
   } catch {
     // Not a URL at all — a bare hostname or a typo.
     return false
-  }
-}
-
-/**
- * Hard ceiling on `jwt.refreshGraceWindowSeconds`, in seconds (five minutes).
- *
- * Deliberately far above the 30-second default and far below anything that could be mistaken
- * for a session policy. `rust-auth` enforces the identical bound.
- */
-const MAX_REFRESH_GRACE_WINDOW_SECONDS = 300
-
-function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
-  const graceSeconds =
-    jwt.refreshGraceWindowSeconds ?? DEFAULT_OPTIONS.jwt.refreshGraceWindowSeconds
-  const refreshExpiresInDays = jwt.refreshExpiresInDays ?? DEFAULT_OPTIONS.jwt.refreshExpiresInDays
-  const refreshLifetimeSeconds = refreshExpiresInDays * 86_400
-
-  if (!Number.isFinite(refreshExpiresInDays) || refreshExpiresInDays <= 0) {
-    throw new Error(
-      `[BymaxAuthModule] jwt.refreshExpiresInDays must be a positive finite number. ` +
-        `Got: ${refreshExpiresInDays}. Zero, negative, NaN, and Infinity are all rejected — ` +
-        `any of these would produce an invalid Redis TTL and cause all token rotations to fail at runtime.`
-    )
-  }
-
-  if (graceSeconds >= refreshLifetimeSeconds) {
-    throw new Error(
-      `[BymaxAuthModule] jwt.refreshGraceWindowSeconds (${graceSeconds} s) must be less than ` +
-        `the refresh token lifetime jwt.refreshExpiresInDays * 86400 (${refreshLifetimeSeconds} s). ` +
-        `A grace window equal to or longer than the token lifetime would allow grace pointers ` +
-        `to outlive the refresh session they protect.`
-    )
-  }
-
-  // The relative bound above is not enough on its own: a 6-day window under a 7-day refresh
-  // passes it. This window is the span in which an already-consumed refresh token still buys a
-  // session, so it is the replay window for a stolen one — it exists to cover a single network
-  // retry, measured in seconds, not a policy knob measured in days.
-  if (graceSeconds < 0 || graceSeconds > MAX_REFRESH_GRACE_WINDOW_SECONDS) {
-    throw new Error(
-      `[BymaxAuthModule] jwt.refreshGraceWindowSeconds must be between 0 and ` +
-        `${MAX_REFRESH_GRACE_WINDOW_SECONDS} inclusive (current: ${graceSeconds}). The window is ` +
-        `how long an already-consumed refresh token still recovers a session, so it is exactly ` +
-        `the replay window for a stolen one. It covers a client that rotated but never received ` +
-        `the response — a retry, not a policy. 0 disables grace recovery entirely.`
-    )
   }
 }
 
