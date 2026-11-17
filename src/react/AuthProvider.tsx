@@ -34,7 +34,7 @@ const DEFAULT_REVALIDATE_INTERVAL_MS = 300_000
  *
  * A background poll that fires every few milliseconds costs a request per tick per open tab, and a
  * value written in the wrong unit (`5` meant as seconds) is exactly that. A positive value below this
- * floor is read as the floor, its nearest valid value; `0` still disables the loop.
+ * floor is read as the floor, its nearest valid value; `0` disables the loop.
  */
 const MIN_REVALIDATE_INTERVAL_MS = 5_000
 
