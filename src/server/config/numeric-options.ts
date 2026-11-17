@@ -117,7 +117,7 @@ function validateWholeNumberOptions(userOptions: BymaxAuthModuleOptions): void {
  */
 function validateAbsoluteSessionLifetime(jwt: BymaxAuthModuleOptions['jwt']): void {
   const days = jwt.absoluteSessionLifetimeDays
-  if (days === undefined || (typeof days === 'number' && Number.isFinite(days) && days >= 0)) return
+  if (days === undefined || (Number.isFinite(days) && days >= 0)) return
   throw new Error(
     `[BymaxAuthModule] jwt.absoluteSessionLifetimeDays must be 0 or a positive finite number ` +
       `(current: ${String(days)}). Only 0 switches the cap off; NaN or a negative would skip it ` +

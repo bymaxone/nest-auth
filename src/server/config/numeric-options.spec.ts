@@ -149,4 +149,48 @@ describe('numeric options at boot', () => {
       /userStatusCacheTtlSeconds must be a whole number between 1 and 3600/
     )
   })
+
+  // Scenario: each refusal, with the explanation it ends on. Expected: the message carries the whole
+  // explanation, because it is what tells an operator why a value that looks harmless is refused.
+  it.each([
+    [
+      'jwt.accessCookieMaxAgeMs',
+      0,
+      'It is the cookie Max-Age; zero deletes the cookie and NaN is ignored by the browser, so the session would end with the tab.'
+    ],
+    [
+      'sessions.defaultMaxSessions',
+      NaN,
+      'It caps concurrent sessions: with NaN the comparison is false in both directions, no session is ever evicted, and the cap does not exist.'
+    ],
+    [
+      'passwordReset.tokenTtlSeconds',
+      0,
+      'It is a Redis expiry in seconds: zero or a negative deletes the record as it is written, and NaN, a fraction or Infinity is refused by Redis on every request.'
+    ],
+    [
+      'userStatusCacheTtlSeconds',
+      3601,
+      'It is how long a suspended account keeps passing the dashboard guards, so it has a ceiling.'
+    ],
+    [
+      'jwt.absoluteSessionLifetimeDays',
+      NaN,
+      '(current: NaN). Only 0 switches the cap off; NaN or a negative would skip it without being asked to, and Infinity is a cap that never fires. Set 0 to accept unbounded sessions deliberately.'
+    ],
+    [
+      'passwordReset.otpLength',
+      NaN,
+      'degrade user experience. The value must also be a whole number: a comparison with NaN is false both ways, so a bound written as a range alone lets it through.'
+    ],
+    ['mfa.totpWindow', NaN, 'is never silently clamped. It must be a whole number.'],
+    ['mfa.recoveryCodeCount', NaN, 'authenticator is lost. The count must be a whole number.'],
+    [
+      'jwt.refreshGraceWindowSeconds',
+      NaN,
+      'The window is how long an already-consumed refresh token recovers a session, so it is exactly the replay window for a stolen one. It covers a client that rotated but never received the response — a retry, not a policy. 0 disables grace recovery entirely. The value must be a whole number: Redis takes an integer expiry, so a fraction or NaN would fail every rotation.'
+    ]
+  ])('explains the refusal of %s', (path, value, explanation) => {
+    expect(() => resolveOptions(optionsWith(path, value))).toThrow(explanation)
+  })
 })
