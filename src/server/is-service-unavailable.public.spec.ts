@@ -31,7 +31,7 @@ describe('isServiceUnavailable as the package exports it', () => {
   })
 
   // Scenario: an AuthException whose cause is the store's error, as the library throws it.
-  // Expected: still the 503, the cause does not matter.
+  // Expected: the 503; the cause does not matter.
   it('recognises the 503 when it carries a cause', () => {
     const error = new AuthException(AUTH_ERROR_CODES.SERVICE_UNAVAILABLE, undefined, {
       cause: new Error('connection lost')
