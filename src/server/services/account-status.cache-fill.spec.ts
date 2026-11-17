@@ -82,9 +82,9 @@ describe('AccountStatusService cache fill', () => {
     await expect(service.assertDashboardAccountUsable(REF)).resolves.toBeUndefined()
   })
 
-  // Scenario: an account that does not exist. Expected: TOKEN_INVALID, as before: no record, no
-  // decision to protect.
-  it('still refuses a missing account with TOKEN_INVALID', async () => {
+  // Scenario: an account that does not exist. Expected: TOKEN_INVALID. Why: a missing repository
+  // record is a refusal, and there is nothing to write to the cache.
+  it('refuses a missing account with TOKEN_INVALID', async () => {
     const { service } = build(null)
 
     await expect(service.assertDashboardAccountUsable(REF)).rejects.toMatchObject({
@@ -105,9 +105,9 @@ describe('AccountStatusService cache fill', () => {
     expect(String(warn.mock.calls[0]?.[0])).not.toMatch(/connection lost/)
   })
 
-  // Scenario: a read that fails (not a fill). Expected: still an error. Why: this change is about
-  // the fill; a store that cannot answer a read is an outage and stays one.
-  it('still fails when the cache READ fails', async () => {
+  // Scenario: a cache read that fails (not a fill). Expected: the error propagates. Why: a store
+  // that cannot answer a read is an outage, and only a write after the decision is best effort.
+  it('fails when the cache READ fails', async () => {
     const { service, redis } = build({ status: 'ACTIVE', emailVerified: true })
     redis.get.mockRejectedValue(new Error('connection lost'))
 
