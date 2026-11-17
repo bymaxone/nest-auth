@@ -4,7 +4,7 @@
  * @layer Service
  */
 
-import { Inject, Injectable, Optional } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import {
   BYMAX_AUTH_OPTIONS,
@@ -20,6 +20,7 @@ import type { IPlatformUserRepository } from '../interfaces/platform-user-reposi
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { describeChannelStatus } from '../utils/describe-error'
 
 /**
  * The two cache keys naming one dashboard account.
@@ -74,6 +75,8 @@ function cacheKeysFor(
  */
 @Injectable()
 export class AccountStatusService {
+  private readonly logger = new Logger(AccountStatusService.name)
+
   /**
    * @param redis - The auth module's Redis service, holding the status and verified caches.
    * @param userRepo - The consumer's dashboard user repository, read on a cache miss.
@@ -177,10 +180,10 @@ export class AccountStatusService {
         throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       }
       status = userRecord.status
-      await this.redis.set(statusKey, status, cacheTtl)
+      await this.fillCache(statusKey, status, cacheTtl)
       if (requireVerified) {
         verified = userRecord.emailVerified ? '1' : '0'
-        await this.redis.set(verifiedKey, verified, cacheTtl)
+        await this.fillCache(verifiedKey, verified, cacheTtl)
       }
     }
 
@@ -194,6 +197,28 @@ export class AccountStatusService {
     // so a banned account is told it is banned rather than that it must verify.
     if (requireVerified && verified === '0') {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+    }
+  }
+
+  /**
+   * Stores one cached fact, best effort.
+   *
+   * The repository has already answered when this runs, so the decision does not depend on the
+   * write: a store that cannot take it must not turn that decision into an error, and above all
+   * must not answer a blocked account with an outage a client retries. A failed write is logged
+   * without the store's text and the next request reads the repository again.
+   *
+   * @param key - The cache key.
+   * @param value - The fact just read from the repository.
+   * @param ttl - The cache lifetime in seconds.
+   */
+  private async fillCache(key: string, value: string, ttl: number): Promise<void> {
+    try {
+      await this.redis.set(key, value, ttl)
+    } catch (err: unknown) {
+      this.logger.warn(
+        `account status cache write failed, the next request reads the repository again: ${describeChannelStatus(err)}`
+      )
     }
   }
 
