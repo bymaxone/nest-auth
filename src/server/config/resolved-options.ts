@@ -16,6 +16,7 @@ import { describeReceived } from './describe-received'
 import { durationToSeconds } from './duration'
 import { validateNumericOptions } from './numeric-options'
 import { validateSecretStrength } from './secret-strength'
+import { assertArray, assertObject } from './shape-checks'
 import { dropUnset } from './unset-options'
 import {
   resolveRegistration,
@@ -485,7 +486,7 @@ function validateClientIpSource(rateLimit: BymaxAuthModuleOptions['rateLimit']):
   }
   throw new Error(
     `[BymaxAuthModule] rateLimit.clientIpSource must be 'peer' or 'trusted-proxy' when rate ` +
-      `limiting is enabled (current: ${JSON.stringify(rateLimit?.clientIpSource)}). ` +
+      `limiting is enabled (received ${describeReceived(rateLimit?.clientIpSource)}). ` +
       `Set 'peer' when the application is directly exposed (the limit keys on the socket ` +
       `address), or 'trusted-proxy' when it runs behind a proxy and 'trust proxy' is ` +
       `configured for the real hop count (the limit keys on the forwarded client address). ` +
@@ -716,6 +717,7 @@ function validateRolesHierarchy(roles: BymaxAuthModuleOptions['roles']): void {
   // Referential integrity: every role referenced as a child must be declared as a key.
   const allRoles = new Set(Object.keys(roles.hierarchy))
   for (const [role, children] of Object.entries(roles.hierarchy)) {
+    assertArray(`roles.hierarchy['${role}']`, children)
     for (const child of children) {
       if (!allRoles.has(child)) {
         throw new Error(
@@ -946,9 +948,7 @@ function validateOAuthProviders(
   if (!oauth) return
 
   for (const [providerOrField, rawConfig] of Object.entries(oauth)) {
-    // Skip top-level OAuth keys that are not provider blocks (e.g. `successRedirectUrl`,
-    // `mfaRedirectUrl`, `errorRedirectUrl`). These are validated separately by the
-    // dedicated `validateOAuth*RedirectUrl` helpers below.
+    // The redirect URLs are not provider blocks; `validateOAuth*RedirectUrl` below checks them.
     if (
       providerOrField === 'successRedirectUrl' ||
       providerOrField === 'mfaRedirectUrl' ||
@@ -957,8 +957,8 @@ function validateOAuthProviders(
       continue
 
     const provider = providerOrField
-    // Treat the provider config as a string-keyed record only for field-level
-    // access; the public type is preserved elsewhere in ResolvedOptions.
+    // A string-keyed record for field-level access only; ResolvedOptions keeps the public type.
+    assertObject(`oauth.${provider}`, rawConfig)
     const config = rawConfig as Record<string, unknown>
 
     for (const field of REQUIRED_OAUTH_FIELDS) {
@@ -978,7 +978,7 @@ function validateOAuthProviders(
     if (typeof callbackUrl === 'string' && !callbackUrl.startsWith('https://') && isProduction) {
       throw new Error(
         `[BymaxAuthModule] oauth.${provider}.callbackUrl must use HTTPS in production ` +
-          `(got: '${callbackUrl}'). Use an HTTPS URL to prevent authorization code interception.`
+          `(received a string). Use an HTTPS URL to prevent authorization code interception.`
       )
     }
   }
@@ -1012,7 +1012,7 @@ function validateOAuthSuccessRedirectUrl(userOptions: BymaxAuthModuleOptions): v
   if (isProduction && !isSafe) {
     throw new Error(
       `[BymaxAuthModule] oauth.successRedirectUrl must use HTTPS or be a same-origin path ` +
-        `(starts with '/') in production (got: '${url}').`
+        `(starts with '/') in production (received a string).`
     )
   }
 
@@ -1053,7 +1053,7 @@ function validateOAuthMfaRedirectUrl(userOptions: BymaxAuthModuleOptions): void 
   if (isProduction && !isSafe) {
     throw new Error(
       `[BymaxAuthModule] oauth.mfaRedirectUrl must use HTTPS or be a same-origin path ` +
-        `(starts with '/') in production (got: '${url}').`
+        `(starts with '/') in production (received a string).`
     )
   }
 }
@@ -1078,7 +1078,7 @@ function validateOAuthErrorRedirectUrl(userOptions: BymaxAuthModuleOptions): voi
   if (isProduction && !isSafe) {
     throw new Error(
       `[BymaxAuthModule] oauth.errorRedirectUrl must use HTTPS or be a same-origin path ` +
-        `(starts with '/') in production (got: '${url}').`
+        `(starts with '/') in production (received a string).`
     )
   }
 }

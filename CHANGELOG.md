@@ -36,16 +36,19 @@ A patch release.
 - **An option that holds `undefined` or `null` is unset, so its default applies, never "no bound".** The defaults were
   spread under the host's group, so an own key holding `undefined` replaced the default: `Number(process.env.X) || undefined`
   switched the session cap (`sessions.defaultMaxSessions`) and the absolute lifetime cap off, which is the `NaN` bug reached
-  through a different value. The options are now read once with the unset keys dropped, at the top level and in each option group (the role
-  hierarchies are left as given), so every default and every validator sees the same thing. `null` follows the same
-  rule: some options refused it and some took it through `??`; all of them now read it as unset.
+  through a different value. The options are read once, by property access, into a plain object without the unset keys, at the top level and in
+  each option group, so a group that is a typed configuration class is read like an object literal and every default and
+  every validator sees the same thing. `null` follows the same rule: some options refused it and some took it through
+  `??`. The options that hold a host-defined map or a required value are the exception, and refuse `null` by name:
+  `oauth.successRedirectUrl`, `oauth.mfaRedirectUrl`, `oauth.errorRedirectUrl`, `oauth.<provider>`, each
+  `roles.hierarchy.<role>` and each `workspaces.permissions.<action>`.
 - `jwt.accessCookieMaxAgeMs` has a floor of 1000: the cookie `Max-Age` is sent in whole seconds, so 1 to 999 became
   `Max-Age=0`, which deletes the cookie.
-- A refusal names the type of a value that is not a number (`received a string`) and never prints it, so a secret passed to
-  the wrong option does not reach a log. A message that said `Got: 1.1` for `jwt.refreshExpiresInDays` states the rule:
-  days × 86400 must be a whole number of seconds; 1.5 and 0.25 are, 1.1 is not.
-- A message override of `DefaultAuthEmailProvider` that holds `undefined` keeps the default copy instead of sending a
-  message with no body.
+- A refusal names the type of a value (`received a string`) and never prints it, so a secret passed to the wrong option does
+  not reach a log. That covers `rateLimit.clientIpSource` and the `oauth` URLs, and a symbol or a bigint is refused by name. A message that said `Got: 1.1` for `jwt.refreshExpiresInDays` states the rule:
+  days × 86400 must be a whole number of seconds when computed in floating point; 1.5 and 0.25 are, 1.1 and 0.7 are not.
+- A message override of `DefaultAuthEmailProvider` that holds `undefined` keeps the default copy; it threw a `TypeError`
+  (`is not a function`) when the message was built.
 - `userStatusCacheTtlSeconds` has a ceiling of 3600 seconds. It is the window in which a suspended account still passes
   the dashboard guards, so it is a security bound and not a tuning knob.
 

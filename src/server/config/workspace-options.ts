@@ -6,6 +6,7 @@
  */
 
 import type { ResolvedOptions } from './resolved-options'
+import { assertArray } from './shape-checks'
 import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 import type {
@@ -136,6 +137,7 @@ function validateWorkspacePermissions(
 ): void {
   for (const [action, list] of Object.entries(permissions ?? {})) {
     if (list === undefined) continue
+    assertArray(`workspaces.permissions.${action}`, list)
     for (const role of list) {
       const known = roles.has(role)
       if (!known && !(action === 'viewMembers' && role === ANY_WORKSPACE_MEMBER)) {

@@ -1602,10 +1602,10 @@ describe('resolveOptions — oauth provider validation', () => {
     }
   }
 
-  // Scenario: HTTP callbackUrl in production. Expected: the error reports the offending URL and the
-  // interception rationale. Why: pins the second concatenated literal of the HTTPS error (line with
-  // the got: '<url>' fragment) so the StringLiteral mutant emptying it is killed.
-  it('should report the offending URL and interception rationale in the HTTPS error', () => {
+  // Scenario: HTTP callbackUrl in production. Expected: the error names the type received and the
+  // interception rationale, and never the URL. Why: pins the second concatenated literal of the HTTPS
+  // error so the StringLiteral mutant emptying it is killed.
+  it('should report the type received and the interception rationale in the HTTPS error', () => {
     withNodeEnv('production', () => {
       expect(() =>
         resolveOptions({
@@ -1619,7 +1619,7 @@ describe('resolveOptions — oauth provider validation', () => {
           }
         })
       ).toThrow(
-        /\(got: 'http:\/\/app\.com\/callback'\)\. Use an HTTPS URL to prevent authorization code interception\./
+        /\(received a string\)\. Use an HTTPS URL to prevent authorization code interception\./
       )
     })
   })
@@ -1820,7 +1820,7 @@ describe('resolveOptions — oauth provider validation', () => {
             }
           }
         })
-      ).toThrow("(starts with '/') in production (got: 'http://app.example.com/dashboard')")
+      ).toThrow("(starts with '/') in production (received a string).")
     })
   })
 
@@ -2025,7 +2025,7 @@ describe('resolveOptions — oauth provider validation', () => {
             }
           }
         })
-      ).toThrow("(starts with '/') in production (got: 'http://app.example.com/mfa')")
+      ).toThrow("(starts with '/') in production (received a string).")
     })
   })
 
@@ -2190,7 +2190,7 @@ describe('resolveOptions — oauth provider validation', () => {
             }
           }
         })
-      ).toThrow("(starts with '/') in production (got: 'http://app.example.com/error')")
+      ).toThrow("(starts with '/') in production (received a string).")
     })
   })
 
@@ -2734,15 +2734,15 @@ describe('resolveOptions — rateLimit.clientIpSource', () => {
     expect(() => resolveOptions(options)).toThrow(/clientIpSource must be/)
   })
 
-  // The rejected value belongs in the message: an operator who mistyped it is looking for
-  // which of their several config layers supplied the wrong string.
-  it('quotes the offending value back', () => {
+  // The value is not echoed: it can be a credential pasted into the wrong option, so the message names
+  // the option and the type received.
+  it('names the type received and never quotes the value', () => {
     const options = {
       ...withoutSource,
       rateLimit: { clientIpSource: 'trusted_proxy' }
     } as unknown as BymaxAuthModuleOptions
 
-    expect(() => resolveOptions(options)).toThrow(/"trusted_proxy"/)
+    expect(() => resolveOptions(options)).toThrow(/received a string\)/)
   })
 
   // The message has to be actionable: an operator reading it must be able to pick the right
