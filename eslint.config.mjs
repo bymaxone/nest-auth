@@ -8,9 +8,24 @@ import security from 'eslint-plugin-security'
 import globals from 'globals'
 
 export default [
-  // Global ignores — only build artifacts and coverage, NOT config files
+  // Global ignores — only build artifacts and coverage, NOT config files, plus the shared templates
+  // copied byte for byte from bymaxone/.github: their bytes are the contract, so no fixer may rewrite them
   {
-    ignores: ['node_modules/**', 'dist/**', 'coverage/**', 'reports/**', '.stryker-tmp/**']
+    ignores: [
+      'node_modules/**',
+      'dist/**',
+      'coverage/**',
+      'reports/**',
+      '.stryker-tmp/**',
+      'scripts/check-double-assertions.mjs',
+      'scripts/check-function-length.mjs',
+      'scripts/function-length-key.mjs',
+      'scripts/commitlint-no-ai-attribution.cjs',
+      'src/check-double-assertions.spec.ts',
+      'src/check-function-length.spec.ts',
+      'src/check-function-length.baseline.spec.ts',
+      'src/check-function-length.key.spec.ts'
+    ]
   },
 
   // Base recommended config

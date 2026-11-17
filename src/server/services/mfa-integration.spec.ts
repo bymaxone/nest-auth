@@ -25,7 +25,7 @@
 import { createHash } from 'node:crypto'
 
 import { Reflector } from '@nestjs/core'
-import { Test } from '@nestjs/testing'
+import { Test, type TestingModule } from '@nestjs/testing'
 
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
@@ -167,6 +167,61 @@ const mockHooks = {}
 /** The account password every enrolment test re-proves. */
 const PASSWORD = 'correct horse battery staple'
 
+/** Seeds every mock with its safe default; separate so the hook stays short and the defaults read as one list. */
+function primeDefaultMocks(): void {
+  // Default safe returns
+  mockRedis.get.mockResolvedValue(null)
+  mockRedis.set.mockResolvedValue(undefined)
+  mockRedis.del.mockResolvedValue(true)
+  // The temp-token consume reports whether THIS call removed the marker — the
+  // exactly-once signal the challenge gates on. `true` is the ordinary case: nobody
+  // raced us.
+  mockTokenManager.consumeMfaTempToken.mockResolvedValue(true)
+  mockRedis.sadd.mockResolvedValue(1)
+  mockRedis.srem.mockResolvedValue(1)
+  mockRedis.expire.mockResolvedValue(undefined)
+  mockRedis.setIfAbsent.mockResolvedValue(true)
+  mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
+  mockRedis.bumpUserTokenEpoch.mockResolvedValue(1)
+  mockUserRepo.findById.mockResolvedValue(DASHBOARD_USER)
+  mockUserRepo.updateMfa.mockResolvedValue(undefined)
+  mockPlatformUserRepo.findById.mockResolvedValue(PLATFORM_ADMIN)
+  mockPlatformUserRepo.updateMfa.mockResolvedValue(undefined)
+  mockBruteForce.isLockedOut.mockResolvedValue(false)
+  mockBruteForce.recordFailure.mockResolvedValue(undefined)
+  mockBruteForce.resetFailures.mockResolvedValue(undefined)
+  mockEmailProvider.sendMfaEnabledNotification.mockResolvedValue(undefined)
+  mockEmailProvider.sendMfaDisabledNotification.mockResolvedValue(undefined)
+}
+
+/** Compiles the testing module around the mocks; separate because the provider list is the bulk of the setup. */
+async function compileMfaModule(): Promise<TestingModule> {
+  return Test.createTestingModule({
+    providers: [
+      MfaService,
+      ...MFA_COLLABORATORS,
+      { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+      { provide: AuthRedisService, useValue: mockRedis },
+      { provide: TokenManagerService, useValue: mockTokenManager },
+      { provide: BruteForceService, useValue: mockBruteForce },
+      {
+        // `compare` answers true: enrolment re-proves the account password, and these
+        // smoke tests drive the flow with the correct one.
+        provide: PasswordService,
+        useValue: {
+          hash: jest.fn().mockResolvedValue('$scrypt$hashed'),
+          compare: jest.fn().mockResolvedValue(true)
+        }
+      },
+      { provide: SessionService, useValue: mockSessionService },
+      { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+      { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+    ]
+  }).compile()
+}
+
 describe('MFA — integration smoke tests', () => {
   let service: MfaService
 
@@ -175,54 +230,9 @@ describe('MFA — integration smoke tests', () => {
     jest.setSystemTime(new Date('2026-01-01T00:00:15.000Z'))
     jest.resetAllMocks()
 
-    // Default safe returns
-    mockRedis.get.mockResolvedValue(null)
-    mockRedis.set.mockResolvedValue(undefined)
-    mockRedis.del.mockResolvedValue(true)
-    // The temp-token consume reports whether THIS call removed the marker — the
-    // exactly-once signal the challenge gates on. `true` is the ordinary case: nobody
-    // raced us.
-    mockTokenManager.consumeMfaTempToken.mockResolvedValue(true)
-    mockRedis.sadd.mockResolvedValue(1)
-    mockRedis.srem.mockResolvedValue(1)
-    mockRedis.expire.mockResolvedValue(undefined)
-    mockRedis.setIfAbsent.mockResolvedValue(true)
-    mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
-    mockRedis.bumpUserTokenEpoch.mockResolvedValue(1)
-    mockUserRepo.findById.mockResolvedValue(DASHBOARD_USER)
-    mockUserRepo.updateMfa.mockResolvedValue(undefined)
-    mockPlatformUserRepo.findById.mockResolvedValue(PLATFORM_ADMIN)
-    mockPlatformUserRepo.updateMfa.mockResolvedValue(undefined)
-    mockBruteForce.isLockedOut.mockResolvedValue(false)
-    mockBruteForce.recordFailure.mockResolvedValue(undefined)
-    mockBruteForce.resetFailures.mockResolvedValue(undefined)
-    mockEmailProvider.sendMfaEnabledNotification.mockResolvedValue(undefined)
-    mockEmailProvider.sendMfaDisabledNotification.mockResolvedValue(undefined)
+    primeDefaultMocks()
 
-    const module = await Test.createTestingModule({
-      providers: [
-        MfaService,
-        ...MFA_COLLABORATORS,
-        { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-        { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
-        { provide: AuthRedisService, useValue: mockRedis },
-        { provide: TokenManagerService, useValue: mockTokenManager },
-        { provide: BruteForceService, useValue: mockBruteForce },
-        {
-          // `compare` answers true: enrolment re-proves the account password, and these
-          // smoke tests drive the flow with the correct one.
-          provide: PasswordService,
-          useValue: {
-            hash: jest.fn().mockResolvedValue('$scrypt$hashed'),
-            compare: jest.fn().mockResolvedValue(true)
-          }
-        },
-        { provide: SessionService, useValue: mockSessionService },
-        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
-        { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
-      ]
-    }).compile()
+    const module = await compileMfaModule()
 
     service = module.get(MfaService)
   })

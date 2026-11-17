@@ -27,6 +27,50 @@ const UA_LINUX = 'Mozilla/5.0 (Linux X11)'
 /** iPhone mobile User-Agent — used for the third login (the "current" session). */
 const UA_IPHONE = 'Mozilla/5.0 (iPhone iOS)'
 
+/**
+ * Registers the multi-device user and immediately logs the registration session out; separate
+ * because it is pre-flight cleanup, not one of the three device logins under test.
+ */
+async function registerAndDropRegistrationSession(app: INestApplication): Promise<void> {
+  // Register the user once. With emailVerification.required: false (the
+  // bootstrapTestApp default) registration immediately yields tokens AND
+  // creates an active session for the registration request. To keep the
+  // "three sessions from three devices" invariant clean, we immediately
+  // logout the registration session so only the dedicated device logins
+  // below contribute to the active session set.
+  const register = await request(app.getHttpServer()).post('/register').send({
+    email: 'multi-device@example.com',
+    password: 'MultiDeviceSecret123!',
+    name: 'Multi Device User',
+    tenantId: 'tenant-1'
+  })
+  const registerAccessToken = register.body.accessToken as string
+  const registerRefreshToken = register.body.refreshToken as string
+  await request(app.getHttpServer())
+    .post('/logout')
+    .set('Authorization', `Bearer ${registerAccessToken}`)
+    .send({ refreshToken: registerRefreshToken })
+}
+
+/**
+ * Logs in the multi-device user with a specific User-Agent and returns the token pair;
+ * separate because the three device logins differ only by User-Agent.
+ */
+async function loginWithUserAgent(
+  app: INestApplication,
+  userAgent: string
+): Promise<{ accessToken: string; refreshToken: string }> {
+  const res = await request(app.getHttpServer()).post('/login').set('User-Agent', userAgent).send({
+    email: 'multi-device@example.com',
+    password: 'MultiDeviceSecret123!',
+    tenantId: 'tenant-1'
+  })
+  return {
+    accessToken: res.body.accessToken as string,
+    refreshToken: res.body.refreshToken as string
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
@@ -65,61 +109,23 @@ describe('sessions flow (E2E)', () => {
       const bootstrap = await bootstrapTestApp({ tokenDelivery: 'bearer' })
       app = bootstrap.app
 
-      // Register the user once. With emailVerification.required: false (the
-      // bootstrapTestApp default) registration immediately yields tokens AND
-      // creates an active session for the registration request. To keep the
-      // "three sessions from three devices" invariant clean, we immediately
-      // logout the registration session so only the dedicated device logins
-      // below contribute to the active session set.
-      const register = await request(app.getHttpServer()).post('/register').send({
-        email: 'multi-device@example.com',
-        password: 'MultiDeviceSecret123!',
-        name: 'Multi Device User',
-        tenantId: 'tenant-1'
-      })
-      const registerAccessToken = register.body.accessToken as string
-      const registerRefreshToken = register.body.refreshToken as string
-      await request(app.getHttpServer())
-        .post('/logout')
-        .set('Authorization', `Bearer ${registerAccessToken}`)
-        .send({ refreshToken: registerRefreshToken })
+      await registerAndDropRegistrationSession(app)
 
       // Login #1 — Mac. First session.
-      const macLogin = await request(app.getHttpServer())
-        .post('/login')
-        .set('User-Agent', UA_MAC)
-        .send({
-          email: 'multi-device@example.com',
-          password: 'MultiDeviceSecret123!',
-          tenantId: 'tenant-1'
-        })
-      macAccessToken = macLogin.body.accessToken as string
-      macRefreshToken = macLogin.body.refreshToken as string
+      const macLogin = await loginWithUserAgent(app, UA_MAC)
+      macAccessToken = macLogin.accessToken
+      macRefreshToken = macLogin.refreshToken
 
       // Login #2 — Linux. Second session.
-      const linuxLogin = await request(app.getHttpServer())
-        .post('/login')
-        .set('User-Agent', UA_LINUX)
-        .send({
-          email: 'multi-device@example.com',
-          password: 'MultiDeviceSecret123!',
-          tenantId: 'tenant-1'
-        })
-      linuxAccessToken = linuxLogin.body.accessToken as string
-      linuxRefreshToken = linuxLogin.body.refreshToken as string
+      const linuxLogin = await loginWithUserAgent(app, UA_LINUX)
+      linuxAccessToken = linuxLogin.accessToken
+      linuxRefreshToken = linuxLogin.refreshToken
 
       // Login #3 — iPhone. Third session — treated as the caller's CURRENT
       // session for every subsequent request.
-      const iphoneLogin = await request(app.getHttpServer())
-        .post('/login')
-        .set('User-Agent', UA_IPHONE)
-        .send({
-          email: 'multi-device@example.com',
-          password: 'MultiDeviceSecret123!',
-          tenantId: 'tenant-1'
-        })
-      currentAccessToken = iphoneLogin.body.accessToken as string
-      currentRefreshToken = iphoneLogin.body.refreshToken as string
+      const iphoneLogin = await loginWithUserAgent(app, UA_IPHONE)
+      currentAccessToken = iphoneLogin.accessToken
+      currentRefreshToken = iphoneLogin.refreshToken
     })
 
     afterAll(async () => {

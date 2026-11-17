@@ -77,6 +77,47 @@ async function waitForEmail(
   throw new Error(`Timed out waiting for email after ${timeoutMs}ms`)
 }
 
+/** Registers a dashboard user in tenant-1; separate because both chains open with the same request. */
+async function registerUser(
+  app: INestApplication,
+  email: string,
+  password: string,
+  name: string
+): Promise<void> {
+  await request(app.getHttpServer())
+    .post('/register')
+    .send({ email, password, name, tenantId: 'tenant-1' })
+}
+
+/** POSTs /password/forgot-password for tenant-1; separate because both chains start the reset here. */
+function requestPasswordReset(app: INestApplication, email: string): Promise<request.Response> {
+  return request(app.getHttpServer())
+    .post('/password/forgot-password')
+    .send({ email, tenantId: 'tenant-1' })
+}
+
+/** POSTs /login for tenant-1; separate because each chain logs in with the new (and old) password. */
+function loginAs(
+  app: INestApplication,
+  email: string,
+  password: string
+): Promise<request.Response> {
+  return request(app.getHttpServer()).post('/login').send({ email, password, tenantId: 'tenant-1' })
+}
+
+/**
+ * Waits for the OTP email sent to `to` and returns the 6-digit code embedded in it (empty
+ * string when absent); separate to keep the OTP hook within the length limit.
+ */
+async function readResetOtp(sentEmails: CapturedEmail[], to: string): Promise<string> {
+  const otpEmail = await waitForEmail(
+    sentEmails,
+    (e) => e.to === to && e.subject === 'Password reset OTP'
+  )
+  const match = /<strong>(\d{6})<\/strong>/.exec(otpEmail.html)
+  return match ? (match[1] as string) : ''
+}
+
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
@@ -111,19 +152,11 @@ describe('password reset flow (E2E)', () => {
       const sentEmails = instrumentPasswordResetEmails(bootstrap.email)
 
       // Step 1 — register the user whose password will be reset.
-      await request(app.getHttpServer()).post('/register').send({
-        email: 'reset-token@example.com',
-        password: 'OldSecret123!-xyz',
-        name: 'Token Reset User',
-        tenantId: 'tenant-1'
-      })
+      await registerUser(app, 'reset-token@example.com', 'OldSecret123!-xyz', 'Token Reset User')
 
       // Step 2 — POST /password/forgot-password initiates the flow. Always 200
       // regardless of whether the email exists (anti-enumeration).
-      const forgot = await request(app.getHttpServer()).post('/password/forgot-password').send({
-        email: 'reset-token@example.com',
-        tenantId: 'tenant-1'
-      })
+      const forgot = await requestPasswordReset(app, 'reset-token@example.com')
       forgotStatus = forgot.status
 
       // Step 3 — extract the token from the captured email's HTML body. The
@@ -147,22 +180,14 @@ describe('password reset flow (E2E)', () => {
       resetStatus = reset.status
 
       // Step 5 — login with the new password should succeed and issue tokens.
-      const loginNew = await request(app.getHttpServer()).post('/login').send({
-        email: 'reset-token@example.com',
-        password: 'NewSecret456!-xyz',
-        tenantId: 'tenant-1'
-      })
+      const loginNew = await loginAs(app, 'reset-token@example.com', 'NewSecret456!-xyz')
       loginNewStatus = loginNew.status
       loginNewBody = loginNew.body as Record<string, unknown>
 
       // Step 6 — login with the OLD password must be rejected. The brute-force
       // counter at 5 attempts/window leaves plenty of headroom here for the
       // single attempt this scenario performs.
-      const loginOld = await request(app.getHttpServer()).post('/login').send({
-        email: 'reset-token@example.com',
-        password: 'OldSecret123!-xyz',
-        tenantId: 'tenant-1'
-      })
+      const loginOld = await loginAs(app, 'reset-token@example.com', 'OldSecret123!-xyz')
       loginOldStatus = loginOld.status
     })
 
@@ -485,29 +510,16 @@ describe('password reset flow (E2E)', () => {
 
       // Step 1 — register a fresh user with a distinct email to keep this
       // scenario independent from the token-method scenario above.
-      await request(app.getHttpServer()).post('/register').send({
-        email: 'reset-otp@example.com',
-        password: 'OldOtpSecret123!',
-        name: 'Otp Reset User',
-        tenantId: 'tenant-1'
-      })
+      await registerUser(app, 'reset-otp@example.com', 'OldOtpSecret123!', 'Otp Reset User')
 
       // Step 2 — POST /password/forgot-password. The DTO carries no `method`
       // field — the server-side configuration determines whether a token or an
       // OTP is sent. Always 200 (anti-enumeration).
-      const forgot = await request(app.getHttpServer()).post('/password/forgot-password').send({
-        email: 'reset-otp@example.com',
-        tenantId: 'tenant-1'
-      })
+      const forgot = await requestPasswordReset(app, 'reset-otp@example.com')
       forgotStatus = forgot.status
 
       // Step 3 — extract the 6-digit OTP from the captured email's HTML body.
-      const otpEmail = await waitForEmail(
-        sentEmails,
-        (e) => e.to === 'reset-otp@example.com' && e.subject === 'Password reset OTP'
-      )
-      const match = /<strong>(\d{6})<\/strong>/.exec(otpEmail.html)
-      extractedOtp = match ? (match[1] as string) : ''
+      extractedOtp = await readResetOtp(sentEmails, 'reset-otp@example.com')
 
       // Step 4 — POST /password/verify-otp exchanges the OTP for a 64-char
       // single-use `verifiedToken` valid for 5 minutes.
@@ -531,11 +543,7 @@ describe('password reset flow (E2E)', () => {
       resetStatus = reset.status
 
       // Step 6 — login with the new password should succeed.
-      const loginNew = await request(app.getHttpServer()).post('/login').send({
-        email: 'reset-otp@example.com',
-        password: 'NewOtpSecret456!',
-        tenantId: 'tenant-1'
-      })
+      const loginNew = await loginAs(app, 'reset-otp@example.com', 'NewOtpSecret456!')
       loginNewStatus = loginNew.status
       loginNewBody = loginNew.body as Record<string, unknown>
     })
