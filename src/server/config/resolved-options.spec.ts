@@ -1380,7 +1380,7 @@ describe('resolveOptions — passwordReset.otpLength validation', () => {
       passwordReset: { otpLength: 9 }
     }
     expect(() => resolveOptions(options)).toThrow(
-      /\(current: 9\)\. Values below 4 are too easily guessable/
+      /\(received 9\)\. Values below 4 are too easily guessable/
     )
     expect(() => resolveOptions(options)).toThrow(/degrade user experience\./)
   })
@@ -1433,7 +1433,7 @@ describe('resolveOptions — password.costFactor validation', () => {
       password: { costFactor: 8_192 }
     }
     expect(() => resolveOptions(options)).toThrow(
-      /\(current: 8192\)\. Lower values produce hashes vulnerable to brute-force attacks\./
+      /\(received 8192\)\. Lower values produce hashes vulnerable to brute-force attacks\./
     )
     expect(() => resolveOptions(options)).toThrow(
       /The recommended minimum for production is 32768 \(2\^15\)\./
@@ -3350,7 +3350,7 @@ describe('resolveOptions — password.minLength', () => {
   // also pins that the message reports `${minLength}` rather than a constant.
   it('should report the rejected value and explain both bounds', () => {
     const run = (): unknown => resolveOptions({ ...MINIMAL_OPTIONS, password: { minLength: 7 } })
-    expect(run).toThrow(/\(current: 7\)\. NIST SP 800-63B-4 §3\.1\.1\.1 allows 8 only for a/)
+    expect(run).toThrow(/\(received 7\)\. NIST SP 800-63B-4 §3\.1\.1\.1 allows 8 only for a/)
     expect(run).toThrow(
       /password used as part of multi-factor authentication and requires 15 for one used as a/
     )

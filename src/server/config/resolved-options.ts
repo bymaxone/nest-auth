@@ -12,9 +12,11 @@ import { createHash } from 'node:crypto'
 
 import { resolveApiKeys, validateApiKeys } from './api-key-options'
 import { DEFAULT_OPTIONS } from './default-options'
+import { describeReceived } from './describe-received'
 import { durationToSeconds } from './duration'
 import { validateNumericOptions } from './numeric-options'
 import { validateSecretStrength } from './secret-strength'
+import { dropUnset } from './unset-options'
 import {
   resolveRegistration,
   resolveWorkspaceOptions,
@@ -196,7 +198,8 @@ function isProductionDeployment(userOptions: BymaxAuthModuleOptions): boolean {
  * Called once at module initialization. Errors thrown here prevent the NestJS
  * application from starting, ensuring misconfigured deployments fail fast.
  */
-export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOptions {
+export function resolveOptions(given: BymaxAuthModuleOptions): ResolvedOptions {
+  const userOptions = dropUnset(given)
   validateJwt(userOptions.jwt)
   validateIdentifierKey(userOptions.identifierKey)
   validateMfaEncryptionKey(userOptions.mfa)
@@ -226,8 +229,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateTrustedOrigins(userOptions)
   validateAccessLifetimeAgainstEpochRetention(userOptions.jwt)
 
-  // Destructure mfa out so the base spread does not inject the raw optional-field shape.
-  // mfa is re-added below with defaults applied.
+  // mfa is destructured out so the base spread injects no raw shape; it is re-added below.
   const {
     mfa: _mfa,
     identifierKey: _identifierKey,
@@ -320,16 +322,14 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
     // Evaluated once at startup — not re-evaluated per request.
     //
-    // `clientIpSource` has no default and `validateClientIpSource` has already refused a
-    // deployment that left it unset with limiting on. The fallback here is reached only when
-    // limiting is OFF, where the value is never read; `'peer'` is the inert choice because it
-    // consults no request header at all.
+    // `clientIpSource` has no default and `validateClientIpSource` refused a deployment that left it
+    // unset with limiting on. The fallback is reached only when limiting is OFF, where the value is
+    // never read; `'peer'` is the inert choice because it consults no request header at all.
     rateLimit: {
       ...DEFAULT_OPTIONS.rateLimit,
       ...userOptions.rateLimit,
-      // Stryker disable next-line OptionalChaining: unreachable — `validateClientIpSource` has
-      // already run, and it only returns without throwing when `rateLimit` is an object (either
-      // naming a source or disabling limiting), so `rateLimit` is never undefined here
+      // Stryker disable next-line OptionalChaining: unreachable — `validateClientIpSource` has run, and
+      // it returns only when `rateLimit` is an object (naming a source or disabling limiting)
       clientIpSource: userOptions.rateLimit?.clientIpSource ?? 'peer'
     },
 
@@ -760,7 +760,7 @@ function validatePlatformAdmin(
 function assertIntegralScryptParameter(name: string, value: number | undefined): void {
   if (value === undefined || Number.isInteger(value)) return
   throw new Error(
-    `[BymaxAuthModule] password.${name} must be an integer (current: ${value}). ` +
+    `[BymaxAuthModule] password.${name} must be an integer (received ${describeReceived(value)}). ` +
       `Node's crypto.scrypt rejects a non-integral cost parameter, and it does so on the ` +
       `first derivation — which is the first login after deploy, not at startup.`
   )
@@ -785,7 +785,7 @@ function validatePasswordMinLength(password: BymaxAuthModuleOptions['password'])
   if (!Number.isInteger(minLength) || minLength < 8 || minLength > 128) {
     throw new Error(
       `[BymaxAuthModule] password.minLength must be an integer between 8 and 128 ` +
-        `(current: ${String(minLength)}). NIST SP 800-63B-4 §3.1.1.1 allows 8 only for a ` +
+        `(received ${describeReceived(minLength)}). NIST SP 800-63B-4 §3.1.1.1 allows 8 only for a ` +
         `password used as part of multi-factor authentication and requires 15 for one used as a ` +
         `single factor; 128 is the maximum the password DTOs accept, so a higher policy would ` +
         `reject every password that reaches this service.`
@@ -802,14 +802,14 @@ function validatePasswordCostFactor(password: BymaxAuthModuleOptions['password']
   if (costFactor < 16_384) {
     throw new Error(
       `[BymaxAuthModule] password.costFactor must be at least 16384 (2^14) ` +
-        `(current: ${costFactor}). Lower values produce hashes vulnerable to brute-force attacks. ` +
+        `(received ${describeReceived(costFactor)}). Lower values produce hashes vulnerable to brute-force attacks. ` +
         `The recommended minimum for production is 32768 (2^15).`
     )
   }
 
   if ((costFactor & (costFactor - 1)) !== 0) {
     throw new Error(
-      `[BymaxAuthModule] password.costFactor must be a power of 2 (current: ${costFactor}).`
+      `[BymaxAuthModule] password.costFactor must be a power of 2 (received ${describeReceived(costFactor)}).`
     )
   }
 }
@@ -837,14 +837,14 @@ function validateBruteForce(bruteForce: BymaxAuthModuleOptions['bruteForce']): v
   if (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
     throw new Error(
       `[BymaxAuthModule] bruteForce.maxAttempts must be a whole number of at least 1 ` +
-        `(current: ${maxAttempts}). Zero locks out every account permanently, because a ` +
+        `(received ${describeReceived(maxAttempts)}). Zero locks out every account permanently, because a ` +
         `freshly created counter already satisfies "attempts >= 0".`
     )
   }
   if (maxAttempts !== undefined && maxAttempts > MAX_BRUTE_FORCE_ATTEMPTS) {
     throw new Error(
       `[BymaxAuthModule] bruteForce.maxAttempts must not exceed ${MAX_BRUTE_FORCE_ATTEMPTS} ` +
-        `(current: ${maxAttempts}). A threshold this high disables the lockout as effectively ` +
+        `(received ${describeReceived(maxAttempts)}). A threshold this high disables the lockout as effectively ` +
         `as switching it off, while the configuration still reads as enabled.`
     )
   }
@@ -883,7 +883,7 @@ function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['pass
   assertIntegralScryptParameter('blockSize', blockSize)
   if (blockSize !== undefined && blockSize < 8) {
     throw new Error(
-      `[BymaxAuthModule] password.blockSize must be at least 8 (current: ${blockSize}). ` +
+      `[BymaxAuthModule] password.blockSize must be at least 8 (received ${describeReceived(blockSize)}). ` +
         `scrypt's memory cost is 128 * N * r, so a smaller block size divides the memory ` +
         `hardness that password.costFactor's floor exists to guarantee.`
     )
@@ -894,7 +894,7 @@ function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['pass
   if (parallelization !== undefined && parallelization < 1) {
     throw new Error(
       `[BymaxAuthModule] password.parallelization must be at least 1 ` +
-        `(current: ${parallelization}).`
+        `(received ${describeReceived(parallelization)}).`
     )
   }
 

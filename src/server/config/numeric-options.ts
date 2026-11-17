@@ -13,6 +13,7 @@
  */
 
 import { DEFAULT_OPTIONS } from './default-options'
+import { describeReceived } from './describe-received'
 import { MAX_VERIFY_WINDOW } from '../crypto/totp'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
@@ -85,7 +86,7 @@ function assertWholeNumber(
   if (Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max) return
   throw new Error(
     `[BymaxAuthModule] ${path} must be a whole number between ${min} and ${max} inclusive ` +
-      `(current: ${String(value)}). ${why}`
+      `(received ${describeReceived(value)}). ${why}`
   )
 }
 
@@ -100,18 +101,20 @@ function validateWholeNumberOptions(userOptions: BymaxAuthModuleOptions): void {
   assertWholeNumber(
     'jwt.accessCookieMaxAgeMs',
     userOptions.jwt.accessCookieMaxAgeMs,
-    1,
+    1000,
     MAX_COOKIE_MAX_AGE_MS,
-    'It is the cookie Max-Age; zero deletes the cookie and NaN is ignored by the browser, ' +
-      'so the session would end with the tab.'
+    'It is the cookie Max-Age in milliseconds, sent in whole seconds: under 1000 it becomes ' +
+      'Max-Age=0, which deletes the cookie, and NaN is ignored by the browser, so the session ' +
+      'would end with the tab.'
   )
   assertWholeNumber(
     'sessions.defaultMaxSessions',
     userOptions.sessions?.defaultMaxSessions,
     1,
     MAX_SESSIONS_PER_USER,
-    'It caps concurrent sessions: with NaN the comparison is false in both directions, no ' +
-      'session is ever evicted, and the cap does not exist.'
+    'It caps concurrent sessions per user, counted in whole sessions: NaN evicts no session, ' +
+      'zero or a negative value evicts them all, a fraction cannot be counted, and a value ' +
+      'above 1000 is no cap.'
   )
   assertWholeNumber(
     'bruteForce.windowSeconds',
@@ -181,7 +184,7 @@ function validateAbsoluteSessionLifetime(jwt: BymaxAuthModuleOptions['jwt']): vo
   }
   throw new Error(
     `[BymaxAuthModule] jwt.absoluteSessionLifetimeDays must be 0 or between ` +
-      `${MIN_ABSOLUTE_LIFETIME_DAYS.toFixed(4)} and ${MAX_LIFETIME_DAYS} days (current: ${String(days)}). ` +
+      `${MIN_ABSOLUTE_LIFETIME_DAYS.toFixed(4)} and ${MAX_LIFETIME_DAYS} days (received ${describeReceived(days)}). ` +
       `Only 0 switches the cap off; NaN, a negative or a value so large that its length in ` +
       `milliseconds overflows would skip it without being asked to, and a value under an hour ` +
       `ends every session at its first rotation after that age, minutes after login. Set 0 to ` +
@@ -198,7 +201,7 @@ function validatePasswordResetOtpLength(
   if (!Number.isInteger(otpLength) || otpLength < 4 || otpLength > 8) {
     throw new Error(
       `[BymaxAuthModule] passwordReset.otpLength must be between 4 and 8 inclusive ` +
-        `(current: ${otpLength}). Values below 4 are too easily guessable; ` +
+        `(received ${describeReceived(otpLength)}). Values below 4 are too easily guessable; ` +
         `values above 8 are not required for security and degrade user experience. The value must also be a whole number: ` +
         `a comparison with NaN is false both ways, so a bound written as a range alone lets it through.`
     )
@@ -228,7 +231,7 @@ function validateMfaVerificationParameters(mfa: BymaxAuthModuleOptions['mfa']): 
   ) {
     throw new Error(
       `[BymaxAuthModule] mfa.totpWindow must be between 0 and ${MAX_VERIFY_WINDOW} inclusive ` +
-        `(current: ${totpWindow}). The window is counted in 30-second steps on either side ` +
+        `(received ${describeReceived(totpWindow)}). The window is counted in 30-second steps on either side ` +
         `of the current time, so ${2 * totpWindow + 1} codes would be valid at once. RFC 6238 §5.2 ` +
         `recommends at most one step of tolerance; the default of 1 accepts three codes. ` +
         `The bound matches the drift window the verifier actually applies, so a configured ` +
@@ -244,7 +247,7 @@ function validateMfaVerificationParameters(mfa: BymaxAuthModuleOptions['mfa']): 
   ) {
     throw new Error(
       `[BymaxAuthModule] mfa.recoveryCodeCount must be between 1 and 50 inclusive ` +
-        `(current: ${recoveryCodeCount}). Zero enrols an account with no way back if the ` +
+        `(received ${describeReceived(recoveryCodeCount)}). Zero enrols an account with no way back if the ` +
         `authenticator is lost. The count must be a whole number.`
     )
   }
@@ -272,10 +275,10 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
   ) {
     throw new Error(
       `[BymaxAuthModule] jwt.refreshExpiresInDays must be a positive finite number. ` +
-        `Got: ${refreshExpiresInDays}. Zero, negative, NaN, and Infinity are all rejected — ` +
+        `It received ${describeReceived(refreshExpiresInDays)}. Zero, negative, NaN, and Infinity are all rejected — ` +
         `any of these would produce an invalid Redis TTL and cause all token rotations to fail at runtime. ` +
-        `It is also at most ${MAX_LIFETIME_DAYS} days, and its length in seconds must be a whole ` +
-        `number, because Redis takes an integer expiry: 1.1 days is 95040.00000000001 s.`
+        `It is at most ${MAX_LIFETIME_DAYS} days, and days × 86400 must be a whole number of seconds, ` +
+        `because Redis takes an integer expiry: 1.5 and 0.25 are, 1.1 is not.`
     )
   }
 
@@ -299,7 +302,7 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
   ) {
     throw new Error(
       `[BymaxAuthModule] jwt.refreshGraceWindowSeconds must be between 0 and ` +
-        `${MAX_REFRESH_GRACE_WINDOW_SECONDS} inclusive (current: ${graceSeconds}). The window is ` +
+        `${MAX_REFRESH_GRACE_WINDOW_SECONDS} inclusive (received ${describeReceived(graceSeconds)}). The window is ` +
         `how long an already-consumed refresh token recovers a session, so it is exactly ` +
         `the replay window for a stolen one. It covers a client that rotated but never received ` +
         `the response — a retry, not a policy. 0 disables grace recovery entirely. The value must be a whole number: Redis takes an ` +
@@ -326,7 +329,7 @@ function validateScryptParallelizationCeiling(password: BymaxAuthModuleOptions['
   }
   throw new Error(
     `[BymaxAuthModule] password.parallelization must be at most ${MAX_SCRYPT_PARALLELIZATION} ` +
-      `(current: ${parallelization}). scrypt's CPU cost grows linearly with it and an ` +
+      `(received ${describeReceived(parallelization)}). scrypt's CPU cost grows linearly with it and an ` +
       `unauthenticated login derives a hash even for an address that does not exist.`
   )
 }
