@@ -307,6 +307,8 @@ export class PrismaUserRepository implements IUserRepository {
 
 Email delivery is fully delegated to the consumer — the library never imports a mailer SDK. Implement `IEmailProvider` with your transport of choice (Resend, SendGrid, SES, Nodemailer) and bind it to the `BYMAX_AUTH_EMAIL_PROVIDER` token.
 
+When the provider (or the `BYMAX_AUTH_HOOKS` object) is registered as a ready-made `useValue` object, `registerAsync` checks it when it is called: every member that is present must be a function, and the provider must carry the methods the library calls without a guard: `sendPasswordResetToken`, `sendPasswordResetOtp`, `sendEmailVerificationOtp`, `sendMfaEnabledNotification`, `sendMfaDisabledNotification` and `sendInvitation`. A class, a factory or an alias is not inspected.
+
 > [!WARNING]
 > Any user-supplied value (display name, tenant name, inviter name) interpolated into HTML email bodies MUST be escaped to prevent stored XSS in notification content. Tokens and OTPs are library-generated and safe, but `inviterName`, `tenantName`, device strings, and any consumer-supplied placeholder are attacker-controllable.
 
