@@ -35,6 +35,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   present and not a function, and an email provider without a method the library calls unguarded, are refused when it is
   called instead of at the first event that fires them. A class, a factory or an alias is not inspected.
 
+- `oauth` and `roles` are read by property access too, so a typed configuration class whose `hierarchy`, `platformHierarchy`
+  or provider block is a getter on its prototype takes effect. 1.5.9 read the fixed-key groups that way and left these two
+  as given, so a class with such a getter reached the validators with no hierarchy or no provider block: startup failed
+  or OAuth stayed unconfigured, never a looser setting. A `null` in either is still refused by name.
+- `jwt.accessExpiresIn`'s refusals no longer quote the value: the unreadable case names the type received and the
+  too-long case states the lifetime in seconds.
+
 ### Apply to a derived backend
 
 A configuration that booted before is refused at startup when it sets a flag or an option with a documented set of values to

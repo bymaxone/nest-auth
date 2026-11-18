@@ -106,6 +106,7 @@ describe('a value that cannot be read is refused by name', () => {
   // Scenario: a credential pasted into an option that holds a string. Expected: the refusal never contains it.
   it.each([
     ['rateLimit.clientIpSource', { rateLimit: { clientIpSource: 'hunter2-secret' } }],
+    ['jwt.accessExpiresIn', { jwt: { secret: SECRET, accessExpiresIn: 'hunter2-secret' } }],
     [
       'oauth.successRedirectUrl',
       { oauth: { successRedirectUrl: 'http://u:hunter2-secret@x.test/p' } }
