@@ -54,7 +54,7 @@ anything else. `undefined` and `null` still mean the default. An environment var
 `BYMAX_AUTH_EMAIL_PROVIDER` registered as an object needs the email methods the library calls without a guard; the
 other methods stay optional, and one that is present must be a function.
 
-Also refused at `registerAsync`: a `BYMAX_AUTH_HOOKS` or `BYMAX_AUTH_EMAIL_PROVIDER` `useValue` that is not an object, and a
+Also refused at `registerAsync`: a `BYMAX_AUTH_EMAIL_PROVIDER` `useValue`, or a `BYMAX_AUTH_HOOKS` one that is not nullish, that is not an object, and a
 hook (any of the hooks the library calls by name) that is present and not a function. A `null` hook counts as absent.
 A `controllers` flag passed to `registerAsync` is checked like every other flag, and a `null` flag is unset.
 `workspaces.allowCreate` may be `true`, `false` or a function. A refusal of `jwt.accessExpiresIn` has new wording; a test
