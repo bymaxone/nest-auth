@@ -809,7 +809,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 
 An option that is omitted, or that holds `undefined` or `null`, is unset and takes its default; it never means "no limit". To switch
 a cap off, use the documented value (`0` for `jwt.absoluteSessionLifetimeDays`), not an absent one. A host-defined map or a required value (`oauth.<provider>`, the `oauth` redirect URLs, `roles.hierarchy.<role>`, `workspaces.permissions.<action>`) refuses `null` by name.
-A flag must be exactly `true` or `false`, and an option with a documented set of values exactly one of them: anything else, an empty string and `'false'` included, is
+A flag must be exactly `true` or `false` (`workspaces.allowCreate` may also be a function), and an option with a documented set of values exactly one of them: anything else, an empty string and `'false'` included, is
 refused at startup naming the option, never read as off or as a default.
 
 > [!NOTE]

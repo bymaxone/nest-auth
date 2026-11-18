@@ -18,7 +18,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
-## [1.5.10] - 2026-11-18
+## [1.5.10] - 2026-11-17
 
 A patch release.
 
@@ -52,7 +52,13 @@ A configuration that booted before is refused at startup when it sets a flag or 
 anything else. `undefined` and `null` still mean the default. An environment variable must be converted before it is passed
 (`process.env.X === 'true'`), and `environment` must be spelled exactly as documented. A
 `BYMAX_AUTH_EMAIL_PROVIDER` registered as an object needs the email methods the library calls without a guard; the
-other methods stay optional.
+other methods stay optional, and one that is present must be a function.
+
+Also refused at `registerAsync`: a `BYMAX_AUTH_HOOKS` or `BYMAX_AUTH_EMAIL_PROVIDER` `useValue` that is not an object, and a
+hook (any of the hooks the library calls by name) that is present and not a function. A `null` hook counts as absent.
+A `controllers` flag passed to `registerAsync` is checked like every other flag, and a `null` flag is unset.
+`workspaces.allowCreate` may be `true`, `false` or a function. A refusal of `jwt.accessExpiresIn` has new wording; a test
+or a log filter that matches the old text must change.
 
 ## [1.5.9] - 2026-11-17
 
