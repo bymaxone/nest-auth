@@ -59,8 +59,8 @@ describe('BymaxAuthModule.registerAsync shapes', () => {
     )
   })
 
-  // Scenario: a controller flag that is a string. Expected: refused at the call (the opt-in controllers
-  // were enabled only by `=== true`, so 'yes' silently left MFA off).
+  // Scenario: a controller flag that is a string. Expected: refused at the call. Why: an opt-in controller
+  // is switched on only by `=== true`, so a string is neither on nor off.
   it('refuses a controller flag that is not a boolean', () => {
     expect(() =>
       BymaxAuthModule.registerAsync({

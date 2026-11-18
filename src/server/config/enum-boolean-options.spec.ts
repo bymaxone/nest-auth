@@ -84,8 +84,8 @@ const FLAGS = [...BOOLEAN_OPTIONS, ...BOOLEAN_OR_FUNCTION_OPTIONS]
 
 describe('flags at boot', () => {
   // Scenario: each flag given a value that is not a boolean. Expected: refused, naming the option, with
-  // the type and never the content. Why: `rateLimit.enabled: ''` switched the rate-limit guard off
-  // (`if (!enabled) return true`) while the boot check still read it as enabled.
+  // the type and never the content. Why: the rate-limit guard reads its flag as `if (!enabled) return true`,
+  // so `rateLimit.enabled: ''` would disable it while the boot check reads it as enabled.
   describe.each(FLAGS)('%s', (path) => {
     it.each(NOT_A_BOOLEAN)('refuses %s', (_label, value) => {
       expect(() => resolveOptions(optionsAt(path, value))).toThrow(
@@ -120,7 +120,7 @@ describe('flags at boot', () => {
     expect(message).not.toContain(secret)
   })
 
-  // Scenario: the measured consequences. Expected: each is refused at boot instead of reaching its reader.
+  // Scenario: values the readers disagree on. Expected: each is refused at boot, before a reader sees it.
   it.each([
     ['rateLimit.enabled', ''],
     ['emailVerification.required', ''],
@@ -159,8 +159,7 @@ describe('documented-set options at boot', () => {
     })
   })
 
-  // Scenario: the typo that dropped the Secure flag from every cookie. Expected: refused, and the
-  // documented value still makes cookies Secure.
+  // Scenario: the misspelling 'prodution'. Expected: refused, and the documented value makes cookies Secure.
   it('refuses environment "prodution" and keeps production secure', () => {
     expect(() => resolveOptions(optionsAt('environment', 'prodution'))).toThrow(
       "environment must be one of 'production', 'development', 'test'"
