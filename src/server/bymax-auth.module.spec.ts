@@ -45,6 +45,7 @@ import { PasswordResetService } from './services/password-reset.service'
 import { SessionService } from './services/session.service'
 import { WsTicketService } from './services/ws-ticket.service'
 import { BymaxAuthModule } from './bymax-auth.module'
+import { completeEmailProvider } from './__tests__/complete-email-provider'
 
 // ---------------------------------------------------------------------------
 // Shared test fixtures
@@ -566,9 +567,8 @@ describe('BymaxAuthModule', () => {
       expect(emailProvider).toBeInstanceOf(NoOpEmailProvider)
     })
 
-    // Verifies that a consumer-supplied email provider overrides the NoOp fallback.
     it('should use the consumer email provider when supplied', async () => {
-      const customEmailProvider = { sendEmailVerificationOtp: jest.fn() }
+      const customEmailProvider = completeEmailProvider()
 
       const module = await Test.createTestingModule({
         imports: [
@@ -1119,7 +1119,7 @@ describe('BymaxAuthModule', () => {
       // which is its own test below.
       {
         provide: BYMAX_AUTH_EMAIL_PROVIDER,
-        useValue: { sendEmailChangeVerification: jest.fn() }
+        useValue: completeEmailProvider({ sendEmailChangeVerification: jest.fn() })
       }
     ]
 
@@ -1161,7 +1161,7 @@ describe('BymaxAuthModule', () => {
             extraProviders: [
               { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
               { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-              { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: {} }
+              { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: completeEmailProvider() }
             ]
           })
         ]

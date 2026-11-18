@@ -18,6 +18,38 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A flag that is not `true` or `false`, and an option that is not one of its documented values, are refused at startup.**
+  A flag is read as `if (x)` in some places and `=== false` in others, so a value that is neither was decided by whichever
+  reader saw it: `rateLimit.enabled: ''` (an unset environment variable) switched the rate-limit guard off while the boot
+  check still read it as enabled, `emailVerification.required: ''` let login skip the verification, and `'false'` was
+  truthy. An option compared with `===` fell through to its default branch on a typo: `environment: 'prodution'` was read
+  as not production and dropped `Secure` from every cookie with no error, a misspelled `tokenDelivery` issued cookies, and a
+  misspelled `passwordReset.method` silently used the token flow. Every flag (a `controllers` flag passed to
+  `registerAsync` included; `workspaces.allowCreate` may also be a function) must be exactly `true` or `false`, and an
+  option with a documented set of values must be one of them, with no case folding. The refusal
+  names the type of a string and never prints it. A spec reads the option interfaces and fails when a new flag or
+  documented-set option is declared and not listed in the validator.
+- `registerAsync` inspects the hooks and the email provider when they are ready-made `useValue` objects: a hook that is
+  present and not a function, and an email provider without a method the library calls unguarded, are refused when it is
+  called instead of at the first event that fires them. A class, a factory or an alias is not inspected.
+
+- `oauth` and `roles` are read by property access too, so a typed configuration class whose `hierarchy`, `platformHierarchy`
+  or provider block is a getter on its prototype takes effect. 1.5.9 read the fixed-key groups that way and left these two
+  as given, so a class with such a getter reached the validators with no hierarchy or no provider block: startup failed
+  or OAuth stayed unconfigured, never a looser setting. A `null` in either is still refused by name.
+- `jwt.accessExpiresIn`'s refusals no longer quote the value: the unreadable case names the type received and the
+  too-long case states the lifetime in seconds.
+
+### Apply to a derived backend
+
+A configuration that booted before is refused at startup when it sets a flag or an option with a documented set of values to
+anything else. `undefined` and `null` still mean the default. An environment variable must be converted before it is passed
+(`process.env.X === 'true'`), and `environment` must be spelled exactly as documented. A
+`BYMAX_AUTH_EMAIL_PROVIDER` registered as an object needs the email methods the library calls without a guard; the
+other methods stay optional.
+
 ## [1.5.9] - 2026-11-17
 
 A patch release.

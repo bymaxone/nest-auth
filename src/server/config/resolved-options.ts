@@ -14,7 +14,7 @@ import { resolveApiKeys, validateApiKeys } from './api-key-options'
 import { DEFAULT_OPTIONS } from './default-options'
 import { describeReceived } from './describe-received'
 import { durationToSeconds } from './duration'
-import { validateNumericOptions } from './numeric-options'
+import { validateOptionValues } from './option-values'
 import { validateSecretStrength } from './secret-strength'
 import { assertArray, assertObject } from './shape-checks'
 import { dropUnset } from './unset-options'
@@ -206,7 +206,7 @@ export function resolveOptions(given: BymaxAuthModuleOptions): ResolvedOptions {
   validateMfaEncryptionKey(userOptions.mfa)
   validateRolesHierarchy(userOptions.roles)
   validatePlatformAdmin(userOptions.platform, userOptions.roles)
-  validateNumericOptions(userOptions)
+  validateOptionValues(userOptions)
   validatePasswordMinLength(userOptions.password)
   validatePasswordCostFactor(userOptions.password)
   validatePasswordMemoryParameters(userOptions.password)
@@ -1296,14 +1296,14 @@ function validateAccessLifetimeAgainstEpochRetention(jwt: BymaxAuthModuleOptions
   if (seconds === undefined) {
     throw new Error(
       `[BymaxAuthModule] jwt.accessExpiresIn must be a time span such as '15m', '1h' or '900s'. ` +
-        `Got: '${configured}'. A value the signer cannot read would fail at the first token ` +
+        `Received ${describeReceived(configured)}. A value the signer cannot read would fail at the first token ` +
         `issued, and leaves the token-epoch retention bound unverifiable at startup.`
     )
   }
 
   if (seconds > TOKEN_EPOCH_RETENTION_SECONDS) {
     throw new Error(
-      `[BymaxAuthModule] jwt.accessExpiresIn ('${configured}' = ${seconds} s) must not exceed the ` +
+      `[BymaxAuthModule] jwt.accessExpiresIn (${seconds} s) must not exceed the ` +
         `token-epoch retention window (${TOKEN_EPOCH_RETENTION_SECONDS} s). An access token that ` +
         `outlives the stored epoch would survive the password reset that revoked it: the epoch ` +
         `lookup falls back to 0 once the record expires, and the staleness check stops firing.`

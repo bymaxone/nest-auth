@@ -361,4 +361,77 @@ describe('an unset option means its default', () => {
     expect(resolved.sessions.defaultMaxSessions).toBe(5)
     expect(resolved.jwt.absoluteSessionLifetimeDays).toBe(30)
   })
+
+  /** The options a call needs beyond the group under test. */
+  const optionsWith = (name: string, value: unknown): BymaxAuthModuleOptions => ({
+    jwt: { secret: SECRET },
+    roles: { hierarchy: {} },
+    rateLimit: { enabled: false },
+    ...{ [name]: value }
+  })
+
+  // Scenario: `roles` and `oauth` as typed configuration classes whose settings are getters on the
+  // prototype. Expected: read through the property, so the hierarchy and the provider block take effect.
+  it('reads the roles and oauth groups when they are class instances with getters', () => {
+    class Roles {
+      get hierarchy(): Record<string, string[]> {
+        return { ADMIN: ['MEMBER'], MEMBER: [] }
+      }
+    }
+    class OAuth {
+      get google(): Record<string, string> {
+        return { clientId: 'id', clientSecret: 'secret', callbackUrl: 'https://app.example/cb' }
+      }
+      get successRedirectUrl(): string {
+        return '/done'
+      }
+    }
+    const cleaned = dropUnset(optionsWith('roles', new Roles()))
+    const oauth = dropUnset(optionsWith('oauth', new OAuth()))
+
+    expect(Reflect.get(cleaned, 'roles')).toEqual({ hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } })
+    expect(Reflect.get(oauth, 'oauth')).toEqual({
+      google: { clientId: 'id', clientSecret: 'secret', callbackUrl: 'https://app.example/cb' },
+      successRedirectUrl: '/done'
+    })
+  })
+
+  // Scenario: a class `roles` group reaches `resolveOptions` through its getter. Expected: the resolved
+  // hierarchy is the one the getter returns, not an empty group refused as missing.
+  it('resolves a roles hierarchy declared through a getter', () => {
+    class Roles {
+      get hierarchy(): Record<string, string[]> {
+        return { ADMIN: ['MEMBER'], MEMBER: [] }
+      }
+    }
+    const options = { ...build('sessions', 'enabled', true), roles: new Roles() }
+    if (!isOptions(options)) throw new Error('the base options lost a required group')
+
+    expect(resolveOptions(options).roles.hierarchy).toEqual({ ADMIN: ['MEMBER'], MEMBER: [] })
+  })
+
+  // Scenario: the kept groups hold an own `null`, an own `undefined`, a getter that returns `null` and a
+  // getter that returns `undefined`. Expected: the first three are kept as given, so the refusal by name
+  // still fires; the last is absent.
+  it('keeps an unset key of oauth and roles as given and omits an undefined getter', () => {
+    class OAuth {
+      successRedirectUrl = null
+      mfaRedirectUrl = undefined
+      get errorRedirectUrl(): null {
+        return null
+      }
+      get google(): undefined {
+        return undefined
+      }
+    }
+    const oauth: unknown = Reflect.get(dropUnset(optionsWith('oauth', new OAuth())), 'oauth')
+
+    expect(oauth).toEqual({
+      successRedirectUrl: null,
+      mfaRedirectUrl: undefined,
+      errorRedirectUrl: null
+    })
+    expect(oauth).not.toHaveProperty('google')
+    expect(oauth).toHaveProperty('mfaRedirectUrl')
+  })
 })

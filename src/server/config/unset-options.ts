@@ -55,9 +55,8 @@ const TOP_KEYS = {
 } satisfies Keys<BymaxAuthModuleOptions>
 
 /**
- * The option groups whose keys are fixed settings, each with its keys. Only these are cleaned: a group
- * that is a host-defined map (`roles`, `oauth`) is left as given, because a `null` there is a mistake
- * to refuse, and a map this table does not name is untouched by construction.
+ * The option groups whose keys are fixed settings, each with its keys. Only these are cleaned: a map
+ * this table does not name is untouched by construction.
  */
 const GROUP_KEYS = {
   jwt: {
@@ -152,6 +151,20 @@ const GROUP_KEYS = {
   } satisfies Keys<Group<'workspaces'>>
 }
 
+/**
+ * The host-defined groups, each with its known keys. They are read by property access like the fixed
+ * groups, but an unset key is kept as given: a `null` there is a mistake that is refused by name.
+ */
+const KEPT_GROUP_KEYS = {
+  oauth: {
+    successRedirectUrl: true,
+    mfaRedirectUrl: true,
+    errorRedirectUrl: true,
+    google: true
+  } satisfies Keys<Group<'oauth'>>,
+  roles: { hierarchy: true, platformHierarchy: true } satisfies Keys<Group<'roles'>>
+}
+
 /** The `workspaces` sub-groups that hold plain settings, each with its keys. */
 const WORKSPACE_SUBGROUP_KEYS: Readonly<Record<string, readonly string[]>> = {
   accessDeniedEvents: ['max', 'windowSeconds']
@@ -181,6 +194,23 @@ function readSetKeys(group: object, keys: readonly string[]): Record<string, unk
 }
 
 /**
+ * Reads a group by property access into a plain object, keeping a key that is set to `undefined` or
+ * `null` as the host wrote it, and adding a known key only when its value is not `undefined`.
+ *
+ * @param group - The group, of any prototype.
+ * @param keys - The group's known keys.
+ * @returns A plain object with the keys as given.
+ */
+function readKeptKeys(group: object, keys: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of new Set([...keys, ...Object.keys(group)])) {
+    const entry: unknown = Reflect.get(group, key)
+    if (entry !== undefined || Object.hasOwn(group, key)) out[key] = entry
+  }
+  return out
+}
+
+/**
  * Copies `value` without the keys that hold `undefined` or `null`, one level deep.
  *
  * @param value - A plain object, such as a message override.
@@ -198,7 +228,8 @@ export function dropUnsetKeys<T extends object>(value: T): T {
  * Returns the options as a plain object in which unset means absent: at the top level, inside each
  * fixed-key option group and inside the `workspaces` sub-groups that hold plain settings. The options,
  * and each group, may be an object literal, an object with no prototype, one from another realm, or a
- * class instance. Host-defined maps are left as given.
+ * class instance. `oauth` and `roles` are read the same way but keep an unset key as given, and the maps
+ * inside them are left as given.
  *
  * @param options - The options as the host wrote them.
  * @returns A copy in which unset means absent.
@@ -216,6 +247,10 @@ export function dropUnset(options: BymaxAuthModuleOptions): BymaxAuthModuleOptio
       }
     }
     copy[name] = group
+  }
+  for (const [name, keys] of Object.entries(KEPT_GROUP_KEYS)) {
+    const entry = copy[name]
+    if (isObjectGroup(entry)) copy[name] = readKeptKeys(entry, Object.keys(keys))
   }
   return Object.assign({} as BymaxAuthModuleOptions, copy)
 }

@@ -2341,7 +2341,7 @@ describe('resolveOptions — jwt.accessExpiresIn validation', () => {
       jwt: { secret: VALID_SECRET, accessExpiresIn: `${RETENTION_SECONDS + 1}s` }
     }
     expect(() => resolveOptions(options)).toThrow(
-      new RegExp(`accessExpiresIn \\('${RETENTION_SECONDS + 1}s' = ${RETENTION_SECONDS + 1} s\\)`)
+      new RegExp(`accessExpiresIn \\(${RETENTION_SECONDS + 1} s\\)`)
     )
     expect(() => resolveOptions(options)).toThrow(
       /must not exceed the token-epoch retention window \(2592000 s\)\./
