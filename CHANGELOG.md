@@ -18,6 +18,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.10] - 2026-11-18
+
+A patch release.
+
 ### Fixed
 
 - **A flag that is not `true` or `false`, and an option that is not one of its documented values, are refused at startup.**
@@ -48,7 +52,13 @@ A configuration that booted before is refused at startup when it sets a flag or 
 anything else. `undefined` and `null` still mean the default. An environment variable must be converted before it is passed
 (`process.env.X === 'true'`), and `environment` must be spelled exactly as documented. A
 `BYMAX_AUTH_EMAIL_PROVIDER` registered as an object needs the email methods the library calls without a guard; the
-other methods stay optional.
+other methods stay optional, and one that is present must be a function.
+
+Also refused at `registerAsync`: a `BYMAX_AUTH_EMAIL_PROVIDER` `useValue`, or a `BYMAX_AUTH_HOOKS` one that is not nullish, that is not an object, and a
+hook (any of the hooks the library calls by name) that is present and not a function. A `null` hook counts as absent.
+A `controllers` flag passed to `registerAsync` is checked like every other flag, and a `null` flag is unset.
+`workspaces.allowCreate` may be `true`, `false` or a function. A refusal of `jwt.accessExpiresIn` has new wording; a test
+or a log filter that matches the old text must change.
 
 ## [1.5.9] - 2026-11-17
 
@@ -5367,7 +5377,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.9...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.10...HEAD
+[1.5.10]: https://github.com/bymaxone/nest-auth/compare/v1.5.9...v1.5.10
 [1.5.9]: https://github.com/bymaxone/nest-auth/compare/v1.5.8...v1.5.9
 [1.5.8]: https://github.com/bymaxone/nest-auth/compare/v1.5.7...v1.5.8
 [1.5.7]: https://github.com/bymaxone/nest-auth/compare/v1.5.6...v1.5.7
