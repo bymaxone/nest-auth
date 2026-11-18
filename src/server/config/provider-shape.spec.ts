@@ -148,4 +148,22 @@ describe('validateRegistrationShapes', () => {
   it('reads a null controller flag as unset', () => {
     expect(() => validateRegistrationShapes({ auth: null, mfa: undefined }, [])).not.toThrow()
   })
+
+  // Scenario: a class that carries the provider fields as statics, and an unrelated object provider listed
+  // before the hooks. Expected: a class is not a provider definition and is not read as one, and the hooks
+  // are found by their token wherever they sit in the list.
+  it('finds the hooks by token and ignores a class that only looks like a provider', () => {
+    class NotAProvider {
+      static provide = BYMAX_AUTH_HOOKS
+      static useValue = { onLockout: true }
+    }
+
+    expect(() => validateRegistrationShapes(undefined, [NotAProvider])).not.toThrow()
+    expect(() =>
+      validateRegistrationShapes(undefined, [
+        { provide: Symbol('other'), useValue: 5 },
+        { provide: BYMAX_AUTH_HOOKS, useValue: { onLockout: true } }
+      ])
+    ).toThrow('BYMAX_AUTH_HOOKS.onLockout must be a function (received a boolean)')
+  })
 })

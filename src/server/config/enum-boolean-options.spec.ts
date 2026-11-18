@@ -260,3 +260,29 @@ describe('the option interfaces', () => {
     expect(sets.length).toBeGreaterThan(4)
   })
 })
+
+describe('what a refusal says', () => {
+  // Scenario: a flag that may also be a function, given a string. Expected: refused as a flag, so the
+  // function-or-boolean list is applied to it.
+  it('refuses a string for workspaces.allowCreate', () => {
+    expect(() => resolveOptions(optionsAt('workspaces.allowCreate', 'yes'))).toThrow(
+      'workspaces.allowCreate must be true or false (received a string).'
+    )
+  })
+
+  // Scenario: a documented-set option given a typo. Expected: the sentence closes with the type
+  // received, as the flag refusals do.
+  it('closes a documented-set refusal with the type received', () => {
+    expect(() => resolveOptions(optionsAt('tokenDelivery', 'preupload'))).toThrow(
+      "tokenDelivery must be one of 'cookie', 'bearer', 'both' (received a string)."
+    )
+  })
+
+  // Scenario: the `controllers` group inside the options the factory returns. Expected: checked at
+  // resolution too, not only on the object handed to registerAsync.
+  it('refuses a controller flag inside the resolved options', () => {
+    expect(() => resolveOptions(optionsAt('controllers.mfa', 'yes'))).toThrow(
+      'controllers.mfa must be true or false (received a string)'
+    )
+  })
+})
