@@ -45,8 +45,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 ### Apply to a derived backend
 
 A configuration that booted before is refused at startup when it sets a flag or an option with a documented set of values to
-anything else. `undefined` and `null` still mean the default. An environment variable must be converted before it is passed
-(`process.env.X === 'true'`), and `environment` must be spelled exactly `'production'`, `'development'` or `'test'`. A
+anything else. `undefined` still means the default, and so does `null` except in a `controllers` flag passed to `registerAsync`. An environment variable must be converted before it is passed
+(`process.env.X === 'true'`), and `environment` must be spelled exactly as documented. A
 `BYMAX_AUTH_EMAIL_PROVIDER` registered as an object needs the email methods the library calls without a guard; the
 other methods stay optional.
 
