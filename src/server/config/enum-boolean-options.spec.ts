@@ -85,7 +85,7 @@ const FLAGS = [...BOOLEAN_OPTIONS, ...BOOLEAN_OR_FUNCTION_OPTIONS]
 describe('flags at boot', () => {
   // Scenario: each flag given a value that is not a boolean. Expected: refused, naming the option, with
   // the type and never the content. Why: the rate-limit guard reads its flag as `if (!enabled) return true`,
-  // so `rateLimit.enabled: ''` would disable it while the boot check reads it as enabled.
+  // so a flag that is falsy and not `false` would disable it if it reached the guard.
   describe.each(FLAGS)('%s', (path) => {
     it.each(NOT_A_BOOLEAN)('refuses %s', (_label, value) => {
       expect(() => resolveOptions(optionsAt(path, value))).toThrow(
