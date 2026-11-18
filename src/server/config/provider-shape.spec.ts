@@ -87,12 +87,19 @@ describe('validateRegistrationShapes', () => {
     ).toThrow(`BYMAX_AUTH_EMAIL_PROVIDER.${missing} is required and must be a function.`)
   })
 
-  it('refuses an email provider that holds a member that is not a function', () => {
+  // Scenario: an optional email method that is present and is not a function, and a provider that is not an
+  // object. Expected: refused, naming the member and the type.
+  it('refuses a named email method that is not a function', () => {
     expect(() =>
       validateRegistrationShapes(undefined, [
-        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: { ...emailProvider(), from: 'a@b.c' } }
+        {
+          provide: BYMAX_AUTH_EMAIL_PROVIDER,
+          useValue: { ...emailProvider(), sendNewSessionAlert: 'a@b.c' }
+        }
       ])
-    ).toThrow('BYMAX_AUTH_EMAIL_PROVIDER.from must be a function (received a string)')
+    ).toThrow(
+      'BYMAX_AUTH_EMAIL_PROVIDER.sendNewSessionAlert must be a function (received a string)'
+    )
     expect(() =>
       validateRegistrationShapes(undefined, [{ provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: 5 }])
     ).toThrow('BYMAX_AUTH_EMAIL_PROVIDER must be an object (received 5)')
@@ -112,5 +119,33 @@ describe('validateRegistrationShapes', () => {
     expect(() => validateRegistrationShapes({ mfa: 'yes' }, [])).toThrow(
       'controllers.mfa must be true or false (received a string)'
     )
+  })
+
+  // Scenario: a ready-made class instance that holds data of its own (a from address, a client, a logger)
+  // beside its methods, and a named member that is null. Expected: accepted. Why: only the members the
+  // library calls by name are looked at, and a nullish one is absent for the optional call.
+  it('does not look at members the library does not call', () => {
+    class Provider {
+      from = 'noreply@example.com'
+      client = { send: 1 }
+      sendNewSessionAlert = null
+      async sendPasswordResetToken(): Promise<void> {}
+      async sendPasswordResetOtp(): Promise<void> {}
+      async sendEmailVerificationOtp(): Promise<void> {}
+      async sendMfaEnabledNotification(): Promise<void> {}
+      async sendMfaDisabledNotification(): Promise<void> {}
+      async sendInvitation(): Promise<void> {}
+    }
+    expect(() =>
+      validateRegistrationShapes(undefined, [
+        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: new Provider() },
+        { provide: BYMAX_AUTH_HOOKS, useValue: { logger: console, onLockout: null } }
+      ])
+    ).not.toThrow()
+  })
+
+  // Scenario: a `null` controller flag. Expected: unset, so accepted, as it is for every other option.
+  it('reads a null controller flag as unset', () => {
+    expect(() => validateRegistrationShapes({ auth: null, mfa: undefined }, [])).not.toThrow()
   })
 })

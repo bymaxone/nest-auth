@@ -92,11 +92,14 @@ function assertOneOf(path: string, value: unknown, allowed: readonly string[]): 
 /**
  * Checks the controller flags a host passes to `registerAsync`.
  *
- * @param flags - The host's `controllers`, if any.
+ * @param flags - The host's `controllers`, if any. A `null` flag is unset, as everywhere else.
  * @throws {Error} naming the first flag that is not `true` or `false`.
  */
 export function validateControllerFlags(flags: unknown): void {
-  for (const name of CONTROLLER_FLAGS) assertBoolean(`controllers.${name}`, readPath(flags, name))
+  for (const name of CONTROLLER_FLAGS) {
+    const flag = readPath(flags, name)
+    if (flag !== null) assertBoolean(`controllers.${name}`, flag)
+  }
 }
 
 /**
