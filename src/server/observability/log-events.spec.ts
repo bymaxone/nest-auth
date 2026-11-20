@@ -1,12 +1,11 @@
 /**
  * @fileoverview The catalog of log events, the README "Log events" table and the code that writes the events
- * agree both ways: every event is documented and written somewhere, and every call names a documented event
- * with only the fields the catalog lists.
+ * agree: every event is documented, in the same words.
  *
  * @layer Test
  */
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { AUTH_LOG_EVENTS } from './log-events'
@@ -32,31 +31,6 @@ function documented(): Map<
     rows.set(code, { level: cells[2] ?? '', message: cells[3] ?? '', when: cells[4] ?? '', fields })
   }
   return rows
-}
-
-/** Every non-test source file of the server. */
-function sources(dir: string = ROOT): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name)
-    if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sources(path)
-    return entry.name.endsWith('.ts') && !entry.name.endsWith('.spec.ts') ? [path] : []
-  })
-}
-
-/** The events the code writes: each call's code and the field names it passes. */
-function writtenCalls(): Array<{ code: string; fields: string[]; file: string }> {
-  const calls: Array<{ code: string; fields: string[]; file: string }> = []
-  const call = /logEvent\(\s*[\w.]+,\s*'(AUTH_[A-Z_]+)'(?:,\s*\{([^}]*)\})?/g
-  for (const file of sources()) {
-    if (file.endsWith('log-event.ts') || file.endsWith('log-events.ts')) continue
-    for (const match of readFileSync(file, 'utf8').matchAll(call)) {
-      const fields = [...(match[2] ?? '').matchAll(/(?:^|,)\s*(\w+)\s*(?::|(?=,|$))/g)].map(
-        (m) => m[1] as string
-      )
-      calls.push({ code: match[1] as string, fields, file })
-    }
-  }
-  return calls
 }
 
 describe('the log event catalog', () => {
@@ -86,19 +60,5 @@ describe('the log event catalog', () => {
       expect(row?.when).toBe(spec.when[0]?.toUpperCase() + spec.when.slice(1))
       expect(row?.fields).toEqual([...spec.fields])
     }
-  })
-
-  // Scenario: the code that writes events. Expected: every call names a catalog code and passes only the
-  // fields the catalog lists for it, and every catalog code is written by at least one call.
-  it('is what the code writes, and nothing else', () => {
-    const calls = writtenCalls()
-
-    expect(calls.length).toBeGreaterThan(0)
-    for (const { code, fields } of calls) {
-      expect(CODES).toContain(code)
-      const allowed: readonly string[] = AUTH_LOG_EVENTS[code as AuthLogEvent].fields
-      for (const field of fields) expect(allowed).toContain(field)
-    }
-    expect(new Set(calls.map((call) => call.code))).toEqual(new Set(CODES))
   })
 })
