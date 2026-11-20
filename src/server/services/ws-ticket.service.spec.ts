@@ -423,8 +423,9 @@ describe('WsTicketService', () => {
   // ---------------------------------------------------------------------------
 
   describe('observability', () => {
-    // The two refusals below are written as events, so each assertion checks the code and the reason it
-    // carries, and that no account appears in what the logger received.
+    // The refusal below is written as an event, so its assertion checks the code and the reason it carries,
+    // and that no account appears in what the logger received. The issued-ticket line after it is a success
+    // line and names the user and tenant on purpose.
 
     // Scenario: an enrolled session that never cleared its challenge tries to mint. Expected:
     // the refusal is the event with reason `mfa_not_satisfied`, and it names no user. Why: this is the one

@@ -318,7 +318,7 @@ describe('EmailChangeService', () => {
 
     // The lockout is answered with `account_locked`, which says nothing about why, so this event is the
     // record that a re-proof budget ran out in the email-change flow — the signal that someone holding a
-    // token is guessing at the password behind it. It names no account.
+    // token is guessing at the password behind it, not who. It names no account.
     it('records the lockout as an event that names no account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
@@ -404,8 +404,8 @@ describe('EmailChangeService', () => {
       })
     })
 
-    // The refusal is recorded with its flow and no account; a run of these against the lockout event
-    // tells an operator a user fumbling their own password from someone working through a stolen token.
+    // The refusal is recorded with its flow and no account; a run of these followed by the lockout event
+    // shows a re-proof budget being spent in this flow, not whose.
     it('records a rejected password as an event that names no account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockPasswordService.compare.mockResolvedValue(false)
