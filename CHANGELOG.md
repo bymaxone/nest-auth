@@ -18,6 +18,26 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A text option, a list of text and a group of settings given a value of the wrong type are refused at startup, naming the
+  option and the type received.** `jwt.accessExpiresIn` given a number, a boolean, an object, a symbol or a bigint failed
+  with `value.trim is not a function`; it now gets the same refusal as an unreadable string. `jwt.issuer`, `jwt.audience`,
+  the three cookie names, `cookies.refreshCookiePath`, `cookies.mfaTempCookiePath`, `mfa.issuer`, `apiKeys.pepper`,
+  `redisNamespace` and `routePrefix` must be strings. `blockedStatuses`, `cookies.trustedOrigins` and `password.blocklist`
+  must be arrays of strings: `blockedStatuses: 'evil'` was accepted and read as no list. The groups `password`, `cookies`,
+  `sessions`, `bruteForce`, `passwordReset`, `emailVerification`, `platform`, `invitations`, `emailChange` and `oauth`
+  must be objects, where a string was read as an empty group. The `controllers` argument of `registerAsync` must be an
+  object. A refusal prints a number as it is and names any other value by its type, never its content.
+- Three refusals no longer print what the host typed: a `cookies.trustedOrigins` entry that is not an absolute origin is
+  named by its position, a `workspaces.permissions.<action>` entry that is not a workspace role is named by its position,
+  and the `routePrefix` refusal says "followed by the routePrefix" instead of repeating it. A log filter that matched the
+  old text must change.
+- A nested `oauth.google` given as a class with getters, an accessor pair or a Proxy is read through its properties, so
+  the provider block carries its values; it resolved as an empty object, and the provider was never built.
+- The `controllers` flags are read once, by `registerAsync`, and that one reading is what the registration uses; a flag that
+  is a getter was evaluated twice, once to check it and once to apply it.
+
 ## [1.5.10] - 2026-11-18
 
 A patch release.

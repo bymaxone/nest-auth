@@ -14,10 +14,9 @@ import { resolveApiKeys, validateApiKeys } from './api-key-options'
 import { DEFAULT_OPTIONS } from './default-options'
 import { describeReceived } from './describe-received'
 import { durationToSeconds } from './duration'
-import { validateOptionValues } from './option-values'
+import { readOptions, validateOptionValues } from './option-values'
 import { validateSecretStrength } from './secret-strength'
 import { assertArray, assertObject } from './shape-checks'
-import { dropUnset } from './unset-options'
 import {
   resolveRegistration,
   resolveWorkspaceOptions,
@@ -200,7 +199,7 @@ function isProductionDeployment(userOptions: BymaxAuthModuleOptions): boolean {
  * application from starting, ensuring misconfigured deployments fail fast.
  */
 export function resolveOptions(given: BymaxAuthModuleOptions): ResolvedOptions {
-  const userOptions = dropUnset(given)
+  const userOptions = readOptions(given)
   validateJwt(userOptions.jwt)
   validateIdentifierKey(userOptions.identifierKey)
   validateMfaEncryptionKey(userOptions.mfa)
@@ -1090,10 +1089,10 @@ function validateRefreshCookiePath(
   const prefix = routePrefix ?? DEFAULT_OPTIONS.routePrefix
   if (prefix !== 'auth' && !cookies?.refreshCookiePath) {
     throw new Error(
-      `[BymaxAuthModule] routePrefix is '${prefix}' but cookies.refreshCookiePath is not set. ` +
+      `[BymaxAuthModule] routePrefix is not 'auth' but cookies.refreshCookiePath is not set. ` +
         `The refresh cookie path defaults to '/auth', which will not match your routes — ` +
         `the refresh cookie will be sent on every request instead of only to the refresh endpoint. ` +
-        `Set cookies.refreshCookiePath: '/${prefix}' to restrict the refresh cookie correctly.`
+        `Set cookies.refreshCookiePath to '/' followed by the routePrefix to restrict the refresh cookie correctly.`
     )
   }
 }
@@ -1240,11 +1239,12 @@ function validateTrustedOrigins(userOptions: BymaxAuthModuleOptions): void {
     )
   }
 
-  const malformed = trustedOrigins.filter((origin) => !isAbsoluteOrigin(origin))
+  // Named by position: an origin can carry credentials and a boot error is logged.
+  const malformed = trustedOrigins.flatMap((origin, at) => (isAbsoluteOrigin(origin) ? [] : [at]))
   if (malformed.length > 0) {
     throw new Error(
       `[BymaxAuthModule] cookies.trustedOrigins contains entries that are not absolute ` +
-        `origins: ${malformed.join(', ')}. Each entry is compared verbatim against the ` +
+        `origins (at position ${malformed.join(', ')}). Each entry is compared verbatim against the ` +
         `request's Origin header, which is always 'scheme://host[:port]' with no path or ` +
         `trailing slash — anything else can never match.`
     )
@@ -1291,7 +1291,7 @@ function isAbsoluteOrigin(value: string): boolean {
  */
 function validateAccessLifetimeAgainstEpochRetention(jwt: BymaxAuthModuleOptions['jwt']): void {
   const configured = jwt.accessExpiresIn ?? DEFAULT_OPTIONS.jwt.accessExpiresIn
-  const seconds = durationToSeconds(configured)
+  const seconds = typeof configured === 'string' ? durationToSeconds(configured) : undefined
 
   if (seconds === undefined) {
     throw new Error(

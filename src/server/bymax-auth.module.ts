@@ -253,7 +253,7 @@ export class BymaxAuthModule {
    */
   static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
     const extraProviders = options.extraProviders ?? []
-    validateRegistrationShapes(options.controllers, extraProviders)
+    const controllerFlags = validateRegistrationShapes(options.controllers, extraProviders)
 
     // BYMAX_AUTH_USER_REPOSITORY is required by AuthService, AccountStatusService (and through
     // it UserStatusGuard), SessionService, MfaService, OAuthService, InvitationService, and
@@ -288,48 +288,48 @@ export class BymaxAuthModule {
     // ---------------------------------------------------------------------------
 
     // AuthController — opt-out. Enabled by default, disable via controllers.auth: false.
-    const includeAuth = options.controllers?.auth !== false
+    const includeAuth = controllerFlags.auth !== false
 
     // MfaController — opt-in only. The consumer must set controllers.mfa: true when
     // they configure the `mfa` group. This prevents MfaService from being registered
     // without a valid mfa.encryptionKey/issuer in the resolved options.
-    const includeMfa = options.controllers?.mfa === true
+    const includeMfa = controllerFlags.mfa === true
 
     // PasswordResetController — opt-out. Enabled by default unless explicitly disabled.
-    const includePasswordReset = options.controllers?.passwordReset !== false
+    const includePasswordReset = controllerFlags.passwordReset !== false
 
     // SessionController — opt-in. Requires controllers.sessions: true AND sessions.enabled: true
     // in the factory return value. Enabling the controller without session tracking active would
     // register endpoints that return stale/empty data.
-    const includeSessions = options.controllers?.sessions === true
+    const includeSessions = controllerFlags.sessions === true
 
     // PlatformAuthController — opt-in. Requires platform.enabled: true in the resolved
     // options. MfaService is also required (platform MFA challenge endpoint) so the mfa group
     // must be configured as well.
-    const includePlatform = options.controllers?.platform === true
+    const includePlatform = controllerFlags.platform === true
 
     // OAuthController — opt-in. Requires the oauth group to be configured in the factory.
     // OAUTH_PLUGINS is built lazily via a factory provider so that buildOAuthPlugins()
     // runs after BYMAX_AUTH_OPTIONS is resolved rather than at module build time.
-    const includeOAuth = options.controllers?.oauth === true
+    const includeOAuth = controllerFlags.oauth === true
 
     // InvitationController — opt-in. Requires invitations.enabled: true in the resolved options.
-    const includeInvitations = options.controllers?.invitations === true
+    const includeInvitations = controllerFlags.invitations === true
     // Service API keys have no controller: the host's repository provider is what opts in.
     const includeApiKeys = hasProviderToken(extraProviders, BYMAX_AUTH_API_KEY_REPOSITORY)
 
     // EmailChangeController — opt-in. The service refuses to boot when the configured email
     // provider cannot deliver the verification token, so a deployment that enables the flow
     // without wiring the message fails at startup rather than at a user's first attempt.
-    const includeEmailChange = options.controllers?.emailChange === true
+    const includeEmailChange = controllerFlags.emailChange === true
 
     // WorkspaceController — opt-in. Needs the workspace layer, which the repository providers
     // register and `workspaces.enabled` configures; the factory below checks both.
-    const includeWorkspaceController = options.controllers?.workspaces === true
+    const includeWorkspaceController = controllerFlags.workspaces === true
 
     // WorkspaceInvitationController — opt-in, on the same workspace layer. Its service refuses to
     // boot when the email provider cannot deliver the invitation.
-    const includeWorkspaceInvitations = options.controllers?.workspaceInvitations === true
+    const includeWorkspaceInvitations = controllerFlags.workspaceInvitations === true
 
     // Resolved options provider — wraps the consumer's factory with resolveOptions().
     const resolvedOptionsProvider: Provider = {

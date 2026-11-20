@@ -578,18 +578,18 @@ describe('resolveOptions — cookies.sameSite', () => {
       })
 
     expect(resolve).toThrow(/not absolute origins/)
-    // The offending entry is named, along with the shape that would have worked — with four
-    // origins listed, "one of these is wrong" is not an actionable message.
-    expect(resolve).toThrow(origin)
+    // The entry is named by position, never printed: an origin can carry credentials.
+    expect(resolve).toThrow('(at position 0)')
+    expect(resolve).not.toThrow(origin)
     expect(resolve).toThrow('compared verbatim against the')
     expect(resolve).toThrow("always 'scheme://host[:port]' with no path or trailing slash")
   })
 
   /**
-   * With more than one bad entry the message has to keep them apart — a run-together list is
-   * not a list, and the operator has to be able to read which origins to fix.
+   * With more than one bad entry the message has to keep their positions apart — a run-together
+   * list is not a list, and the operator has to be able to read which entries to fix.
    */
-  it('should name every malformed trusted origin, separated', () => {
+  it('should name the position of every malformed trusted origin, separated', () => {
     const resolve = () =>
       resolveOptions({
         ...MINIMAL_OPTIONS,
@@ -600,7 +600,7 @@ describe('resolveOptions — cookies.sameSite', () => {
         }
       })
 
-    expect(resolve).toThrow('app.example.com, https://app.example.com/')
+    expect(resolve).toThrow('(at position 0, 1)')
   })
 
   /**
@@ -2515,14 +2515,12 @@ describe('resolveOptions — refreshCookiePath validation', () => {
     )
   })
 
-  // Scenario: custom routePrefix without refreshCookiePath. Expected: the message names the actual
-  // prefix, explains the '/auth' default mismatch, the every-request consequence, and the precise
-  // remediation `Set cookies.refreshCookiePath: '/<prefix>'`. Why: pins all four concatenated
-  // literals (with the interpolated prefix) so the StringLiteral mutants emptying any of them are
-  // killed — the prefix interpolation also pins it is `${prefix}`, not a constant.
-  it('should produce the full refreshCookiePath remediation including the prefix', () => {
+  // Scenario: custom routePrefix without refreshCookiePath. Expected: the message explains the '/auth'
+  // default mismatch, the every-request consequence, and the remediation, without printing the prefix.
+  // Why: pins all four concatenated literals so the StringLiteral mutants emptying any of them are killed.
+  it('should produce the full refreshCookiePath remediation without printing the prefix', () => {
     const run = (): unknown => resolveOptions({ ...MINIMAL_OPTIONS, routePrefix: 'api/auth' })
-    expect(run).toThrow(/routePrefix is 'api\/auth' but cookies\.refreshCookiePath is not set\./)
+    expect(run).toThrow(/routePrefix is not 'auth' but cookies\.refreshCookiePath is not set\./)
     expect(run).toThrow(
       /The refresh cookie path defaults to '\/auth', which will not match your routes/
     )
@@ -2530,8 +2528,10 @@ describe('resolveOptions — refreshCookiePath validation', () => {
       /the refresh cookie will be sent on every request instead of only to the refresh endpoint\./
     )
     expect(run).toThrow(
-      /Set cookies\.refreshCookiePath: '\/api\/auth' to restrict the refresh cookie correctly\./
+      /Set cookies\.refreshCookiePath to '\/' followed by the routePrefix to restrict the refresh cookie correctly\./
     )
+    // The prefix is not printed: it is a value the host typed and a boot error is logged.
+    expect(run).not.toThrow('api/auth')
   })
 
   // Verifies that a custom routePrefix with partial cookie config but missing refreshCookiePath still throws.

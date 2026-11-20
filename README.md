@@ -811,6 +811,10 @@ An option that is omitted, or that holds `undefined` or `null`, is unset and tak
 a cap off, use the documented value (`0` for `jwt.absoluteSessionLifetimeDays`), not an absent one. A host-defined map or a required value (`oauth.<provider>`, the `oauth` redirect URLs, `roles.hierarchy.<role>`, `workspaces.permissions.<action>`) refuses `null` by name.
 A flag must be exactly `true` or `false` (`workspaces.allowCreate` may also be a function), and an option with a documented set of values exactly one of them: anything else, an empty string and `'false'` included, is
 refused at startup naming the option, never read as off or as a default.
+A text option (`jwt.issuer`, `jwt.audience`, the cookie names and paths, `mfa.issuer`, `apiKeys.pepper`, `redisNamespace`,
+`routePrefix`) must be a string, `blockedStatuses`, `cookies.trustedOrigins` and `password.blocklist` an array of strings, and each
+settings group an object; any other type is refused at startup naming the option and the type received, and never printing the content of a value that is not a number. `controllers` is read once, by
+`registerAsync()`, and a `controllers` key in what `useFactory` returns is refused whatever its value, `null` and `undefined` included.
 
 > [!NOTE]
 > When a feature is not enabled (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead. A feature is enabled by `controllers.<name>: true` on the `registerAsync()` call together with its configuration group (`mfa.encryptionKey` and `mfa.issuer`, `sessions.enabled`, `platform.enabled`); either half alone leaves it unregistered or fails at startup.

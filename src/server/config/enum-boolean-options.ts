@@ -13,7 +13,9 @@
  */
 
 import { describeReceived } from './describe-received'
+import { assertObject } from './shape-checks'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import type { ControllerFlags } from '../interfaces/controller-flags.interface'
 
 /** The dotted path of every option that is exactly `true` or `false`. */
 export const BOOLEAN_OPTIONS: readonly string[] = [
@@ -90,16 +92,37 @@ function assertOneOf(path: string, value: unknown, allowed: readonly string[]): 
 }
 
 /**
+ * Reads the controller flags a host passes to `registerAsync`, once each, and checks them.
+ *
+ * The result is the only thing the module reads afterwards, so a flag that is a getter is
+ * evaluated here and nowhere else, and the value checked is the value used.
+ *
+ * @param controllers - The host's `controllers`, if any. A `null` flag is unset, as everywhere else.
+ * @returns The flags that are set, as a plain object.
+ * @throws {Error} naming `controllers` when it is present and is not an object, or the first flag
+ *   that is not `true` or `false`.
+ */
+export function readControllerFlags(controllers: unknown): ControllerFlags {
+  if (controllers === undefined || controllers === null) return {}
+  assertObject('controllers', controllers)
+  const flags: Record<string, boolean> = {}
+  for (const name of CONTROLLER_FLAGS) {
+    const flag = readPath(controllers, name)
+    if (flag === null || flag === undefined) continue
+    assertBoolean(`controllers.${name}`, flag)
+    flags[name] = flag as boolean
+  }
+  return flags
+}
+
+/**
  * Checks the controller flags a host passes to `registerAsync`.
  *
- * @param flags - The host's `controllers`, if any. A `null` flag is unset, as everywhere else.
+ * @param controllers - The host's `controllers`, if any.
  * @throws {Error} naming the first flag that is not `true` or `false`.
  */
-export function validateControllerFlags(flags: unknown): void {
-  for (const name of CONTROLLER_FLAGS) {
-    const flag = readPath(flags, name)
-    if (flag !== null) assertBoolean(`controllers.${name}`, flag)
-  }
+export function validateControllerFlags(controllers: unknown): void {
+  readControllerFlags(controllers)
 }
 
 /**

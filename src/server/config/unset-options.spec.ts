@@ -434,4 +434,79 @@ describe('an unset option means its default', () => {
     expect(oauth).not.toHaveProperty('google')
     expect(oauth).toHaveProperty('mfaRedirectUrl')
   })
+
+  // Scenario: `oauth.google` as a class whose settings are getters on the prototype, as an accessor
+  // pair, and as a Proxy. Expected: each is read through the property into a plain object, so the
+  // provider block carries its values and is not an empty object. Why: a spread copies own enumerable
+  // keys only, so the block would resolve empty and the provider would never be built.
+  it.each([
+    [
+      'a class with getters',
+      (): object =>
+        new (class Google {
+          get clientId(): string {
+            return 'id'
+          }
+          get clientSecret(): string {
+            return 'secret'
+          }
+          get callbackUrl(): string {
+            return 'https://app.example/cb'
+          }
+        })()
+    ],
+    [
+      'an accessor pair',
+      (): object =>
+        Object.defineProperties(
+          {},
+          {
+            clientId: { get: () => 'id' },
+            clientSecret: { get: () => 'secret' },
+            callbackUrl: { get: () => 'https://app.example/cb' }
+          }
+        )
+    ],
+    [
+      'a Proxy',
+      (): object =>
+        new Proxy(
+          {},
+          {
+            get: (_target, key) =>
+              ({ clientId: 'id', clientSecret: 'secret', callbackUrl: 'https://app.example/cb' })[
+                key as string
+              ]
+          }
+        )
+    ]
+  ])('reads oauth.google given as %s into a plain object', (_case, make) => {
+    const oauth: unknown = Reflect.get(dropUnset(optionsWith('oauth', { google: make() })), 'oauth')
+    const google: unknown = Reflect.get(oauth as object, 'google')
+
+    expect(Object.getPrototypeOf(google)).toBe(Object.prototype)
+    expect(google).toStrictEqual({
+      clientId: 'id',
+      clientSecret: 'secret',
+      callbackUrl: 'https://app.example/cb'
+    })
+  })
+
+  // Scenario: a scope list on a class `oauth.google`. Expected: carried through, as the other keys are.
+  it('carries the scope of a class oauth.google', () => {
+    class Google {
+      clientId = 'id'
+      clientSecret = 'secret'
+      callbackUrl = 'https://app.example/cb'
+      get scope(): string[] {
+        return ['openid']
+      }
+    }
+    const oauth: unknown = Reflect.get(
+      dropUnset(optionsWith('oauth', { google: new Google() })),
+      'oauth'
+    )
+
+    expect(Reflect.get(Reflect.get(oauth as object, 'google'), 'scope')).toStrictEqual(['openid'])
+  })
 })
