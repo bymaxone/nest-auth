@@ -37,6 +37,12 @@ const STATUS_ERROR = 2
 const TRACER_NAME = '@bymax-one/nest-auth'
 const LIBRARY_CODE = /^auth\.[a-z_]+$/
 
+/** Whether a loaded module has the one member the seam calls, so a different package of that name is not used. */
+function isOtelApi(value: unknown): value is OtelApi {
+  const trace = (value as { trace?: { getTracer?: unknown } } | null)?.trace
+  return typeof trace?.getTracer === 'function'
+}
+
 /** The library error code a failure carries, or a generic marker; the text of a message never leaves. */
 function codeOf(error: unknown): string {
   if (!(error instanceof AuthException)) return 'auth.error'
@@ -69,7 +75,8 @@ export class AuthTracing implements OnModuleInit {
   /** Loads the API once, at start-up; a package that is not there leaves the seam inert. */
   async onModuleInit(): Promise<void> {
     try {
-      this.#api = (await import('@opentelemetry/api')) as unknown as OtelApi
+      const loaded: unknown = await import('@opentelemetry/api')
+      if (isOtelApi(loaded)) this.#api = loaded
     } catch {
       // The package is not installed: the seam stays inert.
     }

@@ -5,7 +5,6 @@
  */
 
 import { Inject, Injectable } from '@nestjs/common'
-import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 
@@ -18,7 +17,9 @@ import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
  */
 @Injectable()
 export class AuthHealthProbe {
-  constructor(@Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: Pick<Redis, 'ping'>) {}
+  constructor(
+    @Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: { ping(): Promise<string> }
+  ) {}
 
   /**
    * Whether the store answers a `PING`.

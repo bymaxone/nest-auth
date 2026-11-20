@@ -135,14 +135,18 @@ describe('observability against @bymax-one/nest-core', () => {
   // the rejection left to the aggregator, which turns it into a down entry; the name is `auth-redis`, and no
   // detail is reported.
   it('reports up, down and lets a rejection through, without detail', async () => {
-    const answers = [true, false]
-    const probe = { ping: jest.fn(() => Promise.resolve(answers.shift() ?? false)) }
-    const indicator = new AuthRedisHealthIndicator(probe as unknown as AuthHealthProbe)
+    const answers: Array<Promise<string>> = [
+      Promise.resolve('PONG'),
+      Promise.resolve('LOADING'),
+      Promise.reject(new Error('ECONNREFUSED 10.0.0.1:6379'))
+    ]
+    const indicator = new AuthRedisHealthIndicator(
+      new AuthHealthProbe({ ping: () => answers.shift() ?? Promise.resolve('') })
+    )
 
     expect(indicator.name).toBe('auth-redis')
     await expect(indicator.check()).resolves.toStrictEqual({ status: 'up' })
     await expect(indicator.check()).resolves.toStrictEqual({ status: 'down' })
-    probe.ping.mockRejectedValueOnce(new Error('ECONNREFUSED 10.0.0.1:6379'))
     await expect(indicator.check()).rejects.toThrow('ECONNREFUSED')
   })
 })

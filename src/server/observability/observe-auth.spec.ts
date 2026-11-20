@@ -7,6 +7,7 @@
 
 import type { CallHandler, ExecutionContext } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
+import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host'
 import { lastValueFrom, of, throwError } from 'rxjs'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -43,7 +44,7 @@ function build(): { interceptor: AuthObservabilityInterceptor; tally: AuthMetric
 
 /** A context whose handler is the given function. */
 function contextOf(handler: () => void): ExecutionContext {
-  return { getHandler: () => handler } as unknown as ExecutionContext
+  return new ExecutionContextHost([], class Probe {}, handler)
 }
 
 /** Runs the interceptor over a handler that returns `result`. */
