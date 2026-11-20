@@ -44,6 +44,10 @@
     "reason": "Parses the service sources with the TypeScript compiler as text; it imports only node modules and typescript and executes no source under src."
   },
   {
+    "file": "src/server/observability/log-events.scan.spec.ts",
+    "reason": "Reads the server sources and the catalog as text with the TypeScript compiler; it imports only node modules and typescript and executes no source under src, so the related-test lookup is right to leave it out."
+  },
+  {
     "file": "src/server/services/lockout-reads.spec.ts",
     "reason": "Parses the service sources with the TypeScript compiler as text; it imports only node modules and typescript and executes no source under src, so the related-test lookup is right to leave it out."
   },

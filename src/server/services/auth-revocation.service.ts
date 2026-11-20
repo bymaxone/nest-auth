@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common'
 
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { readStampedEpoch } from '../utils'
 
@@ -93,11 +94,7 @@ export class AuthRevocationService {
       // an auth one, past a green type-check and a green unit suite that pinned the old shape.
       // No identifier is logged: `sub` and `jti` name an account and a live token, and this
       // says everything the operator needs without either.
-      this.logger.warn(
-        `isAccessTokenRevoked: dashboard token refused without a store read — the payload ` +
-          `carries no tenantId, so its epoch key cannot be named. Forward the tenant from the ` +
-          `verified token; a dashboard check missing it fails closed by design`
-      )
+      logEvent(this.logger, 'AUTH_TOKEN_REVOCATION_REFUSED', { reason: 'missing_tenant' })
       return true
     }
 

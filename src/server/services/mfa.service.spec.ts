@@ -29,6 +29,7 @@ import { MfaService } from './mfa.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
+import { eventOf, expectEvent } from '../__tests__/log-events'
 
 // ---------------------------------------------------------------------------
 // Test constants
@@ -404,12 +405,12 @@ describe('MfaService', () => {
       expect(mockRedis.setIfAbsent).not.toHaveBeenCalled()
     })
 
-    // …and it is recorded, naming the account and which surface it was attempted on. This is the
+    // …and it is recorded, naming the plane and the reason and no account. This is the
     // refusal that means "someone is holding a token for a passwordless account and trying to
     // enrol a factor on it" — the exact shape of the attack the gate was added for. The response
     // says only `reauthentication_required`, which a legitimate user also sees, so the log line is
     // the only place the attempt is distinguishable at all.
-    it('records the refused enrolment with the account and the surface', async () => {
+    it('records the refused enrolment as an event that names no account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
       mockRedis.get.mockImplementation(onlyRecentAuth(false))
@@ -418,10 +419,15 @@ describe('MfaService', () => {
         AuthException
       )
 
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('no recent authentication')
-      expect(warned).toContain('userId=user-1')
-      expect(warned).toContain('context=dashboard')
+      expectEvent(
+        warnSpy,
+        'AUTH_REAUTHENTICATION_REFUSED',
+        {
+          plane: 'dashboard',
+          reason: 'no_recent_authentication'
+        },
+        ['user-1']
+      )
       warnSpy.mockRestore()
     })
 
@@ -440,9 +446,9 @@ describe('MfaService', () => {
       )
     })
 
-    // The lockout answers `account_locked`, which names neither the account nor the flow, so
-    // this line is what tells an operator whose budget ran out and where.
-    it('records a locked re-proof budget with the account and the surface', async () => {
+    // The lockout answers `account_locked`, which names neither the account nor the flow, so this event
+    // is what tells an operator which flow's budget ran out; it names no account.
+    it('records a locked re-proof budget as an event that names no account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
 
@@ -452,10 +458,7 @@ describe('MfaService', () => {
         response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } }
       })
 
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('account locked')
-      expect(warned).toContain('userId=user-1')
-      expect(warned).toContain('context=dashboard')
+      expectEvent(warnSpy, 'AUTH_ACCOUNT_LOCKED', { flow: 'reauthentication' }, ['user-1'])
       warnSpy.mockRestore()
     })
 
@@ -986,8 +989,9 @@ describe('MfaService', () => {
       await expect(
         service.verifyAndEnable('user-1', '000000', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).rejects.toThrow(AuthException)
-      // Pin the invalid-code warn template (line 432) so blanking it to '' is caught.
-      expect(warnSpy).toHaveBeenCalledWith('verifyAndEnable: invalid TOTP code userId=user-1')
+      expectEvent(warnSpy, 'AUTH_MFA_CODE_INVALID', { plane: 'dashboard', flow: 'enable' }, [
+        'user-1'
+      ])
       warnSpy.mockRestore()
     })
 
@@ -1340,16 +1344,13 @@ describe('MfaService', () => {
       // The ?? [] fallback must yield an EMPTY array, so no recovery comparison runs. Kills the
       // `?? []` -> `?? ["Stryker"]` ArrayDeclaration mutant (line 530), which would compare once.
       expect(mockPasswordService.compare).not.toHaveBeenCalled()
-      // Pin the invalid-code warn template including the context (line 537).
-      expect(warnSpy).toHaveBeenCalledWith(
-        'challenge: invalid MFA code userId=user-1 context=dashboard'
-      )
+      expectEvent(warnSpy, 'AUTH_MFA_CODE_INVALID', { plane: 'dashboard', flow: 'challenge' })
       warnSpy.mockRestore()
     })
 
     // Verifies that challenge throws ACCOUNT_LOCKED when brute-force threshold is reached.
     it('should throw ACCOUNT_LOCKED when the user is locked out', async () => {
-      expect.assertions(2)
+      expect.assertions(3)
       mockBruteForce.isLockedOut.mockResolvedValue(true)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
@@ -1360,8 +1361,7 @@ describe('MfaService', () => {
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_LOCKED })
         })
       }
-      // Pin the account-locked warn template (line 509).
-      expect(warnSpy).toHaveBeenCalledWith('challenge: account locked userId=user-1')
+      expectEvent(warnSpy, 'AUTH_MFA_LOCKED', { plane: 'dashboard', flow: 'challenge' }, ['user-1'])
       warnSpy.mockRestore()
     })
 
@@ -2783,9 +2783,7 @@ describe('MfaService', () => {
       // At `warn`, and saying "administratively": an operator reading the log has to be able to
       // tell this apart from a user who disabled their own factor, and both paths otherwise
       // write the same record and send the same mail.
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('resetMfa: MFA removed administratively')
-      )
+      expectEvent(warnSpy, 'AUTH_MFA_RESET', { plane: 'dashboard' })
       warnSpy.mockRestore()
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith({
@@ -3011,10 +3009,7 @@ describe('MfaService', () => {
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_LOCKED })
         })
       }
-      // Pin the disable account-locked warn template including the context (line 655).
-      expect(warnSpy).toHaveBeenCalledWith(
-        'disable: account locked userId=user-1 context=dashboard'
-      )
+      expectEvent(warnSpy, 'AUTH_MFA_LOCKED', { plane: 'dashboard', flow: 'disable' })
       warnSpy.mockRestore()
     })
 
@@ -3216,10 +3211,7 @@ describe('MfaService', () => {
         service.disable('user-1', '000000', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).rejects.toThrow(AuthException)
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
-      // Pin the disable invalid-code warn template including the context (line 670).
-      expect(warnSpy).toHaveBeenCalledWith(
-        'disable: invalid MFA code userId=user-1 context=dashboard'
-      )
+      expectEvent(warnSpy, 'AUTH_MFA_CODE_INVALID', { plane: 'dashboard', flow: 'disable' })
       warnSpy.mockRestore()
     })
 
@@ -3689,9 +3681,7 @@ describe('MfaService', () => {
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_LOCKED })
         })
       }
-      expect(warnSpy).toHaveBeenCalledWith(
-        'regenerateRecoveryCodes: account locked userId=user-1 context=dashboard'
-      )
+      expectEvent(warnSpy, 'AUTH_MFA_LOCKED', { plane: 'dashboard', flow: 'recovery_codes' })
       warnSpy.mockRestore()
     })
 
@@ -3723,9 +3713,7 @@ describe('MfaService', () => {
       expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(
         hmacSha256('disable:dashboard:8:tenant-1:user-1', HMAC_KEY)
       )
-      expect(warnSpy).toHaveBeenCalledWith(
-        'regenerateRecoveryCodes: invalid MFA code userId=user-1 context=dashboard'
-      )
+      expectEvent(warnSpy, 'AUTH_MFA_CODE_INVALID', { plane: 'dashboard', flow: 'recovery_codes' })
       warnSpy.mockRestore()
     })
 

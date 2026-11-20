@@ -5,6 +5,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthMetricsTally } from '../observability/auth-metrics-tally'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 
 /**
@@ -134,16 +135,11 @@ export class BruteForceService {
    */
   private validateIdentifier(identifier: string): void {
     if (identifier.includes(':') || identifier.includes('\n') || identifier.includes('\r')) {
-      this.logger.error(
-        'Invalid identifier passed to BruteForceService — contains forbidden characters. ' +
-          'Pass a hashed value (e.g. hmacSha256(email, secret)) instead of a raw email or IP.'
-      )
+      logEvent(this.logger, 'AUTH_IDENTIFIER_REFUSED', { reason: 'forbidden_characters' })
       throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
     }
     if (Buffer.byteLength(identifier, 'utf8') > MAX_IDENTIFIER_LENGTH) {
-      this.logger.error(
-        `Identifier exceeds the maximum allowed length of ${MAX_IDENTIFIER_LENGTH} bytes.`
-      )
+      logEvent(this.logger, 'AUTH_IDENTIFIER_REFUSED', { reason: 'too_long' })
       throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
     }
   }

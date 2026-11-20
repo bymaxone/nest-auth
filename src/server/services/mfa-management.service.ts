@@ -26,6 +26,7 @@ import type {
   IPlatformUserRepository
 } from '../interfaces/platform-user-repository.interface'
 import type { AuthUser } from '../interfaces/user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { logSafe } from '../utils/log-safe'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
@@ -165,9 +166,7 @@ export class MfaManagementService {
 
     await this.clearFactor(scope)
 
-    this.logger.warn(
-      `resetMfa: MFA removed administratively userId=${logSafe(userId)} context=${context}`
-    )
+    logEvent(this.logger, 'AUTH_MFA_RESET', { plane: context })
     this.notifyDisabled('resetMfa', scope, user)
     // No request context: this call does not come from one. Empty rather than invented, so a
     // consumer logging the hook cannot mistake a placeholder for a real address.
@@ -290,8 +289,9 @@ export class MfaManagementService {
     mfa: MfaConfig
   ): Promise<void> {
     const { userId, context, tenantId } = scope
+    const flow = origin === 'regenerateRecoveryCodes' ? 'recovery_codes' : 'disable'
     if (await this.flowLockout.isLockedOut('disable', context, userId, tenantId)) {
-      this.logger.warn(`${origin}: account locked userId=${logSafe(userId)} context=${context}`)
+      logEvent(this.logger, 'AUTH_MFA_LOCKED', { plane: context, flow })
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
     if (!user.mfaSecret) {
@@ -308,7 +308,7 @@ export class MfaManagementService {
     )
     if (!valid) {
       await this.flowLockout.recordFailure('disable', context, userId, tenantId)
-      this.logger.warn(`${origin}: invalid MFA code userId=${logSafe(userId)} context=${context}`)
+      logEvent(this.logger, 'AUTH_MFA_CODE_INVALID', { plane: context, flow })
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
     await this.flowLockout.reset('disable', context, userId, tenantId)

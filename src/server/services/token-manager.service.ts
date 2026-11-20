@@ -25,6 +25,7 @@ import type {
 } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { markingPlane, observed } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
@@ -481,15 +482,15 @@ export class TokenManagerService {
       // Two lines rather than one: the detection is the finding and the revocation is the
       // response to it, and a `revokeFamily` that throws must not take the finding down with
       // it. The owner is only knowable after the revocation, which reads a member record.
-      this.logger.warn(
-        `reissueTokens: reuse of a consumed refresh token detected — revoking the token family ` +
-          `familyId=${logSafe(outcome.familyId)}`
-      )
+      logEvent(this.logger, 'AUTH_REFRESH_REUSE_DETECTED', {
+        plane: 'dashboard',
+        familyId: outcome.familyId
+      })
       const { ownerId } = await this.redis.revokeFamily(outcome.familyId)
-      this.logger.warn(
-        `reissueTokens: token family revoked after reuse detection ` +
-          `${ownerFragment(ownerId)} familyId=${logSafe(outcome.familyId)}`
-      )
+      logEvent(this.logger, 'AUTH_REFRESH_FAMILY_REVOKED', {
+        plane: 'dashboard',
+        familyId: outcome.familyId
+      })
       // The one moment the library can say "this is not a guess about risk": a token that was
       // already exchanged has been presented again, so one of its two holders is not the owner.
       // Emitted after the revocation, so a consumer that reacts by paging someone is reacting
@@ -497,9 +498,7 @@ export class TokenManagerService {
       this.emitReuseDetected('dashboard', ownerId, outcome.familyId, ip, userAgent)
       throw observed('reuse_detected', new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID))
     }
-    this.logger.warn(
-      'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
-    )
+    logEvent(this.logger, 'AUTH_REFRESH_REFUSED', { plane: 'dashboard' })
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
   }
 
@@ -609,7 +608,7 @@ export class TokenManagerService {
     if (!Number.isFinite(bornAt)) return
 
     if (Date.now() - bornAt > capDays * 86_400_000) {
-      this.logger.warn('rotation refused: the session has outlived the absolute lifetime cap')
+      logEvent(this.logger, 'AUTH_SESSION_LIFETIME_EXCEEDED')
       throw observed('expired', new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID))
     }
   }
@@ -975,26 +974,24 @@ export class TokenManagerService {
     if (outcome.kind === 'reused') {
       // #38 deferred platform reuse detection entirely; the family design closes that gap on
       // both planes at once.
-      this.logger.warn(
-        `reissuePlatformTokens: reuse of a consumed refresh token detected — revoking the ` +
-          `token family familyId=${logSafe(outcome.familyId)}`
-      )
+      logEvent(this.logger, 'AUTH_REFRESH_REUSE_DETECTED', {
+        plane: 'platform',
+        familyId: outcome.familyId
+      })
       const { ownerId } = await this.redis.revokeFamily(outcome.familyId, 'platform')
       // Named for the same reason as the dashboard plane, and more so: this is the
       // highest-privilege identity in the system.
-      this.logger.warn(
-        `reissuePlatformTokens: token family revoked after reuse detection ` +
-          `${ownerFragment(ownerId)} familyId=${logSafe(outcome.familyId)}`
-      )
+      logEvent(this.logger, 'AUTH_REFRESH_FAMILY_REVOKED', {
+        plane: 'platform',
+        familyId: outcome.familyId
+      })
       // Both planes report reuse: an operator watching for account takeover cares about a
       // replayed platform token at least as much as a dashboard one.
       this.emitReuseDetected('platform', ownerId, outcome.familyId, ip, userAgent)
       throw observed('reuse_detected', new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID))
     }
 
-    this.logger.warn(
-      'reissuePlatformTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
-    )
+    logEvent(this.logger, 'AUTH_REFRESH_REFUSED', { plane: 'platform' })
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
   }
 

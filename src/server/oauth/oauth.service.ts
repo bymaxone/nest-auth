@@ -47,6 +47,7 @@ import type {
   IUserRepository,
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { CREDENTIAL_PROVED, TokenManagerService } from '../services/token-manager.service'
@@ -481,7 +482,7 @@ export class OAuthService {
     // the legitimate browser is still entitled to complete. Hashes are compared rather than
     // the raw values so the constant-time path is not skipped by a length mismatch.
     if (stateCookie === undefined || !timingSafeCompare(sha256(state), sha256(stateCookie))) {
-      this.logger.warn(`handleCallback: OAuth state not bound to this browser provider=${provider}`)
+      logEvent(this.logger, 'AUTH_OAUTH_STATE_REFUSED', { reason: 'not_bound' })
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
@@ -498,7 +499,7 @@ export class OAuthService {
     // callback's own value is a URL path segment the caller supplied. There is nothing here for
     // a timing side channel to reveal, and a constant-time compare would only imply otherwise.
     if (stored.provider !== provider) {
-      this.logger.warn(`handleCallback: OAuth state provider mismatch provider=${provider}`)
+      logEvent(this.logger, 'AUTH_OAUTH_STATE_REFUSED', { reason: 'provider_mismatch' })
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
@@ -519,7 +520,7 @@ export class OAuthService {
     const rawState = await this.redis.getdel(stateKey)
 
     if (!rawState) {
-      this.logger.warn(`handleCallback: invalid or expired OAuth state provider=${provider}`)
+      logEvent(this.logger, 'AUTH_OAUTH_STATE_REFUSED', { reason: 'invalid_or_expired' })
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
@@ -530,7 +531,7 @@ export class OAuthService {
       // A state key that exists but does not parse is corrupted storage, not a stale or
       // forged callback — the two are indistinguishable to the caller (both answer
       // OAUTH_FAILED) and only this line tells them apart in an operator's logs.
-      this.logger.warn(`handleCallback: unparseable OAuth state provider=${provider}`)
+      logEvent(this.logger, 'AUTH_OAUTH_STATE_REFUSED', { reason: 'unparseable' })
       // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone the unparsed state fails `isStoredOAuthState` on the next line and raises the identical OAUTH_FAILED.
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }

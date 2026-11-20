@@ -17,6 +17,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -167,14 +168,14 @@ export class EmailChangeService implements OnModuleInit {
     // other out of its own address change without a credential.
     const bfIdentifier = reproofCounterId('email-change', userId, tenantId, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
-      this.logger.warn(`requestChange: account locked userId=${logSafe(userId)}`)
+      logEvent(this.logger, 'AUTH_ACCOUNT_LOCKED', { flow: 'email_change' })
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
     const matches = await this.passwordService.compare(dto.currentPassword, user.passwordHash)
     if (!matches) {
       await this.bruteForce.recordFailure(bfIdentifier)
-      this.logger.warn(`requestChange: current password rejected userId=${logSafe(userId)}`)
+      logEvent(this.logger, 'AUTH_PASSWORD_REJECTED', { flow: 'email_change' })
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 

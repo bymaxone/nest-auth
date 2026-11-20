@@ -15,6 +15,7 @@ import { Logger } from '@nestjs/common'
 import { AuthRevocationService } from './auth-revocation.service'
 import type { RevocableTokenPayload } from './auth-revocation.service'
 import type { AuthRedisService } from '../redis/auth-redis.service'
+import { expectEvent, serialized } from '../__tests__/log-events'
 
 /** A verified dashboard token payload the check reads. */
 const PAYLOAD: RevocableTokenPayload = {
@@ -158,23 +159,18 @@ describe('AuthRevocationService', () => {
     ['undefined', undefined],
     ['empty', '']
   ])(
-    'warns naming the missing tenant when a dashboard token has a %s one',
+    'warns with an event naming the missing tenant when a dashboard token has a %s one',
     async (_l, tenantId) => {
       const { service } = buildService({ blacklist: null, epoch: 0 })
 
       await service.isAccessTokenRevoked({ ...PAYLOAD, tenantId }, 'dashboard')
 
       expect(warn).toHaveBeenCalledTimes(1)
-      const message = String(warn.mock.calls[0]?.[0])
-
-      expect(message).toContain('dashboard token refused')
-      expect(message).toContain('no tenantId')
-      expect(message).toContain('Forward the tenant')
-      expect(message).toContain('fails closed by design')
+      expectEvent(warn, 'AUTH_TOKEN_REVOCATION_REFUSED', { reason: 'missing_tenant' })
 
       // No identifier reaches the log: `sub` names an account and `jti` a live token.
-      expect(message).not.toContain(PAYLOAD.sub)
-      expect(message).not.toContain(PAYLOAD.jti)
+      expect(serialized(warn)).not.toContain(PAYLOAD.sub)
+      expect(serialized(warn)).not.toContain(PAYLOAD.jti)
     }
   )
 

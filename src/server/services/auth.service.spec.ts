@@ -28,6 +28,7 @@ import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
+import { expectEvent } from '../__tests__/log-events'
 
 // Mock the anti-enumeration sleep so timing-normalization delays are observable and instant.
 jest.mock('../utils/sleep', () => ({ sleep: jest.fn().mockResolvedValue(undefined) }))
@@ -1198,11 +1199,11 @@ describe('AuthService', () => {
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
     })
 
-    // Scenario: wrong password. Expected: the thrown code is exactly INVALID_CREDENTIALS and a
-    // warn log carries the masked email and tenantId. Why: pins the code and the warn template
-    // (line 226) so a blanked log message is caught.
-    it('should throw exactly INVALID_CREDENTIALS and warn-log the masked email on wrong password', async () => {
-      expect.assertions(2)
+    // Scenario: wrong password. Expected: the thrown code is exactly INVALID_CREDENTIALS and the warn log is
+    // the invalid-credentials event on the dashboard plane, carrying no address. Why: pins the code and the
+    // event so a blanked log is caught and an address cannot return to it.
+    it('should throw exactly INVALID_CREDENTIALS and warn-log an event that names no address on wrong password', async () => {
+      expect.assertions(3)
       mockPasswordService.compare.mockResolvedValue(false)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       try {
@@ -1212,9 +1213,9 @@ describe('AuthService', () => {
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.INVALID_CREDENTIALS })
         })
       }
-      expect(warnSpy).toHaveBeenCalledWith(
-        `login: invalid credentials email=u***@example.com tenantId=tenant-1`
-      )
+      expectEvent(warnSpy, 'AUTH_LOGIN_INVALID_CREDENTIALS', { plane: 'dashboard' }, [
+        'example.com'
+      ])
       warnSpy.mockRestore()
     })
 
@@ -1244,11 +1245,11 @@ describe('AuthService', () => {
     })
 
     // Scenario: locked account. Expected: thrown AuthException carries
-    // details.retryAfterSeconds=543 and a warn log naming the masked email/tenant. Why: kills
-    // the `{ retryAfterSeconds: remainingSeconds }` -> `{}` ObjectLiteral mutant (line 191:69)
-    // and pins the warn log template (line 189).
+    // details.retryAfterSeconds=543 and a warn event on the dashboard plane that carries no address. Why:
+    // kills the `{ retryAfterSeconds: remainingSeconds }` -> `{}` ObjectLiteral mutant (line 191:69)
+    // and pins the warn event.
     it('should include retryAfterSeconds in the ACCOUNT_LOCKED details and warn-log it', async () => {
-      expect.assertions(2)
+      expect.assertions(3)
       mockBruteForce.isLockedOut.mockResolvedValue(true)
       mockBruteForce.getRemainingLockoutSeconds.mockResolvedValue(543)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
@@ -1262,9 +1263,7 @@ describe('AuthService', () => {
           })
         })
       }
-      expect(warnSpy).toHaveBeenCalledWith(
-        `login: account locked email=u***@example.com tenantId=tenant-1`
-      )
+      expectEvent(warnSpy, 'AUTH_LOGIN_LOCKED', { plane: 'dashboard' }, ['example.com'])
       warnSpy.mockRestore()
     })
 

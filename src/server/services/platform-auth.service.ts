@@ -25,6 +25,7 @@ import type {
   IPlatformUserRepository,
   SafeAuthPlatformUser
 } from '../interfaces/platform-user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -108,7 +109,7 @@ export class PlatformAuthService {
 
     const locked = await this.bruteForce.isLockedOut(bfIdentifier)
     if (locked) {
-      this.logger.warn(`login: account locked email=${maskEmail(dto.email)}`)
+      logEvent(this.logger, 'AUTH_LOGIN_LOCKED', { plane: 'platform' })
       const retryAfterSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, { retryAfterSeconds })
     }
@@ -123,7 +124,7 @@ export class PlatformAuthService {
     if (!admin) {
       await this.passwordService.compareDummy(dto.password)
       await this.bruteForce.recordFailure(bfIdentifier)
-      this.logger.warn(`login: invalid credentials email=${maskEmail(dto.email)}`)
+      logEvent(this.logger, 'AUTH_LOGIN_INVALID_CREDENTIALS', { plane: 'platform' })
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
@@ -136,7 +137,7 @@ export class PlatformAuthService {
     const passwordMatch = await this.passwordService.compare(dto.password, admin.passwordHash)
     if (!passwordMatch) {
       await this.bruteForce.recordFailure(bfIdentifier)
-      this.logger.warn(`login: invalid credentials email=${maskEmail(dto.email)}`)
+      logEvent(this.logger, 'AUTH_LOGIN_INVALID_CREDENTIALS', { plane: 'platform' })
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
