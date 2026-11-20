@@ -543,6 +543,28 @@ describe('log-injection guard (E2E)', () => {
   // closed set, or an id taken from an account, and anything else is a failure until someone decides what it is.
   const ID_FIELDS = new Set(['userId', 'tenantId', 'actorUserId', 'familyId'])
   const CLOSED_IDENTIFIERS = new Set(['context', 'flow', 'kind'])
+  // The expressions that may fill an id field: the id of an account the flow already resolved, the id the host
+  // authenticated, or the lineage of a refresh token. A property chain on a request, a body or an error is not
+  // on the list, so adding one is a decision this list makes visible, like LIBRARY_AUTHORED above.
+  const ID_EXPRESSIONS = new Set([
+    'userId',
+    'tenantId',
+    'inviterUserId',
+    'revokerUserId',
+    'admin.id',
+    'authUser.id',
+    'authUser.tenantId',
+    'context.userId',
+    'newUser.id',
+    'payload.sub',
+    'payload.tenantId',
+    'safeUser.id',
+    'user.id',
+    'user.tenantId',
+    'outcome.familyId'
+  ])
+  // Constants of string literals this library declares, which a spread may bring into an event.
+  const SPREADABLE = new Set(['PASSWORD_LOGIN'])
 
   /** The fields of every `logEvent(logger, code, { ... })` call in a source that break the rule. */
   function eventFieldProblems(text: string): string[] {
@@ -552,15 +574,25 @@ describe('log-injection guard (E2E)', () => {
       ts.isCallExpression(node) && ts.isIdentifier(node.expression)
         ? node.expression.text
         : undefined
-    const idLike = (node: ts.Expression): boolean =>
-      ts.isIdentifier(node) || (ts.isPropertyAccessExpression(node) && idLike(node.expression))
-
     const checkField = (property: ts.ObjectLiteralElementLike): void => {
       if (ts.isSpreadAssignment(property)) {
         const spread = property.expression
-        const conditional =
+        if (ts.isIdentifier(spread) && SPREADABLE.has(spread.text)) return
+        // `...(cond ? { field } : {})`: the object in the arm is judged field by field and the other arm is empty.
+        const arms =
           ts.isParenthesizedExpression(spread) && ts.isConditionalExpression(spread.expression)
-        if (!ts.isIdentifier(spread) && !conditional) problems.push(property.getText(source))
+            ? spread.expression
+            : undefined
+        if (
+          arms !== undefined &&
+          ts.isObjectLiteralExpression(arms.whenTrue) &&
+          ts.isObjectLiteralExpression(arms.whenFalse) &&
+          arms.whenFalse.properties.length === 0
+        ) {
+          arms.whenTrue.properties.forEach(checkField)
+          return
+        }
+        problems.push(property.getText(source))
         return
       }
       const name = property.name?.getText(source) ?? ''
@@ -573,7 +605,7 @@ describe('log-injection guard (E2E)', () => {
         value !== undefined &&
         (ts.isStringLiteral(value) ||
           ts.isNumericLiteral(value) ||
-          (ID_FIELDS.has(name) && idLike(value)) ||
+          (ID_FIELDS.has(name) && ID_EXPRESSIONS.has(value.getText(source))) ||
           (name === 'detail' && callName(value) === 'describeChannelStatus') ||
           (name === 'error' && callName(value) === 'authorizationErrorCode') ||
           (ts.isIdentifier(value) && CLOSED_IDENTIFIERS.has(value.text)))
@@ -613,6 +645,13 @@ describe('log-injection guard (E2E)', () => {
     ["logEvent(l, 'AUTH_X', { reason: req.body.reason })", 1],
     ["logEvent(l, 'AUTH_X', { detail: String(err) })", 1],
     ["logEvent(l, 'AUTH_X', { userId: `${req.query.id}` })", 1],
+    ["logEvent(l, 'AUTH_X', { userId: req.body.id })", 1],
+    ["logEvent(l, 'AUTH_X', { tenantId: err.message })", 1],
+    ["logEvent(l, 'AUTH_X', { ...req.body })", 1],
+    ["logEvent(l, 'AUTH_X', { ...record })", 1],
+    ["logEvent(l, 'AUTH_X', { ...(ok ? { userId: req.body.id } : {}) })", 1],
+    ["logEvent(l, 'AUTH_X', { ...(ok ? { reason: 'x' } : { email }) })", 1],
+    ["logEvent(l, 'AUTH_X', { plane: 'platform', ...(userId ? { userId } : {}) })", 0],
     [
       "logEvent(l, 'AUTH_X', { reason: 'ok', detail: describeChannelStatus(err), userId: user.id })",
       0
