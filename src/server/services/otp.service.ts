@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto'
 
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, type LoggerService } from '@nestjs/common'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
@@ -8,6 +8,7 @@ import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { describeChannelStatus } from '../utils/describe-error'
 import { sleep } from '../utils/sleep'
 
 /** Maximum allowed OTP verification attempts before the code is locked. */
@@ -330,5 +331,37 @@ export class OtpService {
 
     // Success — the script already consumed the record.
     await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
+  }
+}
+
+/**
+ * Stores the code of an email verification, and reports whether it was stored.
+ *
+ * Best effort: the account exists by the time the code is stored, and a code that cannot be stored
+ * is one the user asks for again through the resend route. Failing here would answer an error for an
+ * account that was created and would tell a caller whether the address was new. The refusal is logged
+ * as a closed code with what the store said, never the address or the user id, and the caller sends
+ * nothing for a code that was not stored.
+ *
+ * @param otpService - The service that holds the code.
+ * @param logger - Where the refusal is logged.
+ * @param identifier - The HMAC identifier of the tenant and address.
+ * @param otp - The generated code.
+ * @param ttlSeconds - How long the code lives.
+ * @returns `true` when the code was stored, `false` when the store refused it.
+ */
+export async function storeVerificationCode(
+  otpService: OtpService,
+  logger: LoggerService,
+  identifier: string,
+  otp: string,
+  ttlSeconds: number
+): Promise<boolean> {
+  try {
+    await otpService.store('email_verification', identifier, otp, ttlSeconds)
+    return true
+  } catch (err: unknown) {
+    logger.error(`[AUTH_OTP_STORE_FAILED] email_verification: ${describeChannelStatus(err)}`)
+    return false
   }
 }

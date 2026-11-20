@@ -144,6 +144,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     tables, and the key tables of `oauth` and `roles`.
 //     171.09 KiB sits 0.03 KiB above the measured 171.06 KiB, which also holds the type checks of the text
 //     options, lists and groups (`text-options.ts`) and the single reading of the controller flags.
+//     171.21 KiB sits 0.03 KiB above the measured 171.18 KiB, which also holds the best-effort write of the
+//     email-verification code.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
@@ -209,7 +211,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 171.09 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 171.21 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 3.71 * 1024 },
