@@ -31,9 +31,10 @@ export const HEALTH_INDICATOR_METADATA = 'bymax-one:health-indicator'
  * The readiness check of the authentication store.
  *
  * It asks the Redis client the module was given for a `PING`: one round trip, nothing written and nothing
- * read that a caller owns. A client that rejects, or answers anything but `PONG`, is `down`; the
- * aggregator bounds the check by its own timeout and turns a rejection into a `down` entry, so this class
- * neither times itself out nor catches. No detail is reported, so nothing about the store leaves with it.
+ * read that a caller owns. A client that rejects, answers anything but `PONG`, or does not answer in time is
+ * `down`: the probe gives up after its own timeout, under the aggregator's, and when the aggregator's signal
+ * aborts, and the aggregator turns the rejection into a `down` entry, so this class does not catch. No
+ * detail is reported, so nothing about the store leaves with it.
  */
 @SetMetadata(HEALTH_INDICATOR_METADATA, true)
 @Injectable()
@@ -42,8 +43,8 @@ export class AuthRedisHealthIndicator implements HealthIndicator {
 
   constructor(@Inject(AuthHealthProbe) private readonly probe: AuthHealthProbe) {}
 
-  /** Whether the store answers. */
-  async check(): Promise<HealthIndicatorResult> {
-    return { status: (await this.probe.ping()) ? 'up' : 'down' }
+  /** Whether the store answers in time; the aggregator's signal ends the wait. */
+  async check(signal?: AbortSignal): Promise<HealthIndicatorResult> {
+    return { status: (await this.probe.ping(signal)) ? 'up' : 'down' }
   }
 }

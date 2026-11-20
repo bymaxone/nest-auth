@@ -21,7 +21,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 ### Added
 
 - **An optional `@bymax-one/nest-auth/observability` subpath**, with a metrics contributor (`AuthMetrics`) and a readiness
-  indicator (`AuthRedisHealthIndicator`, name `auth-redis`). Four counters, all with closed labels and none carrying an
+  indicator (`AuthRedisHealthIndicator`, name `auth-redis`, which gives up after 4 seconds or when the aggregator's signal aborts). Four counters, all with closed labels and none carrying an
   id, tenant, user or address: `bymax_auth_logins_total`, `bymax_auth_refresh_total` and
   `bymax_auth_mfa_verifications_total` by `plane` (`dashboard` or `platform`) and `outcome`, and
   `bymax_auth_bruteforce_lockouts_total`. The server entry exports `AuthMetricsTally`, the closed sets

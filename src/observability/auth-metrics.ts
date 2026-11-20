@@ -16,7 +16,13 @@ import { Inject, Injectable, SetMetadata } from '@nestjs/common'
 import { Counter } from 'prom-client'
 import type { Registry } from 'prom-client'
 
-import { AUTH_PLANES, AuthMetricsTally } from '@bymax-one/nest-auth'
+import {
+  AUTH_PLANES,
+  AuthMetricsTally,
+  LOGIN_OUTCOMES,
+  MFA_OUTCOMES,
+  REFRESH_OUTCOMES
+} from '@bymax-one/nest-auth'
 import type { AuthPlane } from '@bymax-one/nest-auth'
 
 /** The registry the application's scrape endpoint serves. */
@@ -78,19 +84,19 @@ export class AuthMetrics implements MetricsContributor {
     countedByPlaneAndOutcome(registry, {
       name: 'bymax_auth_logins_total',
       help: 'Login attempts by plane and outcome.',
-      outcomes: ['success', 'invalid_credentials', 'locked', 'mfa_required', 'blocked'],
+      outcomes: LOGIN_OUTCOMES,
       read: () => tally.snapshot().logins
     })
     countedByPlaneAndOutcome(registry, {
       name: 'bymax_auth_refresh_total',
       help: 'Refresh attempts by plane and outcome.',
-      outcomes: ['rotated', 'reuse_detected', 'expired', 'invalid'],
+      outcomes: REFRESH_OUTCOMES,
       read: () => tally.snapshot().refreshes
     })
     countedByPlaneAndOutcome(registry, {
       name: 'bymax_auth_mfa_verifications_total',
       help: 'MFA verifications by plane and outcome.',
-      outcomes: ['success', 'invalid', 'locked'],
+      outcomes: MFA_OUTCOMES,
       read: () => tally.snapshot().mfa
     })
     new Counter({

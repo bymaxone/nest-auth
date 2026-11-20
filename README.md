@@ -1408,7 +1408,7 @@ With `@opentelemetry/api` installed and an SDK registered, each of these routes 
 
 ### Readiness
 
-`AuthRedisHealthIndicator` (name `auth-redis`) asks the Redis client the module was given for a `PING`: one round trip, nothing written, no detail reported. `AuthHealthProbe` is the same question for a host that wires its own check.
+`AuthRedisHealthIndicator` (name `auth-redis`) asks the Redis client the module was given for a `PING`: one round trip, nothing written, no detail reported. It gives up after 4 seconds, under the 5 seconds the readiness aggregator of `@bymax-one/nest-core` waits by default, or as soon as the aggregator's signal aborts, and probes that arrive while a `PING` is still pending share it, so a store that never answers is asked once rather than once per probe. `AuthHealthProbe` is the same question for a host that wires its own check.
 
 ---
 

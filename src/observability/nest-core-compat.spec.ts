@@ -149,4 +149,18 @@ describe('observability against @bymax-one/nest-core', () => {
     await expect(indicator.check()).resolves.toStrictEqual({ status: 'down' })
     await expect(indicator.check()).rejects.toThrow('ECONNREFUSED')
   })
+
+  // Scenario: the aggregator aborts the signal it gave the check while the store has not answered. Expected:
+  // the check rejects at once, which the aggregator reports as down, instead of waiting for the store.
+  it('ends the check when the aggregator’s signal aborts', async () => {
+    const indicator = new AuthRedisHealthIndicator(
+      new AuthHealthProbe({ ping: () => new Promise<string>(() => undefined) })
+    )
+    const controller = new AbortController()
+
+    const check = indicator.check(controller.signal)
+    controller.abort()
+
+    await expect(check).rejects.toThrow('did not answer in time')
+  })
 })
