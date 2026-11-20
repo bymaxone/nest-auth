@@ -27,6 +27,7 @@ import type {
   IPlatformUserRepository
 } from '../interfaces/platform-user-repository.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
+import { onPlane } from '../observability/observed-outcome'
 import { logSafe } from '../utils/log-safe'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { verifyRecoveryCode } from '../utils/mfa-recovery-codes'
@@ -198,7 +199,7 @@ export class MfaChallengeService {
     const { userId, context, tenantId } = scope
     if (await this.flowLockout.isLockedOut('challenge', context, userId, tenantId)) {
       this.logger.warn(`challenge: account locked userId=${logSafe(userId)}`)
-      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
+      throw onPlane(context, new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED))
     }
   }
 
@@ -213,7 +214,7 @@ export class MfaChallengeService {
     const { userId, context, tenantId } = scope
     await this.flowLockout.recordFailure('challenge', context, userId, tenantId)
     this.logger.warn(`challenge: invalid MFA code userId=${logSafe(userId)} context=${context}`)
-    throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
+    throw onPlane(context, new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE))
   }
 
   /**

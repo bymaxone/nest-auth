@@ -257,7 +257,7 @@ export class MfaController {
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaChallenge)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaChallenge)
   @HttpCode(HttpStatus.OK)
-  @ObserveAuth('mfa_verify', 'dashboard')
+  @ObserveAuth('mfa_verify', 'token')
   @Post('challenge')
   async challenge(
     @Body() dto: MfaChallengeDto,

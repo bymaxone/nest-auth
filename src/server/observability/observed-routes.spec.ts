@@ -10,38 +10,38 @@ import { MfaController } from '../controllers/mfa.controller'
 import { PasswordResetController } from '../controllers/password-reset.controller'
 import { PlatformAuthController } from '../controllers/platform-auth.controller'
 import { AuthObservabilityInterceptor, OBSERVE_AUTH_METADATA } from './observe-auth'
-import type { ObservedOperation } from './observe-auth'
-import type { AuthPlane } from '../services/auth-token-verifier.service'
+import type { ObservedOperation, ObservedPlane } from './observe-auth'
 
 /** Controller, method, the operation it is observed as, and the plane. */
-const OBSERVED_ROUTES: ReadonlyArray<[string, Function, string, ObservedOperation, AuthPlane]> = [
-  ['POST /login', AuthController, 'login', 'login', 'dashboard'],
-  ['POST /refresh', AuthController, 'refresh', 'refresh', 'dashboard'],
-  ['POST /mfa/challenge', MfaController, 'challenge', 'mfa_verify', 'dashboard'],
+const OBSERVED_ROUTES: ReadonlyArray<[string, Function, string, ObservedOperation, ObservedPlane]> =
   [
-    'POST /password/forgot-password',
-    PasswordResetController,
-    'forgotPassword',
-    'password_reset',
-    'dashboard'
-  ],
-  [
-    'POST /password/reset-password',
-    PasswordResetController,
-    'resetPassword',
-    'password_reset',
-    'dashboard'
-  ],
-  ['POST /platform/auth/login', PlatformAuthController, 'login', 'login', 'platform'],
-  [
-    'POST /platform/auth/mfa/challenge',
-    PlatformAuthController,
-    'mfaChallenge',
-    'mfa_verify',
-    'platform'
-  ],
-  ['POST /platform/auth/refresh', PlatformAuthController, 'refresh', 'refresh', 'platform']
-]
+    ['POST /login', AuthController, 'login', 'login', 'dashboard'],
+    ['POST /refresh', AuthController, 'refresh', 'refresh', 'dashboard'],
+    ['POST /mfa/challenge', MfaController, 'challenge', 'mfa_verify', 'token'],
+    [
+      'POST /password/forgot-password',
+      PasswordResetController,
+      'forgotPassword',
+      'password_reset',
+      'dashboard'
+    ],
+    [
+      'POST /password/reset-password',
+      PasswordResetController,
+      'resetPassword',
+      'password_reset',
+      'dashboard'
+    ],
+    ['POST /platform/auth/login', PlatformAuthController, 'login', 'login', 'platform'],
+    [
+      'POST /platform/auth/mfa/challenge',
+      PlatformAuthController,
+      'mfaChallenge',
+      'mfa_verify',
+      'platform'
+    ],
+    ['POST /platform/auth/refresh', PlatformAuthController, 'refresh', 'refresh', 'platform']
+  ]
 
 describe('observed routes', () => {
   // Scenario: each route the library's metrics and spans describe. Expected: its handler carries the

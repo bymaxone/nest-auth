@@ -16,12 +16,12 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthMetricsTally } from './auth-metrics-tally'
 import { AuthTracing } from './auth-tracing'
 import { AuthObservabilityInterceptor, ObserveAuth, OBSERVE_AUTH_METADATA } from './observe-auth'
-import type { ObservedOperation } from './observe-auth'
-import { observed } from './observed-outcome'
+import type { ObservedOperation, ObservedPlane } from './observe-auth'
+import { observed, onPlane } from './observed-outcome'
 import type { AuthPlane } from '../services/auth-token-verifier.service'
 
 /** A handler decorated for the operation and plane, as a controller method would be. */
-function handlerFor(operation: ObservedOperation, plane: AuthPlane): () => void {
+function handlerFor(operation: ObservedOperation, plane: ObservedPlane): () => void {
   class Probe {
     handle(): void {
       // The decorated method.
@@ -161,8 +161,8 @@ describe('AuthObservabilityInterceptor — refresh and MFA', () => {
     expect(counts()).toEqual({ rotated: 1, reuse_detected: 1, expired: 1, invalid: 1 })
   })
 
-  // Scenario: an MFA challenge that succeeds, a wrong code, a locked account and another refusal, one at a
-  // time.
+  // Scenario: an MFA challenge that succeeds, a wrong code, a locked account, a token that does not verify and
+  // another refusal, one at a time.
   it('counts MFA verifications by outcome', async () => {
     const { interceptor, tally } = build()
     const handler = handlerFor('mfa_verify', 'platform')
@@ -181,7 +181,9 @@ describe('AuthObservabilityInterceptor — refresh and MFA', () => {
     await throwing(interceptor, handler, refused(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)).catch(
       () => undefined
     )
-    expect(counts()).toEqual({ success: 1, invalid: 1, locked: 1 })
+    expect(counts()).toEqual({ success: 1, invalid: 2, locked: 1 })
+    await throwing(interceptor, handler, refused(AUTH_ERROR_CODES.FORBIDDEN)).catch(() => undefined)
+    expect(counts()).toEqual({ success: 1, invalid: 2, locked: 1 })
   })
 
   // Scenario: a password-reset route. Expected: traced but counted nowhere.
@@ -276,5 +278,108 @@ describe('AuthObservabilityInterceptor — the span and its collaborators', () =
 
     expect(spans).toEqual([])
     expect(tally.snapshot().logins.dashboard.success).toBe(0)
+  })
+})
+
+describe('AuthObservabilityInterceptor — a route that serves both planes', () => {
+  /** The interceptor, the tally and the shared route's handler, with the span recorded. */
+  function shared(): {
+    interceptor: AuthObservabilityInterceptor
+    tally: AuthMetricsTally
+    handler: () => void
+    spans: Array<Record<string, string>>
+  } {
+    const spans: Array<Record<string, string>> = []
+    const tracing = new AuthTracing()
+    jest.spyOn(tracing, 'span').mockImplementation((_name, attributes, run) => {
+      spans.push({ ...attributes })
+      return run()
+    })
+    const tally = new AuthMetricsTally()
+    return {
+      interceptor: new AuthObservabilityInterceptor(new Reflector(), tally, tracing),
+      tally,
+      handler: handlerFor('mfa_verify', 'token'),
+      spans
+    }
+  }
+
+  // Scenario: a challenge that ends with a dashboard session and one with a platform session. Expected: each is
+  // counted on its own plane, read from the result.
+  it('counts a success on the plane of the session the result carries', async () => {
+    const { interceptor, tally, handler } = shared()
+
+    await returning(interceptor, handler, { user: { id: 'u' }, accessToken: 'a' })
+    expect(tally.snapshot().mfa.dashboard.success).toBe(1)
+    expect(tally.snapshot().mfa.platform.success).toBe(0)
+    await returning(interceptor, handler, { admin: { id: 'a' }, accessToken: 'a' })
+
+    expect(tally.snapshot().mfa.dashboard.success).toBe(1)
+    expect(tally.snapshot().mfa.platform.success).toBe(1)
+  })
+
+  // Scenario: a wrong code and a locked account, marked with each plane. Expected: counted on the marked plane.
+  it.each(['dashboard', 'platform'] as const)(
+    'counts an invalid code and a lockout on the plane the service marked: %s',
+    async (plane) => {
+      const { interceptor, tally, handler } = shared()
+      const other = plane === 'dashboard' ? 'platform' : 'dashboard'
+
+      await throwing(
+        interceptor,
+        handler,
+        onPlane(plane, refused(AUTH_ERROR_CODES.MFA_INVALID_CODE))
+      ).catch(() => undefined)
+      await throwing(
+        interceptor,
+        handler,
+        onPlane(plane, refused(AUTH_ERROR_CODES.ACCOUNT_LOCKED))
+      ).catch(() => undefined)
+
+      expect(tally.snapshot().mfa[plane]).toEqual({ success: 0, invalid: 1, locked: 1 })
+      expect(tally.snapshot().mfa[other]).toEqual({ success: 0, invalid: 0, locked: 0 })
+    }
+  )
+
+  // Scenario: a failure before any plane is known (a token that does not verify), and an unmarked wrong code.
+  // Expected: counted on the dashboard, the route's default.
+  it('counts a failure with no plane on the dashboard', async () => {
+    const { interceptor, tally, handler } = shared()
+
+    await throwing(interceptor, handler, refused(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)).catch(
+      () => undefined
+    )
+    await throwing(interceptor, handler, refused(AUTH_ERROR_CODES.MFA_INVALID_CODE)).catch(
+      () => undefined
+    )
+
+    expect(tally.snapshot().mfa.dashboard).toEqual({ success: 0, invalid: 2, locked: 0 })
+    expect(tally.snapshot().mfa.platform).toEqual({ success: 0, invalid: 0, locked: 0 })
+  })
+
+  // Scenario: the route's span, and a route of one plane. Expected: the shared route names no plane (it is
+  // not known when the span starts), and the one-plane route names its own.
+  it('names no plane on the span of a route that learns it from the token', async () => {
+    const { interceptor, handler, spans } = shared()
+    const platformOnly = handlerFor('mfa_verify', 'platform')
+
+    await returning(interceptor, handler, { admin: {} })
+    await returning(interceptor, platformOnly, { admin: {} })
+
+    expect(spans).toEqual([{}, { 'bymax.auth.plane': 'platform' }])
+  })
+
+  // Scenario: a marked plane on a route of one plane. Expected: the route's own plane wins.
+  it('keeps the plane of a route that names one', async () => {
+    const { interceptor, tally } = shared()
+
+    await throwing(
+      interceptor,
+      handlerFor('mfa_verify', 'platform'),
+      onPlane('dashboard', refused(AUTH_ERROR_CODES.MFA_INVALID_CODE))
+    ).catch(() => undefined)
+
+    expect(tally.snapshot().mfa.platform.invalid).toBe(1)
+    expect(tally.snapshot().mfa.dashboard.invalid).toBe(0)
   })
 })

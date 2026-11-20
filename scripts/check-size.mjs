@@ -146,9 +146,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     options, lists and groups (`text-options.ts`) and the single reading of the controller flags.
 //     171.21 KiB sits 0.03 KiB above the measured 171.18 KiB, which also holds the best-effort write of the
 //     email-verification code.
-//     173.70 KiB sits 0.03 KiB above the measured 173.67 KiB, which also holds the closed-set tally, the span
+//     173.83 KiB sits 0.03 KiB above the measured 173.80 KiB, which also holds the closed-set tally, the span
 //     seam, the interceptor that counts and traces the eight observed routes, the readiness probe, bounded and
-//     recovering from a PING that never settles, and the refusal marker.
+//     recovering from a PING that never settles, and the refusal and plane markers.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
@@ -216,7 +216,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 173.7 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 173.83 * 1024 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },

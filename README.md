@@ -1386,18 +1386,18 @@ export class ObservabilityModule {}
 
 Every label is a member of a closed set, a sample exists for each plane and outcome from the first scrape, and no id, tenant, user, address or message is ever a label. `plane` is `dashboard` or `platform`.
 
-| Name                                   | Type    | Labels             | Meaning                                                                                                |
-| -------------------------------------- | ------- | ------------------ | ------------------------------------------------------------------------------------------------------ |
-| `bymax_auth_logins_total`              | counter | `plane`, `outcome` | Login attempts. `outcome`: `success`, `invalid_credentials`, `locked`, `mfa_required`, `blocked`       |
-| `bymax_auth_refresh_total`             | counter | `plane`, `outcome` | Refresh attempts. `outcome`: `rotated`, `reuse_detected`, `expired`, `invalid`                         |
-| `bymax_auth_mfa_verifications_total`   | counter | `plane`, `outcome` | MFA challenges. `outcome`: `success`, `invalid`, `locked`                                              |
-| `bymax_auth_bruteforce_lockouts_total` | counter | none               | Identifiers locked out after too many failures, counted once at the failure that reaches the threshold |
+| Name                                   | Type    | Labels             | Meaning                                                                                                   |
+| -------------------------------------- | ------- | ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `bymax_auth_logins_total`              | counter | `plane`, `outcome` | Login attempts. `outcome`: `success`, `invalid_credentials`, `locked`, `mfa_required`, `blocked`          |
+| `bymax_auth_refresh_total`             | counter | `plane`, `outcome` | Refresh attempts. `outcome`: `rotated`, `reuse_detected`, `expired`, `invalid`                            |
+| `bymax_auth_mfa_verifications_total`   | counter | `plane`, `outcome` | MFA challenges. `outcome`: `success`, `invalid` (a wrong code, or a token that does not verify), `locked` |
+| `bymax_auth_bruteforce_lockouts_total` | counter | none               | Identifiers locked out after too many failures, counted once at the failure that reaches the threshold    |
 
-A login that ends any other way (an unverified address, a server error) is not counted. `reuse_detected` is a refresh that presented an already-consumed token; `expired` is a session past `jwt.absoluteSessionLifetimeDays`. The caller still receives the same `auth.refresh_token_invalid` for every refused refresh.
+A login that ends any other way (an unverified address, a server error) is not counted. `POST /mfa/challenge` serves both planes, so its `plane` is the plane of the session it ends with and, for a refused challenge, the plane of the token it verified; a token that does not verify (counted as `invalid`) has no plane and counts as `dashboard`. `reuse_detected` is a refresh that presented an already-consumed token; `expired` is a session past `jwt.absoluteSessionLifetimeDays`. The caller receives the same `auth.refresh_token_invalid` for every refused refresh.
 
 ### Spans
 
-With `@opentelemetry/api` installed and an SDK registered, each of these routes runs inside a span carrying `bymax.auth.plane`; without them nothing is created. A failed span carries the library error code (`auth.invalid_credentials`) and never the message.
+With `@opentelemetry/api` installed and an SDK registered, each of these routes runs inside a span carrying `bymax.auth.plane`, except `POST /mfa/challenge`, which serves both planes and whose span names none because the token decides it; without them nothing is created. A failed span carries the library error code (`auth.invalid_credentials`) and never the message.
 
 | Span                  | Routes                                                            |
 | --------------------- | ----------------------------------------------------------------- |

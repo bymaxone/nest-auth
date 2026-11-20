@@ -26,7 +26,7 @@ import { AuthMetricsTally } from './auth-metrics-tally'
 import type { LoginOutcome, MfaOutcome, RefreshOutcome } from './auth-metrics-tally'
 import { AuthTracing } from './auth-tracing'
 import type { AuthSpanName } from './auth-tracing'
-import { observedRefusal } from './observed-outcome'
+import { markedPlane, observedRefusal } from './observed-outcome'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { AuthPlane } from '../services/auth-token-verifier.service'
@@ -34,10 +34,16 @@ import type { AuthPlane } from '../services/auth-token-verifier.service'
 /** The operations a route can be observed as. */
 export type ObservedOperation = 'login' | 'refresh' | 'mfa_verify' | 'password_reset'
 
+/**
+ * The plane of a route: one plane, or `'token'` for a route that serves both and learns the plane from the
+ * token it verifies.
+ */
+export type ObservedPlane = AuthPlane | 'token'
+
 /** What the decorator records on the handler. */
 interface ObserveMetadata {
   readonly operation: ObservedOperation
-  readonly plane: AuthPlane
+  readonly plane: ObservedPlane
 }
 
 /** Reflect metadata key carrying the operation and the plane. */
@@ -89,8 +95,33 @@ function refreshOutcome(error: unknown, failed: boolean): RefreshOutcome | undef
 function mfaOutcome(error: unknown, failed: boolean): MfaOutcome | undefined {
   if (!failed) return 'success'
   const code = codeOf(error)
-  if (code === AUTH_ERROR_CODES.MFA_INVALID_CODE) return 'invalid'
+  if (
+    code === AUTH_ERROR_CODES.MFA_INVALID_CODE ||
+    code === AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID
+  ) {
+    return 'invalid'
+  }
   return code === AUTH_ERROR_CODES.ACCOUNT_LOCKED ? 'locked' : undefined
+}
+
+/**
+ * The plane a finished request belonged to.
+ *
+ * A route of one plane says so. A route that serves both reads it from what happened: a result that carries
+ * the platform `admin` is a platform session, a failure carries the plane the service verified the token for,
+ * and a failure before any token was verified is counted on the dashboard plane, the route's default.
+ */
+function planeOf(
+  declared: ObservedPlane,
+  result: unknown,
+  error: unknown,
+  failed: boolean
+): AuthPlane {
+  if (declared !== 'token') return declared
+  if (failed) return markedPlane(error) ?? 'dashboard'
+  return typeof result === 'object' && result !== null && 'admin' in result
+    ? 'platform'
+    : 'dashboard'
 }
 
 /**
@@ -132,11 +163,13 @@ export class AuthObservabilityInterceptor implements NestInterceptor {
         failed = true
         failure = error
       }
-      this.count(operation, plane, result, failure, failed)
+      this.count(operation, planeOf(plane, result, failure, failed), result, failure, failed)
       if (failed) throw failure
       return result
     }
-    return from(this.tracing.span(SPAN_NAMES[operation], { 'bymax.auth.plane': plane }, run))
+    // A route that learns its plane from the token has none to name when the span starts.
+    const attributes = plane === 'token' ? {} : { 'bymax.auth.plane': plane }
+    return from(this.tracing.span(SPAN_NAMES[operation], attributes, run))
   }
 
   /** Bumps the count for how the operation ended, when that is one of the counted outcomes. */
@@ -164,10 +197,10 @@ export class AuthObservabilityInterceptor implements NestInterceptor {
  * Observes a route: counts how it ends and runs it inside a span.
  *
  * @param operation - What the route does.
- * @param plane - The plane it runs on.
+ * @param plane - The plane it runs on, or `'token'` when it serves both and the token says which.
  * @returns The decorator.
  */
-export function ObserveAuth(operation: ObservedOperation, plane: AuthPlane): MethodDecorator {
+export function ObserveAuth(operation: ObservedOperation, plane: ObservedPlane): MethodDecorator {
   return applyDecorators(
     SetMetadata(OBSERVE_AUTH_METADATA, { operation, plane } satisfies ObserveMetadata),
     UseInterceptors(AuthObservabilityInterceptor)
