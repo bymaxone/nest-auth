@@ -17,7 +17,8 @@ import {
   BOOLEAN_OPTIONS,
   BOOLEAN_OR_FUNCTION_OPTIONS,
   CONTROLLER_FLAGS,
-  ENUM_OPTIONS
+  ENUM_OPTIONS,
+  readControllerFlags
 } from './enum-boolean-options'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
@@ -283,5 +284,19 @@ describe('what a refusal says', () => {
     expect(() => resolveOptions(optionsAt('controllers.mfa', 'yes'))).toThrow(
       'controllers.mfa must be true or false (received a string)'
     )
+  })
+
+  // Scenario: `controllers` and each flag left unset as `undefined` or `null`. Expected: nothing is
+  // read from them, so the result has no key at all; `null` is as unset as `undefined`, never an
+  // object to be refused. Why: the registration tells "set to false" from "not set" by the key.
+  it.each([undefined, null])('reads controllers given as %p as no flags', (controllers) => {
+    expect(readControllerFlags(controllers)).toStrictEqual({})
+  })
+
+  it('carries only the flags that are set, keeping a false one', () => {
+    const flags = readControllerFlags({ auth: undefined, mfa: null, sessions: false, oauth: true })
+
+    expect(flags).toStrictEqual({ sessions: false, oauth: true })
+    expect(Object.keys(flags)).toEqual(['sessions', 'oauth'])
   })
 })
