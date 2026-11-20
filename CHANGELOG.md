@@ -31,13 +31,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   installed and an SDK is registered; without them nothing is created. The subpath needs `prom-client`, which is an
   optional peer, and imports no other Bymax library.
 - **Log events.** The flows write their events as one object through the Nest `Logger`
-  (`{ ...fields, event, message }`), listed in the README "Log events" table: refusals and lockouts, a rejected current
-  password, refresh-token reuse and the revocation of its family, a refused WebSocket ticket or OAuth callback, failed
-  deliveries, and the success and audit events (login, registration, MFA changes, invitations, an issued ticket). The line
+  (`{ ...fields, event, message }`), listed in the README "Log events" table. The line
   a host log filter used to match is gone: the text of these lines changed. A refusal or failure names no user and no
-  tenant; a success or audit event carries `userId` and `tenantId` (and `actorUserId` for an invitation) as declared
-  fields; no event carries an email address, a provider name, a token or text a host or a store wrote. The refresh events
-  carry the `familyId` of the lineage. The no-op email provider logs which method was called and no address. A host logger
+  tenant; a success or audit event may carry `userId` and `tenantId` (and `actorUserId` for an invitation) as declared
+  fields; no event carries an email address, a provider name, a token or text a host or a store wrote. The no-op email provider logs which method was called and no address. A host logger
   that is asynchronous and rejects is the host's own unhandled rejection and ends the process unless the application
   handles it.
 - `rxjs` is declared as a peer dependency of the server entry. It is already required by `@nestjs/common`, and the
