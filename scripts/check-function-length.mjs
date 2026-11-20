@@ -4,15 +4,17 @@
  * @layer scripts
  *
  * `AGENTS.md` caps a function or a test body at 50 lines, and the pull-request review reports a
- * newly introduced one as a blocking finding. The repository already holds offenders, so this gate
- * is red for what a change introduces and not for what is inherited.
+ * newly introduced one as a blocking finding. The gate is red for what a change introduces; a
+ * function over the limit is allowed only while it is on a baseline whose entries can only shrink.
  *
  * The unit is a function-like node (a declaration, a method, a constructor, an accessor, a function
  * or an arrow expression) measured from its first line to its last, signature and braces included.
  * That is how the review reports it, so the gate and the reviewer never argue about the measure. A
- * test body is the callback of `it` or `test`, `.each` forms included. The callback of `describe`,
- * `context`, `suite` and the setup and teardown hooks is a container, not a unit: a spec file's
- * `describe` holds all its tests and would otherwise fail every spec.
+ * test body is the callback of `it` or `test`, `.each` forms included. A setup or teardown hook
+ * (`beforeEach`, `afterEach`, `beforeAll`, `afterAll`) is a function like any other and is measured
+ * like a test body, with the same limit and the same baseline. The callback of `describe`, `context`
+ * and `suite` is a container, not a unit: a spec file's `describe` holds all its tests and would
+ * otherwise fail every spec.
  *
  * A function nested in another is measured on its own and inside the span of the one that
  * contains it. Growing it therefore moves two baseline entries, and the failure says so, so the
@@ -27,7 +29,8 @@
  * - a baselined function that shrank fails until its entry is lowered, or removed once it is
  *   within the limit, so a fixed function cannot quietly regress later.
  *
- * A renamed function reads as a stale entry and a new offender; each failure names the other.
+ * A function renamed within its file reads as a stale entry and a new offender, and each failure names the
+ * other. One moved to another file reads as the same two failures with no hint, since the hint matches by file.
  * With `--base <ref>` the baseline is also compared with the one at that revision, because the
  * baseline in a change is the change's own file and could otherwise admit the function it adds.
  *
@@ -57,18 +60,11 @@ const GENERATED = /\/generated\//
 /** Tracked files with these extensions are parsed. */
 const SOURCE_EXTENSION = /\.(?:ts|tsx)$/
 
-/** Callbacks that group tests or run around them: containers, never units. */
-const CONTAINERS = new Set([
-  'describe',
-  'xdescribe',
-  'fdescribe',
-  'context',
-  'suite',
-  'beforeAll',
-  'beforeEach',
-  'afterAll',
-  'afterEach'
-])
+/** Callbacks that group tests: containers, never units. */
+const CONTAINERS = new Set(['describe', 'xdescribe', 'fdescribe', 'context', 'suite'])
+
+/** Setup and teardown callbacks: units, measured like a test body. */
+const HOOKS = new Set(['beforeAll', 'beforeEach', 'afterAll', 'afterEach'])
 
 /** Callbacks that are a test body. */
 const TESTS = new Set(['it', 'xit', 'fit', 'test', 'xtest'])
@@ -76,7 +72,13 @@ const TESTS = new Set(['it', 'xit', 'fit', 'test', 'xtest'])
 /** Reads `--name value` from the arguments, or returns the fallback. */
 function option(name, fallback) {
   const index = process.argv.indexOf(name)
-  return index === -1 ? fallback : (process.argv[index + 1] ?? fallback)
+  if (index === -1) return fallback
+  const value = process.argv[index + 1]
+  if (value === undefined || value.startsWith('--')) {
+    console.error(`${name} needs a value.`)
+    process.exit(2)
+  }
+  return value
 }
 
 /**
@@ -131,11 +133,13 @@ function classNameOf(member) {
 
 /**
  * What a function-like node is called in a key, and whether it is a measured unit.
- * A container callback is named so that tests under it get distinct keys, but is not measured.
+ * A container callback is named so that tests under it get distinct keys, but is not measured; a hook has no
+ * title and is measured.
  */
 function describeNode(node) {
   const call = ts.isCallExpression(node.parent) ? node.parent : null
   const root = call === null ? null : calleeRoot(call)
+  if (call !== null && root !== null && HOOKS.has(root)) return { segment: ['hook', root], measured: true }
   if (call !== null && root !== null && (CONTAINERS.has(root) || TESTS.has(root))) {
     const title = titleOf(call)
     const kind = CONTAINERS.has(root) ? 'container' : 'test'
@@ -205,10 +209,11 @@ function measure(path, text) {
   })
   const offenders = []
   for (const [index, entry] of found.entries()) {
-    if (keys[index] === null) continue
+    const key = keys.at(index)
+    if (key === null) continue
     const owners = []
-    for (let up = entry.container; up !== -1; up = found[up].container) owners.push(keys[up])
-    offenders.push({ key: keys[index], lines: entry.lines, owners })
+    for (let up = entry.container; up !== -1; up = found.at(up).container) owners.push(keys.at(up))
+    offenders.push({ key, lines: entry.lines, owners })
   }
   return { offenders, longest: found }
 }

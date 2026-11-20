@@ -6,9 +6,9 @@
  * `AGENTS.md` lists `as unknown as` laundering a real type error among the blocking findings. A
  * type assertion through `unknown` tells the compiler to stop checking, so a fixture or a cast
  * that does not match its type compiles anyway and the test exercises a value the type forbids.
- * The repository already holds such sites, so this gate is red for what a change introduces and
- * not for what is inherited. The baseline records how many each file holds, and is kept honest
- * from both sides:
+ * The gate is red for what a change introduces; a site is allowed only while its file is on a
+ * baseline whose counts can only shrink. The baseline records how many each file holds, and is kept
+ * honest from both sides:
  *
  * - a file with a site that is not on the baseline fails (a new offender);
  * - a baselined file that gained a site fails (the baseline cannot widen);
@@ -40,7 +40,13 @@ const SOURCE_EXTENSION = /\.(?:ts|tsx)$/
 /** Reads `--name value` from the arguments, or returns the fallback. */
 function option(name, fallback) {
   const index = process.argv.indexOf(name)
-  return index === -1 ? fallback : (process.argv[index + 1] ?? fallback)
+  if (index === -1) return fallback
+  const value = process.argv[index + 1]
+  if (value === undefined || value.startsWith('--')) {
+    console.error(`${name} needs a value.`)
+    process.exit(2)
+  }
+  return value
 }
 
 /** The expression without the parentheses around it. */

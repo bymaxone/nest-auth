@@ -7,7 +7,7 @@
  * several offenders share one name. Every segment is a non-empty array of strings whose first
  * element says what the segment is: `['fn', name]`, `['member', className, name]`,
  * `['ctor', className]`, `['anon']`, `['test', root, title]`, `['dynamic-test', root]`,
- * `['container', root, title]` and `['dynamic-container', root]`; an anonymous class is
+ * `['container', root, title]`, `['dynamic-container', root]` and `['hook', root]`; an anonymous class is
  * `<class>`, which no identifier is. Free text only ever sits inside a JSON string, and a placeholder
  * is a kind of its own, so no title, name or path can spell a delimiter, an ordinal or a
  * placeholder: two different keys cannot serialize to one string, by construction.
@@ -22,7 +22,8 @@ const ARITY = new Map([
   ['test', 2],
   ['dynamic-test', 1],
   ['container', 2],
-  ['dynamic-container', 1]
+  ['dynamic-container', 1],
+  ['hook', 1]
 ])
 
 /**
@@ -86,6 +87,8 @@ function render([kind, first, second]) {
     case 'dynamic-test':
     case 'dynamic-container':
       return `${first} <dynamic>`
+    case 'hook':
+      return `hook ${first}`
     case 'test':
     case 'container':
       return `${first} ${second}`

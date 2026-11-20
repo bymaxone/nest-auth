@@ -24,7 +24,12 @@ import request from 'supertest'
 import { BYMAX_AUTH_OPTIONS } from '../../src/server/bymax-auth.constants'
 import { recentAuthKey } from '../../src/server/constants/recent-auth'
 import type { InviteData } from '../../src/server/interfaces/email-provider.interface'
-import type { CapturedEmail, MockEmailProvider, MockUserRepository } from './setup'
+import type {
+  BootstrappedTestApp,
+  CapturedEmail,
+  MockEmailProvider,
+  MockUserRepository
+} from './setup'
 import { bootstrapTestApp } from './setup'
 
 // ---------------------------------------------------------------------------
@@ -95,6 +100,79 @@ function promoteToAdmin(repo: MockUserRepository, email: string): void {
 // Suite
 // ---------------------------------------------------------------------------
 
+/** Boots the app with invitations enabled. */
+async function bootstrapInvitationsApp(): Promise<BootstrappedTestApp> {
+  return bootstrapTestApp(
+    { invitations: { enabled: true, tokenTtlSeconds: 3_600 } },
+    {
+      controllers: {
+        auth: true,
+        mfa: true,
+        passwordReset: true,
+        sessions: true,
+        invitations: true
+      }
+    }
+  )
+}
+
+/** Registers a dashboard user in tenant-1. */
+async function registerUser(
+  app: INestApplication,
+  email: string,
+  password: string,
+  name: string
+): Promise<void> {
+  await request(app.getHttpServer())
+    .post('/register')
+    .send({ email, password, name, tenantId: 'tenant-1' })
+}
+
+/** Logs in and returns the access token. */
+async function loginAccessToken(
+  app: INestApplication,
+  email: string,
+  password: string
+): Promise<string> {
+  const res = await request(app.getHttpServer())
+    .post('/login')
+    .send({ email, password, tenantId: 'tenant-1' })
+  return res.body.accessToken as string
+}
+
+/**
+ * Waits for the invitation email sent to `to` and returns the raw token embedded in it
+ * (empty string when absent).
+ * `generateSecureToken(32)` always emits exactly 64 hex chars, so one regex suffices.
+ */
+async function readInvitationToken(sentEmails: CapturedEmail[], to: string): Promise<string> {
+  const mail = await waitForEmail(
+    sentEmails,
+    (candidate) => candidate.to === to && candidate.subject === 'Invitation'
+  )
+  return /[?&]token=([a-f0-9]+)/i.exec(mail.html)?.[1] ?? ''
+}
+
+/**
+ * Reports whether the accepted invitee's session carries a recent-auth mark.
+ */
+async function hasInviteeRecentAuthMark(
+  app: INestApplication,
+  redis: BootstrappedTestApp['redis'],
+  acceptBody: Record<string, unknown>
+): Promise<boolean> {
+  const inviteeId = (acceptBody['user'] as { id: string }).id
+  const resolved = app.get<{ hmacKey: string; redisNamespace: string }>(BYMAX_AUTH_OPTIONS)
+  // The mark is the invitee's session's own: its `sid` is read from the token it was issued.
+  const { sid } = JSON.parse(
+    Buffer.from(String(acceptBody['accessToken']).split('.')[1] ?? '', 'base64url').toString()
+  ) as { sid: string }
+  const markKey = recentAuthKey('dashboard', inviteeId, resolved.hmacKey, 'tenant-1', sid)
+  // The exact key, namespace included: a shared server holds the same mock user id in every
+  // suite's namespace, so a pattern would find another suite's mark.
+  return (await redis.exists(`${resolved.redisNamespace}:${markKey}`)) === 1
+}
+
 describe('invitations flow (E2E)', () => {
   // ---------------------------------------------------------------------------
   // Scenario — admin invites → invitee accepts → invitee logs in
@@ -119,20 +197,7 @@ describe('invitations flow (E2E)', () => {
     // Shared state mutates step-by-step inside this beforeAll. Each `it()` below
     // verifies one slice of that chain.
     beforeAll(async () => {
-      const bootstrap = await bootstrapTestApp(
-        {
-          invitations: { enabled: true, tokenTtlSeconds: 3_600 }
-        },
-        {
-          controllers: {
-            auth: true,
-            mfa: true,
-            passwordReset: true,
-            sessions: true,
-            invitations: true
-          }
-        }
-      )
+      const bootstrap = await bootstrapInvitationsApp()
       const { app: _app, repo: _repo, email, redis } = bootstrap
       app = _app
       repo = _repo
@@ -141,22 +206,12 @@ describe('invitations flow (E2E)', () => {
       // Step 1 — register the future admin user. The default role assigned by
       // the mock repo on `create()` is 'MEMBER'; we promote in-memory to ADMIN
       // immediately afterwards so the JWT issued at login carries role: 'ADMIN'.
-      await request(app.getHttpServer()).post('/register').send({
-        email: 'admin@example.com',
-        password: 'AdminSecret123!',
-        name: 'Admin User',
-        tenantId: 'tenant-1'
-      })
+      await registerUser(app, 'admin@example.com', 'AdminSecret123!', 'Admin User')
       promoteToAdmin(repo, 'admin@example.com')
 
       // Step 2 — login as the admin to obtain a fresh access token whose JWT
       // payload reflects role: 'ADMIN' (login re-reads the user from the repo).
-      const adminLogin = await request(app.getHttpServer()).post('/login').send({
-        email: 'admin@example.com',
-        password: 'AdminSecret123!',
-        tenantId: 'tenant-1'
-      })
-      const adminAccessToken = adminLogin.body.accessToken as string
+      const adminAccessToken = await loginAccessToken(app, 'admin@example.com', 'AdminSecret123!')
 
       // Step 3 — POST /invitations with the admin bearer token. Returns 204
       // No Content per the controller's @HttpCode(NO_CONTENT) decorator.
@@ -167,14 +222,7 @@ describe('invitations flow (E2E)', () => {
       inviteStatus = invite.status
 
       // Step 4 — extract the raw invitation token from the captured email.
-      // `generateSecureToken(32)` always emits exactly 64 hex chars, so a
-      // single regex over the embedded URL suffices.
-      const inviteEmail = await waitForEmail(
-        sentEmails,
-        (e) => e.to === 'invitee@example.com' && e.subject === 'Invitation'
-      )
-      const match = /[?&]token=([a-f0-9]+)/i.exec(inviteEmail.html)
-      extractedToken = match ? (match[1] as string) : ''
+      extractedToken = await readInvitationToken(sentEmails, 'invitee@example.com')
 
       // Step 5 — POST /invitations/accept consumes the token and creates the
       // invitee account. Returns 201 Created with a full token pair.
@@ -183,16 +231,7 @@ describe('invitations flow (E2E)', () => {
         .send({ token: extractedToken, name: 'Invitee', password: 'StrongPass123!-xyz' })
       acceptStatus = accept.status
       acceptBody = accept.body as Record<string, unknown>
-      const inviteeId = (acceptBody['user'] as { id: string }).id
-      const resolved = app.get<{ hmacKey: string; redisNamespace: string }>(BYMAX_AUTH_OPTIONS)
-      // The mark is the invitee's session's own: its `sid` is read from the token it was issued.
-      const { sid } = JSON.parse(
-        Buffer.from(String(acceptBody['accessToken']).split('.')[1] ?? '', 'base64url').toString()
-      ) as { sid: string }
-      const markKey = recentAuthKey('dashboard', inviteeId, resolved.hmacKey, 'tenant-1', sid)
-      // The exact key, namespace included: a shared server holds the same mock user id in every
-      // suite's namespace, so a pattern would find another suite's mark.
-      inviteeMarked = (await redis.exists(`${resolved.redisNamespace}:${markKey}`)) === 1
+      inviteeMarked = await hasInviteeRecentAuthMark(app, redis, acceptBody)
 
       // Step 6 — login as the freshly-created invitee to confirm the password
       // hash was persisted correctly and the account is immediately usable.
@@ -322,49 +361,20 @@ describe('invitations flow (E2E)', () => {
     let permittedRevoke: { status: number; body: unknown }
 
     beforeAll(async () => {
-      const bootstrap = await bootstrapTestApp(
-        { invitations: { enabled: true, tokenTtlSeconds: 3_600 } },
-        {
-          controllers: {
-            auth: true,
-            mfa: true,
-            passwordReset: true,
-            sessions: true,
-            invitations: true
-          }
-        }
-      )
+      const bootstrap = await bootstrapInvitationsApp()
       app = bootstrap.app
       const sentEmails = instrumentInvitationEmails(bootstrap.email)
 
-      await request(app.getHttpServer()).post('/register').send({
-        email: 'revoker@example.com',
-        password: 'RevokerSecret123!',
-        name: 'Revoking Admin',
-        tenantId: 'tenant-1'
-      })
+      await registerUser(app, 'revoker@example.com', 'RevokerSecret123!', 'Revoking Admin')
       promoteToAdmin(bootstrap.repo, 'revoker@example.com')
-      adminAccessToken = (
-        await request(app.getHttpServer()).post('/login').send({
-          email: 'revoker@example.com',
-          password: 'RevokerSecret123!',
-          tenantId: 'tenant-1'
-        })
-      ).body.accessToken as string
+      adminAccessToken = await loginAccessToken(app, 'revoker@example.com', 'RevokerSecret123!')
 
-      await request(app.getHttpServer()).post('/register').send({
-        email: 'bystander@example.com',
-        password: 'BystanderSecret123!',
-        name: 'Bystander',
-        tenantId: 'tenant-1'
-      })
-      memberAccessToken = (
-        await request(app.getHttpServer()).post('/login').send({
-          email: 'bystander@example.com',
-          password: 'BystanderSecret123!',
-          tenantId: 'tenant-1'
-        })
-      ).body.accessToken as string
+      await registerUser(app, 'bystander@example.com', 'BystanderSecret123!', 'Bystander')
+      memberAccessToken = await loginAccessToken(
+        app,
+        'bystander@example.com',
+        'BystanderSecret123!'
+      )
 
       // Two invitations at different ranks. The MEMBER may withdraw one and not the other, and
       // the whole point of the pair is that the RESPONSE cannot tell them apart.
@@ -378,16 +388,8 @@ describe('invitations flow (E2E)', () => {
           .send({ email, role })
       }
 
-      const readToken = async (to: string): Promise<string> => {
-        const mail = await waitForEmail(
-          sentEmails,
-          (candidate) => candidate.to === to && candidate.subject === 'Invitation'
-        )
-        return /[?&]token=([a-f0-9]+)/i.exec(mail.html)?.[1] ?? ''
-      }
-
-      outrankingToken = await readToken('outranking-invitee@example.com')
-      withdrawnToken = await readToken('withdrawn-invitee@example.com')
+      outrankingToken = await readInvitationToken(sentEmails, 'outranking-invitee@example.com')
+      withdrawnToken = await readInvitationToken(sentEmails, 'withdrawn-invitee@example.com')
 
       // The MEMBER tries to withdraw the ADMIN-level invitation — outranked, so nothing is
       // deleted. The admin withdraws the MEMBER-level one — permitted, so it is.

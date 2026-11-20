@@ -1,9 +1,9 @@
 /**
- * Pins `scripts/check-double-assertions.mjs`, the gate for `as unknown as`. It is plain Node, so
+ * @fileoverview Pins `scripts/check-double-assertions.mjs`, the gate for `as unknown as`. It is plain Node, so
  * each case runs it the way CI does, as a child process against a throwaway git repository, and
  * asserts the exit code and the printed problems.
  *
- * Layer: repository tooling, tests.
+ * @layer tests
  */
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -130,8 +130,8 @@ describe('check-double-assertions', () => {
     expect(result.output).toContain('Remove its entry')
   })
 
-  it('refuses a baseline entry that is not a positive count', () => {
-    const result = run(repo({ 'src/a.ts': SITE }, { files: { 'src/a.ts': 0 } }))
+  it.each([0, -1, 1.5, 'x'])('refuses the baseline count %j, which is not a positive integer', (count) => {
+    const result = run(repo({ 'src/a.ts': SITE }, { files: { 'src/a.ts': count } }))
 
     expect(result.status).not.toBe(0)
     expect(result.output).toContain('must record an integer count of 1 or more')
@@ -161,7 +161,20 @@ describe('check-double-assertions', () => {
       )
     })
 
-    it('imposes nothing when the base has no baseline file, and fails on an unknown revision', () => {
+    it('refuses an option that has no value instead of skipping the base comparison', () => {
+      const root = repo({ 'src/a.ts': SITE + SITE }, { files: { 'src/a.ts': 1 } })
+      commitBase(root)
+      setBaseline(root, { files: { 'src/a.ts': 2 } })
+
+      for (const option of ['--base', '--baseline']) {
+        const result = run(root, option)
+
+        expect(result.status).toBe(2)
+        expect(result.output).toContain(`${option} needs a value.`)
+      }
+    })
+
+    it('passes an entry unchanged from the base revision, and fails on an unknown revision', () => {
       const root = repo({ 'src/a.ts': SITE }, { files: { 'src/a.ts': 1 } })
       commitBase(root)
 

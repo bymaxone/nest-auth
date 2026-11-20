@@ -1,15 +1,23 @@
 [
   {
     "file": "src/check-double-assertions.spec.ts",
-    "reason": "Runs scripts/check-double-assertions.mjs as a child process over a temporary tree; it imports no module from src, so there is no mutated source for the run to judge."
+    "reason": "Runs scripts/check-double-assertions.mjs as a child process and imports nothing from src/, so it judges no mutant."
   },
   {
     "file": "src/check-file-length.spec.ts",
     "reason": "Runs scripts/check-file-length.mjs as a child process over a temporary tree; it imports no module from src."
   },
   {
+    "file": "src/check-function-length.baseline.spec.ts",
+    "reason": "Runs scripts/check-function-length.mjs as a child process and imports nothing from src/, so it judges no mutant."
+  },
+  {
+    "file": "src/check-function-length.key.spec.ts",
+    "reason": "Runs scripts/function-length-key.mjs as a child process and imports nothing from src/, so it judges no mutant."
+  },
+  {
     "file": "src/check-function-length.spec.ts",
-    "reason": "Runs scripts/check-function-length.mjs as a child process over a temporary tree; it imports no module from src."
+    "reason": "Runs scripts/check-function-length.mjs as a child process and imports nothing from src/, so it judges no mutant."
   },
   {
     "file": "src/mutate-const-tables.spec.ts",

@@ -32,6 +32,62 @@ const TOTP_DIGITS = 6
 /** Base32 alphabet per RFC 4648 §6 (uppercase A–Z and digits 2–7). */
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 
+/** An account that has registered and enabled TOTP MFA, with what the scenarios need afterwards. */
+interface EnrolledMfaUser {
+  accessToken: string
+  refreshToken: string
+  secret: string
+  recoveryCodes: string[]
+}
+
+/**
+ * Registers a user, runs /mfa/setup and /mfa/verify-enable with a real TOTP code, and returns
+ * the pre-enable tokens plus the secret and recovery codes.
+ */
+async function enrollMfaUser(
+  app: INestApplication,
+  email: string,
+  password: string,
+  name: string
+): Promise<EnrolledMfaUser> {
+  const register = await request(app.getHttpServer())
+    .post('/register')
+    .send({ email, password, name, tenantId: 'tenant-1' })
+  const accessToken = register.body.accessToken as string
+
+  const setup = await request(app.getHttpServer())
+    .post('/mfa/setup')
+    .set('Authorization', `Bearer ${accessToken}`)
+    .send({ password })
+  const secret = setup.body.secret as string
+
+  // Use the current step's TOTP for the enable step.
+  const enableCode = generateTotp(secret)
+  await request(app.getHttpServer())
+    .post('/mfa/verify-enable')
+    .set('Authorization', `Bearer ${accessToken}`)
+    .send({ code: enableCode })
+
+  return {
+    accessToken,
+    refreshToken: register.body.refreshToken as string,
+    secret,
+    recoveryCodes: setup.body.recoveryCodes as string[]
+  }
+}
+
+/** POSTs /login for tenant-1 and returns the response body. */
+async function loginBody(
+  app: INestApplication,
+  email: string,
+  password: string
+): Promise<Record<string, unknown>> {
+  const login = await request(app.getHttpServer())
+    .post('/login')
+    .send({ email, password, tenantId: 'tenant-1' })
+  return login.body as Record<string, unknown>
+}
+
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
@@ -201,36 +257,17 @@ describe('mfa flow (E2E)', () => {
 
       // Pre-flight — register, setup, enable MFA. These steps are duplicated
       // from Scenario 1 because each scenario gets a fresh app instance.
-      const register = await request(app.getHttpServer()).post('/register').send({
-        email: 'mfa-totp@example.com',
-        password: 'TotpSecret456!-xyz',
-        name: 'Totp User',
-        tenantId: 'tenant-1'
-      })
-      const initialAccessToken = register.body.accessToken as string
-
-      const setup = await request(app.getHttpServer())
-        .post('/mfa/setup')
-        .set('Authorization', `Bearer ${initialAccessToken}`)
-        .send({ password: 'TotpSecret456!-xyz' })
-      secret = setup.body.secret as string
-
-      // Use the current step's TOTP for the enable step.
-      const enableCode = generateTotp(secret)
-      await request(app.getHttpServer())
-        .post('/mfa/verify-enable')
-        .set('Authorization', `Bearer ${initialAccessToken}`)
-        .send({ code: enableCode })
+      ;({ secret } = await enrollMfaUser(
+        app,
+        'mfa-totp@example.com',
+        'TotpSecret456!-xyz',
+        'Totp User'
+      ))
 
       // Step 1 — re-login with the same credentials. With MFA enabled the
       // service returns the `mfaRequired: true` discriminator and a temp token
       // instead of issuing full auth tokens.
-      const login = await request(app.getHttpServer()).post('/login').send({
-        email: 'mfa-totp@example.com',
-        password: 'TotpSecret456!-xyz',
-        tenantId: 'tenant-1'
-      })
-      loginResponseBody = login.body as Record<string, unknown>
+      loginResponseBody = await loginBody(app, 'mfa-totp@example.com', 'TotpSecret456!-xyz')
 
       // Step 2 — generate a fresh TOTP code one step ahead of the enable code.
       // Two effects matter here: (a) the enable step stored an anti-replay key
@@ -325,43 +362,26 @@ describe('mfa flow (E2E)', () => {
       const bootstrap = await bootstrapTestApp({ tokenDelivery: 'bearer' })
       app = bootstrap.app
 
-      // Step 1 — register and enable MFA in a fresh app.
-      const register = await request(app.getHttpServer()).post('/register').send({
-        email: 'mfa-recovery@example.com',
-        password: 'RecoverySecret789!',
-        name: 'Recovery User',
-        tenantId: 'tenant-1'
-      })
-      const initialAccessToken = register.body.accessToken as string
-
-      const setup = await request(app.getHttpServer())
-        .post('/mfa/setup')
-        .set('Authorization', `Bearer ${initialAccessToken}`)
-        .send({ password: 'RecoverySecret789!' })
-      const secret = setup.body.secret as string
-      // Step 2 — save the first recovery code for use in the challenge.
-      const recoveryCodes = setup.body.recoveryCodes as string[]
-      const firstRecoveryCode = recoveryCodes[0] as string
-
-      const enableCode = generateTotp(secret)
-      await request(app.getHttpServer())
-        .post('/mfa/verify-enable')
-        .set('Authorization', `Bearer ${initialAccessToken}`)
-        .send({ code: enableCode })
+      // Steps 1-2 — register and enable MFA in a fresh app, then save the first
+      // recovery code for use in the challenge.
+      const enrolled = await enrollMfaUser(
+        app,
+        'mfa-recovery@example.com',
+        'RecoverySecret789!',
+        'Recovery User'
+      )
+      const initialAccessToken = enrolled.accessToken
+      const firstRecoveryCode = enrolled.recoveryCodes[0] as string
 
       // Step 3 — logout and re-login. Logout revokes the refresh session;
       // re-login on an MFA-enabled account returns the temp token.
       await request(app.getHttpServer())
         .post('/logout')
         .set('Authorization', `Bearer ${initialAccessToken}`)
-        .send({ refreshToken: register.body.refreshToken as string })
+        .send({ refreshToken: enrolled.refreshToken })
 
-      const login = await request(app.getHttpServer()).post('/login').send({
-        email: 'mfa-recovery@example.com',
-        password: 'RecoverySecret789!',
-        tenantId: 'tenant-1'
-      })
-      const tempToken = login.body.mfaTempToken as string
+      const login = await loginBody(app, 'mfa-recovery@example.com', 'RecoverySecret789!')
+      const tempToken = login.mfaTempToken as string
 
       // Step 4 — exchange the recovery code for full tokens.
       const firstChallenge = await request(app.getHttpServer())
@@ -373,12 +393,8 @@ describe('mfa flow (E2E)', () => {
       // Step 5 — re-login to obtain a fresh temp token, then re-attempt the
       // same recovery code. The token is single-use, so this call must be
       // rejected even though the temp token is fresh.
-      const secondLogin = await request(app.getHttpServer()).post('/login').send({
-        email: 'mfa-recovery@example.com',
-        password: 'RecoverySecret789!',
-        tenantId: 'tenant-1'
-      })
-      const secondTempToken = secondLogin.body.mfaTempToken as string
+      const secondLogin = await loginBody(app, 'mfa-recovery@example.com', 'RecoverySecret789!')
+      const secondTempToken = secondLogin.mfaTempToken as string
 
       const replayChallenge = await request(app.getHttpServer())
         .post('/mfa/challenge')

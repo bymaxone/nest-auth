@@ -44,6 +44,49 @@ const UA_IPHONE = 'Mozilla/5.0 (iPhone iOS)'
 /** Configured concurrent session limit for this suite. */
 const MAX_PER_USER = 5
 
+/**
+ * Registers the eviction user and immediately logs the registration session out.
+ */
+async function registerAndDropRegistrationSession(app: INestApplication): Promise<void> {
+  // Register the user once. With emailVerification.required: false (the
+  // bootstrapTestApp default) registration immediately yields tokens AND
+  // creates an active session for the registration request. To keep the
+  // "six sessions from six devices" invariant clean, we immediately
+  // logout the registration session so only the dedicated device logins
+  // contribute to the active session set.
+  const register = await request(app.getHttpServer()).post('/register').send({
+    email: 'eviction@example.com',
+    password: 'EvictionSecret123!',
+    name: 'Eviction Test User',
+    tenantId: 'tenant-1'
+  })
+  const registerAccessToken = register.body.accessToken as string
+  const registerRefreshToken = register.body.refreshToken as string
+  await request(app.getHttpServer())
+    .post('/logout')
+    .set('Authorization', `Bearer ${registerAccessToken}`)
+    .send({ refreshToken: registerRefreshToken })
+}
+
+/**
+ * Logs in with a specific User-Agent and returns the resulting token pair. Each login MUST
+ * carry a unique User-Agent so each session is identifiable in the listSessions output.
+ */
+async function loginWithUserAgent(
+  app: INestApplication,
+  userAgent: string
+): Promise<{ accessToken: string; refreshToken: string }> {
+  const res = await request(app.getHttpServer()).post('/login').set('User-Agent', userAgent).send({
+    email: 'eviction@example.com',
+    password: 'EvictionSecret123!',
+    tenantId: 'tenant-1'
+  })
+  return {
+    accessToken: res.body.accessToken as string,
+    refreshToken: res.body.refreshToken as string
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
@@ -81,62 +124,25 @@ describe('session FIFO eviction (E2E)', () => {
       })
       app = bootstrap.app
 
-      // Register the user once. With emailVerification.required: false (the
-      // bootstrapTestApp default) registration immediately yields tokens AND
-      // creates an active session for the registration request. To keep the
-      // "six sessions from six devices" invariant clean, we immediately
-      // logout the registration session so only the dedicated device logins
-      // contribute to the active session set.
-      const register = await request(app.getHttpServer()).post('/register').send({
-        email: 'eviction@example.com',
-        password: 'EvictionSecret123!',
-        name: 'Eviction Test User',
-        tenantId: 'tenant-1'
-      })
-      const registerAccessToken = register.body.accessToken as string
-      const registerRefreshToken = register.body.refreshToken as string
-      await request(app.getHttpServer())
-        .post('/logout')
-        .set('Authorization', `Bearer ${registerAccessToken}`)
-        .send({ refreshToken: registerRefreshToken })
-
-      // Helper — perform a login with a specific User-Agent and return the
-      // resulting token pair. Each login MUST carry a unique User-Agent so
-      // each session is identifiable in the listSessions output.
-      const login = async (
-        userAgent: string
-      ): Promise<{ accessToken: string; refreshToken: string }> => {
-        const res = await request(app.getHttpServer())
-          .post('/login')
-          .set('User-Agent', userAgent)
-          .send({
-            email: 'eviction@example.com',
-            password: 'EvictionSecret123!',
-            tenantId: 'tenant-1'
-          })
-        return {
-          accessToken: res.body.accessToken as string,
-          refreshToken: res.body.refreshToken as string
-        }
-      }
+      await registerAndDropRegistrationSession(app)
 
       // Login #1 — Mac. This is the OLDEST session and the one expected
       // to be evicted by the 6th login.
-      const first = await login(UA_MAC)
+      const first = await loginWithUserAgent(app, UA_MAC)
       firstAccessToken = first.accessToken
       firstRefreshToken = first.refreshToken
 
       // Logins #2–#5 — fill up the 5-session quota.
-      await login(UA_LINUX)
-      await login(UA_WINDOWS)
-      await login(UA_ANDROID)
-      await login(UA_IPAD)
+      await loginWithUserAgent(app, UA_LINUX)
+      await loginWithUserAgent(app, UA_WINDOWS)
+      await loginWithUserAgent(app, UA_ANDROID)
+      await loginWithUserAgent(app, UA_IPAD)
 
       // Login #6 — iPhone. With 5 sessions already active, this login MUST
       // trigger FIFO eviction of the Mac (oldest) session before recording
       // itself. After this call returns, the user has exactly 5 sessions
       // again — Linux, Windows, Android, iPad, and iPhone.
-      const sixth = await login(UA_IPHONE)
+      const sixth = await loginWithUserAgent(app, UA_IPHONE)
       sixthAccessToken = sixth.accessToken
       sixthRefreshToken = sixth.refreshToken
     })

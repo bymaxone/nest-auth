@@ -75,6 +75,54 @@ function sessionIndexFor(userId: string, tenantId: string): string {
   return `sess:${createHmac('sha256', hmacKey).update(subject).digest('hex')}`
 }
 
+/**
+ * Wraps the mock Redis `eval` so a nil Lua result reads as `null`.
+ *
+ * ioredis-mock returns `undefined` when a Lua script returns nil, but the
+ * production `TokenManagerService.reissueTokens` checks `oldSessionJson !==
+ * null`. Real Redis returns `null` for nil, so the production check works
+ * against a live Redis instance — but in this in-memory mock the check
+ * would silently pass with `undefined`, sending the rotation through the
+ * primary path with bad data and producing a spurious 401 on the grace
+ * path. Wrap the mock's `eval` to normalise `undefined` to `null` so the
+ * grace window behaves identically to production. This is test-only
+ * infrastructure (no production source is modified).
+ */
+function normaliseNilEval(redis: BootstrappedTestApp['redis']): void {
+  const originalEval = redis.eval.bind(redis) as (...args: unknown[]) => Promise<unknown>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(redis as any).eval = async (...args: unknown[]): Promise<unknown> => {
+    const result = await originalEval(...args)
+    return result === undefined ? null : result
+  }
+}
+
+/**
+ * Registers the race account and logs it in, returning the login refresh token and user id.
+ */
+async function registerAndLoginRacer(
+  app: INestApplication
+): Promise<{ refreshToken: string; userId: string }> {
+  // Register and login to obtain a fresh refresh token. Registration with
+  // emailVerification.required=false (the bootstrap default) immediately
+  // yields tokens, but we follow up with /login anyway to mirror the
+  // typical client flow and ensure the active session is the login session.
+  await request(app.getHttpServer()).post('/register').send({
+    email: 'race@example.com',
+    password: 'RaceSecret123!-xyz',
+    name: 'Race User',
+    tenantId: 'tenant-1'
+  })
+
+  const login = await request(app.getHttpServer()).post('/login').send({
+    email: 'race@example.com',
+    password: 'RaceSecret123!-xyz',
+    tenantId: 'tenant-1'
+  })
+
+  return { refreshToken: login.body.refreshToken as string, userId: login.body.user.id as string }
+}
+
 describe('refresh concurrency with grace window (E2E)', () => {
   // ---------------------------------------------------------------------------
   // Scenario — register → login → refresh twice with same token → expire → 401
@@ -119,43 +167,12 @@ describe('refresh concurrency with grace window (E2E)', () => {
       redisClient = bootstrap.redis
       namespace = bootstrap.options.redisNamespace ?? 'auth'
 
-      // ioredis-mock returns `undefined` when a Lua script returns nil, but the
-      // production `TokenManagerService.reissueTokens` checks `oldSessionJson !==
-      // null`. Real Redis returns `null` for nil, so the production check works
-      // against a live Redis instance — but in this in-memory mock the check
-      // would silently pass with `undefined`, sending the rotation through the
-      // primary path with bad data and producing a spurious 401 on the grace
-      // path. Wrap the mock's `eval` to normalise `undefined` to `null` so the
-      // grace window behaves identically to production. This is test-only
-      // infrastructure (no production source is modified).
-      const originalEval = bootstrap.redis.eval.bind(bootstrap.redis) as (
-        ...args: unknown[]
-      ) => Promise<unknown>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(bootstrap.redis as any).eval = async (...args: unknown[]): Promise<unknown> => {
-        const result = await originalEval(...args)
-        return result === undefined ? null : result
-      }
+      normaliseNilEval(bootstrap.redis)
 
-      // Register and login to obtain a fresh refresh token. Registration with
-      // emailVerification.required=false (the bootstrap default) immediately
-      // yields tokens, but we follow up with /login anyway to mirror the
-      // typical client flow and ensure the active session is the login session.
-      await request(app.getHttpServer()).post('/register').send({
-        email: 'race@example.com',
-        password: 'RaceSecret123!-xyz',
-        name: 'Race User',
-        tenantId: 'tenant-1'
-      })
-
-      const login = await request(app.getHttpServer()).post('/login').send({
-        email: 'race@example.com',
-        password: 'RaceSecret123!-xyz',
-        tenantId: 'tenant-1'
-      })
-
-      originalRefreshToken = login.body.refreshToken as string
-      userId = login.body.user.id as string
+      // Register and login to obtain a fresh refresh token.
+      const racer = await registerAndLoginRacer(app)
+      originalRefreshToken = racer.refreshToken
+      userId = racer.userId
 
       // Act — fire two /refresh requests in parallel via Promise.all, both
       // exchanging the SAME original refresh token. The first to win the
