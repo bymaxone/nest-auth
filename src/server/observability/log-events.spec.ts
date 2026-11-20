@@ -24,6 +24,7 @@ function documented(): Map<
   const rows = new Map<string, { level: string; message: string; when: string; fields: string[] }>()
   for (const line of body.split('\n')) {
     const cells = line.split('|').map((cell) => cell.trim())
+    if (/^\| `AUTH_/.test(line)) expect(cells).toHaveLength(7)
     const code = /^`(AUTH_[A-Z_]+)`$/.exec(cells[1] ?? '')?.[1]
     if (code === undefined) continue
     const fields = [...(cells[5] ?? '').matchAll(/`(\w+)`/g)].map((m) => m[1] as string)

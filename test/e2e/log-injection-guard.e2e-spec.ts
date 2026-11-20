@@ -30,7 +30,6 @@ import ts from 'typescript'
 import { describeChannelStatus, describeError } from '../../src/server/utils/describe-error'
 import { logSafe } from '../../src/server/utils/log-safe'
 import { maskEmail } from '../../src/server/utils/mask-email'
-import { ownerFragment } from '../../src/server/utils/owner-fragment'
 
 /** Source root, from this suite's location under `test/e2e/`. */
 const SRC_ROOT = join(__dirname, '../../src')
@@ -62,20 +61,8 @@ function breaksRecord(value: string): boolean {
  * name against a value carrying `\n` rather than trusting it. `maskEmail` was listed here while
  * copying the domain verbatim, which made `a@example.com\nforged` a masked address that still
  * closed the record — the allowlist asserted a property the member did not have.
- *
- * `safeLogLine` is deliberately absent. It is a check on a fully composed line, not a field guard:
- * it takes the values that must not appear and answers whether the line reconstructed one, and
- * `safeLogLine(raw, [])` returns `raw` untouched. Every call site wraps the whole template with it
- * — it appears inside a `${...}` nowhere in `src/` — so removing it from this set costs nothing
- * and closes the shape where it would have been read as a boundary it never enforced.
  */
-const GUARDS = new Set([
-  'logSafe',
-  'maskEmail',
-  'describeChannelStatus',
-  'describeError',
-  'ownerFragment'
-])
+const GUARDS = new Set(['logSafe', 'maskEmail', 'describeChannelStatus', 'describeError'])
 
 /**
  * Expressions this library authors, so no guard applies.
@@ -305,15 +292,6 @@ describe('log-injection guard (E2E)', () => {
         node.operatorToken.kind === ts.SyntaxKind.PlusToken &&
         composed(node.left) &&
         composed(node.right)) ||
-      // `safeLogLine(line, secrets)` returns either `line` or a constant this library wrote, so
-      // its output is composed exactly when its INPUT is. Recursing rather than accepting the
-      // name keeps `safeLogLine(rawThing, [])` a failure, which is the shape that made it wrong
-      // to list as a field guard in the first place.
-      (ts.isCallExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === 'safeLogLine' &&
-        node.arguments[0] !== undefined &&
-        composed(node.arguments[0])) ||
       isGuardCall(node)
 
     const raw = files.flatMap((file) =>
@@ -397,11 +375,11 @@ describe('log-injection guard (E2E)', () => {
     )
   })
 
-  // The detector has to be able to fail, or the assertions above are decoration. It found 48 real
-  // sites when written; asserting a lower bound keeps a later refactor of the walker from silently
-  // reducing it to nothing.
+  // The detector has to be able to fail, or the assertions above are decoration. Asserting a lower bound
+  // keeps a later refactor of the walker from silently reducing it to nothing; the bound fell when the
+  // identity-bearing lines became events, and it falls again as the remaining text lines do.
   it('actually inspects the logger calls it claims to', () => {
-    expect(everything.length).toBeGreaterThan(80)
+    expect(everything.length).toBeGreaterThan(30)
     expect(everything.some((i) => i.guarded)).toBe(true)
   })
 
@@ -533,8 +511,7 @@ describe('log-injection guard (E2E)', () => {
     ['logSafe', (value: string) => logSafe(value)],
     ['maskEmail', (value: string) => maskEmail(value)],
     ['describeChannelStatus', (value: string) => describeChannelStatus(new Error(value))],
-    ['describeError', (value: string) => describeError(new Error(value), [])],
-    ['ownerFragment', (value: string) => ownerFragment(value)]
+    ['describeError', (value: string) => describeError(new Error(value), [])]
   ])('%s never returns a value that can break a log record', (name, guard) => {
     expect(GUARDS.has(name)).toBe(true)
 
@@ -560,10 +537,88 @@ describe('log-injection guard (E2E)', () => {
     }
   })
 
-  // The counterpart to the exclusion documented on GUARDS: `safeLogLine` answers a question about
-  // a whole line and enforces no boundary of its own — `safeLogLine(raw, [])` is `raw`. Listing it
-  // as a field guard would let `${safeLogLine(x, [])}` pass the gate carrying anything.
-  it('does not accept the composed-line check as a field guard', () => {
-    expect(GUARDS.has('safeLogLine')).toBe(false)
+  // The events. A field of `logEvent` is a value in a structured record, so it cannot close a text record, but
+  // it is still where a value a caller, a host or a store supplied could enter. The rule is fail-closed like the
+  // one above: a field is a literal, the description of a failure the library composed, an RFC code reduced to a
+  // closed set, or an id taken from an account, and anything else is a failure until someone decides what it is.
+  const ID_FIELDS = new Set(['userId', 'tenantId', 'actorUserId', 'familyId'])
+  const CLOSED_IDENTIFIERS = new Set(['context', 'flow', 'kind'])
+
+  /** The fields of every `logEvent(logger, code, { ... })` call in a source that break the rule. */
+  function eventFieldProblems(text: string): string[] {
+    const source = ts.createSourceFile('probe.ts', text, ts.ScriptTarget.Latest, true)
+    const problems: string[] = []
+    const callName = (node: ts.Expression): string | undefined =>
+      ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+        ? node.expression.text
+        : undefined
+    const idLike = (node: ts.Expression): boolean =>
+      ts.isIdentifier(node) || (ts.isPropertyAccessExpression(node) && idLike(node.expression))
+
+    const checkField = (property: ts.ObjectLiteralElementLike): void => {
+      if (ts.isSpreadAssignment(property)) {
+        const spread = property.expression
+        const conditional =
+          ts.isParenthesizedExpression(spread) && ts.isConditionalExpression(spread.expression)
+        if (!ts.isIdentifier(spread) && !conditional) problems.push(property.getText(source))
+        return
+      }
+      const name = property.name?.getText(source) ?? ''
+      const value = ts.isShorthandPropertyAssignment(property)
+        ? property.name
+        : ts.isPropertyAssignment(property)
+          ? property.initializer
+          : undefined
+      const ok =
+        value !== undefined &&
+        (ts.isStringLiteral(value) ||
+          ts.isNumericLiteral(value) ||
+          (ID_FIELDS.has(name) && idLike(value)) ||
+          (name === 'detail' && callName(value) === 'describeChannelStatus') ||
+          (name === 'error' && callName(value) === 'authorizationErrorCode') ||
+          (ts.isIdentifier(value) && CLOSED_IDENTIFIERS.has(value.text)))
+      if (!ok) problems.push(property.getText(source))
+    }
+
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && callName(node) === 'logEvent') {
+        const fields = node.arguments[2]
+        if (fields !== undefined) {
+          if (ts.isObjectLiteralExpression(fields)) fields.properties.forEach(checkField)
+          else problems.push(fields.getText(source))
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    return problems
+  }
+
+  // Scenario: every `logEvent` call in the library. Expected: no field outside the rule above. Why: the event
+  // fields are the only place a value this library did not author could reach a log after the text lines left.
+  it('writes only fields the library composed or an account id into an event', () => {
+    const calls = files.filter((file) => !file.endsWith('log-event.ts'))
+    const problems = calls.flatMap((file) =>
+      eventFieldProblems(readFileSync(file, 'utf8')).map(
+        (field) => `${file.slice(SRC_ROOT.length + 1)}: ${field}`
+      )
+    )
+
+    expect(problems).toEqual([])
+  })
+
+  // The rule has to be able to fail: a request value in a field, a bare expression as `detail` and a stringified
+  // error each break it, and the accepted shapes do not.
+  it.each([
+    ["logEvent(l, 'AUTH_X', { reason: req.body.reason })", 1],
+    ["logEvent(l, 'AUTH_X', { detail: String(err) })", 1],
+    ["logEvent(l, 'AUTH_X', { userId: `${req.query.id}` })", 1],
+    [
+      "logEvent(l, 'AUTH_X', { reason: 'ok', detail: describeChannelStatus(err), userId: user.id })",
+      0
+    ],
+    ["logEvent(l, 'AUTH_X', { ...PASSWORD_LOGIN, tenantId, error: authorizationErrorCode(q) })", 0]
+  ])('judges %s as having %i problem field(s)', (text, count) => {
+    expect(eventFieldProblems(text)).toHaveLength(count)
   })
 })

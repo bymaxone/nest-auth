@@ -69,11 +69,10 @@ function isMfaSetupData(value: unknown): value is MfaSetupData {
  * "setup payload corrupted".
  *
  * @param raw - The stored JSON.
- * @param userId - The account, for the log line.
  * @param logger - Where the refusal is recorded.
  * @returns The validated record.
  */
-export function parseSetupData(raw: string, userId: string, logger: Logger): MfaSetupData {
+export function parseSetupData(raw: string, logger: Logger): MfaSetupData {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -107,11 +106,10 @@ export function parseSetupData(raw: string, userId: string, logger: Logger): Mfa
  * encrypted payload.
  *
  * @param raw - The decrypted JSON.
- * @param userId - The account, for the log line.
  * @param logger - Where the refusal is recorded.
  * @returns The plain recovery codes.
  */
-export function parsePlainRecoveryCodes(raw: string, userId: string, logger: Logger): string[] {
+export function parsePlainRecoveryCodes(raw: string, logger: Logger): string[] {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)

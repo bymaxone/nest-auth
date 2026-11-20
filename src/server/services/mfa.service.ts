@@ -204,10 +204,10 @@ export class MfaService {
     // discarded by SET-NX after wasted work; subsequent requests hit the fast path.
     const existingFast = await this.redis.get(setupKey)
     if (existingFast !== null) {
-      const data = parseSetupData(existingFast, userId, this.logger)
+      const data = parseSetupData(existingFast, this.logger)
       const existingSecret = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
       const decryptedCodesJson = decryptMfaSecret(data.encryptedPlainCodes, this.mfaOptions)
-      const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, userId, this.logger)
+      const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, this.logger)
       const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
       return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
     }
@@ -231,10 +231,10 @@ export class MfaService {
       // Another request already started setup — return their data for idempotency.
       const existing = await this.redis.get(setupKey)
       if (existing !== null) {
-        const data = parseSetupData(existing, userId, this.logger)
+        const data = parseSetupData(existing, this.logger)
         const existingSecret = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
         const decryptedCodesJson = decryptMfaSecret(data.encryptedPlainCodes, this.mfaOptions)
-        const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, userId, this.logger)
+        const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, this.logger)
         const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
         return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
       }
@@ -296,7 +296,7 @@ export class MfaService {
     const raw = await this.redis.get(setupKey)
     if (raw === null) throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
 
-    const data = parseSetupData(raw, userId, this.logger)
+    const data = parseSetupData(raw, this.logger)
     const secretBase32 = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
 
     const totpWindow = this.mfaOptions.totpWindow
