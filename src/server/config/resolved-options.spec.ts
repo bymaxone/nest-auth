@@ -586,10 +586,10 @@ describe('resolveOptions — cookies.sameSite', () => {
   })
 
   /**
-   * With more than one bad entry the message has to keep them apart — a run-together list is
-   * not a list, and the operator has to be able to read which origins to fix.
+   * With more than one bad entry the message has to keep their positions apart — a run-together
+   * list is not a list, and the operator has to be able to read which entries to fix.
    */
-  it('should name every malformed trusted origin, separated', () => {
+  it('should name the position of every malformed trusted origin, separated', () => {
     const resolve = () =>
       resolveOptions({
         ...MINIMAL_OPTIONS,
@@ -2518,7 +2518,7 @@ describe('resolveOptions — refreshCookiePath validation', () => {
   // Scenario: custom routePrefix without refreshCookiePath. Expected: the message explains the '/auth'
   // default mismatch, the every-request consequence, and the remediation, without printing the prefix.
   // Why: pins all four concatenated literals so the StringLiteral mutants emptying any of them are killed.
-  it('should produce the full refreshCookiePath remediation including the prefix', () => {
+  it('should produce the full refreshCookiePath remediation without printing the prefix', () => {
     const run = (): unknown => resolveOptions({ ...MINIMAL_OPTIONS, routePrefix: 'api/auth' })
     expect(run).toThrow(/routePrefix is not 'auth' but cookies\.refreshCookiePath is not set\./)
     expect(run).toThrow(
