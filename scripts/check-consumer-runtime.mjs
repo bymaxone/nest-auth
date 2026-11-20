@@ -34,6 +34,9 @@ const consumerDir = join(rootDir, '.consumer-runtime-check')
  * are Next's design, not this package's, and neither says anything about whether
  * the subpath is built correctly. `attw` still checks that its declarations
  * resolve, which is the part a gate here could meaningfully assert.
+ *
+ * `./observability` is absent for a different reason: it reads `prom-client`, an optional peer this clean
+ * consumer does not install. The dogfood smoke test loads it where the peer is present.
  */
 const SUBPATHS = {
   '.': ['AuthException', 'AuthExceptionFilter', 'WsAuthExceptionFilter', 'AUTH_ERROR_CODES'],

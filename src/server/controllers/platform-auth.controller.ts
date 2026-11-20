@@ -32,6 +32,7 @@ import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { MfaChallengeResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
+import { ObserveAuth } from '../observability/observe-auth'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { MfaService } from '../services/mfa.service'
 import { PlatformAuthService } from '../services/platform-auth.service'
@@ -120,6 +121,7 @@ export class PlatformAuthController {
   @Throttle(AUTH_THROTTLE_CONFIGS.platformLogin)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.platformLogin)
   @HttpCode(HttpStatus.OK)
+  @ObserveAuth('login', 'platform')
   @Post('login')
   async login(
     @Body() dto: PlatformLoginDto,
@@ -158,6 +160,7 @@ export class PlatformAuthController {
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaChallenge)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaChallenge)
   @HttpCode(HttpStatus.OK)
+  @ObserveAuth('mfa_verify', 'platform')
   @Post('mfa/challenge')
   async mfaChallenge(
     @Body() dto: MfaChallengeDto,
@@ -258,6 +261,7 @@ export class PlatformAuthController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.refresh)
   @HttpCode(HttpStatus.OK)
   @RequestEncoding('unchecked')
+  @ObserveAuth('refresh', 'platform')
   @Post('refresh')
   async refresh(@Req() req: Request): Promise<PlatformBearerAuthResponse> {
     // Always reads from req.body — platform sessions never use cookie delivery.

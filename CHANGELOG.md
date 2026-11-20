@@ -18,6 +18,21 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **An optional `@bymax-one/nest-auth/observability` subpath**, with a metrics contributor (`AuthMetrics`) and a readiness
+  indicator (`AuthRedisHealthIndicator`, name `auth-redis`, which gives up after 4 seconds or when the aggregator's signal aborts). Four counters, all with closed labels and none carrying an
+  id, tenant, user or address: `bymax_auth_logins_total`, `bymax_auth_refresh_total` and
+  `bymax_auth_mfa_verifications_total` by `plane` (`dashboard` or `platform`) and `outcome`, and
+  `bymax_auth_bruteforce_lockouts_total`. `POST /mfa/challenge` serves both planes, so its `plane` comes from the
+  session it ends with or the token it verified, and a token that does not verify counts as `dashboard`. The server entry exports `AuthMetricsTally`, the closed sets
+  (`AUTH_PLANES`, `LOGIN_OUTCOMES`, `REFRESH_OUTCOMES`, `MFA_OUTCOMES`) and `AuthHealthProbe`. Routes run inside the
+  spans `auth.login`, `auth.refresh`, `auth.mfa.verify` and `auth.password_reset` when `@opentelemetry/api` is
+  installed and an SDK is registered; without them nothing is created. The subpath needs `prom-client`, which is an
+  optional peer, and imports no other Bymax library.
+- `rxjs` is declared as a peer dependency of the server entry. It is already required by `@nestjs/common`, and the
+  interceptor that counts the observed routes imports it.
+
 ### Fixed
 
 - A verification code the store refuses no longer fails the registration that created the account. `POST /register` and

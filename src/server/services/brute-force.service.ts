@@ -1,9 +1,10 @@
-import { Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { AuthMetricsTally } from '../observability/auth-metrics-tally'
 import { AuthRedisService } from '../redis/auth-redis.service'
 
 /**
@@ -50,7 +51,8 @@ export class BruteForceService {
 
   constructor(
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
-    @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions
+    @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions,
+    @Optional() @Inject(AuthMetricsTally) private readonly tally?: AuthMetricsTally
   ) {
     this.maxAttempts = options.bruteForce.maxAttempts
     this.windowSeconds = options.bruteForce.windowSeconds
@@ -83,7 +85,13 @@ export class BruteForceService {
    */
   async recordFailure(identifier: string): Promise<void> {
     this.validateIdentifier(identifier)
-    await this.redis.incrWithFixedTtl(`${LOCKOUT_PREFIX}${identifier}`, this.windowSeconds)
+    const count = await this.redis.incrWithFixedTtl(
+      `${LOCKOUT_PREFIX}${identifier}`,
+      this.windowSeconds
+    )
+    // Counted at the failure that reaches the threshold, so one lockout is one count however many
+    // attempts follow it.
+    if (count === this.maxAttempts) this.tally?.lockout()
   }
 
   /**

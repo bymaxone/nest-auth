@@ -56,6 +56,7 @@ import { OAUTH_PLUGINS } from './oauth/oauth.constants'
 import { OAuthController } from './oauth/oauth.controller'
 import { buildOAuthPlugins } from './oauth/oauth.module'
 import { OAuthService } from './oauth/oauth.service'
+import { OBSERVABILITY_EXPORTS, OBSERVABILITY_PROVIDERS } from './observability/providers'
 import type { RegisteredControllers } from './openapi/auth-openapi-fragment'
 import { AuthOpenApiContributor } from './openapi/auth-openapi.contributor'
 import { CommonPasswordChecker } from './providers/common-password-checker.provider'
@@ -658,9 +659,9 @@ export class BymaxAuthModule {
         RequestEncodingGuard,
         TrustedOriginGuard,
         AuthRateLimitGuard,
-        // Response-header interceptor — every library controller applies it, so it must be
-        // resolvable in this module's injector.
+        // The interceptors every library controller applies, and what the second one counts with.
         NoStoreInterceptor,
+        ...OBSERVABILITY_PROVIDERS,
         RolesGuard,
         UserStatusGuard,
         // MFA services and guard — only registered when controllers.mfa: true.
@@ -698,9 +699,9 @@ export class BymaxAuthModule {
         // Export TokenDeliveryService for host-app refresh endpoints.
         TokenDeliveryService,
         // Export SessionService unconditionally — mirrors provider registration above.
-        // Host-app modules that extend the auth flow (e.g. custom logout logic) can
-        // inject SessionService without re-registering it.
         SessionService,
+        // Read by the optional observability subpath.
+        ...OBSERVABILITY_EXPORTS,
         // Export ReauthenticationService so a host module can guard its own destructive routes
         // with the same password check and lockout counter the library uses.
         ReauthenticationService,

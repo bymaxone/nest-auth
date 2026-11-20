@@ -33,6 +33,7 @@ import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, MfaChallengeResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
+import { ObserveAuth } from '../observability/observe-auth'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { AuthService } from '../services/auth.service'
 import type {
@@ -117,6 +118,7 @@ export class AuthController {
   @Throttle(AUTH_THROTTLE_CONFIGS.login)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.login)
   @HttpCode(HttpStatus.OK)
+  @ObserveAuth('login', 'dashboard')
   @Post('login')
   async login(
     @Body() dto: LoginDto,
@@ -178,6 +180,7 @@ export class AuthController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.refresh)
   @HttpCode(HttpStatus.OK)
   @RequestEncoding('unchecked')
+  @ObserveAuth('refresh', 'dashboard')
   @Post('refresh')
   async refresh(
     @Req() req: Request,

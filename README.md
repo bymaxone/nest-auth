@@ -97,15 +97,16 @@ pnpm add @bymax-one/nest-auth
 
 ## 📦 Subpath Exports
 
-One package, five entry points — import only what your app needs:
+One package, six entry points — import only what your app needs:
 
-| Subpath     | Import                        | Purpose                                     |    Dependencies    |
-| ----------- | ----------------------------- | ------------------------------------------- | :----------------: |
-| **Server**  | `@bymax-one/nest-auth`        | NestJS module, guards, decorators, services | NestJS 11, ioredis |
-| **Shared**  | `@bymax-one/nest-auth/shared` | Types, constants, error codes               |        None        |
-| **Client**  | `@bymax-one/nest-auth/client` | Fetch-based auth client                     |        None        |
-| **React**   | `@bymax-one/nest-auth/react`  | Hooks & AuthProvider                        |      React 19      |
-| **Next.js** | `@bymax-one/nest-auth/nextjs` | Proxy, route handlers, JWT helpers          |     Next.js 16     |
+| Subpath           | Import                               | Purpose                                                |    Dependencies    |
+| ----------------- | ------------------------------------ | ------------------------------------------------------ | :----------------: |
+| **Server**        | `@bymax-one/nest-auth`               | NestJS module, guards, decorators, services            | NestJS 11, ioredis |
+| **Shared**        | `@bymax-one/nest-auth/shared`        | Types, constants, error codes                          |        None        |
+| **Client**        | `@bymax-one/nest-auth/client`        | Fetch-based auth client                                |        None        |
+| **React**         | `@bymax-one/nest-auth/react`         | Hooks & AuthProvider                                   |      React 19      |
+| **Next.js**       | `@bymax-one/nest-auth/nextjs`        | Proxy, route handlers, JWT helpers                     |     Next.js 16     |
+| **Observability** | `@bymax-one/nest-auth/observability` | Metrics contributor and readiness indicator (optional) |   `prom-client`    |
 
 ```
 shared (zero deps)
@@ -142,7 +143,7 @@ yarn add @bymax-one/nest-auth
 
 ```bash
 # Server subpath (required)
-pnpm add @nestjs/common @nestjs/core @nestjs/jwt @nestjs/throttler @nestjs/websockets express ioredis class-validator class-transformer reflect-metadata
+pnpm add @nestjs/common @nestjs/core @nestjs/jwt @nestjs/throttler @nestjs/websockets express ioredis class-validator class-transformer reflect-metadata rxjs
 pnpm add -D @types/express
 
 # Also needed with `tokenDelivery: 'cookie'` or `'both'` (see step 4): the library reads `req.cookies`
@@ -1364,6 +1365,50 @@ actorUserId, context)` first; it refuses with `409 auth.last_owner` while the ac
 owner of an active or suspended workspace. A workspace id is never trusted from the body, a header
 or a stored default, and non-members and nonexistent workspaces are indistinguishable. All of it is in
 [Workspaces: reference](./docs/workspaces.md).
+
+---
+
+## 📊 Observability
+
+The flows count what they do whether or not anything publishes it: the module registers `AuthMetricsTally`, a few integer counts keyed by closed sets, and the optional `@bymax-one/nest-auth/observability` subpath reads them. It needs `prom-client` and a metrics registry that discovers contributors by the `bymax-one:metrics-contributor` metadata key (`@bymax-one/nest-core` >= 1.6.15 does); the package itself imports no other Bymax library.
+
+```ts
+import { AuthMetrics, AuthRedisHealthIndicator } from '@bymax-one/nest-auth/observability'
+
+@Module({
+  imports: [BymaxAuthModule.registerAsync({/* ... */})],
+  providers: [AuthMetrics, AuthRedisHealthIndicator] // discovered by the metrics and health modules
+})
+export class ObservabilityModule {}
+```
+
+### Metrics
+
+Every label is a member of a closed set, a sample exists for each plane and outcome from the first scrape, and no id, tenant, user, address or message is ever a label. `plane` is `dashboard` or `platform`.
+
+| Name                                   | Type    | Labels             | Meaning                                                                                                   |
+| -------------------------------------- | ------- | ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `bymax_auth_logins_total`              | counter | `plane`, `outcome` | Login attempts. `outcome`: `success`, `invalid_credentials`, `locked`, `mfa_required`, `blocked`          |
+| `bymax_auth_refresh_total`             | counter | `plane`, `outcome` | Refresh attempts. `outcome`: `rotated`, `reuse_detected`, `expired`, `invalid`                            |
+| `bymax_auth_mfa_verifications_total`   | counter | `plane`, `outcome` | MFA challenges. `outcome`: `success`, `invalid` (a wrong code, or a token that does not verify), `locked` |
+| `bymax_auth_bruteforce_lockouts_total` | counter | none               | Identifiers locked out after too many failures, counted once at the failure that reaches the threshold    |
+
+A login that ends any other way (an unverified address, a server error) is not counted. `POST /mfa/challenge` serves both planes, so its `plane` is the plane of the session it ends with and, for a refused challenge, the plane of the token it verified; a token that does not verify (counted as `invalid`) has no plane and counts as `dashboard`. `reuse_detected` is a refresh that presented an already-consumed token; `expired` is a session past `jwt.absoluteSessionLifetimeDays`. The caller receives the same `auth.refresh_token_invalid` for every refused refresh.
+
+### Spans
+
+With `@opentelemetry/api` installed and an SDK registered, each of these routes runs inside a span carrying `bymax.auth.plane`, except `POST /mfa/challenge`, which serves both planes and whose span names none because the token decides it; without them nothing is created. A failed span carries the library error code (`auth.invalid_credentials`) and never the message.
+
+| Span                  | Routes                                                            |
+| --------------------- | ----------------------------------------------------------------- |
+| `auth.login`          | `POST /login`, `POST /platform/auth/login`                        |
+| `auth.refresh`        | `POST /refresh`, `POST /platform/auth/refresh`                    |
+| `auth.mfa.verify`     | `POST /mfa/challenge`, `POST /platform/auth/mfa/challenge`        |
+| `auth.password_reset` | `POST /password/forgot-password`, `POST /password/reset-password` |
+
+### Readiness
+
+`AuthRedisHealthIndicator` (name `auth-redis`) asks the Redis client the module was given for a `PING`: one round trip, nothing written, no detail reported. It gives up after 4 seconds, under the 5 seconds the readiness aggregator of `@bymax-one/nest-core` waits by default, or as soon as the aggregator's signal aborts, and probes that arrive while a `PING` is still pending share it, so a store that never answers is asked at most once per 4-second window rather than once per probe; a `PING` that has outlived the timeout is dropped and the next probe sends a fresh one, so readiness recovers when the store does. `AuthHealthProbe` is the same question for a host that wires its own check.
 
 ---
 

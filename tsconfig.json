@@ -28,7 +28,8 @@
       "@bymax-one/nest-auth/shared": ["./src/shared/index.ts"],
       "@bymax-one/nest-auth/client": ["./src/client/index.ts"],
       "@bymax-one/nest-auth/react": ["./src/react/index.ts"],
-      "@bymax-one/nest-auth/nextjs": ["./src/nextjs/index.ts"]
+      "@bymax-one/nest-auth/nextjs": ["./src/nextjs/index.ts"],
+      "@bymax-one/nest-auth/observability": ["./src/observability/index.ts"]
     }
   },
   "include": ["src/**/*"],

@@ -38,6 +38,7 @@ import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import { ObserveAuth } from '../observability/observe-auth'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { MfaSetupResult } from '../services/mfa.service'
 import { MfaService } from '../services/mfa.service'
@@ -256,6 +257,7 @@ export class MfaController {
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaChallenge)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaChallenge)
   @HttpCode(HttpStatus.OK)
+  @ObserveAuth('mfa_verify', 'token')
   @Post('challenge')
   async challenge(
     @Body() dto: MfaChallengeDto,

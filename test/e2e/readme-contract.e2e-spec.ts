@@ -38,11 +38,17 @@ const STAR_EXPORT_MARKER = '*'
 /**
  * `bymax`-prefixed tokens that are not scheme names and never will be.
  *
- * One entry: the GitHub organisation, which the README names 15 times. Kept as an explicit list
- * because the alternative — a pattern shaped so the organisation falls outside it — excluded real
- * misspellings as a side effect and no reader could tell that from the regex.
+ * The GitHub organisation, which the README names 15 times, and the Prometheus metrics its Observability
+ * section documents. Kept as an explicit list because the alternative — a pattern shaped so these fall
+ * outside it — excluded real misspellings as a side effect and no reader could tell that from the regex.
  */
-const NOT_A_SCHEME: ReadonlySet<string> = new Set(['bymaxone'])
+const NOT_A_SCHEME: ReadonlySet<string> = new Set([
+  'bymaxone',
+  'bymax_auth_logins_total',
+  'bymax_auth_refresh_total',
+  'bymax_auth_mfa_verifications_total',
+  'bymax_auth_bruteforce_lockouts_total'
+])
 
 /** The scheme table's header cell, which is how it is found rather than by line number. */
 const TABLE_HEADER = 'what the document says'
@@ -113,7 +119,8 @@ const BARRELS: Readonly<Record<string, string>> = {
   '@bymax-one/nest-auth/shared': '../../src/shared/index.ts',
   '@bymax-one/nest-auth/client': '../../src/client/index.ts',
   '@bymax-one/nest-auth/react': '../../src/react/index.ts',
-  '@bymax-one/nest-auth/nextjs': '../../src/nextjs/index.ts'
+  '@bymax-one/nest-auth/nextjs': '../../src/nextjs/index.ts',
+  '@bymax-one/nest-auth/observability': '../../src/observability/index.ts'
 }
 
 /**

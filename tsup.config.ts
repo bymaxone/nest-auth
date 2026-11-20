@@ -23,8 +23,30 @@ export default defineConfig([
       'class-transformer',
       'class-validator',
       'ioredis',
-      'express'
+      'express',
+      'rxjs',
+      // Loaded with a dynamic import at start-up, and optional: the server bundle must never inline it.
+      '@opentelemetry/api'
     ],
+    target: 'node24',
+    clean: false,
+    splitting: false,
+    treeshake: true,
+    sourcemap: false
+  },
+  // Observability entry — the metrics contributor and the readiness indicator. It reads the main entry,
+  // which therefore stays external: bundled in, the tally class would be a second one and the module
+  // would inject a different instance from the one the flows count into.
+  {
+    entry: { 'observability/index': 'src/observability/index.ts' },
+    format: ['esm', 'cjs'],
+    dts: true,
+    tsconfig: 'tsconfig.build.json',
+    outDir: 'dist',
+    outExtension: ({ format }) => ({
+      js: format === 'esm' ? '.mjs' : '.cjs'
+    }),
+    external: [/^@nestjs\//, 'reflect-metadata', '@bymax-one/nest-auth', 'prom-client'],
     target: 'node24',
     clean: false,
     splitting: false,
