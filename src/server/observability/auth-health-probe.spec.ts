@@ -118,6 +118,40 @@ describe('AuthHealthProbe', () => {
     expect(asked).toHaveBeenCalledTimes(1)
   })
 
+  // Scenario: a PING that the client never settles, then the store recovers. Expected: while the stuck PING is
+  // younger than the timeout it is shared; once it has outlived the timeout the next probe sends a fresh PING
+  // and is up, and the stuck one settling late does not discard the fresh one. Why: a dead promise reused for
+  // ever would keep readiness down after the store came back.
+  it('recovers after a PING that never settles', async () => {
+    let now = 1_000_000
+    jest.spyOn(Date, 'now').mockImplementation(() => now)
+    const stuck = deferred<string>()
+    const fresh = deferred<string>()
+    const asked = jest
+      .fn<Promise<string>, []>()
+      .mockReturnValueOnce(stuck.promise)
+      .mockReturnValueOnce(fresh.promise)
+      .mockResolvedValue('PONG')
+    const probe = new AuthHealthProbe({ ping: asked })
+
+    await expect(probe.ping(AbortSignal.abort())).rejects.toThrow('did not answer in time')
+    now += PING_TIMEOUT_MS - 1
+    await expect(probe.ping(AbortSignal.abort())).rejects.toThrow('did not answer in time')
+    expect(asked).toHaveBeenCalledTimes(1)
+
+    now += 1
+    const recovered = probe.ping()
+    expect(asked).toHaveBeenCalledTimes(2)
+    stuck.resolve('LOADING')
+    await Promise.resolve()
+    const sharedWithFresh = probe.ping()
+    expect(asked).toHaveBeenCalledTimes(2)
+    fresh.resolve('PONG')
+
+    await expect(recovered).resolves.toBe(true)
+    await expect(sharedWithFresh).resolves.toBe(true)
+  })
+
   // Scenario: the client throws instead of returning a promise. Expected: the probe rejects with it.
   it('rejects with what a throwing client throws', async () => {
     const probe = new AuthHealthProbe({

@@ -25,11 +25,14 @@ export const PING_TIMEOUT_MS = 4000
  *
  * Each probe is bounded: it gives up after {@link PING_TIMEOUT_MS} or when the caller's signal aborts,
  * whichever is first, so a stalled socket cannot hold a readiness check open. Probes that arrive while a
- * `PING` is still pending share it, so a store that never answers is asked once, not once per probe.
+ * `PING` is still pending share it, so a store that never answers is asked once, not once per probe. A
+ * `PING` that has outlived the timeout is not shared any longer: the next probe sends a fresh one, so a
+ * command the client never settles cannot keep the readiness check down after the store has recovered, and
+ * at most one `PING` is sent per timeout window.
  */
 @Injectable()
 export class AuthHealthProbe {
-  #pending: Promise<string> | undefined
+  #pending: { readonly asked: Promise<string>; readonly at: number } | undefined
 
   constructor(
     @Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: { ping(): Promise<string> }
@@ -49,17 +52,17 @@ export class AuthHealthProbe {
     return (await this.within(this.#ask(), bound)) === 'PONG'
   }
 
-  /** The pending `PING`, started if none is pending. */
+  /** The pending `PING` while it is younger than the timeout, otherwise a fresh one. */
   #ask(): Promise<string> {
-    if (this.#pending === undefined) {
-      const asked = this.redis.ping()
-      const clear = (): void => {
-        this.#pending = undefined
-      }
-      asked.then(clear, clear)
-      this.#pending = asked
+    const pending = this.#pending
+    if (pending !== undefined && Date.now() - pending.at < PING_TIMEOUT_MS) return pending.asked
+    const entry = { asked: this.redis.ping(), at: Date.now() }
+    const clear = (): void => {
+      if (this.#pending === entry) this.#pending = undefined
     }
-    return this.#pending
+    entry.asked.then(clear, clear)
+    this.#pending = entry
+    return entry.asked
   }
 
   /** `answer`, or a rejection as soon as `signal` aborts. */
