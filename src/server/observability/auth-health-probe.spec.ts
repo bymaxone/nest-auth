@@ -124,7 +124,9 @@ describe('AuthHealthProbe', () => {
   // ever would keep readiness down after the store came back.
   it('recovers after a PING that never settles', async () => {
     let now = 1_000_000
-    jest.spyOn(Date, 'now').mockImplementation(() => now)
+    jest.spyOn(performance, 'now').mockImplementation(() => now)
+    // The wall clock steps backward by a minute; the age of a pending PING does not follow it.
+    jest.spyOn(Date, 'now').mockImplementation(() => 5_000_000 - now)
     const stuck = deferred<string>()
     const fresh = deferred<string>()
     const asked = jest

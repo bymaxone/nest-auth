@@ -55,8 +55,10 @@ export class AuthHealthProbe {
   /** The pending `PING` while it is younger than the timeout, otherwise a fresh one. */
   #ask(): Promise<string> {
     const pending = this.#pending
-    if (pending !== undefined && Date.now() - pending.at < PING_TIMEOUT_MS) return pending.asked
-    const entry = { asked: this.redis.ping(), at: Date.now() }
+    // The monotonic clock: a step of the wall clock must not lengthen how long a stuck PING is shared.
+    if (pending !== undefined && performance.now() - pending.at < PING_TIMEOUT_MS)
+      return pending.asked
+    const entry = { asked: this.redis.ping(), at: performance.now() }
     const clear = (): void => {
       if (this.#pending === entry) this.#pending = undefined
     }
