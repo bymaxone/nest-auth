@@ -239,6 +239,119 @@ function parse(path: string): ts.SourceFile {
   return ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.ESNext, true)
 }
 
+// ---------------------------------------------------------------------------
+// The events
+// ---------------------------------------------------------------------------
+
+// A field of `logEvent` is a value in a structured record, so it cannot close a text record, but it is still
+// where a value a caller, a host or a store supplied could enter. The rule is fail-closed like the one above: a
+// field is a literal, the description of a failure the library composed, an RFC code reduced to a closed set, an
+// allowlisted account id or one of a few closed identifiers, and anything else is a failure until someone
+// decides what it is.
+const ID_FIELDS = new Set(['userId', 'tenantId', 'actorUserId', 'familyId'])
+const CLOSED_IDENTIFIERS = new Set(['context', 'flow', 'kind'])
+// The expressions that may fill an id field: the id of an account the flow already resolved, the id the host
+// authenticated, or the lineage of a refresh token. A property chain on a request, a body or an error is not on
+// the list, so adding one is a decision this list makes visible, like LIBRARY_AUTHORED above.
+const ID_EXPRESSIONS = new Set([
+  'userId',
+  'tenantId',
+  'inviterUserId',
+  'revokerUserId',
+  'admin.id',
+  'authUser.id',
+  'authUser.tenantId',
+  'context.userId',
+  'newUser.id',
+  'payload.sub',
+  'payload.tenantId',
+  'safeUser.id',
+  'user.id',
+  'user.tenantId',
+  'outcome.familyId'
+])
+// Constants of string literals this library declares, which a spread may bring into an event.
+const SPREADABLE = new Set(['PASSWORD_LOGIN'])
+
+/** The name of the function a call invokes, when it is called by a plain identifier. */
+function calleeName(node: ts.Expression): string | undefined {
+  return ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+    ? node.expression.text
+    : undefined
+}
+
+/** Whether a call writes an event: `logEvent(...)`, or the same function reached through a property. */
+function isEventCall(node: ts.CallExpression): boolean {
+  return (
+    calleeName(node) === 'logEvent' ||
+    (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'logEvent')
+  )
+}
+
+/** Whether the value of a named field is one the rule accepts. */
+function isAllowedValue(name: string, value: ts.Expression, source: ts.SourceFile): boolean {
+  return (
+    ts.isStringLiteral(value) ||
+    ts.isNumericLiteral(value) ||
+    (ID_FIELDS.has(name) && ID_EXPRESSIONS.has(value.getText(source))) ||
+    (name === 'detail' && calleeName(value) === 'describeChannelStatus') ||
+    (name === 'error' && calleeName(value) === 'authorizationErrorCode') ||
+    (ts.isIdentifier(value) && CLOSED_IDENTIFIERS.has(value.text))
+  )
+}
+
+/** The members of an event object that break the rule, each as its source text. */
+function fieldProblems(property: ts.ObjectLiteralElementLike, source: ts.SourceFile): string[] {
+  const text = property.getText(source)
+  if (ts.isSpreadAssignment(property)) {
+    const spread = property.expression
+    if (ts.isIdentifier(spread) && SPREADABLE.has(spread.text)) return []
+    // `...(cond ? { field } : {})`: the object in the arm is judged field by field and the other arm is empty.
+    const arms =
+      ts.isParenthesizedExpression(spread) && ts.isConditionalExpression(spread.expression)
+        ? spread.expression
+        : undefined
+    if (
+      arms !== undefined &&
+      ts.isObjectLiteralExpression(arms.whenTrue) &&
+      ts.isObjectLiteralExpression(arms.whenFalse) &&
+      arms.whenFalse.properties.length === 0
+    ) {
+      return arms.whenTrue.properties.flatMap((member) => fieldProblems(member, source))
+    }
+    return [text]
+  }
+  // A computed key names its field at run time, so the field it writes cannot be judged here.
+  if (property.name !== undefined && ts.isComputedPropertyName(property.name)) return [text]
+  const value = ts.isShorthandPropertyAssignment(property)
+    ? property.name
+    : ts.isPropertyAssignment(property)
+      ? property.initializer
+      : undefined
+  const name = property.name?.getText(source) ?? ''
+  return value !== undefined && isAllowedValue(name, value, source) ? [] : [text]
+}
+
+/** The fields of every `logEvent(logger, code, { ... })` call in a source that break the rule. */
+function eventFieldProblems(text: string): string[] {
+  const source = ts.createSourceFile('probe.ts', text, ts.ScriptTarget.Latest, true)
+  const problems: string[] = []
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && isEventCall(node)) {
+      const fields = node.arguments[2]
+      if (fields !== undefined && ts.isObjectLiteralExpression(fields)) {
+        problems.push(...fields.properties.flatMap((member) => fieldProblems(member, source)))
+      } else if (fields !== undefined) {
+        problems.push(fields.getText(source))
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return problems
+}
+
 describe('log-injection guard (E2E)', () => {
   const files = sourceFiles(SRC_ROOT)
   const everything = files.flatMap((file) =>
@@ -536,104 +649,6 @@ describe('log-injection guard (E2E)', () => {
       expect(breaksRecord(guard(injection))).toBe(false)
     }
   })
-
-  // The events. A field of `logEvent` is a value in a structured record, so it cannot close a text record, but
-  // it is still where a value a caller, a host or a store supplied could enter. The rule is fail-closed like the
-  // one above: a field is a literal, the description of a failure the library composed, an RFC code reduced to a
-  // closed set, or an id taken from an account, and anything else is a failure until someone decides what it is.
-  const ID_FIELDS = new Set(['userId', 'tenantId', 'actorUserId', 'familyId'])
-  const CLOSED_IDENTIFIERS = new Set(['context', 'flow', 'kind'])
-  // The expressions that may fill an id field: the id of an account the flow already resolved, the id the host
-  // authenticated, or the lineage of a refresh token. A property chain on a request, a body or an error is not
-  // on the list, so adding one is a decision this list makes visible, like LIBRARY_AUTHORED above.
-  const ID_EXPRESSIONS = new Set([
-    'userId',
-    'tenantId',
-    'inviterUserId',
-    'revokerUserId',
-    'admin.id',
-    'authUser.id',
-    'authUser.tenantId',
-    'context.userId',
-    'newUser.id',
-    'payload.sub',
-    'payload.tenantId',
-    'safeUser.id',
-    'user.id',
-    'user.tenantId',
-    'outcome.familyId'
-  ])
-  // Constants of string literals this library declares, which a spread may bring into an event.
-  const SPREADABLE = new Set(['PASSWORD_LOGIN'])
-
-  /** The fields of every `logEvent(logger, code, { ... })` call in a source that break the rule. */
-  function eventFieldProblems(text: string): string[] {
-    const source = ts.createSourceFile('probe.ts', text, ts.ScriptTarget.Latest, true)
-    const problems: string[] = []
-    const callName = (node: ts.Expression): string | undefined =>
-      ts.isCallExpression(node) && ts.isIdentifier(node.expression)
-        ? node.expression.text
-        : undefined
-    const checkField = (property: ts.ObjectLiteralElementLike): void => {
-      if (ts.isSpreadAssignment(property)) {
-        const spread = property.expression
-        if (ts.isIdentifier(spread) && SPREADABLE.has(spread.text)) return
-        // `...(cond ? { field } : {})`: the object in the arm is judged field by field and the other arm is empty.
-        const arms =
-          ts.isParenthesizedExpression(spread) && ts.isConditionalExpression(spread.expression)
-            ? spread.expression
-            : undefined
-        if (
-          arms !== undefined &&
-          ts.isObjectLiteralExpression(arms.whenTrue) &&
-          ts.isObjectLiteralExpression(arms.whenFalse) &&
-          arms.whenFalse.properties.length === 0
-        ) {
-          arms.whenTrue.properties.forEach(checkField)
-          return
-        }
-        problems.push(property.getText(source))
-        return
-      }
-      // A computed key names its field at run time, so the field it writes cannot be judged here.
-      if (property.name !== undefined && ts.isComputedPropertyName(property.name)) {
-        problems.push(property.getText(source))
-        return
-      }
-      const name = property.name?.getText(source) ?? ''
-      const value = ts.isShorthandPropertyAssignment(property)
-        ? property.name
-        : ts.isPropertyAssignment(property)
-          ? property.initializer
-          : undefined
-      const ok =
-        value !== undefined &&
-        (ts.isStringLiteral(value) ||
-          ts.isNumericLiteral(value) ||
-          (ID_FIELDS.has(name) && ID_EXPRESSIONS.has(value.getText(source))) ||
-          (name === 'detail' && callName(value) === 'describeChannelStatus') ||
-          (name === 'error' && callName(value) === 'authorizationErrorCode') ||
-          (ts.isIdentifier(value) && CLOSED_IDENTIFIERS.has(value.text)))
-      if (!ok) problems.push(property.getText(source))
-    }
-
-    const isEventCall = (node: ts.CallExpression): boolean =>
-      callName(node) === 'logEvent' ||
-      (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'logEvent')
-
-    const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node) && isEventCall(node)) {
-        const fields = node.arguments[2]
-        if (fields !== undefined) {
-          if (ts.isObjectLiteralExpression(fields)) fields.properties.forEach(checkField)
-          else problems.push(fields.getText(source))
-        }
-      }
-      ts.forEachChild(node, visit)
-    }
-    visit(source)
-    return problems
-  }
 
   // Scenario: every `logEvent` call in the library. Expected: no field outside the rule above. Why: the event
   // fields are the only place a value this library did not author could reach a log after the text lines left.
