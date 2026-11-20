@@ -1500,8 +1500,8 @@ describe('InvitationService', () => {
     // record that the attempt happened, which is what an operator investigating a member
     // probing an address list has to work from.
     //
-    // Each assertion also pins that no address, masked or not, and no tenant appears in the event: the line used
-    // to name a person, and an invitee list must not reach wherever logs are shipped.
+    // Each assertion also pins that no address, masked or not, and no tenant appears in the event: an invitee
+    // list must not reach wherever logs are shipped.
 
     it('records a supersede refused for rank, with no address', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)

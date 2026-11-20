@@ -30,7 +30,7 @@ import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import { PlatformAuthService } from './platform-auth.service'
 import { TokenManagerService } from './token-manager.service'
-import { eventsReceived, expectEvent } from '../__tests__/log-events'
+import { expectEvent } from '../__tests__/log-events'
 
 // ---------------------------------------------------------------------------
 // Test doubles — platform admin records
@@ -752,13 +752,13 @@ describe('PlatformAuthService', () => {
       expect(mockRedis.del).toHaveBeenCalledWith('prt:' + tokenHash)
     })
 
-    // Scenario: logout of an admin; expected: the logout event on the platform plane is emitted. Why: pins
+    // Scenario: logout of an admin; expected: the logout event on the platform plane, naming the admin. Why: pins
     // the event so emptying it is caught — logout otherwise has only Redis side effects, no return value.
     it('should log the logout event with the admin id', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+      mockRedis.readSessionOwner.mockResolvedValue({ userId: 'admin-1', tenantId: undefined })
       await service.logout('access.jwt', rawRefreshToken)
-      expect(eventsReceived(logSpy)).toEqual(['AUTH_LOGOUT'])
-      expect(logSpy.mock.calls[0]?.[0]).toMatchObject({ plane: 'platform' })
+      expectEvent(logSpy, 'AUTH_LOGOUT', { plane: 'platform', userId: 'admin-1' })
       logSpy.mockRestore()
     })
 
