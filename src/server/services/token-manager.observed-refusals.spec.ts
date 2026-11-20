@@ -11,16 +11,18 @@ import { TokenManagerService } from './token-manager.service'
 import { BYMAX_AUTH_HOOKS, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import { observedRefusal } from '../observability/observed-outcome'
+import { markedPlane, observedRefusal } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 
 const FAMILY = '4d6e1c2a-8b3f-4a5e-9c7d-0e1f2a3b4c5d'
 
 const redis = {
   get: jest.fn(),
+  getUserTokenEpoch: jest.fn(),
   rotateRefreshSession: jest.fn(),
   revokeFamily: jest.fn()
 }
+const verify = jest.fn()
 const options = {
   jwt: {
     accessExpiresIn: '15m',
@@ -61,7 +63,7 @@ describe('observed refusals of a refresh', () => {
         TokenManagerService,
         {
           provide: JwtService,
-          useValue: { sign: jest.fn(), decode: jest.fn(), verify: jest.fn() }
+          useValue: { sign: jest.fn(), decode: jest.fn(), verify }
         },
         { provide: BYMAX_AUTH_OPTIONS, useValue: options },
         { provide: AuthRedisService, useValue: redis },
@@ -131,5 +133,77 @@ describe('observed refusals of a refresh', () => {
 
     expect(observedRefusal(error)).toBe('expired')
     expect(codeOf(error)).toBe(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+  })
+})
+
+describe('the plane of a refused MFA temp token', () => {
+  let service: TokenManagerService
+
+  /** The claims of a temp token of the plane that passed its signature. */
+  const claims = {
+    dashboard: { sub: 'user-1', jti: 'jti-d', context: 'dashboard', tenantId: 'tenant-1' },
+    platform: { sub: 'admin-1', jti: 'jti-p', context: 'platform' }
+  } as const
+
+  beforeEach(async () => {
+    jest.resetAllMocks()
+    const module = await Test.createTestingModule({
+      providers: [
+        TokenManagerService,
+        {
+          provide: JwtService,
+          useValue: { sign: jest.fn(), decode: jest.fn(), verify }
+        },
+        { provide: BYMAX_AUTH_OPTIONS, useValue: options },
+        { provide: AuthRedisService, useValue: redis },
+        { provide: BYMAX_AUTH_HOOKS, useValue: {} }
+      ]
+    }).compile()
+    service = module.get(TokenManagerService)
+  })
+
+  /** The ways a verified temp token is refused, each arranging the doubles for one. */
+  const REFUSALS: ReadonlyArray<[string, (plane: 'dashboard' | 'platform') => void]> = [
+    [
+      'a tenant binding that does not fit the plane',
+      (plane) =>
+        verify.mockReturnValue(
+          plane === 'dashboard'
+            ? { ...claims.dashboard, tenantId: '' }
+            : { ...claims.platform, tenantId: 'x' }
+        )
+    ],
+    ['a record that is gone', () => redis.get.mockResolvedValue(null)],
+    ['a record of another account', () => redis.get.mockResolvedValue('someone-else')],
+    ['an epoch that was bumped', () => redis.getUserTokenEpoch.mockResolvedValue(5)]
+  ]
+
+  // Scenario: a temp token that passed its signature and is then refused, on each plane, for each reason.
+  // Expected: MFA_TEMP_TOKEN_INVALID, marked with the plane the token names, whatever the reason.
+  describe.each(['dashboard', 'platform'] as const)('a verified %s temp token', (plane) => {
+    it.each(REFUSALS)('is marked with its plane when it has %s', async (_reason, arrange) => {
+      verify.mockReturnValue(claims[plane])
+      redis.get.mockResolvedValue(claims[plane].sub)
+      redis.getUserTokenEpoch.mockResolvedValue(0)
+      arrange(plane)
+
+      const error = await refusalOf(service.verifyMfaTempToken('temp.jwt'))
+
+      expect(codeOf(error)).toBe(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+      expect(markedPlane(error)).toBe(plane)
+    })
+  })
+
+  // Scenario: a token whose signature does not verify. Expected: refused, and no plane is marked, because the
+  // claims were not trusted.
+  it('leaves a token that does not verify unmarked', async () => {
+    verify.mockImplementation(() => {
+      throw new Error('invalid signature')
+    })
+
+    const error = await refusalOf(service.verifyMfaTempToken('bad.jwt'))
+
+    expect(codeOf(error)).toBe(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    expect(markedPlane(error)).toBeUndefined()
   })
 })

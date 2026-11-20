@@ -174,7 +174,7 @@ export class MfaChallengeService {
     // is not benign on the recovery-code path, where one code and one token would mint two
     // sessions. The loser is reported as an invalid temp token.
     if (!(await this.tokenManager.consumeMfaTempToken(tempTokenJti))) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+      throw onPlane(context, new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID))
     }
     await this.settleRecovery(user, scope, opened, recoveryIndex, mfa)
 

@@ -16,7 +16,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { encrypt } from '../crypto/aes-gcm'
-import { generateTotpSecret } from '../crypto/totp'
+import { generateHotp, generateTotpSecret } from '../crypto/totp'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { markedPlane } from '../observability/observed-outcome'
@@ -142,8 +142,7 @@ describe('MfaService.challenge — the plane of a refusal', () => {
   })
 
   /** Arranges the account of the plane, with a TOTP secret the submitted code will not match. */
-  function arrange(plane: 'dashboard' | 'platform'): void {
-    const { base32 } = generateTotpSecret()
+  function arrange(plane: 'dashboard' | 'platform', base32 = generateTotpSecret().base32): void {
     const account = {
       id: plane === 'dashboard' ? 'user-1' : 'admin-1',
       ...(plane === 'dashboard' ? { tenantId: 'tenant-1' } : {}),
@@ -189,6 +188,23 @@ describe('MfaService.challenge — the plane of a refusal', () => {
       const error = await refusalOf(service.challenge('temp.jwt', '000000', '1.2.3.4', 'ua'))
 
       expect(codeOf(error)).toBe(AUTH_ERROR_CODES.MFA_INVALID_CODE)
+      expect(markedPlane(error)).toBe(plane)
+    }
+  )
+
+  // Scenario: two submissions race and this one loses the consume of the temp token, on each plane. Expected:
+  // MFA_TEMP_TOKEN_INVALID, marked with the plane of the token. Why: the token verified, so the plane is known.
+  it.each(['dashboard', 'platform'] as const)(
+    'marks a lost temp-token consume on %s with its plane',
+    async (plane) => {
+      const { base32 } = generateTotpSecret()
+      arrange(plane, base32)
+      mockTokenManager.consumeMfaTempToken.mockResolvedValue(false)
+      const code = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const error = await refusalOf(service.challenge('temp.jwt', code, '1.2.3.4', 'ua'))
+
+      expect(codeOf(error)).toBe(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
       expect(markedPlane(error)).toBe(plane)
     }
   )

@@ -25,7 +25,7 @@ import type {
 } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
-import { observed } from '../observability/observed-outcome'
+import { observed, onPlane } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -1340,7 +1340,7 @@ export class TokenManagerService {
       (payload.context === 'dashboard' && (payload.tenantId ?? '') === '') ||
       (payload.context === 'platform' && payload.tenantId !== undefined)
     ) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+      throw onPlane(payload.context, new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID))
     }
 
     // GET (not GETDEL): keep the entry alive so wrong-TOTP attempts can
@@ -1349,14 +1349,14 @@ export class TokenManagerService {
     const storedUserId = await this.redis.get(`mfa:${sha256(payload.jti)}`)
 
     if (storedUserId === null) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+      throw onPlane(payload.context, new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID))
     }
 
     // Defence-in-depth: cross-check the Redis-stored userId against the JWT sub claim.
     // In the current threat model this requires a forged JWT (which requires the secret),
     // but an explicit comparison makes the relationship between the two values auditable.
     if (storedUserId !== payload.sub) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+      throw onPlane(payload.context, new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID))
     }
 
     // The same bulk-revocation gate the access-token guards apply, on the plane the challenge
@@ -1372,7 +1372,7 @@ export class TokenManagerService {
       readStampedEpoch(payload) <
       (await this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, payload.context))
     ) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+      throw onPlane(payload.context, new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID))
     }
 
     return {
