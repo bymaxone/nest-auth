@@ -154,6 +154,24 @@ describe('AuthHealthProbe', () => {
     await expect(sharedWithFresh).resolves.toBe(true)
   })
 
+  // Scenario: the wait is bounded by an abort signal, and the store answers. Expected: the probe listens for
+  // the abort once, and takes the listener off when the answer arrives. Why: a signal that outlives the probe
+  // must not collect a listener per probe.
+  it('listens for the abort once and removes the listener when the store answers', async () => {
+    const bound = new AbortController().signal
+    const add = jest.spyOn(bound, 'addEventListener')
+    const remove = jest.spyOn(bound, 'removeEventListener')
+    jest.spyOn(AbortSignal, 'any').mockReturnValue(bound)
+    const probe = new AuthHealthProbe({ ping: () => Promise.resolve('PONG') })
+
+    await expect(probe.ping(new AbortController().signal)).resolves.toBe(true)
+    await Promise.resolve()
+
+    expect(add).toHaveBeenCalledWith('abort', expect.any(Function), { once: true })
+    const listener = add.mock.calls[0]?.[1]
+    expect(remove).toHaveBeenCalledWith('abort', listener)
+  })
+
   // Scenario: the client throws instead of returning a promise. Expected: the probe rejects with it.
   it('rejects with what a throwing client throws', async () => {
     const probe = new AuthHealthProbe({
