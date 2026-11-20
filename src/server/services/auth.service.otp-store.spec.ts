@@ -56,7 +56,7 @@ const mockOptions = {
   sessions: { enabled: false, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
 }
 
-const REQUEST = { ip: '1.2.3.4', headers: { 'user-agent': 'TestBrowser' } } as unknown as Request
+const REQUEST = { ip: '1.2.3.4', headers: { 'user-agent': 'TestBrowser' } } as Request
 const DTO = { email: EMAIL, password: 'SecureP@ss1', name: 'New User', tenantId: 'tenant-1' }
 
 /** What a store under memory pressure answers to a write it refuses. */
