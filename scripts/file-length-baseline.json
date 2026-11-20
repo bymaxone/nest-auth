@@ -11,7 +11,7 @@
     "src/server/controllers/mfa.controller.spec.ts": 902,
     "src/server/interfaces/auth-module-options.interface.ts": 992,
     "src/server/oauth/oauth.controller.spec.ts": 1078,
-    "src/server/oauth/oauth.service.spec.ts": 1537,
+    "src/server/oauth/oauth.service.spec.ts": 1538,
     "src/server/providers/default-auth-email.provider.spec.ts": 1205,
     "src/server/redis/auth-redis.service.spec.ts": 1363,
     "src/server/redis/auth-redis.service.ts": 1228,

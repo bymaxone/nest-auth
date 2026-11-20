@@ -405,12 +405,12 @@ describe('MfaService', () => {
       expect(mockRedis.setIfAbsent).not.toHaveBeenCalled()
     })
 
-    // …and it is recorded, naming the account and which surface it was attempted on. This is the
+    // …and it is recorded, naming the plane and the reason and no account. This is the
     // refusal that means "someone is holding a token for a passwordless account and trying to
     // enrol a factor on it" — the exact shape of the attack the gate was added for. The response
     // says only `reauthentication_required`, which a legitimate user also sees, so the log line is
     // the only place the attempt is distinguishable at all.
-    it('records the refused enrolment with the account and the surface', async () => {
+    it('records the refused enrolment as an event that names no account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
       mockRedis.get.mockImplementation(onlyRecentAuth(false))
@@ -446,9 +446,9 @@ describe('MfaService', () => {
       )
     })
 
-    // The lockout answers `account_locked`, which names neither the account nor the flow, so
-    // this line is what tells an operator whose budget ran out and where.
-    it('records a locked re-proof budget with the account and the surface', async () => {
+    // The lockout answers `account_locked`, which names neither the account nor the flow, so this event
+    // is what tells an operator which flow's budget ran out; it names no account.
+    it('records a locked re-proof budget as an event that names no account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
 

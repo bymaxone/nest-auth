@@ -593,8 +593,9 @@ describe('OAuthService', () => {
     // failures in this flow produce — so nothing in the response says a state/cookie binding was
     // broken. That is deliberate, and it makes this line the only record of the one failure here
     // that indicates an attack rather than a mistake: a callback URL delivered to a browser that
-    // did not start the authorization is the login-CSRF the binding exists to stop.
-    it('records which provider the unbound callback arrived for', async () => {
+    // did not start the authorization is the login-CSRF the binding exists to stop. The event carries the
+    // reason and no provider name.
+    it('records the unbound callback as an event that names no provider', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
       setupHappyPathCreate()
 

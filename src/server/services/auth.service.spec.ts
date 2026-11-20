@@ -1199,10 +1199,10 @@ describe('AuthService', () => {
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
     })
 
-    // Scenario: wrong password. Expected: the thrown code is exactly INVALID_CREDENTIALS and a
-    // warn log carries the masked email and tenantId. Why: pins the code and the warn template
-    // (line 226) so a blanked log message is caught.
-    it('should throw exactly INVALID_CREDENTIALS and warn-log the masked email on wrong password', async () => {
+    // Scenario: wrong password. Expected: the thrown code is exactly INVALID_CREDENTIALS and the warn log is
+    // the invalid-credentials event on the dashboard plane, carrying no address. Why: pins the code and the
+    // event so a blanked log is caught and an address cannot return to it.
+    it('should throw exactly INVALID_CREDENTIALS and warn-log an event that names no address on wrong password', async () => {
       expect.assertions(3)
       mockPasswordService.compare.mockResolvedValue(false)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
