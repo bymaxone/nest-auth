@@ -451,8 +451,7 @@ describe('WsTicketService', () => {
 
       await service.issue(payload())
 
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('userId=user-1'))
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('tenantId=tenant-1'))
+      expectEvent(logSpy, 'AUTH_WS_TICKET_ISSUED', { userId: 'user-1', tenantId: 'tenant-1' })
       logSpy.mockRestore()
     })
   })

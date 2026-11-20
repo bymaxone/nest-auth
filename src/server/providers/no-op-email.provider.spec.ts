@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
+import { expectEvent } from '../__tests__/log-events'
 import { maskEmail } from '../utils/mask-email'
 import { NoOpEmailProvider } from './no-op-email.provider'
 
@@ -37,13 +38,15 @@ describe('NoOpEmailProvider', () => {
       ).resolves.toBeUndefined()
     })
 
-    // The recipient is logged MASKED. This is the default provider — a deployment that ships
-    // without wiring one gets it — so an unmasked address here writes every user's email to
+    // No address is logged, masked or not. This is the default provider — a deployment that ships
+    // without wiring one gets it — so an address here would write every user's email to
     // stdout on every send, a PII disclosure produced by an omission rather than a decision.
-    it('should log the recipient address masked', async () => {
+    it('should log that nothing was sent, naming the method and no address', async () => {
       await provider.sendPasswordResetToken('tenant-1', 'user@example.com', 'token')
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expectEvent(logSpy, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendPasswordResetToken' }, [
+        'user@example.com',
+        maskEmail('user@example.com')
+      ])
     })
 
     // Verifies that the actual token value is never logged to prevent accidental secret leakage.
@@ -67,10 +70,12 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Masked for the same reason as above: this is the default provider.
-    it('should log the recipient address masked', async () => {
+    it('should log that nothing was sent, naming the method and no address', async () => {
       await provider.sendPasswordResetOtp('tenant-1', 'user@example.com', '123456')
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expectEvent(logSpy, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendPasswordResetOtp' }, [
+        'user@example.com',
+        maskEmail('user@example.com')
+      ])
     })
   })
 
@@ -87,10 +92,12 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Verifies that the recipient email is included in the log output.
-    it('should log the recipient address masked', async () => {
+    it('should log that nothing was sent, naming the method and no address', async () => {
       await provider.sendEmailVerificationOtp('tenant-1', 'user@example.com', '654321')
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expectEvent(logSpy, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendEmailVerificationOtp' }, [
+        'user@example.com',
+        maskEmail('user@example.com')
+      ])
     })
   })
 
@@ -107,10 +114,12 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Verifies that the recipient email appears in the log output for the MFA-enabled notification.
-    it('should log the recipient address masked', async () => {
+    it('should log that nothing was sent, naming the method and no address', async () => {
       await provider.sendMfaEnabledNotification('tenant-1', 'user@example.com')
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expectEvent(logSpy, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendMfaEnabledNotification' }, [
+        'user@example.com',
+        maskEmail('user@example.com')
+      ])
     })
   })
 
@@ -127,10 +136,12 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Verifies that the recipient email appears in the log output for the MFA-disabled notification.
-    it('should log the recipient address masked', async () => {
+    it('should log that nothing was sent, naming the method and no address', async () => {
       await provider.sendMfaDisabledNotification('tenant-1', 'user@example.com')
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expectEvent(logSpy, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendMfaDisabledNotification' }, [
+        'user@example.com',
+        maskEmail('user@example.com')
+      ])
     })
   })
 
@@ -149,10 +160,12 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Verifies that the recipient email is logged when a new session alert is sent.
-    it('should log the recipient address masked', async () => {
+    it('should log that nothing was sent, naming the method and no address', async () => {
       await provider.sendNewSessionAlert('tenant-1', 'user@example.com', sessionInfo)
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expectEvent(logSpy, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendNewSessionAlert' }, [
+        'user@example.com',
+        maskEmail('user@example.com')
+      ])
     })
   })
 
@@ -176,10 +189,12 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Verifies that the invitee email is included in the log output when an invitation is sent.
-    it('should log the recipient address masked', async () => {
+    it('should log that nothing was sent, naming the method and no address', async () => {
       await provider.sendInvitation('tenant-1', 'invitee@example.com', inviteData)
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('invitee@example.com')))
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('invitee@example.com'))
+      expectEvent(logSpy, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendInvitation' }, [
+        'invitee@example.com',
+        maskEmail('invitee@example.com')
+      ])
     })
   })
 
@@ -205,13 +220,14 @@ describe('NoOpEmailProvider', () => {
       ).resolves.toBeUndefined()
     })
 
-    // Verifies the recipient is masked and the token is never written to the log.
-    it('should log the recipient masked and never the token', async () => {
+    // Verifies no address and no token is written to the log.
+    it('should log that nothing was sent, with no address and no token', async () => {
       await provider.sendWorkspaceInvitation('tenant-1', 'invitee@example.com', data)
-
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('invitee@example.com')))
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('invitee@example.com'))
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining(data.inviteToken))
+      expectEvent(logSpy, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendWorkspaceInvitation' }, [
+        'invitee@example.com',
+        maskEmail('invitee@example.com'),
+        data.inviteToken
+      ])
     })
   })
 })

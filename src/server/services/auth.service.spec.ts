@@ -20,6 +20,7 @@ import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { describeChannelStatus } from '../utils/describe-error'
 import { sleep } from '../utils/sleep'
 import { AccountStatusService } from './account-status.service'
 import { AuthService } from './auth.service'
@@ -28,7 +29,7 @@ import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
-import { expectEvent } from '../__tests__/log-events'
+import { eventsReceived, expectEvent, serialized } from '../__tests__/log-events'
 
 // Mock the anti-enumeration sleep so timing-normalization delays are observable and instant.
 jest.mock('../utils/sleep', () => ({ sleep: jest.fn().mockResolvedValue(undefined) }))
@@ -316,9 +317,9 @@ describe('AuthService', () => {
     it('should log the registered userId and tenantId on success', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       await service.register(dto, mockReq)
-      expect(logSpy).toHaveBeenCalledWith(
-        `register: user registered userId=${USER.id} tenantId=tenant-1`
-      )
+      expectEvent(logSpy, 'AUTH_USER_REGISTERED', { userId: USER.id, tenantId: 'tenant-1' }, [
+        'user@example.com'
+      ])
       logSpy.mockRestore()
     })
 
@@ -988,7 +989,7 @@ describe('AuthService', () => {
       })
 
       const unreadableWarnings = (): string[] =>
-        warnSpy.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('onLockout'))
+        eventsReceived(warnSpy).filter((event) => event === 'AUTH_LOCKOUT_STATE_UNREADABLE')
 
       it('skips the hook and still refuses when the lockout flag cannot be read', async () => {
         // First read is the pre-check, which stays fail-closed; the second feeds the hook.
@@ -1002,12 +1003,14 @@ describe('AuthService', () => {
         expect(mockHooks.onLoginFailed).toHaveBeenCalledTimes(1)
         expect(mockHooks.onLockout).not.toHaveBeenCalled()
         expect(unreadableWarnings()).toHaveLength(1)
-        // The line names the class of the fault and nothing it carried: no address, no key, no host.
-        const line = unreadableWarnings()[0] ?? ''
-        expect(line).toContain('ReplyError')
-        expect(line).not.toContain('user@example.com')
-        expect(line).not.toContain('10.0.0.7')
-        expect(line).not.toContain('lf:secret')
+        // The event carries the library's description of the fault and nothing the fault carried: no
+        // address, no key, no host, and not even the class name the channel chose.
+        expectEvent(
+          warnSpy,
+          'AUTH_LOCKOUT_STATE_UNREADABLE',
+          { detail: describeChannelStatus(fault) },
+          ['user@example.com', '10.0.0.7', 'lf:secret', 'ReplyError']
+        )
       })
 
       it('reads the lock state only once when no onLockout hook is set', async () => {
@@ -1021,14 +1024,18 @@ describe('AuthService', () => {
         expect(mockBruteForce.getRemainingLockoutSeconds).not.toHaveBeenCalled()
       })
 
-      it('names a fault that is not an Error as unknown', async () => {
+      it('describes a fault that is not an Error by its type', async () => {
         mockBruteForce.isLockedOut.mockResolvedValueOnce(false).mockRejectedValueOnce('ECONNRESET')
 
         const err = await service.login(dto, mockReq).catch((e: unknown) => e)
 
         expect(getErrorCode(err)).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
-        expect(unreadableWarnings()[0]).toContain('cause=unknown')
-        expect(unreadableWarnings()[0]).not.toContain('ECONNRESET')
+        expectEvent(
+          warnSpy,
+          'AUTH_LOCKOUT_STATE_UNREADABLE',
+          { detail: describeChannelStatus('ECONNRESET') },
+          ['ECONNRESET']
+        )
       })
 
       it('announces the lock with the configured window when its TTL cannot be read', async () => {
@@ -1048,7 +1055,7 @@ describe('AuthService', () => {
         )
         expect(mockHooks.onLoginFailed).toHaveBeenCalledTimes(1)
         expect(unreadableWarnings()).toHaveLength(1)
-        expect(unreadableWarnings()[0]).not.toContain('10.0.0.7')
+        expect(serialized(warnSpy)).not.toContain('10.0.0.7')
       })
 
       it('lets a fault in recordFailure itself reach the caller', async () => {
@@ -1142,7 +1149,12 @@ describe('AuthService', () => {
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
         ...provedArgs(expect.objectContaining({ id: USER.id }), '1.2.3.4', 'TestBrowser')
       )
-      expect(logSpy).toHaveBeenCalledWith(`login: success userId=${USER.id} tenantId=tenant-1`)
+      expectEvent(logSpy, 'AUTH_LOGIN_SUCCEEDED', {
+        plane: 'dashboard',
+        userId: USER.id,
+        tenantId: 'tenant-1',
+        via: 'password'
+      })
       expect(mockSessionService.createSession).not.toHaveBeenCalled()
       logSpy.mockRestore()
     })
@@ -1307,9 +1319,12 @@ describe('AuthService', () => {
 
       await service.login(dto, mockReq)
 
-      expect(logSpy).toHaveBeenCalledWith(
-        `login: MFA challenge issued userId=${USER.id} tenantId=tenant-1`
-      )
+      expectEvent(logSpy, 'AUTH_LOGIN_MFA_CHALLENGED', {
+        plane: 'dashboard',
+        userId: USER.id,
+        tenantId: 'tenant-1',
+        via: 'password'
+      })
       logSpy.mockRestore()
     })
 
@@ -1493,13 +1508,12 @@ describe('AuthService', () => {
       expect(mockRedis.readSessionOwner).toHaveBeenCalledWith(`rt:${sha256('the-refresh-token')}`)
     })
 
-    // The log line names the owner the stored record gave, and says so plainly when there was
-    // none. An operator reading "userId=" with nothing after it cannot tell an account whose id
-    // is empty from a session that was already gone.
+    // The event names the owner the stored record gave and leaves the field out when there was none, so an
+    // operator can tell a session that was already gone from an account.
     it.each([
-      ['user-1', 'user-1'],
-      ['', '(no live session)']
-    ])('logs the owner as %s when the record names %s', async (owner, expected) => {
+      ['user-1', { plane: 'dashboard', userId: 'user-1' }],
+      ['', { plane: 'dashboard' }]
+    ])('writes the logout event for the owner "%s" with the fields %j', async (owner, fields) => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       mockRedis.readSessionOwner.mockResolvedValue({ userId: owner, tenantId: 'tenant-1' })
       mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
@@ -1510,9 +1524,7 @@ describe('AuthService', () => {
 
       await service.logout('access.jwt', 'the-refresh-token')
 
-      expect(logSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
-        `logout: userId=${expected}`
-      )
+      expectEvent(logSpy, 'AUTH_LOGOUT', fields)
       logSpy.mockRestore()
     })
 
@@ -1608,7 +1620,7 @@ describe('AuthService', () => {
 
       await service.logout('access.token', 'raw-refresh')
 
-      expect(logSpy).toHaveBeenCalledWith('logout: userId=user-1')
+      expectEvent(logSpy, 'AUTH_LOGOUT', { plane: 'dashboard', userId: 'user-1' })
       logSpy.mockRestore()
     })
 
@@ -2537,9 +2549,7 @@ describe('AuthService', () => {
         tenantId: 'tenant-1'
       })
       // Pin the success log template (line 408) so blanking it to '' is caught.
-      expect(logSpy).toHaveBeenCalledWith(
-        `verifyEmail: email verified userId=${USER.id} tenantId=tenant-1`
-      )
+      expectEvent(logSpy, 'AUTH_EMAIL_VERIFIED', { userId: USER.id, tenantId: 'tenant-1' })
       logSpy.mockRestore()
     })
 
@@ -2778,90 +2788,45 @@ describe('AuthService', () => {
 
       // One argument, not two: the error object is never handed to the logger, because a relay
       // that rejects by quoting the message body would carry the OTP into the record Nest prints
-      // from it. The description replaces it, and the code must not appear anywhere in the line.
-      expect(loggerSpy).toHaveBeenCalledWith(
-        expect.stringContaining('sendEmailVerificationOtp failed')
+      // from it. The event carries the library's description, and the code must not appear in it.
+      expectEvent(
+        loggerSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'email_verification_otp', detail: describeChannelStatus(new Error('email error')) },
+        ['654321', 'email error', 'user@example.com']
       )
       expect(loggerSpy.mock.calls[0]).toHaveLength(1)
-      expect(loggerSpy.mock.calls[0]?.[0]).not.toContain('654321')
       loggerSpy.mockRestore()
     })
 
-    // The seam at this site: the template puts `: ` between the identifier and the description,
-    // so a withheld value spanning both is rebuilt from two fields that each contain nothing.
-    // Reachable because the description opens with the error's NAME, which a custom class controls.
-    it('withholds the line when the identifier and the error compose the address', async () => {
-      // The composed value straddles the template's own `': '` separator: the identifier ends
-      // one field and the description begins the next, and neither field contains the value.
-      // The description opens with the opaque stand-in — nothing the channel wrote gets in — so
-      // straddling value has to be built from.
-      const named = new Error('channel down')
-
+    // The user id comes from the consumer's repository, which the interface places no character constraint on, and
+    // it is not part of the event at all: a CR in it cannot forge a record, and a six-digit run in it cannot put the
+    // generated code back into the log.
+    it.each([
+      [
+        'a control character',
+        'u1\nLOG [AuthService] login: success userId=victim',
+        '112358',
+        'victim'
+      ],
+      ['the generated code', 'user-864209-abc', '864209', 'user-864209-abc']
+    ])('writes no user id when it contains %s', async (_label, id, code, absent) => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       mockRedis.setnx.mockResolvedValue(true)
-      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, id: 'u1', emailVerified: false })
-      mockOtpService.generate.mockReturnValue('414141')
-      mockOtpService.store.mockResolvedValue(undefined)
-      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(named)
-
-      await service.resendVerificationEmail('tenant-1', 'u1: <error>', mockReq)
-      await new Promise((r) => setImmediate(r))
-
-      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).not.toContain('u1: <error>')
-      expect(logged).toContain('withheld')
-      loggerSpy.mockRestore()
-    })
-
-    // `userId` reaches a log template and comes from the consumer's repository, which the
-    // interface places no character constraint on. A CR in it closes the record and opens a
-    // forged one — the attack `logSafe` exists for, and the same reasoning that already puts
-    // `logSafe` around `tenantId` elsewhere in this codebase. Redaction alone does not cover it:
-    // `redactSecrets` removes values, not control characters.
-    it('neutralises a control character in the user id', async () => {
-      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-      mockRedis.setnx.mockResolvedValue(true)
-      mockUserRepo.findByEmail.mockResolvedValue({
-        ...USER,
-        id: 'u1\nLOG [AuthService] login: success userId=victim',
-        emailVerified: false
-      })
-      mockOtpService.generate.mockReturnValue('112358')
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, id, emailVerified: false })
+      mockOtpService.generate.mockReturnValue(code)
       mockOtpService.store.mockResolvedValue(undefined)
       mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(new Error('channel down'))
 
       await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
       await new Promise((r) => setImmediate(r))
 
-      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).not.toContain('\n')
-      expect(logged).toContain('<malformed>')
-      loggerSpy.mockRestore()
-    })
-
-    // `userId` is the consumer's identifier and is interpolated into the same line as the error.
-    // An id that happens to contain the generated code puts it back into the record after the
-    // error text was cleaned — and a six-digit run inside a UUID-shaped id is not exotic. Every
-    // field the template interpolates has to be sanitised, not only the one that obviously
-    // carries channel text.
-    it('redacts the code from the user id as well as from the error', async () => {
-      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-      mockRedis.setnx.mockResolvedValue(true)
-      mockUserRepo.findByEmail.mockResolvedValue({
-        ...USER,
-        id: 'user-864209-abc',
-        emailVerified: false
-      })
-      mockOtpService.generate.mockReturnValue('864209')
-      mockOtpService.store.mockResolvedValue(undefined)
-      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(new Error('channel down'))
-
-      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
-      await new Promise((r) => setImmediate(r))
-
-      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).toContain('sendEmailVerificationOtp failed')
-      expect(logged).not.toContain('864209')
+      expectEvent(
+        loggerSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'email_verification_otp', detail: describeChannelStatus(new Error('x')) },
+        [absent, code, '\n']
+      )
       loggerSpy.mockRestore()
     })
 
@@ -2881,14 +2846,15 @@ describe('AuthService', () => {
       await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
       await new Promise((r) => setImmediate(r))
 
-      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).not.toContain('975310')
-      // On a credential path nothing the relay wrote reaches the line, and nothing is parsed off it
-      // either. What remains is the label this library owns plus the opaque stand-in — which IS the
-      // diagnosis: it says the send failed and how deep the failure was reported from.
-      expect(logged).not.toContain('rejected by policy')
-      expect(logged).not.toContain('550')
-      expect(logged).toBe('sendEmailVerificationOtp failed for user user-1: <error>')
+      // On a credential path nothing the relay wrote reaches the event, and nothing is parsed off it
+      // either. What remains is the opaque stand-in — which IS the diagnosis: it says the send failed
+      // and how deep the failure was reported from.
+      expectEvent(
+        loggerSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'email_verification_otp', detail: '<error>' },
+        ['975310', 'rejected by policy', '550']
+      )
       loggerSpy.mockRestore()
     })
 
@@ -2940,19 +2906,14 @@ describe('AuthService', () => {
       await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
       await new Promise((r) => setImmediate(r))
 
-      // The error's NAME carries the code here, and no part of it reaches the line: the
-      // description carries nothing the channel authored. The assertion is not merely that the
-      // code is absent — it is that the ORDINARY line survives, because a build that let the name
-      // through would have `safeLogLine` withhold the whole record to stop it, and the operator
-      // would lose the diagnosis to a guard that should never have had to fire.
-      const logged = loggerSpy.mock.calls[0]?.[0] as string
-      expect(logged).not.toContain('654321')
-      // On a credential path nothing the relay wrote reaches the line, and nothing is parsed off it
-      // either. What remains is the label this library owns plus the opaque stand-in — which IS the
-      // diagnosis: it says the send failed and how deep the failure was reported from.
-      expect(logged).not.toContain('rejected by policy')
-      expect(logged).not.toContain('550')
-      expect(logged).toBe('sendEmailVerificationOtp failed for user user-1: <error>')
+      // The error's NAME carries the code here, and no part of it reaches the event: the
+      // description carries nothing the channel authored.
+      expectEvent(
+        loggerSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'email_verification_otp', detail: '<error>' },
+        ['654321', 'E654321', 'rejected by policy', '550']
+      )
       loggerSpy.mockRestore()
     })
   })
@@ -3421,9 +3382,7 @@ describe('AuthService', () => {
       // succeeded, nothing surfaces to the user, and the account keeps a hash the migration was
       // supposed to replace. Without the line, an operator watching a parameter migration stall
       // on a subset of accounts has no record of why it skipped them.
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining(`the stored hash changed userId=${USER.id}`)
-      )
+      expectEvent(logSpy, 'AUTH_REHASH_SKIPPED')
       logSpy.mockRestore()
     })
 
@@ -3497,17 +3456,14 @@ describe('AuthService', () => {
       )
     })
 
-    // The clear is logged with the address masked and the tenant named — an operator auditing
-    // "who unlocked this account" needs both, and must not get the address in the clear.
-    it('logs the clear with the address masked', async () => {
+    // The clear is logged with the tenant named and no address at all: an operator auditing which tenant had a
+    // lockout cleared gets it, and the address never reaches the log.
+    it('logs the clear with the tenant and no address', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
       await service.unlockAccount('user@example.com', 'tenant-1')
 
-      const logged = logSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(logged).toContain('unlockAccount: lockout cleared')
-      expect(logged).toContain('tenantId=tenant-1')
-      expect(logged).not.toContain('user@example.com')
+      expectEvent(logSpy, 'AUTH_ACCOUNT_UNLOCKED', { tenantId: 'tenant-1' }, ['user@example.com'])
       logSpy.mockRestore()
     })
   })

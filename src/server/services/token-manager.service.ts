@@ -30,8 +30,6 @@ import { markingPlane, observed } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
 import { describeChannelStatus } from '../utils/describe-error'
-import { logSafe } from '../utils/log-safe'
-import { ownerFragment } from '../utils/owner-fragment'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { serializeSession } from '../utils/serialize-session'
 import { dashboardSessionDetail, platformSessionExtra } from '../utils/session-detail'
@@ -475,13 +473,12 @@ export class TokenManagerService {
       return this.rotateFromGrace(outcome.sessionJson, ip, userAgent, refreshTtl)
     }
     if (outcome.kind === 'reused') {
-      // Named, on both lines: this is the strongest compromise signal the library produces (a token that
-      // was already exchanged has been presented again), and the default hooks are no-ops, so the log is
-      // the only place an operator learns whose account it concerns (ASVS 16.2.1).
+      // The strongest compromise signal the library produces: a token that was already exchanged has
+      // been presented again. Both events carry the family id and no owner; the owner reaches a host
+      // through the reuse hook, which runs after the revocation reads the member record (ASVS 16.2.1).
       //
-      // Two lines rather than one: the detection is the finding and the revocation is the
-      // response to it, and a `revokeFamily` that throws must not take the finding down with
-      // it. The owner is only knowable after the revocation, which reads a member record.
+      // Two events rather than one: the detection is the finding and the revocation is the
+      // response to it, and a `revokeFamily` that throws must not take the finding down with it.
       logEvent(this.logger, 'AUTH_REFRESH_REUSE_DETECTED', {
         plane: 'dashboard',
         familyId: outcome.familyId

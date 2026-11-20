@@ -25,6 +25,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { expectEvent } from '../__tests__/log-events'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -188,6 +189,8 @@ const TEST_HEADERS: Record<string, string | string[] | undefined> = {
 // ---------------------------------------------------------------------------
 // InvitationService — invite() + acceptInvitation()
 // ---------------------------------------------------------------------------
+
+const ACTED = { tenantId: 'tenant-1', actorUserId: 'inviter-1' } as const
 
 describe('InvitationService', () => {
   let service: InvitationService
@@ -384,15 +387,13 @@ describe('InvitationService', () => {
       expect(delta).toBeLessThanOrEqual(expectedMs + 1_000)
     })
 
-    // Scenario: a successful invite; expected: an info log identifying the created invitation is
-    // emitted. Why: pins the "invite: invitation created" template so emptying it is caught — the
-    // invite() method returns void, so the log is the only observable success signal here.
+    // Scenario: a successful invite; expected: the invitation-created event, with the tenant and the inviter and no
+    // address or role. Why: the invite() method returns void, so the event is the only observable success signal.
     it('should log the invitation-created event on success', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
-      expect(logged).toContain('invite: invitation created')
+      expectEvent(logSpy, 'AUTH_INVITATION_CREATED', ACTED, ['invited@example.com', 'member'])
       logSpy.mockRestore()
     })
 
@@ -757,16 +758,19 @@ describe('InvitationService', () => {
       ).resolves.toBe(AUTH_RESULT)
     })
 
-    // Scenario: a successful acceptance; expected: an info log identifying the acceptance event
-    // is emitted. Why: pins the "acceptInvitation: invitation accepted" template so emptying it
-    // is caught — the success path is otherwise observable only via the returned AuthResult.
+    // Scenario: a successful acceptance; expected: the invitation-accepted event with the new user and the tenant,
+    // and no role. Why: the success path is otherwise observable only via the returned AuthResult.
     it('should log the invitation-accepted event on success', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       const dto = { token: VALID_TOKEN, name: 'Invited User', password: 'Secure123!' }
       await service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
 
-      const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
-      expect(logged).toContain('acceptInvitation: invitation accepted')
+      expectEvent(
+        logSpy,
+        'AUTH_INVITATION_ACCEPTED',
+        { userId: AUTH_USER.id, tenantId: 'tenant-1' },
+        ['member']
+      )
       logSpy.mockRestore()
     })
 
@@ -1000,9 +1004,9 @@ describe('InvitationService', () => {
       expect(mockUserRepo.create).not.toHaveBeenCalled()
     })
 
-    // The refusal is logged with the inviter and the role, which is what an operator needs to
-    // tell a revoked delegation from a corrupted record.
-    it('logs which inviter lost the authority the invitation rests on', async () => {
+    // The refusal is recorded with its reason, which is what an operator needs to tell a revoked delegation from
+    // a corrupted record; neither the inviter nor the role is part of the event.
+    it('records that the inviter lost the authority the invitation rests on', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockUserRepo.findById.mockResolvedValue(null)
       mockRedis.getdel.mockResolvedValue(JSON.stringify(VALID_STORED_INVITATION))
@@ -1016,10 +1020,10 @@ describe('InvitationService', () => {
         )
       ).rejects.toThrow(AuthException)
 
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('the inviter can no longer grant this invitation')
-      expect(warned).toContain('inviterUserId=inviter-1')
-      expect(warned).toContain('role=member')
+      expectEvent(warnSpy, 'AUTH_INVITATION_REFUSED', { reason: 'inviter_cannot_grant' }, [
+        'inviter-1',
+        'member'
+      ])
       warnSpy.mockRestore()
     })
   })
@@ -1057,19 +1061,17 @@ describe('InvitationService', () => {
       expect(mockRedis.get).toHaveBeenCalledWith(`inv:${TOKEN_HASH}`)
     })
 
-    // The withdrawal is logged with the address masked and the tenant and revoker named: the
-    // three things an operator reconstructing "who cancelled this invitation" needs, and the
-    // one thing — the address in the clear — they must not get from a log line.
-    it('logs the withdrawal with the address masked', async () => {
+    // The withdrawal is recorded with the tenant and the revoker: what an operator reconstructing "who cancelled
+    // this invitation" needs. No address appears in it, masked or not.
+    it('logs the withdrawal with the tenant and the revoker and no address', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
       await service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
 
-      const logged = logSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(logged).toContain('revokeInvitation: invitation withdrawn')
-      expect(logged).toContain('tenantId=tenant-1')
-      expect(logged).toContain('revokerUserId=inviter-1')
-      expect(logged).not.toContain('invited@example.com')
+      expectEvent(logSpy, 'AUTH_INVITATION_REVOKED', ACTED, [
+        'invited@example.com',
+        'i***@example.com'
+      ])
       logSpy.mockRestore()
     })
 
@@ -1344,15 +1346,14 @@ describe('InvitationService', () => {
       expect(mockRedis.set).not.toHaveBeenCalled()
       expect(mockRedis.del).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
-      // The whole line, not just its tail: this refusal is answered with the same
-      // `insufficient_role` an ordinary rank failure gets, so an operator can only tell sustained
-      // contention on one invitee from a permissions mistake by the address and tenant being
-      // named here. Masked, because the line names a person.
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('the pending invitation kept changing under the rank check')
-      expect(warned).toContain('email=i***@example.com')
-      expect(warned).not.toContain('invited@example.com')
-      expect(warned).toContain('tenantId=tenant-1')
+      // This refusal is answered with the same `insufficient_role` an ordinary rank failure gets, so the
+      // reason in the event is what tells sustained contention on one invitee from a permissions mistake.
+      // The event names no person and no tenant.
+      expectEvent(warnSpy, 'AUTH_INVITATION_REFUSED', { reason: 'changed_under_rank_check' }, [
+        'invited@example.com',
+        'i***@example.com',
+        'tenant-1'
+      ])
       warnSpy.mockRestore()
     })
 
@@ -1499,11 +1500,10 @@ describe('InvitationService', () => {
     // record that the attempt happened, which is what an operator investigating a member
     // probing an address list has to work from.
     //
-    // Each assertion also pins the address as MASKED and the raw one as absent. The line names a
-    // person, and the mask is the only thing keeping a tenant's invitee list out of wherever
-    // logs are shipped.
+    // Each assertion also pins that no address, masked or not, and no tenant appears in the event: an invitee
+    // list must not reach wherever logs are shipped.
 
-    it('records a supersede refused for rank, with the address masked', async () => {
+    it('records a supersede refused for rank, with no address', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'member' })
       mockRedis.get.mockImplementation((key: string) =>
@@ -1518,17 +1518,17 @@ describe('InvitationService', () => {
         service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
       ).rejects.toThrow(AuthException)
 
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain(`email=${MASKED}`)
-      expect(warned).not.toContain('invited@example.com')
-      expect(warned).toContain('tenantId=tenant-1')
-      expect(warned).toContain('inviterRole=member')
+      expectEvent(warnSpy, 'AUTH_INVITATION_REFUSED', { reason: 'outranked' }, [
+        'invited@example.com',
+        MASKED,
+        'tenant-1'
+      ])
       warnSpy.mockRestore()
     })
 
     // The revoke route's own refusal, which returns a bare `false` — indistinguishable from
     // "nothing pending" by design, so the log line is the only record it happened.
-    it('records a revoke refused for rank, with the address masked', async () => {
+    it('records a revoke refused for rank, with no address', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'member' })
       mockRedis.get.mockImplementation((key: string) =>
@@ -1543,11 +1543,11 @@ describe('InvitationService', () => {
         service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
       ).resolves.toBe(false)
 
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain(`email=${MASKED}`)
-      expect(warned).not.toContain('invited@example.com')
-      expect(warned).toContain('tenantId=tenant-1')
-      expect(warned).toContain('revokerUserId=inviter-1')
+      expectEvent(warnSpy, 'AUTH_INVITATION_REFUSED', { reason: 'revoke_outranked' }, [
+        'invited@example.com',
+        MASKED,
+        'inviter-1'
+      ])
       warnSpy.mockRestore()
     })
   })

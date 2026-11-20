@@ -25,7 +25,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { EmailChangeService } from './email-change.service'
 import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
-import { expectEvent } from '../__tests__/log-events'
+import { eventsReceived, expectEvent } from '../__tests__/log-events'
 
 const USER = {
   id: 'user-1',
@@ -416,16 +416,17 @@ describe('EmailChangeService', () => {
       warnSpy.mockRestore()
     })
 
-    // The address is masked in the log. An operator needs to see that a change was requested;
+    // The event names the account and no address. An operator needs to see that a change was requested;
     // they do not need the address, and a log aggregator is not where it should end up.
-    it('masks the address in the log', async () => {
+    it('logs the request with the account and no address', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
       await service.requestChange('user-1', 'tenant-1', dto)
 
-      const logged = logSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(logged).toContain('requestChange: verification sent')
-      expect(logged).not.toContain(NEW_EMAIL)
+      expectEvent(logSpy, 'AUTH_EMAIL_CHANGE_REQUESTED', { userId: 'user-1' }, [
+        NEW_EMAIL,
+        'n***@example.com'
+      ])
       logSpy.mockRestore()
     })
   })
@@ -596,13 +597,11 @@ describe('EmailChangeService', () => {
 
       // Refused as a MALFORMED RECORD, and the difference is not visible in the response —
       // both refusals answer the same `email_change_token_invalid`, deliberately. It is visible
-      // here: `assertStillBound` announces "no longer bound to the account password", which
-      // asserts something specific and false about a corrupted record — that the user changed
-      // their password. A shape check that lets the value through reaches that line and files
-      // the wrong diagnosis, sending whoever reads it after a password change that never
-      // happened.
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).not.toContain('no longer bound to the account password')
+      // here: `assertStillBound` writes the stale-token event, which asserts something specific
+      // and false about a corrupted record — that the user changed their password. A shape check
+      // that lets the value through reaches that event and files the wrong diagnosis, sending
+      // whoever reads it after a password change that never happened.
+      expect(eventsReceived(warnSpy)).not.toContain('AUTH_EMAIL_CHANGE_TOKEN_STALE')
       warnSpy.mockRestore()
     })
 
@@ -675,34 +674,29 @@ describe('EmailChangeService', () => {
       expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
     })
 
-    // The refusal names the account whose token stopped matching, which is what an operator
-    // needs to tell a stale link from a planted one.
-    it('logs which account a rejected token belonged to', async () => {
+    // The refusal is recorded as the stale-token event, which says the token stopped matching the
+    // password and names no account.
+    it('records a token that no longer matches the password, without naming the account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockUserRepo.findById.mockResolvedValue({ ...USER, passwordHash: 'scrypt:new:hash' })
 
       await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
 
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('token no longer bound to the account password')
-      expect(warned).toContain('userId=user-1')
+      expectEvent(warnSpy, 'AUTH_EMAIL_CHANGE_TOKEN_STALE', {}, ['user-1'])
       warnSpy.mockRestore()
     })
 
-    // Both addresses are masked in the log, for the same reason the request masks one.
-    it('masks both addresses in the log', async () => {
+    // No address appears in the event, old or new: it names the account whose address changed.
+    it('logs the change with the account and no address', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
       await service.confirmChange({ token: TOKEN })
 
-      const logged = logSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(logged).toContain('confirmChange: address changed')
-      expect(logged).toContain('userId=user-1')
-      // Both endpoints of the move are named, masked — an operator reconstructing an incident
-      // needs to see WHICH change happened, not just that one did.
-      expect(logged).toMatch(/from=\S+ to=\S+/)
-      expect(logged).not.toContain('old@example.com')
-      expect(logged).not.toContain(NEW_EMAIL)
+      expectEvent(logSpy, 'AUTH_EMAIL_CHANGED', { userId: 'user-1' }, [
+        'old@example.com',
+        'o***@example.com',
+        NEW_EMAIL
+      ])
       logSpy.mockRestore()
     })
   })

@@ -36,7 +36,7 @@ import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { sleep } from '../utils/sleep'
 import type { Request } from 'express'
-import { expectEvent } from '../__tests__/log-events'
+import { eventsReceived, expectEvent } from '../__tests__/log-events'
 
 const mockSleep = sleep as jest.MockedFunction<typeof sleep>
 
@@ -572,16 +572,16 @@ describe('PasswordResetService', () => {
       await new Promise((resolve) => setImmediate(resolve))
 
       expect(mockUserRepo.updatePassword).toHaveBeenCalled()
-      const logged = errorSpy.mock.calls[0]?.[0] as string
       expect(errorSpy.mock.calls[0]).toHaveLength(1)
-      expect(logged).toContain('notifyPasswordChanged: delivery failed for user u1')
-      expect(logged).not.toContain('user@example.com')
-      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
-      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // Nothing the transport wrote reaches the event, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the exact event
       // is what keeps this from passing on a build that logs nothing at all.
-      expect(logged).not.toContain('recipient rejected')
-      expect(logged).not.toContain('550')
-      expect(logged).toBe('notifyPasswordChanged: delivery failed for user u1: <error>')
+      expectEvent(
+        errorSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'password_changed_notice', detail: '<error>' },
+        ['user@example.com', 'recipient rejected', '550', 'u1']
+      )
       errorSpy.mockRestore()
     })
 
@@ -602,20 +602,20 @@ describe('PasswordResetService', () => {
 
       expect(mockUserRepo.updatePassword).toHaveBeenCalled()
 
-      const logged = errorSpy.mock.calls[0]?.[0] as string
       // One argument, not two: the error object is never handed to the logger, because a logger
       // that receives it prints whatever the transport hung on it.
       expect(errorSpy.mock.calls[0]).toHaveLength(1)
-      // Which flow, and whose account. Without both, an operator has a delivery failure with no
-      // way to reach the affected user.
-      expect(logged).toContain('notifyPasswordChanged: delivery failed for user u1')
-      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
-      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // Which flow. The event names no account: a delivery failure is not an audit record, and the
+      // address the rejection named must not come back through it.
+      // Nothing the transport wrote reaches the event, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the exact event
       // is what keeps this from passing on a build that logs nothing at all.
-      expect(logged).not.toContain('user@example.com')
-      expect(logged).not.toContain('smtp down')
-      expect(logged).not.toContain('550')
-      expect(logged).toBe('notifyPasswordChanged: delivery failed for user u1: <error>')
+      expectEvent(
+        errorSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'password_changed_notice', detail: '<error>' },
+        ['user@example.com', 'smtp down', '550', 'u1']
+      )
       errorSpy.mockRestore()
     })
 
@@ -848,40 +848,11 @@ describe('PasswordResetService', () => {
         await flushMicrotasks()
 
         // Both errors must be logged: the original email failure AND the rollback failure.
-        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-        expect(logged).toMatch(/sendPasswordResetToken failed/)
-        expect(logged).toMatch(/pw_reset rollback delete failed/)
-      } finally {
-        loggerSpy.mockRestore()
-      }
-    })
-
-    // The same seam at the token site. `userId` is not redacted here (a 64-hex token cannot hide
-    // in an identifier), so the composition is the only guard, and `safeLogLine` is what provides
-    // it — the per-field redactions cannot see across the `: ` the template inserts.
-    it('withholds the line when the identifier and the error compose the address', async () => {
-      // The composed value straddles the template's own `': '` separator: the identifier ends
-      // one field and the description begins the next, and neither field contains the value.
-      // The description opens with the opaque stand-in — nothing the channel wrote gets in — so
-      // straddling value has to be built from.
-      const named = new Error('channel down')
-
-      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-      try {
-        mockRedis.setnx.mockResolvedValue(true)
-        mockUserRepo.findByEmail.mockResolvedValue({
-          id: 'u1',
-          status: 'active',
-          tenantId: 'tenant1'
-        })
-        mockEmailProvider.sendPasswordResetToken.mockRejectedValue(named)
-
-        await service.initiateReset({ ...dto, email: 'u1: <error>' }, mockReq)
-        await flushMicrotasks()
-
-        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-        expect(logged).not.toContain('u1: <error>')
-        expect(logged).toContain('withheld')
+        expect(eventsReceived(loggerSpy)).toContain('AUTH_DELIVERY_FAILED')
+        expectEvent(loggerSpy, 'AUTH_PASSWORD_RESET_ROLLBACK_FAILED', { detail: '<error>' }, [
+          'Redis down',
+          'u1'
+        ])
       } finally {
         loggerSpy.mockRestore()
       }
@@ -909,7 +880,6 @@ describe('PasswordResetService', () => {
         await flushMicrotasks()
 
         const sent = mockEmailProvider.sendPasswordResetToken.mock.calls[0]?.[2] as string
-        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
 
         // The token has to have existed for the assertion to mean anything — a build that stopped
         // passing one would otherwise satisfy `not.toContain` trivially. Asserted against the
@@ -917,14 +887,15 @@ describe('PasswordResetService', () => {
         // characters, and a bare `toBeTruthy` survives a mutation that hands the provider any
         // non-empty string at all, which is the shape this assertion exists to rule out.
         expect(sent).toMatch(/^[0-9a-f]{64}$/)
-        expect(logged).toContain('sendPasswordResetToken failed')
-        expect(logged).not.toContain(sent)
-        // On a credential path nothing the relay wrote reaches the line, and nothing is parsed off it
-        // either. What remains is the label this library owns plus the opaque stand-in — which IS the
-        // diagnosis: it says the send failed and how deep the failure was reported from.
-        expect(logged).not.toContain('rejected by policy')
-        expect(logged).not.toContain('550')
-        expect(logged).toBe('sendPasswordResetToken failed for user u1: <error>')
+        // On a credential path nothing the relay wrote reaches the event, and nothing is parsed off it
+        // either. What remains is the opaque stand-in — which IS the diagnosis: it says the send failed
+        // and how deep the failure was reported from.
+        expectEvent(
+          loggerSpy,
+          'AUTH_DELIVERY_FAILED',
+          { kind: 'password_reset_token', detail: '<error>' },
+          [sent, 'rejected by policy', '550', 'u1']
+        )
       } finally {
         loggerSpy.mockRestore()
       }
@@ -953,16 +924,14 @@ describe('PasswordResetService', () => {
         await flushMicrotasks()
 
         const sent = mockEmailProvider.sendPasswordResetToken.mock.calls[0]?.[2] as string
-        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
 
         expect(sent).toMatch(/^[0-9a-f]{64}$/)
-        expect(logged).not.toContain(sent)
-        // On a credential path nothing the relay wrote reaches the line, and nothing is parsed off it
-        // either. What remains is the label this library owns plus the opaque stand-in — which IS the
-        // diagnosis: it says the send failed and how deep the failure was reported from.
-        expect(logged).not.toContain('rejected by policy')
-        expect(logged).not.toContain('550')
-        expect(logged).toBe('sendPasswordResetToken failed for user u1: <error>')
+        expectEvent(
+          loggerSpy,
+          'AUTH_DELIVERY_FAILED',
+          { kind: 'password_reset_token', detail: '<error>' },
+          [sent, 'rejected by policy', '550', 'u1']
+        )
       } finally {
         loggerSpy.mockRestore()
       }
@@ -1502,12 +1471,10 @@ describe('PasswordResetService', () => {
       expect(getErrorCode(caught)).toBe(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
       expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
       // The caller gets the same `password_reset_token_invalid` an expired or unknown token gets,
-      // deliberately — so this line is the only place the distinction exists, and the distinction
+      // deliberately — so this event is the only place the distinction exists, and the distinction
       // is the interesting one: a superseded link being presented is what an attacker holding a
-      // stolen link looks like after the victim has already reset.
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('a password that has since changed')
-      expect(warned).toContain('userId=u1')
+      // stolen link looks like after the victim has already reset. It names no account.
+      expectEvent(warnSpy, 'AUTH_PASSWORD_RESET_TOKEN_STALE', {}, ['u1', 'user@example.com'])
       warnSpy.mockRestore()
     })
 
@@ -2365,44 +2332,11 @@ describe('PasswordResetService', () => {
       // Assert
       // One argument, not two — see the OTP-redaction cases: the error object never reaches the
       // logger, so a relay quoting the body cannot carry the code into the record.
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('sendPasswordResetOtp failed'))
-      expect(errorSpy.mock.calls[0]).toHaveLength(1)
-      errorSpy.mockRestore()
-    })
-
-    // The SEAM at this site: the template puts `: ` between the identifier and the description, so
-    // a value ending where the id ends and beginning where the error begins is rebuilt from two
-    // fields that each contain nothing. An address can hold almost anything in a quoted local part
-    // and an identifier is unconstrained, so the composition is constructible. `safeLogLine` is
-    // what catches it — the per-field redactions cannot, by construction.
-    it('withholds the line when the identifier and the error compose a withheld value', async () => {
-      // The address is normalised to lower case before it becomes a withheld value, and the
-      // description opens with the error's NAME — so the composition spells the address only when
-      // that name is lower case too. A custom error class provides exactly that, which is what
-      // makes this reachable rather than theoretical.
-      // The composed value straddles the template's own `': '` separator: the identifier ends
-      // one field and the description begins the next, and neither field contains the value.
-      // The description opens with the opaque stand-in — nothing the channel wrote gets in — so
-      // straddling value has to be built from.
-      const named = new Error('channel down')
-
-      const seam = { ...dto, email: 'u1: <error>' }
-      mockRedis.setnx.mockResolvedValue(true)
-      mockOtpService.generate.mockReturnValue('303030')
-      mockUserRepo.findByEmail.mockResolvedValue({
-        id: 'u1',
-        status: 'active',
-        tenantId: 'tenant1'
+      expectEvent(errorSpy, 'AUTH_DELIVERY_FAILED', {
+        kind: 'password_reset_otp',
+        detail: '<error>'
       })
-      mockEmailProvider.sendPasswordResetOtp.mockRejectedValue(named)
-      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-
-      await otpMethodService.resendOtp(seam, mockReq)
-      await flushMicrotasks()
-
-      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).not.toContain('u1: <error>')
-      expect(logged).toContain('withheld')
+      expect(errorSpy.mock.calls[0]).toHaveLength(1)
       errorSpy.mockRestore()
     })
 
@@ -2426,16 +2360,18 @@ describe('PasswordResetService', () => {
       await otpMethodService.resendOtp(dto, mockReq)
       await flushMicrotasks()
 
-      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).toContain('sendPasswordResetOtp failed')
-      expect(logged).not.toContain(dto.email)
+      expectEvent(
+        errorSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'password_reset_otp', detail: '<error>' },
+        [dto.email, 'recipient rejected']
+      )
       errorSpy.mockRestore()
     })
 
-    // `userId` is interpolated into the same line as the error, and a reset OTP is short enough
-    // that an identifier containing one is a real possibility rather than a curiosity. Every field
-    // the template interpolates has to be sanitised, not only the one carrying channel text.
-    it('redacts the reset code from the user id as well as from the error', async () => {
+    // A reset OTP is short enough that an identifier containing one is a real possibility rather than a
+    // curiosity. The event carries no user id, so the code cannot be rebuilt beside the description.
+    it('writes no user id, so a user id containing the reset code cannot put it back', async () => {
       mockRedis.setnx.mockResolvedValue(true)
       mockOtpService.generate.mockReturnValue('531642')
       mockUserRepo.findByEmail.mockResolvedValue({
@@ -2449,9 +2385,12 @@ describe('PasswordResetService', () => {
       await otpMethodService.resendOtp(dto, mockReq)
       await flushMicrotasks()
 
-      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).toContain('sendPasswordResetOtp failed')
-      expect(logged).not.toContain('531642')
+      expectEvent(
+        errorSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'password_reset_otp', detail: '<error>' },
+        ['531642', 'u-531642-x']
+      )
       errorSpy.mockRestore()
     })
 
@@ -2477,14 +2416,15 @@ describe('PasswordResetService', () => {
       await otpMethodService.resendOtp(dto, mockReq)
       await flushMicrotasks()
 
-      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).not.toContain('868686')
-      // On a credential path nothing the relay wrote reaches the line, and nothing is parsed off it
-      // either. What remains is the label this library owns plus the opaque stand-in — which IS the
-      // diagnosis: it says the send failed and how deep the failure was reported from.
-      expect(logged).not.toContain('rejected by policy')
-      expect(logged).not.toContain('550')
-      expect(logged).toBe('sendPasswordResetOtp failed for user u1: <error>')
+      // On a credential path nothing the relay wrote reaches the event, and nothing is parsed off it
+      // either. What remains is the opaque stand-in — which IS the diagnosis: it says the send failed
+      // and how deep the failure was reported from.
+      expectEvent(
+        errorSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'password_reset_otp', detail: '<error>' },
+        ['868686', 'rejected by policy', '550', 'u1']
+      )
       errorSpy.mockRestore()
     })
 
@@ -2527,7 +2467,7 @@ describe('PasswordResetService', () => {
         tenantId: 'tenant1'
       })
       // The error's NAME carries the code too, and the name is as much the channel's field to fill
-      // as the message is — which is why neither reaches the line.
+      // as the message is — which is why neither reaches the event.
       const named = new Error('550 rejected by policy: "Your code is 424242."')
       named.name = 'E424242'
       mockEmailProvider.sendPasswordResetOtp.mockRejectedValue(named)
@@ -2536,19 +2476,15 @@ describe('PasswordResetService', () => {
       await otpMethodService.resendOtp(dto, mockReq)
       await flushMicrotasks()
 
-      // The error's NAME carries the code here, and no part of it reaches the line: the
+      // The error's NAME carries the code here, and no part of it reaches the event: the
       // description carries nothing the channel authored. The assertion is not merely that the
-      // code is absent — it is that the ORDINARY line survives, because a build that let the name
-      // through would have `safeLogLine` withhold the whole record to stop it, and the operator
-      // would lose the diagnosis to a guard that should never have had to fire.
-      const logged = errorSpy.mock.calls[0]?.[0] as string
-      expect(logged).not.toContain('424242')
-      // On a credential path nothing the relay wrote reaches the line, and nothing is parsed off it
-      // either. What remains is the label this library owns plus the opaque stand-in — which IS the
-      // diagnosis: it says the send failed and how deep the failure was reported from.
-      expect(logged).not.toContain('rejected by policy')
-      expect(logged).not.toContain('550')
-      expect(logged).toBe('sendPasswordResetOtp failed for user u1: <error>')
+      // code is absent — it is that the ORDINARY event survives with its opaque stand-in.
+      expectEvent(
+        errorSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'password_reset_otp', detail: '<error>' },
+        ['424242', 'E424242', 'rejected by policy', '550', 'u1']
+      )
       errorSpy.mockRestore()
     })
   })

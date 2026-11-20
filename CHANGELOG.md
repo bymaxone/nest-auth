@@ -30,13 +30,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   spans `auth.login`, `auth.refresh`, `auth.mfa.verify` and `auth.password_reset` when `@opentelemetry/api` is
   installed and an SDK is registered; without them nothing is created. The subpath needs `prom-client`, which is an
   optional peer, and imports no other Bymax library.
-- **Log events.** The security-relevant flows write their events as one object through the Nest `Logger`
-  (`{ event, message, ...fields }`), listed in the README "Log events" table: login and MFA refusals and lockouts, a
-  rejected current password, a refused re-authentication, refresh-token reuse and the revocation of its family, a session
-  past its absolute lifetime, a refused WebSocket ticket or OAuth callback, a refused revocation check, the verification
-  code the store refuses and an identifier the lockout counter refuses. The line a host log filter used to match is gone:
-  the text of these lines changed, and none of them carries a user id, an email address, a tenant id or a provider name any
-  more; the refresh events carry the `familyId` of the lineage.
+- **Log events.** The flows write their events as one object through the Nest `Logger`
+  (`{ ...fields, event, message }`), listed in the README "Log events" table. The line
+  a host log filter used to match is gone: the text of these lines changed. A refusal or failure names no user and no
+  tenant; a success or audit event may carry `userId` and `tenantId` (and `actorUserId` for an invitation) as declared
+  fields; no event carries an email address, a provider name, a token or text a host or a store wrote. The no-op email provider logs which method was called and no address. A host logger
+  that is asynchronous and rejects is the host's own unhandled rejection and ends the process unless the application
+  handles it.
 - `rxjs` is declared as a peer dependency of the server entry. It is already required by `@nestjs/common`, and the
   interceptor that counts the observed routes imports it.
 

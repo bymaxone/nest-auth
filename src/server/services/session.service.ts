@@ -17,9 +17,9 @@ import type {
   IUserRepository,
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
-import { logSafe } from '../utils/log-safe'
 import { runDetached } from '../utils/run-detached'
 import { parseUserAgent } from '../utils/session-detail'
 import { raiseFirst } from '../utils/settle-writes'
@@ -936,10 +936,7 @@ export class SessionService {
         }))
       )
     } catch (err: unknown) {
-      this.logger.error(
-        `enforceSessionLimit: eviction skipped for user ${logSafe(userId)}, ` +
-          `a session record could not be read: ${describeChannelStatus(err)}`
-      )
+      logEvent(this.logger, 'AUTH_SESSION_EVICTION_SKIPPED', { detail: describeChannelStatus(err) })
       return
     }
 
@@ -973,10 +970,9 @@ export class SessionService {
         await this.redis.srem(this.indexKey(userId, tenantId), entry.member)
         await this.redis.del(`sd:${entry.memberHash}`)
       } catch (err: unknown) {
-        this.logger.error(
-          `enforceSessionLimit: failed to evict session ${entry.memberHash} ` +
-            `for user ${logSafe(userId)}: ${describeChannelStatus(err)}`
-        )
+        logEvent(this.logger, 'AUTH_SESSION_EVICTION_FAILED', {
+          detail: describeChannelStatus(err)
+        })
         continue
       }
 
@@ -1052,11 +1048,8 @@ export class SessionService {
       if (!user) return defaultMaxSessions
       const resolved = await maxSessionsResolver(user)
       if (!Number.isInteger(resolved) || resolved < 1) {
-        this.logger.error(
-          `maxSessionsResolver returned ${logSafe(String(resolved))}, which is not a positive whole ` +
-            `number of sessions — falling back to defaultMaxSessions. A cap that silently ` +
-            `stops applying is worse than one that is merely wrong.`
-        )
+        // Loud on purpose: a cap that silently stops applying is worse than one that is merely wrong.
+        logEvent(this.logger, 'AUTH_SESSION_LIMIT_RESOLVER_INVALID')
         return defaultMaxSessions
       }
       return resolved

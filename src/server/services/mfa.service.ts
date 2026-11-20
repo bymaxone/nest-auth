@@ -28,7 +28,6 @@ import type { IPlatformUserRepository } from '../interfaces/platform-user-reposi
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { logSafe } from '../utils/log-safe'
 import { notifyMfaChange } from '../utils/mfa-notify'
 import { assertPlaneTenant } from '../utils/mfa-plane-tenant'
 import { DEFAULT_RECOVERY_CODE_COUNT, generateRecoveryCodes } from '../utils/mfa-recovery-codes'
@@ -205,10 +204,10 @@ export class MfaService {
     // discarded by SET-NX after wasted work; subsequent requests hit the fast path.
     const existingFast = await this.redis.get(setupKey)
     if (existingFast !== null) {
-      const data = parseSetupData(existingFast, userId, this.logger)
+      const data = parseSetupData(existingFast, this.logger)
       const existingSecret = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
       const decryptedCodesJson = decryptMfaSecret(data.encryptedPlainCodes, this.mfaOptions)
-      const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, userId, this.logger)
+      const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, this.logger)
       const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
       return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
     }
@@ -232,10 +231,10 @@ export class MfaService {
       // Another request already started setup — return their data for idempotency.
       const existing = await this.redis.get(setupKey)
       if (existing !== null) {
-        const data = parseSetupData(existing, userId, this.logger)
+        const data = parseSetupData(existing, this.logger)
         const existingSecret = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
         const decryptedCodesJson = decryptMfaSecret(data.encryptedPlainCodes, this.mfaOptions)
-        const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, userId, this.logger)
+        const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, this.logger)
         const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
         return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
       }
@@ -247,7 +246,7 @@ export class MfaService {
     }
 
     const qrCodeUri = buildTotpUri(secretBase32, user.email, this.mfaOptions.issuer)
-    this.logger.log(`setup: MFA setup initiated userId=${logSafe(userId)} context=${context}`)
+    logEvent(this.logger, 'AUTH_MFA_SETUP_STARTED', { plane: context, userId })
     return { secret: secretBase32, qrCodeUri, recoveryCodes: plainCodes }
   }
 
@@ -297,7 +296,7 @@ export class MfaService {
     const raw = await this.redis.get(setupKey)
     if (raw === null) throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
 
-    const data = parseSetupData(raw, userId, this.logger)
+    const data = parseSetupData(raw, this.logger)
     const secretBase32 = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
 
     const totpWindow = this.mfaOptions.totpWindow
@@ -321,9 +320,7 @@ export class MfaService {
     // and the email; a racing request sees `null` and is treated as MFA_SETUP_REQUIRED.
     const consumed = await this.redis.getdel(setupKey)
     if (consumed === null) {
-      this.logger.warn(
-        `verifyAndEnable: setup key consumed by concurrent request userId=${logSafe(userId)}`
-      )
+      logEvent(this.logger, 'AUTH_MFA_SETUP_KEY_CONSUMED')
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
 
@@ -346,12 +343,11 @@ export class MfaService {
     await this.redis.invalidateUserSessions(userId, tenantId, context)
     await this.redis.bumpUserTokenEpoch(userId, tenantId, context)
 
-    this.logger.log(`verifyAndEnable: MFA enabled userId=${logSafe(userId)} context=${context}`)
+    logEvent(this.logger, 'AUTH_MFA_ENABLED', { plane: context, userId })
     notifyMfaChange(
       this.logger,
       this.emailProvider,
-      'verifyAndEnable',
-      userId,
+      'mfa_enabled_notice',
       user,
       (provider, tenant, email) => provider.sendMfaEnabledNotification(tenant, email)
     )

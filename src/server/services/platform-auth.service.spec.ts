@@ -184,6 +184,9 @@ async function flushMicrotasks(ticks = 4): Promise<void> {
   }
 }
 
+/** What the login events of the platform plane have in common. */
+const PASSWORD = { plane: 'platform', via: 'password' } as const
+
 describe('PlatformAuthService', () => {
   let service: PlatformAuthService
 
@@ -257,9 +260,8 @@ describe('PlatformAuthService', () => {
       // Fire-and-forget: drain the microtask queue so the updateLastLogin call completes.
       await Promise.resolve()
       expect(mockPlatformUserRepo.updateLastLogin).toHaveBeenCalledWith(PLATFORM_ADMIN.id)
-      // Pin the success log template so emptying it is caught.
-      const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
-      expect(logged).toContain('login: success')
+      // Pin the success event so emptying it is caught; the platform plane has no tenant.
+      expectEvent(logSpy, 'AUTH_LOGIN_SUCCEEDED', { ...PASSWORD, userId: PLATFORM_ADMIN.id })
       logSpy.mockRestore()
     })
 
@@ -487,9 +489,11 @@ describe('PlatformAuthService', () => {
       )
       // Tokens should NOT be issued on the MFA path.
       expect(mockTokenManager.issuePlatformTokens).not.toHaveBeenCalled()
-      // Pin the MFA-challenge log template so emptying it is caught.
-      const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
-      expect(logged).toContain('login: MFA challenge issued')
+      // Pin the MFA-challenge event so emptying it is caught.
+      expectEvent(logSpy, 'AUTH_LOGIN_MFA_CHALLENGED', {
+        ...PASSWORD,
+        userId: PLATFORM_ADMIN_MFA.id
+      })
       logSpy.mockRestore()
     })
 
@@ -652,21 +656,18 @@ describe('PlatformAuthService', () => {
       expect(mockRedis.set).not.toHaveBeenCalled()
     })
 
-    // The log line names the owner the STORED RECORD gave, and says so plainly when there was
-    // none. An operator reading "adminId=" with nothing after it cannot tell an admin whose id
-    // is empty from a session that was already gone.
+    // The event names the owner the STORED RECORD gave and leaves the field out when there was none, so an
+    // operator can tell a session that was already gone from an admin.
     it.each([
-      ['admin-1', 'admin-1'],
-      ['', '(no live session)']
-    ])('logs the owner as %s when the record names %s', async (owner, expected) => {
+      ['admin-1', { plane: 'platform', userId: 'admin-1' }],
+      ['', { plane: 'platform' }]
+    ])('writes the logout event for the owner "%s" with the fields %j', async (owner, fields) => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       mockRedis.readSessionOwner.mockResolvedValue({ userId: owner, tenantId: undefined })
 
       await service.logout('access.jwt', rawRefreshToken)
 
-      expect(logSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
-        `logout: adminId=${expected}`
-      )
+      expectEvent(logSpy, 'AUTH_LOGOUT', fields)
       logSpy.mockRestore()
     })
 
@@ -751,14 +752,13 @@ describe('PlatformAuthService', () => {
       expect(mockRedis.del).toHaveBeenCalledWith('prt:' + tokenHash)
     })
 
-    // Scenario: logout of an admin; expected: a log identifying the logout event (with the
-    // adminId) is emitted. Why: pins the "logout: adminId=" template so emptying it is caught —
-    // logout otherwise has only Redis side effects, no return value.
+    // Scenario: logout of an admin; expected: the logout event on the platform plane, naming the admin. Why: pins
+    // the event so emptying it is caught — logout otherwise has only Redis side effects, no return value.
     it('should log the logout event with the admin id', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+      mockRedis.readSessionOwner.mockResolvedValue({ userId: 'admin-1', tenantId: undefined })
       await service.logout('access.jwt', rawRefreshToken)
-      const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
-      expect(logged).toContain('logout: adminId=')
+      expectEvent(logSpy, 'AUTH_LOGOUT', { plane: 'platform', userId: 'admin-1' })
       logSpy.mockRestore()
     })
 

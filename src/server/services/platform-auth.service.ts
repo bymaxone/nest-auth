@@ -29,12 +29,13 @@ import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
-import { logSafe } from '../utils/log-safe'
-import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
+
+/** What the two login events of the platform plane have in common. */
+const PASSWORD_LOGIN = { plane: 'platform', via: 'password' } as const
 
 /**
  * Core authentication service for platform administrators.
@@ -151,7 +152,7 @@ export class PlatformAuthService {
     // MFA challenge path: issue a short-lived temp token and stop here.
     if (admin.mfaEnabled) {
       const mfaTempToken = await this.tokenManager.issueMfaTempToken(admin.id, 'platform')
-      this.logger.log(`login: MFA challenge issued adminId=${logSafe(admin.id)}`)
+      logEvent(this.logger, 'AUTH_LOGIN_MFA_CHALLENGED', { ...PASSWORD_LOGIN, userId: admin.id })
       return { mfaRequired: true, mfaTempToken }
     }
 
@@ -164,7 +165,7 @@ export class PlatformAuthService {
     } = admin
 
     const result = await this.tokenManager.issuePlatformTokens(safeAdmin, ip, userAgent)
-    this.logger.log(`login: success adminId=${logSafe(admin.id)}`)
+    logEvent(this.logger, 'AUTH_LOGIN_SUCCEEDED', { ...PASSWORD_LOGIN, userId: admin.id })
 
     // Fire-and-forget: a slow or failing DB update must not block the auth response.
     void this.platformUserRepo.updateLastLogin(admin.id).catch((err: unknown) => {
@@ -200,7 +201,7 @@ export class PlatformAuthService {
     const live = await this.redis.readSessionOwner(`prt:${tokenHash}`)
     const fromSession = live.userId !== ''
     const { userId } = fromSession ? live : await this.redis.readSessionOwner(markerKey)
-    this.logger.log(`logout: adminId=${logSafe(userId || '(no live session)')}`)
+    logEvent(this.logger, 'AUTH_LOGOUT', { plane: 'platform', ...(userId ? { userId } : {}) })
 
     // Every credential write is attempted whatever the earlier ones did, and the first failure is
     // raised once they have all run. What points at a credential (its index member, and for the

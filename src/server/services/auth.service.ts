@@ -35,14 +35,10 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { resolveClientAddress } from '../utils/client-address'
 import { describeChannelStatus, describeError } from '../utils/describe-error'
-import { logSafe } from '../utils/log-safe'
-import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
-import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
-import { safeLogLine } from '../utils/safe-log-line'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
 import { raiseFirst, settleWrites } from '../utils/settle-writes'
 import { sleep } from '../utils/sleep'
@@ -179,9 +175,7 @@ export class AuthService {
       // drops a legitimate upgrade or admits a write the guard exists to refuse.
       const current = await this.userRepo.findById({ id: userId, tenantId })
       if (current?.passwordHash !== verifiedHash) {
-        this.logger.log(
-          `rehash on verify skipped — the stored hash changed userId=${logSafe(userId)}`
-        )
+        logEvent(this.logger, 'AUTH_REHASH_SKIPPED')
         return
       }
       await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash: upgraded })
@@ -290,7 +284,7 @@ export class AuthService {
 
     // Send email verification OTP if required.
     if (this.options.emailVerification.required) {
-      await this.sendVerificationOtp(tenantId, dto.email, newUser.id)
+      await this.sendVerificationOtp(tenantId, dto.email)
     }
 
     const safeUser = toSafeUser(newUser)
@@ -307,9 +301,7 @@ export class AuthService {
       })
     }
 
-    this.logger.log(
-      `register: user registered userId=${logSafe(newUser.id)} tenantId=${logSafe(tenantId)}`
-    )
+    logEvent(this.logger, 'AUTH_USER_REGISTERED', { userId: newUser.id, tenantId })
 
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
@@ -477,9 +469,7 @@ export class AuthService {
         'dashboard',
         user.tenantId
       )
-      this.logger.log(
-        `login: MFA challenge issued userId=${logSafe(user.id)} tenantId=${logSafe(tenantId)}`
-      )
+      this.logLogin('AUTH_LOGIN_MFA_CHALLENGED', user.id, tenantId)
       return { mfaRequired: true, mfaTempToken }
     }
 
@@ -497,7 +487,7 @@ export class AuthService {
       })
     }
 
-    this.logger.log(`login: success userId=${logSafe(safeUser.id)} tenantId=${logSafe(tenantId)}`)
+    this.logLogin('AUTH_LOGIN_SUCCEEDED', safeUser.id, tenantId)
 
     // Non-blocking side effects.
     void this.userRepo.updateLastLogin({ id: user.id, tenantId }).catch((err: unknown) => {
@@ -550,7 +540,7 @@ export class AuthService {
     const live = await this.redis.readSessionOwner(`rt:${sessionHash}`)
     const fromSession = live.userId !== ''
     const { userId, tenantId } = fromSession ? live : await this.redis.readSessionOwner(markerKey)
-    this.logger.log(`logout: userId=${logSafe(userId || '(no live session)')}`)
+    logEvent(this.logger, 'AUTH_LOGOUT', { plane: 'dashboard', ...(userId ? { userId } : {}) })
 
     // Every revocation write is attempted whatever the earlier ones did, and the first failure is
     // raised once all have run. A token presented here may have rotated and still sit inside its
@@ -1008,9 +998,7 @@ export class AuthService {
       })
     }
 
-    this.logger.log(
-      `issueTokensForUserId: success userId=${logSafe(safeUser.id)} tenantId=${logSafe(safeUser.tenantId)}`
-    )
+    logEvent(this.logger, 'AUTH_TOKENS_ISSUED', { userId: user.id, tenantId: user.tenantId })
 
     void this.userRepo
       .updateLastLogin({ id: user.id, tenantId: safeUser.tenantId })
@@ -1086,9 +1074,7 @@ export class AuthService {
 
     await this.dropCachedAccountFacts(user.id, tenantId)
 
-    this.logger.log(
-      `verifyEmail: email verified userId=${logSafe(user.id)} tenantId=${logSafe(tenantId)}`
-    )
+    logEvent(this.logger, 'AUTH_EMAIL_VERIFIED', { userId: user.id, tenantId })
 
     if (this.hooks?.afterEmailVerified) {
       const afterEmailVerified = this.hooks.afterEmailVerified.bind(this.hooks)
@@ -1133,7 +1119,7 @@ export class AuthService {
 
     const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
     if (user && !user.emailVerified) {
-      await this.sendVerificationOtp(tenantId, email, user.id)
+      await this.sendVerificationOtp(tenantId, email)
     }
 
     await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
@@ -1168,9 +1154,7 @@ export class AuthService {
   async unlockAccount(email: string, tenantId: string): Promise<void> {
     const identifier = this.lockoutIdentifier(tenantId, normalizeEmail(email))
     await this.bruteForce.resetFailures(identifier)
-    this.logger.log(
-      `unlockAccount: lockout cleared email=${maskEmail(normalizeEmail(email))} tenantId=${logSafe(tenantId)}`
-    )
+    logEvent(this.logger, 'AUTH_ACCOUNT_UNLOCKED', { tenantId })
   }
 
   /**
@@ -1362,11 +1346,8 @@ export class AuthService {
       locked = await this.bruteForce.isLockedOut(bfIdentifier)
       if (locked) retryAfterSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
     } catch (err: unknown) {
-      // The class only: a store error's message can carry the host or the key.
-      this.logger.warn(
-        `login: lockout state unreadable for the onLockout hook email=${maskEmail(who.email)} ` +
-          `tenantId=${logSafe(who.tenantId)} cause=${logSafe(err instanceof Error ? err.name : 'unknown')}`
-      )
+      // The library's own description of the failure: a store error's message can carry the host or the key.
+      logEvent(this.logger, 'AUTH_LOCKOUT_STATE_UNREADABLE', { detail: describeChannelStatus(err) })
     }
     if (!locked) return
 
@@ -1400,15 +1381,20 @@ export class AuthService {
     }
   }
 
+  /** Writes the event of a password login that reached its end: tokens issued, or an MFA challenge. */
+  private logLogin(
+    event: 'AUTH_LOGIN_SUCCEEDED' | 'AUTH_LOGIN_MFA_CHALLENGED',
+    userId: string,
+    tenantId: string
+  ): void {
+    logEvent(this.logger, event, { plane: 'dashboard', userId, tenantId, via: 'password' })
+  }
+
   private assertUserNotBlocked(user: AuthUser): void {
     assertNotBlocked(user.status, this.options.blockedStatuses)
   }
 
-  private async sendVerificationOtp(
-    tenantId: string,
-    email: string,
-    userId: string
-  ): Promise<void> {
+  private async sendVerificationOtp(tenantId: string, email: string): Promise<void> {
     if (!this.emailProvider) {
       this.logger.warn('sendVerificationOtp: no email provider configured — OTP not sent')
       return
@@ -1440,21 +1426,12 @@ export class AuthService {
         // rejects by quoting the message body puts THIS otp into the error, and a quote can arrive
         // re-encoded where no substring match reaches it.
         //
-        // `withheld` is for the fields THIS line composes, not for the error. `userId` is the
-        // consumer's identifier, interpolated here rather than inside the description, and an id
-        // that happens to contain the generated code would put it back beside a description that
-        // never had it. `safeLogLine` then checks the assembled result, because two fields that
-        // each contain nothing can spell a value across the text between them — and it CHECKS
-        // rather than redacting again, so removing the per-field guard fails loudly instead of
-        // being silently covered by a second pass.
-        const withheld = [otp, email]
-        this.logger.error(
-          safeLogLine(
-            `sendEmailVerificationOtp failed for user ${logSafe(redactSecrets(userId, withheld))}: ` +
-              describeChannelStatus(err),
-            withheld
-          )
-        )
+        // The event carries no user id and no address, so there is nothing for the code to be
+        // rebuilt from beside the description.
+        logEvent(this.logger, 'AUTH_DELIVERY_FAILED', {
+          kind: 'email_verification_otp',
+          detail: describeChannelStatus(err)
+        })
       }
     })()
   }

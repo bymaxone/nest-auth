@@ -21,8 +21,6 @@ import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
-import { logSafe } from '../utils/log-safe'
-import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 
 /** Bytes of entropy in an address-change token before hex encoding (256-bit, 64 hex chars). */
@@ -212,9 +210,7 @@ export class EmailChangeService implements OnModuleInit {
     } catch (err: unknown) {
       throw new Error(describeChannelStatus(err))
     }
-    this.logger.log(
-      `requestChange: verification sent userId=${logSafe(userId)} newEmail=${maskEmail(newEmail)}`
-    )
+    logEvent(this.logger, 'AUTH_EMAIL_CHANGE_REQUESTED', { userId })
   }
 
   // ---------------------------------------------------------------------------
@@ -264,10 +260,7 @@ export class EmailChangeService implements OnModuleInit {
       tenantId: context.tenantId,
       email: context.newEmail
     })
-    this.logger.log(
-      `confirmChange: address changed userId=${logSafe(context.userId)} ` +
-        `from=${maskEmail(oldEmail)} to=${maskEmail(context.newEmail)}`
-    )
+    logEvent(this.logger, 'AUTH_EMAIL_CHANGED', { userId: context.userId })
 
     await this.notifyOldAddress(user.tenantId, oldEmail, context.newEmail)
   }
@@ -334,9 +327,7 @@ export class EmailChangeService implements OnModuleInit {
     // the "decided before it is made" the comment above describes. It is spelled out to say why,
     // not to change the answer
     if (current === null || stored !== current) {
-      this.logger.warn(
-        `confirmChange: token no longer bound to the account password userId=${logSafe(context.userId)}`
-      )
+      logEvent(this.logger, 'AUTH_EMAIL_CHANGE_TOKEN_STALE')
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID)
     }
   }

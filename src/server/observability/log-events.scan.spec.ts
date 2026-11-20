@@ -107,4 +107,28 @@ describe('the code that writes log events', () => {
     }
     expect(new Set(calls.map((call) => call.code))).toEqual(new Set(entries.keys()))
   })
+
+  // Scenario: a logger call that is not an event. Expected: none of them names a user, a tenant or an address
+  // as `key=value` text or through a masked address. Why: the events carry identity only through declared
+  // fields on success and audit events, and a free-text line is where `userId=...` would come back.
+  it('has no plain-text logger call that names an identity', () => {
+    const call = /(?:this\.)?logger\.(?:log|warn|error|debug|verbose)\(/g
+    const identity = /maskEmail\(|\b(?:userId|tenantId|email|adminId|inviterUserId|revokerUserId)=/
+    const found: string[] = []
+
+    for (const file of sources()) {
+      const text = readFileSync(file, 'utf8')
+      for (const match of text.matchAll(call)) {
+        let depth = 1
+        let end = match.index + match[0].length
+        while (depth > 0 && end < text.length) {
+          depth += (text[end] === '(' ? 1 : 0) - (text[end] === ')' ? 1 : 0)
+          end += 1
+        }
+        if (identity.test(text.slice(match.index, end))) found.push(file)
+      }
+    }
+
+    expect(found).toEqual([])
+  })
 })
