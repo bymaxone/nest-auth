@@ -21,6 +21,7 @@ import { WsTicketService } from './ws-ticket.service'
 
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
+import { eventOf, expectEvent } from '../__tests__/log-events'
 
 const mockRedis = {
   mintWsTicket: jest.fn(),
@@ -167,7 +168,7 @@ describe('WsTicketService', () => {
       expect(mockUserRepo.findById).not.toHaveBeenCalled()
       // The refusal answers a deliberately uninformative code, so the log line is where an
       // operator learns why a ticket was not minted.
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no life left'))
+      expectEvent(warnSpy, 'AUTH_WS_TICKET_REFUSED', { reason: 'no_life_left' })
     })
 
     // Scenario: a plain authenticated session. Expected: the snapshot carries exactly the contract
@@ -352,7 +353,7 @@ describe('WsTicketService', () => {
       await expect(service.redeem('raw-ticket')).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
       })
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session that minted it'))
+      expectEvent(warnSpy, 'AUTH_WS_TICKET_REFUSED', { reason: 'session_revoked' })
       warnSpy.mockRestore()
     })
 
@@ -412,7 +413,7 @@ describe('WsTicketService', () => {
 
       await expect(service.redeem('stale')).rejects.toThrow(AuthException)
 
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('redemption refused'))
+      expectEvent(warnSpy, 'AUTH_WS_TICKET_REFUSED', { reason: 'unknown_or_used' })
       warnSpy.mockRestore()
     })
   })
@@ -430,14 +431,14 @@ describe('WsTicketService', () => {
     // the refusal names the user. Why: this is the one refusal that means "a second factor was
     // skipped", and it is invisible in the response — `mfa_required` is what a first, honest
     // attempt gets too.
-    it('should name the user when refusing a session that skipped its second factor', async () => {
+    it('should record, without naming the user, a refused session that skipped its second factor', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
 
       await expect(
         service.issue(payload({ mfaEnabled: true, mfaVerified: false }))
       ).rejects.toThrow(AuthException)
 
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('userId=user-1'))
+      expectEvent(warnSpy, 'AUTH_WS_TICKET_REFUSED', { reason: 'mfa_not_satisfied' }, ['user-1'])
       warnSpy.mockRestore()
     })
 

@@ -28,6 +28,7 @@ import type {
   IUserRepository,
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { answerResetRequest } from '../utils/answer-reset-request'
 import { classifyResetProof } from '../utils/classify-reset-proof'
@@ -531,25 +532,24 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
-    // Counted like a login, and for the same reason. This door asks for the account password
-    // and used to refuse nothing, so a caller holding a stolen access token but not the
-    // password could guess it here without limit — and winning replaces the credential, which
-    // locks the owner out of their own account. The per-route IP limit is not that control: a
-    // distributed caller sidesteps it, and it is not keyed to the account being attacked. The
+    // Counted like a login, and for the same reason: this door asks for the account password, and a
+    // caller holding a stolen access token but not the password could otherwise guess it without limit,
+    // and winning replaces the credential and locks the owner out. The per-route IP limit is not that
+    // control: a distributed caller sidesteps it, and it is not keyed to the account being attacked. The
     // counter is namespaced by flow so it cannot lock the owner out of `login` instead.
     // Counted under the tenant-scoped subject, not the bare id: a repository id is unique only
     // within a tenant, so two tenants' user `1` need two budgets, or failures against one lock the
     // other out with no credential. `userSubject` is injective over (tenant, user).
     const bfIdentifier = reproofCounterId('change-password', userId, tenantId, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
-      this.logger.warn(`changePassword: account locked userId=${logSafe(userId)}`)
+      logEvent(this.logger, 'AUTH_ACCOUNT_LOCKED', { flow: 'change_password' })
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
     const matches = await this.passwordService.compare(dto.currentPassword, user.passwordHash)
     if (!matches) {
       await this.bruteForce.recordFailure(bfIdentifier)
-      this.logger.warn(`changePassword: current password rejected userId=${logSafe(userId)}`)
+      logEvent(this.logger, 'AUTH_PASSWORD_REJECTED', { flow: 'change_password' })
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 

@@ -35,6 +35,7 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
+import { eventOf, expectEvent, serialized } from '../__tests__/log-events'
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -560,9 +561,7 @@ describe('OAuthService', () => {
           )
         ).rejects.toThrow(AuthException)
 
-        const logged = warnSpy.mock.calls.map((call) => String(call[0])).join('\n')
-        expect(logged).toContain('OAuth state not bound to this browser')
-        expect(logged).toContain('provider=google')
+        expectEvent(warnSpy, 'AUTH_OAUTH_STATE_REFUSED', { reason: 'not_bound' }, ['google'])
       } finally {
         warnSpy.mockRestore()
       }
@@ -611,9 +610,7 @@ describe('OAuthService', () => {
         )
       ).rejects.toThrow(AuthException)
 
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('not bound to this browser')
-      expect(warned).toContain('provider=google')
+      expectEvent(warnSpy, 'AUTH_OAUTH_STATE_REFUSED', { reason: 'not_bound' }, ['google'])
       warnSpy.mockRestore()
     })
 
@@ -871,12 +868,12 @@ describe('OAuthService', () => {
         await expect(callCallback()).rejects.toThrow(AuthException)
         expect(mockPlugin.exchangeCode).not.toHaveBeenCalled()
 
-        const logged = warnSpy.mock.calls.map((call) => String(call[0])).join('\n')
+        const mismatch = eventOf('AUTH_OAUTH_STATE_REFUSED', { reason: 'provider_mismatch' })
         if (expectMismatchLog) {
-          expect(logged).toContain('OAuth state provider mismatch')
-          expect(logged).toContain('provider=google')
+          expect(warnSpy).toHaveBeenCalledWith(mismatch)
+          expect(serialized(warnSpy)).not.toContain('google')
         } else {
-          expect(logged).not.toContain('OAuth state provider mismatch')
+          expect(warnSpy).not.toHaveBeenCalledWith(mismatch)
         }
       } finally {
         warnSpy.mockRestore()
@@ -1088,16 +1085,13 @@ describe('OAuthService', () => {
       await expect(callCallback()).rejects.toThrow(AuthException)
     })
 
-    // Pins the diagnostic warn message emitted on an invalid/expired state. The
-    // message must carry the provider so operators can correlate the failure; an
-    // emptied log string would erase that signal. Assert the provider is present
-    // rather than the full sentence (which is otherwise free to be reworded).
-    it('should log a warning that includes the provider when the state is invalid', async () => {
+    // Pins the event written on an invalid or expired state: its code and reason, and no provider name.
+    it('should log an event that names no provider when the state is invalid', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
       mockRedis.getdel.mockResolvedValue(null)
 
       await expect(callCallback()).rejects.toThrow(AuthException)
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('provider=google'))
+      expectEvent(warnSpy, 'AUTH_OAUTH_STATE_REFUSED', { reason: 'invalid_or_expired' }, ['google'])
       warnSpy.mockRestore()
     })
 
@@ -1111,7 +1105,7 @@ describe('OAuthService', () => {
       // Corrupted storage and a stale callback answer the caller identically, so the log is
       // the only place they are distinguishable — and the difference decides whether an
       // operator goes looking at Redis or at the user's browser.
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('unparseable OAuth state'))
+      expectEvent(warnSpy, 'AUTH_OAUTH_STATE_REFUSED', { reason: 'unparseable' })
       warnSpy.mockRestore()
     })
 

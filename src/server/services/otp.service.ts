@@ -7,6 +7,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { sleep } from '../utils/sleep'
@@ -361,7 +362,7 @@ export async function storeVerificationCode(
     await otpService.store('email_verification', identifier, otp, ttlSeconds)
     return true
   } catch (err: unknown) {
-    logger.error(`[AUTH_OTP_STORE_FAILED] email_verification: ${describeChannelStatus(err)}`)
+    logEvent(logger, 'AUTH_OTP_STORE_FAILED', { detail: describeChannelStatus(err) })
     return false
   }
 }

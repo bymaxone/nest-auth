@@ -30,6 +30,7 @@ import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import { PlatformAuthService } from './platform-auth.service'
 import { TokenManagerService } from './token-manager.service'
+import { expectEvent } from '../__tests__/log-events'
 
 // ---------------------------------------------------------------------------
 // Test doubles — platform admin records
@@ -303,14 +304,13 @@ describe('PlatformAuthService', () => {
     // Scenario: login on a locked account; expected: a warn log identifying the lock event is
     // emitted. Why: pins the "account locked" log template so emptying it is caught — the lock
     // path is otherwise observable only via the thrown ACCOUNT_LOCKED code.
-    it('should log a warning identifying the account-locked event', async () => {
+    it('should log an account-locked event that names no address', async () => {
       mockBruteForce.isLockedOut.mockResolvedValue(true)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       await expect(service.login(dto, ip, userAgent)).rejects.toThrow(AuthException)
 
-      const logged = warnSpy.mock.calls.map((c) => String(c[0])).join(' ')
-      expect(logged).toContain('login: account locked')
+      expectEvent(warnSpy, 'AUTH_LOGIN_LOCKED', { plane: 'platform' }, [dto.email])
       warnSpy.mockRestore()
     })
 
@@ -347,8 +347,7 @@ describe('PlatformAuthService', () => {
       expect(response.error.code).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
       // Pin the email-not-found warn log so emptying its template is caught.
-      const logged = warnSpy.mock.calls.map((c) => String(c[0])).join(' ')
-      expect(logged).toContain('login: invalid credentials')
+      expectEvent(warnSpy, 'AUTH_LOGIN_INVALID_CREDENTIALS', { plane: 'platform' }, [dto.email])
       warnSpy.mockRestore()
     })
 
@@ -469,8 +468,7 @@ describe('PlatformAuthService', () => {
       expect(response.error.code).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
       // Pin the wrong-password warn log (a distinct call site from the email-not-found path).
-      const logged = warnSpy.mock.calls.map((c) => String(c[0])).join(' ')
-      expect(logged).toContain('login: invalid credentials')
+      expectEvent(warnSpy, 'AUTH_LOGIN_INVALID_CREDENTIALS', { plane: 'platform' }, [dto.email])
       warnSpy.mockRestore()
     })
 

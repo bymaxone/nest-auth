@@ -28,6 +28,7 @@ import { WS_TICKET_TTL_SECONDS } from '../interfaces/ws-ticket.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { readStampedEpoch } from '../utils'
 import { AuthRevocationService } from './auth-revocation.service'
+import { logEvent } from '../observability/log-event'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { logSafe } from '../utils/log-safe'
 
@@ -127,7 +128,7 @@ export class WsTicketService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     if (payload.mfaEnabled && payload.mfaVerified !== true) {
-      this.logger.warn(`ws-ticket: refused, MFA not satisfied userId=${logSafe(payload.sub)}`)
+      logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'mfa_not_satisfied' })
       throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
   }
@@ -152,7 +153,7 @@ export class WsTicketService {
       payload.exp - Math.ceil(Date.now() / 1000) - EXPIRY_MARGIN_SECONDS
     )
     if (!(lifetime > 0)) {
-      this.logger.warn(`ws-ticket: refused, token has no life left userId=${logSafe(payload.sub)}`)
+      logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'no_life_left' })
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     return lifetime
@@ -174,7 +175,7 @@ export class WsTicketService {
       // Worth a line: a ticket that will not redeem is either a replay of a captured upgrade
       // URL or a client that took longer than the window to open its socket, and an operator
       // seeing a run of these is looking at one or the other.
-      this.logger.warn('ws-ticket: redemption refused — unknown, expired, or already used')
+      logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'unknown_or_used' })
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
@@ -187,7 +188,7 @@ export class WsTicketService {
       snapshot.tenantId === undefined ? 'platform' : 'dashboard'
     )
     if (revoked) {
-      this.logger.warn('ws-ticket: redemption refused — the session that minted it was revoked')
+      logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'session_revoked' })
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     return snapshot

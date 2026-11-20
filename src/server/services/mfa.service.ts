@@ -26,6 +26,7 @@ import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.i
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IPlatformUserRepository } from '../interfaces/platform-user-repository.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { logSafe } from '../utils/log-safe'
 import { notifyMfaChange } from '../utils/mfa-notify'
@@ -311,7 +312,7 @@ export class MfaService {
       tenantId
     )
     if (!codeValid) {
-      this.logger.warn(`verifyAndEnable: invalid TOTP code userId=${logSafe(userId)}`)
+      logEvent(this.logger, 'AUTH_MFA_CODE_INVALID', { plane: context, flow: 'enable' })
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 

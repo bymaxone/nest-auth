@@ -15,6 +15,7 @@ import { recentAuthKey } from '../constants/recent-auth'
 import { sessionId } from '../constants/session-id'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { logSafe } from '../utils/log-safe'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
@@ -86,18 +87,17 @@ export class ReauthenticationService {
       // include.
       const recent = await this.recentMark(context, userId, tenantId, sid)
       if (recent === null) {
-        this.logger.warn(
-          `reauthenticate: no recent authentication userId=${logSafe(userId)} context=${context}`
-        )
+        logEvent(this.logger, 'AUTH_REAUTHENTICATION_REFUSED', {
+          plane: context,
+          reason: 'no_recent_authentication'
+        })
         throw new AuthException(AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED)
       }
       return
     }
 
     if (await this.lockout.isLockedOut('reauth', context, userId, tenantId)) {
-      this.logger.warn(
-        `reauthenticate: account locked userId=${logSafe(userId)} context=${context}`
-      )
+      logEvent(this.logger, 'AUTH_ACCOUNT_LOCKED', { flow: 'reauthentication' })
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 

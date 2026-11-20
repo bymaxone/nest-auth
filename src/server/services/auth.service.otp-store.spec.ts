@@ -29,6 +29,7 @@ import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
+import { AUTH_LOG_EVENTS } from '../observability/log-events'
 
 const JWT_SECRET = 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long'
 const HMAC_KEY = createHash('sha256')
@@ -162,20 +163,24 @@ describe('AuthService — a refused write of the verification code', () => {
     expect(mockEmailProvider.sendEmailVerificationOtp).not.toHaveBeenCalled()
   })
 
-  // Scenario: the same registration. Expected: exactly one error line with the closed code, naming the
-  // purpose, and carrying neither the address, the user id nor the code, even though the store's own
+  // Scenario: the same registration. Expected: exactly one error event with the closed code, carrying a
+  // description of the failure and neither the address, the user id nor the code, even though the store's own
   // message holds all three.
-  it('logs one closed-code line that carries no address, user id or code', async () => {
+  it('logs one closed-code event that carries no address, user id or code', async () => {
     mockOtpService.store.mockRejectedValue(STORE_REFUSED)
 
     await service.register(DTO, REQUEST)
 
     expect(errorLog).toHaveBeenCalledTimes(1)
-    const line = String(errorLog.mock.calls[0]?.[0])
-    expect(line).toMatch(/^\[AUTH_OTP_STORE_FAILED\] email_verification: /)
-    expect(line).not.toContain(EMAIL)
-    expect(line).not.toContain(USER_ID)
-    expect(line).not.toContain(CODE)
+    const [event] = errorLog.mock.calls[0] as [Record<string, unknown>]
+    expect(event).toMatchObject({
+      event: 'AUTH_OTP_STORE_FAILED',
+      message: AUTH_LOG_EVENTS.AUTH_OTP_STORE_FAILED.message
+    })
+    expect(Object.keys(event).sort()).toEqual(['detail', 'event', 'message'])
+    expect(JSON.stringify(event)).not.toContain(EMAIL)
+    expect(JSON.stringify(event)).not.toContain(USER_ID)
+    expect(JSON.stringify(event)).not.toContain(CODE)
   })
 
   // Scenario: the resend route, for an unverified account, with the store refusing. Expected: it
@@ -198,7 +203,7 @@ describe('AuthService — a refused write of the verification code', () => {
     )
     expect(mockEmailProvider.sendEmailVerificationOtp).not.toHaveBeenCalled()
     expect(errorLog).toHaveBeenCalledTimes(1)
-    expect(String(errorLog.mock.calls[0]?.[0])).toMatch(/^\[AUTH_OTP_STORE_FAILED\] /)
+    expect(errorLog.mock.calls[0]?.[0]).toMatchObject({ event: 'AUTH_OTP_STORE_FAILED' })
   })
 
   // Scenario: the write succeeds. Expected: the email is sent with the stored code and nothing is

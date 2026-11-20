@@ -10,6 +10,7 @@ import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES } from '../errors/auth-error-code
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenManagerService } from './token-manager.service'
+import { eventOf, expectEvent, serialized } from '../__tests__/log-events'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -1008,16 +1009,9 @@ describe('TokenManagerService', () => {
       expect(mockHooks.onRefreshTokenReuseDetected).not.toHaveBeenCalled()
     })
 
-    // The same case, in the LOG rather than the hook — and the log is what an on-call reads.
-    // `revokeFamily` names no owner when no member record does. The way that usually happens is
-    // the second-and-later replay of an already-revoked family — the consumed marker outlives the
-    // sessions it points at, so reuse is detected again while every record that could name the
-    // owner is gone — but a member can also have expired, failed to parse, or carried no `userId`,
-    // and the three are indistinguishable from here. The line used to read `userId=` in all of
-    // them: an empty field on the strongest compromise signal this library produces, precisely on
-    // REPEAT attack traffic. An empty field reads as a defect in the logger and makes a reader
-    // distrust the tool rather than the event.
-    it('says the owner is unknown, and what was observed, when the family names none', async () => {
+    // The same case, in the LOG rather than the hook, and the log is what an on-call reads. The event names
+    // the lineage and the plane and never an account, whether or not any member record could name one.
+    it('writes the revocation event naming the family and no owner when the family names none', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
       mockRedis.revokeFamily.mockResolvedValue({ removed: 0, ownerId: '' })
@@ -1026,20 +1020,7 @@ describe('TokenManagerService', () => {
         AuthException
       )
 
-      // The whole line, not three substrings of it, and the line itself rather than every warning
-      // joined — the flow emits two, and joining them lets a substring assertion pass on text from
-      // the wrong one. `ownerFragment`'s own suite pins the fragment; what this pins is that the
-      // fragment reaches THIS line, in place of the bare `userId=` it used to carry, with the
-      // family still named beside it — the only handle left on the lineage once no member can
-      // name its owner.
-      const revocationLine = warnSpy.mock.calls
-        .map((call) => String(call[0]))
-        .find((line) => line.includes('token family revoked'))
-
-      expect(revocationLine).toBe(
-        'reissueTokens: token family revoked after reuse detection ' +
-          `userId=<unknown: no live session remains in this family to name it> familyId=${FAMILY}`
-      )
+      expectEvent(warnSpy, 'AUTH_REFRESH_FAMILY_REVOKED', { plane: 'dashboard', familyId: FAMILY })
       warnSpy.mockRestore()
     })
 
@@ -1056,8 +1037,7 @@ describe('TokenManagerService', () => {
       expect(mockRedis.revokeFamily).toHaveBeenCalledWith(FAMILY)
       // The warning is the operator's only signal that a token theft was detected — an
       // emptied template would make the revocation silent.
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('reuse of a consumed refresh token detected')
+      expectEvent(warnSpy, 'AUTH_REFRESH_REUSE_DETECTED', { plane: 'dashboard', familyId: FAMILY })
       warnSpy.mockRestore()
     })
 
@@ -1183,11 +1163,7 @@ describe('TokenManagerService', () => {
       // Refused before the script ran: the token is still spendable by the legitimate holder
       // right up until they sign in again, and nothing was consumed on their behalf.
       expect(mockRedis.rotateRefreshSession).not.toHaveBeenCalled()
-      // The warning is the operator's only signal that sessions are being ended by the cap
-      // rather than by a bug.
-      expect(warnSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
-        'outlived the absolute lifetime cap'
-      )
+      expectEvent(warnSpy, 'AUTH_SESSION_LIFETIME_EXCEEDED')
       warnSpy.mockRestore()
     })
 
@@ -1548,9 +1524,7 @@ describe('TokenManagerService', () => {
       await expect(service.reissueTokens('gone-token', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
       )
-      expect(warnSpy).toHaveBeenCalledWith(
-        'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
-      )
+      expectEvent(warnSpy, 'AUTH_REFRESH_REFUSED', { plane: 'dashboard' })
       warnSpy.mockRestore()
     })
   })
@@ -2061,9 +2035,7 @@ describe('TokenManagerService', () => {
       ).rejects.toThrow(AuthException)
 
       expect(mockRedis.rotateRefreshSession).not.toHaveBeenCalled()
-      expect(warnSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
-        'outlived the absolute lifetime cap'
-      )
+      expectEvent(warnSpy, 'AUTH_SESSION_LIFETIME_EXCEEDED')
       warnSpy.mockRestore()
     })
 
@@ -2209,8 +2181,10 @@ describe('TokenManagerService', () => {
       ).rejects.toThrow(AuthException)
 
       expect(mockRedis.revokeFamily).toHaveBeenCalledWith(PLATFORM_FAMILY, 'platform')
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('reuse of a consumed refresh token detected')
+      expectEvent(warnSpy, 'AUTH_REFRESH_REUSE_DETECTED', {
+        plane: 'platform',
+        familyId: PLATFORM_FAMILY
+      })
       warnSpy.mockRestore()
     })
 
@@ -2219,7 +2193,7 @@ describe('TokenManagerService', () => {
     // replay tests hand back a populated `ownerId`, so the empty case ran only on the dashboard
     // side. A regression could restore a bare `userId=` here — on the plane whose accounts hold
     // the most authority — without a single test going red.
-    it('says the owner is unknown, and what was observed, on the platform plane', async () => {
+    it('writes the revocation event naming the family and no owner on the platform plane', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.get.mockResolvedValue(null)
       mockRedis.rotateRefreshSession.mockResolvedValue({
@@ -2232,14 +2206,10 @@ describe('TokenManagerService', () => {
         service.reissuePlatformTokens('replayed-platform', '9.9.9.9', 'Attacker')
       ).rejects.toThrow(AuthException)
 
-      const revocationLine = warnSpy.mock.calls
-        .map((call) => String(call[0]))
-        .find((line) => line.includes('token family revoked'))
-
-      expect(revocationLine).toBe(
-        'reissuePlatformTokens: token family revoked after reuse detection ' +
-          `userId=<unknown: no live session remains in this family to name it> familyId=${PLATFORM_FAMILY}`
-      )
+      expectEvent(warnSpy, 'AUTH_REFRESH_FAMILY_REVOKED', {
+        plane: 'platform',
+        familyId: PLATFORM_FAMILY
+      })
       warnSpy.mockRestore()
     })
 
@@ -2433,9 +2403,7 @@ describe('TokenManagerService', () => {
       await expect(
         service.reissuePlatformTokens('gone-platform-token', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
-      expect(warnSpy).toHaveBeenCalledWith(
-        'reissuePlatformTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
-      )
+      expectEvent(warnSpy, 'AUTH_REFRESH_REFUSED', { plane: 'platform' })
       warnSpy.mockRestore()
     })
   })
@@ -2627,48 +2595,41 @@ describe('TokenManagerService', () => {
   // ---------------------------------------------------------------------------
 
   describe('reuse-detection logging', () => {
-    // Scenario: a consumed refresh token presented again. Expected: the log names the account
-    // and the lineage, on both planes. Why: this is the strongest compromise signal the
-    // library produces — a token that was already exchanged has been presented a second time,
-    // so one of its two holders is not the owner — and it used to be logged as bare prose.
-    // The account reached only a consumer who had wired `onRefreshTokenReuseDetected`, and the
-    // shipped hooks are no-ops, so on a default deployment the one unambiguous theft signal
-    // was anonymous in the log and absent everywhere else. An operator could tell that
-    // something happened and not to whom (ASVS 16.2.1).
-    it.each([
-      ['dashboard', 'rt', 'reissueTokens'],
-      ['platform', 'prt', 'reissuePlatformTokens']
-    ])('names the owner and the family on the %s plane', async (plane, prefix, method) => {
-      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
-      mockRedis.get.mockResolvedValue(null)
-      mockRedis.rotateRefreshSession.mockResolvedValue({
-        kind: 'reused',
-        familyId: 'fam-stolen'
-      })
-      mockRedis.revokeFamily.mockResolvedValue({ ownerId: 'user-compromised', count: 3 })
+    // Scenario: a consumed refresh token presented again, on each plane. Expected: the detection and the
+    // revocation are two events that name the plane and the family, and never the account, the token or its
+    // hash. Why: this is the strongest compromise signal the library produces, and the family is the one
+    // handle that ties a reuse to its revocation; the account reaches a consumer through
+    // `onRefreshTokenReuseDetected`, and the logger's own context carries identity.
+    it.each([['dashboard'], ['platform']] as const)(
+      'names the family and no account on the %s plane',
+      async (plane) => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+        mockRedis.get.mockResolvedValue(null)
+        mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: 'fam-stolen' })
+        mockRedis.revokeFamily.mockResolvedValue({ ownerId: 'user-compromised', count: 3 })
 
-      try {
-        const call =
-          plane === 'dashboard'
-            ? service.reissueTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
-            : service.reissuePlatformTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
-        await expect(call).rejects.toThrow(AuthException)
+        try {
+          const call =
+            plane === 'dashboard'
+              ? service.reissueTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
+              : service.reissuePlatformTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
+          await expect(call).rejects.toThrow(AuthException)
 
-        const lines = warn.mock.calls.map((args) => String(args[0]))
-        const named = lines.filter(
-          (line) => line.includes('user-compromised') && line.includes('fam-stolen')
-        )
-        expect(named.length).toBeGreaterThan(0)
-        expect(named.join(' ')).toContain(method)
-
-        // The detection is logged BEFORE the revocation and the owner AFTER it, so a
-        // `revokeFamily` that throws cannot take the finding down with it.
-        expect(lines.filter((line) => line.includes('fam-stolen')).length).toBe(2)
-      } finally {
-        warn.mockRestore()
-        expect(prefix).toBeTruthy()
+          const fields = { plane, familyId: 'fam-stolen' }
+          expect(warn).toHaveBeenNthCalledWith(1, eventOf('AUTH_REFRESH_REUSE_DETECTED', fields))
+          expect(warn).toHaveBeenNthCalledWith(2, eventOf('AUTH_REFRESH_FAMILY_REVOKED', fields))
+          expect(serialized(warn)).not.toContain('user-compromised')
+          expect(serialized(warn)).not.toContain(FIXED_REFRESH_TOKEN)
+          // The family is the lineage's own id, and neither the token nor its hash stands in for it.
+          expect(serialized(warn)).not.toContain(sha256(FIXED_REFRESH_TOKEN))
+          expect(warn.mock.calls.map((call) => (call[0] as { familyId: string }).familyId)).toEqual(
+            ['fam-stolen', 'fam-stolen']
+          )
+        } finally {
+          warn.mockRestore()
+        }
       }
-    })
+    )
 
     // The finding survives a failed response. Losing the log because the revocation could not
     // complete would leave an operator with no record of the one event they most need.
@@ -2686,8 +2647,10 @@ describe('TokenManagerService', () => {
           service.reissueTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
         ).rejects.toThrow('redis down')
 
-        const lines = warn.mock.calls.map((args) => String(args[0]))
-        expect(lines.some((line) => line.includes('fam-stolen'))).toBe(true)
+        expectEvent(warn, 'AUTH_REFRESH_REUSE_DETECTED', {
+          plane: 'dashboard',
+          familyId: 'fam-stolen'
+        })
       } finally {
         warn.mockRestore()
       }

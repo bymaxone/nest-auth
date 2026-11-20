@@ -5,6 +5,7 @@ import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { BruteForceService } from './brute-force.service'
+import { expectEvent } from '../__tests__/log-events'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -203,26 +204,25 @@ describe('BruteForceService', () => {
     // diagnostic log includes BOTH the "Invalid identifier" lead and the "Pass a hashed value"
     // remediation hint. Why: pins the two concatenated string literals so emptying either one
     // (which would otherwise leave the public FORBIDDEN error unchanged) is caught.
-    it('should log both the invalid-identifier reason and the remediation hint', async () => {
+    it('should log an event naming the reason an identifier was refused', async () => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error')
 
       await expect(service.isLockedOut('user:id')).rejects.toThrow(AuthException)
 
-      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' ')
-      expect(logged).toContain('Invalid identifier passed to BruteForceService')
-      expect(logged).toContain('Pass a hashed value (e.g. hmacSha256(email, secret))')
+      expectEvent(errorSpy, 'AUTH_IDENTIFIER_REFUSED', { reason: 'forbidden_characters' }, [
+        'user:id'
+      ])
     })
 
     // Scenario: an over-length identifier is rejected; expected: the diagnostic log states the
     // exact maximum byte length. Why: pins the length-exceeded message template so emptying it
     // is caught (the public FORBIDDEN response is identical regardless of this text).
-    it('should log the configured maximum byte length when the identifier is too long', async () => {
+    it('should log an event naming a too-long identifier without printing it', async () => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error')
 
       await expect(service.isLockedOut('a'.repeat(513))).rejects.toThrow(AuthException)
 
-      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' ')
-      expect(logged).toContain('Identifier exceeds the maximum allowed length of 512 bytes.')
+      expectEvent(errorSpy, 'AUTH_IDENTIFIER_REFUSED', { reason: 'too_long' }, ['aaaa'])
     })
 
     // Verifies that an identifier of exactly 512 bytes is accepted (boundary case).

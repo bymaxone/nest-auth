@@ -30,6 +30,7 @@ import type {
   IUserRepository,
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { resolveClientAddress } from '../utils/client-address'
@@ -359,9 +360,7 @@ export class AuthService {
 
     const locked = await this.bruteForce.isLockedOut(bfIdentifier)
     if (locked) {
-      this.logger.warn(
-        `login: account locked email=${maskEmail(dto.email)} tenantId=${logSafe(tenantId)}`
-      )
+      logEvent(this.logger, 'AUTH_LOGIN_LOCKED', { plane: 'dashboard' })
       const remainingSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
       this.emitLoginFailed({ email: dto.email, tenantId, reason: 'locked_out' }, context)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, {
@@ -426,9 +425,7 @@ export class AuthService {
     // property that matters: every answer an attacker can reach is the same answer.
     const passwordMatch = await this.passwordService.compare(dto.password, user.passwordHash)
     if (!passwordMatch) {
-      this.logger.warn(
-        `login: invalid credentials email=${maskEmail(dto.email)} tenantId=${logSafe(tenantId)}`
-      )
+      logEvent(this.logger, 'AUTH_LOGIN_INVALID_CREDENTIALS', { plane: 'dashboard' })
       await this.recordLoginFailure(
         bfIdentifier,
         { email: dto.email, tenantId, userId: user.id },

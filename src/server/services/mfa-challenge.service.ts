@@ -27,6 +27,7 @@ import type {
   IPlatformUserRepository
 } from '../interfaces/platform-user-repository.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { markingPlane } from '../observability/observed-outcome'
 import { logSafe } from '../utils/log-safe'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
@@ -201,7 +202,7 @@ export class MfaChallengeService {
   private async assertNotLocked(scope: ChallengeScope): Promise<void> {
     const { userId, context, tenantId } = scope
     if (await this.flowLockout.isLockedOut('challenge', context, userId, tenantId)) {
-      this.logger.warn(`challenge: account locked userId=${logSafe(userId)}`)
+      logEvent(this.logger, 'AUTH_MFA_LOCKED', { plane: context, flow: 'challenge' })
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
   }
@@ -216,7 +217,7 @@ export class MfaChallengeService {
   private async refuseWrongCode(scope: ChallengeScope): Promise<never> {
     const { userId, context, tenantId } = scope
     await this.flowLockout.recordFailure('challenge', context, userId, tenantId)
-    this.logger.warn(`challenge: invalid MFA code userId=${logSafe(userId)} context=${context}`)
+    logEvent(this.logger, 'AUTH_MFA_CODE_INVALID', { plane: context, flow: 'challenge' })
     throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
   }
 

@@ -36,6 +36,7 @@ import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { sleep } from '../utils/sleep'
 import type { Request } from 'express'
+import { expectEvent } from '../__tests__/log-events'
 
 const mockSleep = sleep as jest.MockedFunction<typeof sleep>
 
@@ -496,7 +497,7 @@ describe('PasswordResetService', () => {
     // Both refusals below answer with a code that says nothing about which account or why, so
     // these lines are the only record of a caller holding a token and guessing at the password
     // behind it.
-    it('names the account whose re-proof budget ran out', async () => {
+    it('records the lockout as an event that names no account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       // `Once`, because `clearAllMocks` resets calls but keeps implementations — a persistent
       // lockout would decide every test after this one.
@@ -506,15 +507,13 @@ describe('PasswordResetService', () => {
         AuthException
       )
 
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('account locked')
-      expect(warned).toContain('userId=u1')
+      expectEvent(warnSpy, 'AUTH_ACCOUNT_LOCKED', { flow: 'change_password' }, ['u1'])
       warnSpy.mockRestore()
     })
 
     // The wrong-password refusal, counted against the same budget: `invalid_credentials` says
     // nothing about which account, so the log line carries it.
-    it('names the account whose current password was rejected', async () => {
+    it('records a rejected password as an event that names no account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockPasswordService.compare.mockResolvedValueOnce(false)
 
@@ -522,9 +521,7 @@ describe('PasswordResetService', () => {
         AuthException
       )
 
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('current password rejected')
-      expect(warned).toContain('userId=u1')
+      expectEvent(warnSpy, 'AUTH_PASSWORD_REJECTED', { flow: 'change_password' }, ['u1'])
       warnSpy.mockRestore()
     })
 
