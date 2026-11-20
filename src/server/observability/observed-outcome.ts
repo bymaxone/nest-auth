@@ -65,7 +65,8 @@ export function markedPlane(error: unknown): AuthPlane | undefined {
 }
 
 /**
- * Runs `run`, and marks whatever it throws with the plane before rethrowing it unchanged.
+ * Runs `run`, and marks an `Error` it throws with the plane before rethrowing it unchanged; anything else
+ * that is thrown is rethrown as it is.
  *
  * It is how a flow that has already established the plane of its token says so for every way it can end,
  * without a mark at each throw: a refusal added later is marked by being inside the call.
