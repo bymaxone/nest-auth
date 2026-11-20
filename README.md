@@ -813,7 +813,7 @@ A flag must be exactly `true` or `false` (`workspaces.allowCreate` may also be a
 refused at startup naming the option, never read as off or as a default.
 A text option (`jwt.issuer`, `jwt.audience`, the cookie names and paths, `mfa.issuer`, `apiKeys.pepper`, `redisNamespace`,
 `routePrefix`) must be a string, `blockedStatuses`, `cookies.trustedOrigins` and `password.blocklist` an array of strings, and each
-settings group an object; any other type is refused at startup naming the option and the type, never the value. `controllers` is read once, by
+settings group an object; any other type is refused at startup naming the option and the type received, and never printing the content of a value that is not a number. `controllers` is read once, by
 `registerAsync()`, and a `controllers` key in what `useFactory` returns is refused whatever its value, `null` and `undefined` included.
 
 > [!NOTE]

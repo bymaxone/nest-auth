@@ -28,7 +28,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   must be arrays of strings: `blockedStatuses: 'evil'` was accepted and read as no list. The groups `password`, `cookies`,
   `sessions`, `bruteForce`, `passwordReset`, `emailVerification`, `platform`, `invitations`, `emailChange` and `oauth`
   must be objects, where a string was read as an empty group. The `controllers` argument of `registerAsync` must be an
-  object. A refusal never prints the value.
+  object. A refusal prints a number as it is and names any other value by its type, never its content.
 - Three refusals no longer print what the host typed: a `cookies.trustedOrigins` entry that is not an absolute origin is
   named by its position, a `workspaces.permissions.<action>` entry that is not a workspace role is named by its position,
   and the `routePrefix` refusal says "followed by the routePrefix" instead of repeating it. A log filter that matched the
