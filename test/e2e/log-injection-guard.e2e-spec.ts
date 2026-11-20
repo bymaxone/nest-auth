@@ -489,8 +489,7 @@ describe('log-injection guard (E2E)', () => {
   })
 
   // The detector has to be able to fail, or the assertions above are decoration. Asserting a lower bound
-  // keeps a later refactor of the walker from silently reducing it to nothing; the bound fell when the
-  // identity-bearing lines became events, and it falls again as the remaining text lines do.
+  // keeps a later refactor of the walker from silently reducing it to nothing.
   it('actually inspects the logger calls it claims to', () => {
     expect(everything.length).toBeGreaterThan(30)
     expect(everything.some((i) => i.guarded)).toBe(true)
