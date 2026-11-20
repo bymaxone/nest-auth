@@ -148,10 +148,19 @@ describe('a group of settings that is not an object', () => {
     'invitations',
     'emailChange',
     'oauth'
-  ])('refuses a string for %s', (group) => {
-    const result = refusal(options({ [group]: 'secret-not-an-object' }))
+  ])('refuses a string, an array and a function for %s', (group) => {
+    const received: ReadonlyArray<[unknown, string]> = [
+      ['secret-not-an-object', 'a string'],
+      [[], 'an array'],
+      [() => ({}), 'a function']
+    ]
+    for (const [value, type] of received) {
+      const result = refusal(options({ [group]: value }))
 
-    expect(result.type).toBe('Error')
-    expect(result.message).toBe(`[BymaxAuthModule] ${group} must be an object (received a string).`)
+      expect(result.type).toBe('Error')
+      expect(result.message).toBe(
+        `[BymaxAuthModule] ${group} must be an object (received ${type}).`
+      )
+    }
   })
 })

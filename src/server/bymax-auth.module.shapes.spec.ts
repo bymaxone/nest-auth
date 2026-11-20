@@ -76,7 +76,9 @@ describe('BymaxAuthModule.registerAsync shapes', () => {
   it.each([
     ['a string', 'evil', 'a string'],
     ['a number', 7, '7'],
-    ['a boolean', true, 'a boolean']
+    ['a boolean', true, 'a boolean'],
+    ['an array', [], 'an array'],
+    ['a function', () => ({}), 'a function']
   ])('refuses controllers given as %s', (_case, controllers, received) => {
     expect(() =>
       BymaxAuthModule.registerAsync({
