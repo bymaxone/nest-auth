@@ -340,7 +340,7 @@ export class OtpService {
  * Best effort: the account exists by the time the code is stored, and a code that cannot be stored
  * is one the user asks for again through the resend route. Failing here would answer an error for an
  * account that was created and would tell a caller whether the address was new. The refusal is logged
- * as a closed code with what the store said, never the address or the user id, and the caller sends
+ * as a closed code and the shape of the failure, never the address, the user id or text the store wrote, and the caller sends
  * nothing for a code that was not stored.
  *
  * @param otpService - The service that holds the code.
