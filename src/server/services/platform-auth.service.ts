@@ -34,6 +34,9 @@ import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-log
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
 
+/** What the two login events of the platform plane have in common. */
+const PASSWORD_LOGIN = { plane: 'platform', via: 'password' } as const
+
 /**
  * Core authentication service for platform administrators.
  *
@@ -52,9 +55,6 @@ import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
  *
  * @layer Service
  */
-/** What the two login events of the platform plane have in common. */
-const PASSWORD_LOGIN = { plane: 'platform', via: 'password' } as const
-
 @Injectable()
 export class PlatformAuthService {
   private readonly logger = new Logger(PlatformAuthService.name)
