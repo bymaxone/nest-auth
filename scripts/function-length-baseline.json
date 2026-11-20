@@ -35,7 +35,7 @@
     "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"logout\"]]": 57,
     "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"refresh\"]]": 142,
     "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"register\"]]": 113,
-    "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"sendVerificationOtp\"]]": 55,
+    "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"sendVerificationOtp\"]]": 54,
     "[\"src/server/services/email-change.service.ts\",[\"member\",\"EmailChangeService\",\"requestChange\"]]": 69,
     "[\"src/server/services/invitation.service.ts\",[\"member\",\"InvitationService\",\"acceptInvitation\"]]": 134,
     "[\"src/server/services/invitation.service.ts\",[\"member\",\"InvitationService\",\"invite\"]]": 151,

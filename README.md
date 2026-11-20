@@ -1793,6 +1793,12 @@ import { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from '@bymax-one/nest-auth/shared
 > (`auth.otp_invalid`) at one status (`401`) — a `429` on the ceiling would say the address was
 > registered, since only a record that exists can reach one.
 
+> **A verification code that cannot be stored.** `POST /register` stores the code after the account is created, and
+> `POST /resend-verification` stores it before it sends. When the store refuses the write, both answer exactly as
+> they do when it succeeds, no email is sent (it would carry a code nothing holds), and one error line records
+> `[AUTH_OTP_STORE_FAILED] email_verification` and only the shape of the failure, never the address, the user id or text the store wrote. The user
+> asks for a new code through `POST /resend-verification`.
+
 > **When a password-reset request fails.** A failure that is the same for every address answers
 > after the same timing floor as every other exit: `503` (`auth.service_unavailable`) when the
 > resend-cooldown store cannot answer, `500` (`auth.internal`) for any other failure of it and for

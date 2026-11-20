@@ -20,6 +20,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Fixed
 
+- A verification code the store refuses no longer fails the registration that created the account. `POST /register` and
+  `POST /resend-verification` answer as they do when the code is stored, no email is sent for a code that was not stored,
+  and one error line, `[AUTH_OTP_STORE_FAILED] email_verification`, records the refusal without the address or the user
+  id. Before, the refusal reached the caller as an error for an account that existed.
 - **A text option, a list of text and a group of settings given a value of the wrong type are refused at startup, naming the
   option and the type received.** `jwt.accessExpiresIn` given a number, a boolean, an object, a symbol or a bigint failed
   with `value.trim is not a function`; it now gets the same refusal as an unreadable string. `jwt.issuer`, `jwt.audience`,

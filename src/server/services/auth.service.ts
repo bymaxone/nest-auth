@@ -9,7 +9,7 @@ import {
 } from '../bymax-auth.constants'
 import { AccountStatusService } from './account-status.service'
 import { BruteForceService } from './brute-force.service'
-import { OtpService } from './otp.service'
+import { OtpService, storeVerificationCode } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { CREDENTIAL_PROVED, TokenManagerService } from './token-manager.service'
@@ -1418,10 +1418,9 @@ export class AuthService {
     }
 
     const identifier = this.otpIdentifier(tenantId, email)
-    const length = 6 // emailVerification does not expose otpLength; use fixed 6-digit OTPs
-    const ttl = this.options.emailVerification.otpTtlSeconds
-    const otp = this.otpService.generate(length)
-    await this.otpService.store('email_verification', identifier, otp, ttl)
+    const otp = this.otpService.generate(6) // emailVerification has no otpLength: fixed 6 digits
+    const { otpTtlSeconds: ttl } = this.options.emailVerification
+    if (!(await storeVerificationCode(this.otpService, this.logger, identifier, otp, ttl))) return
 
     // Captured out of the field: the guard above narrowed `this.emailProvider`, and that narrowing
     // does not survive into a handler the compiler cannot prove runs before the field changes.
