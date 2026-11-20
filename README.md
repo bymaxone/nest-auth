@@ -1796,7 +1796,7 @@ import { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from '@bymax-one/nest-auth/shared
 > **A verification code that cannot be stored.** `POST /register` stores the code after the account is created, and
 > `POST /resend-verification` stores it before it sends. When the store refuses the write, both answer exactly as
 > they do when it succeeds, no email is sent (it would carry a code nothing holds), and one error line records
-> `[AUTH_OTP_STORE_FAILED] email_verification` with what the store said, never the address or the user id. The user
+> `[AUTH_OTP_STORE_FAILED] email_verification` and only the shape of the failure, never the address, the user id or text the store wrote. The user
 > asks for a new code through `POST /resend-verification`.
 
 > **When a password-reset request fails.** A failure that is the same for every address answers
