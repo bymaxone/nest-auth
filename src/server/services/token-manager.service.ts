@@ -25,6 +25,7 @@ import type {
 } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
+import { observed } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -498,7 +499,7 @@ export class TokenManagerService {
       // Emitted after the revocation, so a consumer that reacts by paging someone is reacting
       // to a lineage that is already dead rather than one still being torn down.
       this.emitReuseDetected('dashboard', ownerId, outcome.familyId, ip, userAgent)
-      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+      throw observed('reuse_detected', new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID))
     }
     this.logger.warn(
       'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
@@ -517,8 +518,7 @@ export class TokenManagerService {
    * consumer subscribes to this hook. `userId` says whose account the family belongs to; `ip` and
    * `userAgent` are the only description of the party holding the token that should not exist, so
    * a report carrying the first and not the second says a compromise happened and gives nothing
-   * to act on. Both were previously dropped: the emit built an EMPTY context while
-   * `reissueTokens` had both values in scope as its own parameters.
+   * to act on.
    *
    * `sanitizedHeaders` stays empty and that is honest — the rotation path receives the address
    * and the agent, never the header map, so there is nothing to sanitize. Inventing one would be
@@ -614,7 +614,7 @@ export class TokenManagerService {
 
     if (Date.now() - bornAt > capDays * 86_400_000) {
       this.logger.warn('rotation refused: the session has outlived the absolute lifetime cap')
-      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+      throw observed('expired', new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID))
     }
   }
 
@@ -993,7 +993,7 @@ export class TokenManagerService {
       // Both planes report reuse: an operator watching for account takeover cares about a
       // replayed platform token at least as much as a dashboard one.
       this.emitReuseDetected('platform', ownerId, outcome.familyId, ip, userAgent)
-      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+      throw observed('reuse_detected', new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID))
     }
 
     this.logger.warn(

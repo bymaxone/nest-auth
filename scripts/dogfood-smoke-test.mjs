@@ -48,7 +48,7 @@ let consumerDir
 
 // ── Expected dist files per subpath ─────────────────────────────────────────
 
-const SUBPATHS = ['server', 'shared', 'client', 'react', 'nextjs']
+const SUBPATHS = ['server', 'shared', 'client', 'react', 'nextjs', 'observability']
 
 const EXPECTED_DIST_FILES = SUBPATHS.flatMap((s) =>
   ['mjs', 'cjs', 'd.ts', 'd.cts'].map((ext) => `dist/${s}/index.${ext}`)
@@ -85,7 +85,8 @@ const EXPECTED_EXPORTS = {
     'buildSilentRefreshUrl',
     'CLIENT_REFRESH_ROUTE',
     'LOGOUT_ROUTE'
-  ]
+  ],
+  observability: ['AuthMetrics', 'AuthRedisHealthIndicator']
 }
 
 const ALLOWED_TARBALL_PATHS = ['package.json', 'README.md', 'CHANGELOG.md', 'LICENSE', 'dist/']
@@ -107,7 +108,7 @@ function section(title) {
 
 // ── 1. Build artifact presence ───────────────────────────────────────────────
 
-section('1. Build artifacts (5 subpaths × 4 files = 20)')
+section('1. Build artifacts (6 subpaths × 4 files = 24)')
 for (const f of EXPECTED_DIST_FILES) {
   const abs = resolve(packageRoot, f)
   if (!existsSync(abs)) {
@@ -125,7 +126,7 @@ const req = createRequire(import.meta.url)
 // Subpaths that bundle optional peer deps (next, react) which may not be
 // installed in every dev environment. We attempt the import and skip gracefully
 // when the peer is absent — section 1 already proved the dist file exists.
-const PEER_OPTIONAL_SUBPATHS = new Set(['react', 'nextjs'])
+const PEER_OPTIONAL_SUBPATHS = new Set(['react', 'nextjs', 'observability'])
 
 for (const subpath of SUBPATHS) {
   section(`2. ESM exports — ${subpath}`)

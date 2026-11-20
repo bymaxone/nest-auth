@@ -363,6 +363,18 @@ export { MfaService } from './services/mfa.service'
 export { ReauthenticationService } from './services/reauthentication.service'
 export type { MfaSetupResult } from './services/mfa.service'
 export { OtpService } from './services/otp.service'
+
+// Observability — the counts the flows keep and the readiness probe; the optional `observability` subpath
+// publishes them.
+export {
+  AUTH_PLANES,
+  AuthMetricsTally,
+  LOGIN_OUTCOMES,
+  MFA_OUTCOMES,
+  REFRESH_OUTCOMES
+} from './observability/auth-metrics-tally'
+export type { LoginOutcome, MfaOutcome, RefreshOutcome } from './observability/auth-metrics-tally'
+export { AuthHealthProbe } from './observability/auth-health-probe'
 // NOTE: `InvitationService` is only registered when `controllers.invitations` is enabled.
 // Same caveat as the services above.
 export { InvitationService } from './services/invitation.service'

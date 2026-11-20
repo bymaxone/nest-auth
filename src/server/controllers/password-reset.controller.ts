@@ -30,6 +30,7 @@ import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import { ObserveAuth } from '../observability/observe-auth'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { PasswordResetService } from '../services/password-reset.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
@@ -89,6 +90,7 @@ export class PasswordResetController {
   @Throttle(AUTH_THROTTLE_CONFIGS.forgotPassword)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.forgotPassword)
   @HttpCode(HttpStatus.OK)
+  @ObserveAuth('password_reset', 'dashboard')
   @Post('forgot-password')
   async forgotPassword(
     @Body() dto: ForgotPasswordDto,
@@ -118,6 +120,7 @@ export class PasswordResetController {
   @Throttle(AUTH_THROTTLE_CONFIGS.resetPassword)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resetPassword)
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ObserveAuth('password_reset', 'dashboard')
   @Post('reset-password')
   async resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request): Promise<void> {
     await this.passwordResetService.resetPassword(dto, req)
