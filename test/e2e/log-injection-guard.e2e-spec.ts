@@ -649,8 +649,8 @@ describe('log-injection guard (E2E)', () => {
     }
   })
 
-  // Scenario: every `logEvent` call in the library. Expected: no field outside the rule above. Why: the event
-  // fields are the only place a value this library did not author could reach a log.
+  // Scenario: every `logEvent` call in the library. Expected: no field outside the rule above. Why: an event
+  // field is where a value this library did not author would enter an event.
   it('writes only fields the library composed or an account id into an event', () => {
     const calls = files.filter((file) => !file.endsWith('log-event.ts'))
     const problems = calls.flatMap((file) =>
