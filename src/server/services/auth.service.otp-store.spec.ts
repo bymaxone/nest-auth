@@ -20,6 +20,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { hmacSha256 } from '../crypto/secure-token'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { AccountStatusService } from './account-status.service'
 import { AuthService } from './auth.service'
@@ -118,8 +119,36 @@ describe('AuthService — a refused write of the verification code', () => {
 
     expect(refused).toBe(stored)
     expect(refused).toBe(AUTH_RESULT)
+    // Each registration creates this account in this tenant and issues tokens for the created user,
+    // with the caller's address and agent, so the refused write changes none of it.
+    for (const call of [1, 2]) {
+      expect(mockUserRepo.create).toHaveBeenNthCalledWith(
+        call,
+        expect.objectContaining({
+          email: EMAIL,
+          name: DTO.name,
+          passwordHash: 'scrypt:salt:hash',
+          tenantId: 'tenant-1',
+          emailVerified: false
+        })
+      )
+      expect(mockTokenManager.issueTokens).toHaveBeenNthCalledWith(
+        call,
+        expect.objectContaining({ id: USER_ID, email: EMAIL, tenantId: 'tenant-1' }),
+        '1.2.3.4',
+        'TestBrowser',
+        expect.anything()
+      )
+    }
     expect(mockUserRepo.create).toHaveBeenCalledTimes(2)
     expect(mockTokenManager.issueTokens).toHaveBeenCalledTimes(2)
+    // The write that was refused is the one for this address and this code.
+    expect(mockOtpService.store).toHaveBeenLastCalledWith(
+      'email_verification',
+      hmacSha256(`tenant-1:${EMAIL}`, HMAC_KEY),
+      CODE,
+      600
+    )
   })
 
   // Scenario: the same registration. Expected: no email is sent, since the code in it would match
@@ -160,6 +189,13 @@ describe('AuthService — a refused write of the verification code', () => {
     ).resolves.toBeUndefined()
     await flush()
 
+    expect(mockUserRepo.findByEmail).toHaveBeenCalledWith({ email: EMAIL, tenantId: 'tenant-1' })
+    expect(mockOtpService.store).toHaveBeenCalledWith(
+      'email_verification',
+      hmacSha256(`tenant-1:${EMAIL}`, HMAC_KEY),
+      CODE,
+      600
+    )
     expect(mockEmailProvider.sendEmailVerificationOtp).not.toHaveBeenCalled()
     expect(errorLog).toHaveBeenCalledTimes(1)
     expect(String(errorLog.mock.calls[0]?.[0])).toMatch(/^\[AUTH_OTP_STORE_FAILED\] /)
