@@ -17,7 +17,6 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { logSafe } from '../utils/log-safe'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 
 /** Re-authentication for the callers that change a credential or a membership. */

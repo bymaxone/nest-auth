@@ -57,8 +57,6 @@ import {
 } from '../services/workspace-invitation-accept.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
-import { logSafe } from '../utils/log-safe'
-import { maskEmail } from '../utils/mask-email'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
@@ -323,7 +321,7 @@ export class OAuthService {
     this.assertMaySignIn(authUser)
 
     if (authUser.mfaEnabled) {
-      return this.issueMfaChallenge(authUser, provider, hookResult)
+      return this.issueMfaChallenge(authUser)
     }
 
     const created = hookResult.action === 'create'
@@ -363,15 +361,9 @@ export class OAuthService {
    * Issues the MFA temp token for an account that has a second factor.
    *
    * @param authUser - The account the flow resolved to.
-   * @param provider - The provider name, for the log line.
-   * @param hookResult - The hook's decision, whose action goes in the log line.
    * @returns The challenge the controller plants in a cookie or surfaces in the body.
    */
-  private async issueMfaChallenge(
-    authUser: AuthUser,
-    provider: string,
-    hookResult: OAuthLoginResult
-  ): Promise<OAuthMfaChallengeResult> {
+  private async issueMfaChallenge(authUser: AuthUser): Promise<OAuthMfaChallengeResult> {
     // MFA branch: when the resolved user has MFA enabled, the OAuth flow has only
     // proven control of the OAuth provider account — not the second factor. Issuing
     // a session with `mfaVerified: false` would be rejected on every request by the
@@ -389,9 +381,12 @@ export class OAuthService {
       'dashboard',
       authUser.tenantId
     )
-    this.logger.log(
-      `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${logSafe(authUser.id)} tenantId=${logSafe(authUser.tenantId)} action=${hookResult.action}`
-    )
+    logEvent(this.logger, 'AUTH_LOGIN_MFA_CHALLENGED', {
+      plane: 'dashboard',
+      userId: authUser.id,
+      tenantId: authUser.tenantId,
+      via: 'oauth'
+    })
     return { mfaRequired: true, mfaTempToken }
   }
 
@@ -431,9 +426,12 @@ export class OAuthService {
       })
     }
 
-    this.logger.log(
-      `handleCallback: OAuth login success provider=${provider} userId=${logSafe(safeUser.id)} tenantId=${logSafe(authUser.tenantId)} action=${hookResult.action}`
-    )
+    logEvent(this.logger, 'AUTH_LOGIN_SUCCEEDED', {
+      plane: 'dashboard',
+      userId: safeUser.id,
+      tenantId: authUser.tenantId,
+      via: 'oauth'
+    })
 
     // The same non-blocking side effects a password login runs once it has succeeded. An MFA
     // account reaches them from the challenge completion instead, so this is only the path that
@@ -486,7 +484,7 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
-    const stored = await this.readState(provider, state)
+    const stored = await this.readState(state)
 
     // Mix-up defence (RFC 9700 §2.1/§4.4). `provider` here comes from the callback's own URL
     // path; the record says which provider the flow was actually started with. A mismatch means
@@ -509,12 +507,11 @@ export class OAuthService {
   /**
    * Reads and deletes the state record of a flow, in one step so it can be used once.
    *
-   * @param provider - The provider named by the callback path, for the log lines.
    * @param state - The `state` query value.
    * @returns The stored record.
    * @throws `AuthException(OAUTH_FAILED)` for a state that is missing, unparseable or malformed.
    */
-  private async readState(provider: string, state: string): Promise<StoredOAuthState> {
+  private async readState(state: string): Promise<StoredOAuthState> {
     // Atomically read and delete the CSRF state — single-use enforcement.
     const stateKey = `os:${sha256(state)}`
     const rawState = await this.redis.getdel(stateKey)
@@ -575,10 +572,7 @@ export class OAuthService {
       //
       // A plugin that wants its own diagnostics logged in full can log them itself, where the
       // operator knows the audience.
-      this.logger.error(
-        `OAuth plugin '${provider}' failed during code exchange or profile fetch: ` +
-          describeChannelStatus(err)
-      )
+      logEvent(this.logger, 'AUTH_OAUTH_EXCHANGE_FAILED', { detail: describeChannelStatus(err) })
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
   }
@@ -615,9 +609,7 @@ export class OAuthService {
     // and its errors are untyped — so the check closes the deterministic case and leaves
     // the race to the constraint.
     if (await this.userRepo.findByEmail({ email: profile.email, tenantId })) {
-      this.logger.warn(
-        `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${logSafe(tenantId)}`
-      )
+      logEvent(this.logger, 'AUTH_OAUTH_CREATE_REFUSED')
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
     }
 

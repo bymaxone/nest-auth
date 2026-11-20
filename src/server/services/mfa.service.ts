@@ -28,7 +28,6 @@ import type { IPlatformUserRepository } from '../interfaces/platform-user-reposi
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { logSafe } from '../utils/log-safe'
 import { notifyMfaChange } from '../utils/mfa-notify'
 import { assertPlaneTenant } from '../utils/mfa-plane-tenant'
 import { DEFAULT_RECOVERY_CODE_COUNT, generateRecoveryCodes } from '../utils/mfa-recovery-codes'
@@ -247,7 +246,7 @@ export class MfaService {
     }
 
     const qrCodeUri = buildTotpUri(secretBase32, user.email, this.mfaOptions.issuer)
-    this.logger.log(`setup: MFA setup initiated userId=${logSafe(userId)} context=${context}`)
+    logEvent(this.logger, 'AUTH_MFA_SETUP_STARTED', { plane: context, userId })
     return { secret: secretBase32, qrCodeUri, recoveryCodes: plainCodes }
   }
 
@@ -321,9 +320,7 @@ export class MfaService {
     // and the email; a racing request sees `null` and is treated as MFA_SETUP_REQUIRED.
     const consumed = await this.redis.getdel(setupKey)
     if (consumed === null) {
-      this.logger.warn(
-        `verifyAndEnable: setup key consumed by concurrent request userId=${logSafe(userId)}`
-      )
+      logEvent(this.logger, 'AUTH_MFA_SETUP_KEY_CONSUMED')
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
 
@@ -346,12 +343,11 @@ export class MfaService {
     await this.redis.invalidateUserSessions(userId, tenantId, context)
     await this.redis.bumpUserTokenEpoch(userId, tenantId, context)
 
-    this.logger.log(`verifyAndEnable: MFA enabled userId=${logSafe(userId)} context=${context}`)
+    logEvent(this.logger, 'AUTH_MFA_ENABLED', { plane: context, userId })
     notifyMfaChange(
       this.logger,
       this.emailProvider,
-      'verifyAndEnable',
-      userId,
+      'mfa_enabled_notice',
       user,
       (provider, tenant, email) => provider.sendMfaEnabledNotification(tenant, email)
     )

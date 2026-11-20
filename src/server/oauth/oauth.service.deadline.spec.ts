@@ -17,6 +17,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { expectEvent } from '../__tests__/log-events'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
@@ -215,8 +216,8 @@ describe('OAuthService — the plugin deadline', () => {
     expect(jest.getTimerCount()).toBe(0)
   })
 
-  // Scenario: a timeout. Expected: the log line carries the shape of the failure only, nothing the
-  // plugin wrote, like every other failure on this path.
+  // Scenario: a timeout. Expected: the event carries the shape of the failure only, nothing the
+  // plugin wrote and not the provider, like every other failure on this path.
   it('logs only the shape of a timeout', async () => {
     const target = plugin(1000)
     target.exchangeCode.mockImplementation(never)
@@ -224,6 +225,6 @@ describe('OAuthService — the plugin deadline', () => {
     await settledAt(await serviceWith(target), [1000])
 
     expect(error).toHaveBeenCalledTimes(1)
-    expect(String(error.mock.calls[0]?.[0])).toContain("OAuth plugin 'google' failed")
+    expectEvent(error, 'AUTH_OAUTH_EXCHANGE_FAILED', { detail: '<error>' }, ['google'])
   })
 })

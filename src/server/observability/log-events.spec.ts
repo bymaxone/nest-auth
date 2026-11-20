@@ -11,7 +11,6 @@ import { join } from 'node:path'
 import { AUTH_LOG_EVENTS } from './log-events'
 import type { AuthLogEvent } from './log-events'
 
-const ROOT = join(__dirname, '..')
 const README = readFileSync(join(__dirname, '../../../README.md'), 'utf8')
 const CODES = Object.keys(AUTH_LOG_EVENTS) as AuthLogEvent[]
 
@@ -47,7 +46,7 @@ describe('the log event catalog', () => {
   })
 
   // Scenario: the catalog and the README table. Expected: the same codes, and for each the same level, the same
-  // sentence and the same field names.
+  // message and the same field names, and a sentence saying when it is written.
   it('is the README table, row for row', () => {
     const rows = documented()
 
@@ -57,8 +56,41 @@ describe('the log event catalog', () => {
       const row = rows.get(code)
       expect(row?.level).toBe(spec.level)
       expect(row?.message).toBe(spec.message)
-      expect(row?.when).toBe(spec.when[0]?.toUpperCase() + spec.when.slice(1))
+      expect(row?.when).not.toBe('')
       expect(row?.fields).toEqual([...spec.fields])
+    }
+  })
+
+  // Scenario: the fields an event may carry. Expected: only names from this list. Why: a field is where a value
+  // a caller, a host or a store supplied would enter, so a new name is a decision this list makes visible.
+  it.each(CODES)('%s carries only fields from the closed list', (code) => {
+    const allowed = [
+      'plane',
+      'flow',
+      'reason',
+      'kind',
+      'via',
+      'error',
+      'detail',
+      'familyId',
+      'userId',
+      'tenantId',
+      'actorUserId'
+    ]
+
+    for (const field of AUTH_LOG_EVENTS[code].fields) expect(allowed).toContain(field)
+  })
+
+  // Scenario: who may be named. Expected: only an event written at the `log` level, which is the success and
+  // audit trail, carries a user or a tenant, and no event of any level carries an address, a provider, a token or
+  // a code. Why: an audit trail without "who" is useless, while a refusal that names the account lets whoever
+  // reads the log enumerate it; an address is never wanted.
+  it.each(CODES)('%s names a user or a tenant only when it is a success or audit event', (code) => {
+    const { level, fields } = AUTH_LOG_EVENTS[code]
+
+    for (const field of fields) {
+      if (/^(userId|tenantId|actorUserId)$/.test(field)) expect(level).toBe('log')
+      expect(field).not.toMatch(/email|address|provider|token|otp|secret|password/i)
     }
   })
 })

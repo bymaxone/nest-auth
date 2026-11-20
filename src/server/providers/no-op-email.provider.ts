@@ -14,7 +14,7 @@ import type {
   SessionAlertInfo,
   WorkspaceInviteData
 } from '../interfaces/email-provider.interface'
-import { maskEmail } from '../utils/mask-email'
+import { logEvent } from '../observability/log-event'
 
 /**
  * No-operation email provider for development and testing environments.
@@ -43,78 +43,78 @@ export class NoOpEmailProvider implements IEmailProvider {
   /** @inheritdoc */
   async sendPasswordResetToken(
     _tenantId: string,
-    email: string,
+    _email: string,
     _token: string,
     _locale?: string
   ): Promise<void> {
-    this.logger.log(`sendPasswordResetToken → ${maskEmail(email)} (no-op)`)
+    logEvent(this.logger, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendPasswordResetToken' })
   }
 
   /** @inheritdoc */
   async sendPasswordResetOtp(
     _tenantId: string,
-    email: string,
+    _email: string,
     _otp: string,
     _locale?: string
   ): Promise<void> {
-    this.logger.log(`sendPasswordResetOtp → ${maskEmail(email)} (no-op)`)
+    logEvent(this.logger, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendPasswordResetOtp' })
   }
 
   /** @inheritdoc */
   async sendEmailVerificationOtp(
     _tenantId: string,
-    email: string,
+    _email: string,
     _otp: string,
     _locale?: string
   ): Promise<void> {
-    this.logger.log(`sendEmailVerificationOtp → ${maskEmail(email)} (no-op)`)
+    logEvent(this.logger, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendEmailVerificationOtp' })
   }
 
   /** @inheritdoc */
   async sendMfaEnabledNotification(
     _tenantId: string,
-    email: string,
+    _email: string,
     _locale?: string
   ): Promise<void> {
-    this.logger.log(`sendMfaEnabledNotification → ${maskEmail(email)} (no-op)`)
+    logEvent(this.logger, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendMfaEnabledNotification' })
   }
 
   /** @inheritdoc */
   async sendMfaDisabledNotification(
     _tenantId: string,
-    email: string,
+    _email: string,
     _locale?: string
   ): Promise<void> {
-    this.logger.log(`sendMfaDisabledNotification → ${maskEmail(email)} (no-op)`)
+    logEvent(this.logger, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendMfaDisabledNotification' })
   }
 
   /** @inheritdoc */
   async sendNewSessionAlert(
     _tenantId: string,
-    email: string,
+    _email: string,
     _sessionInfo: SessionAlertInfo,
     _locale?: string
   ): Promise<void> {
-    this.logger.log(`sendNewSessionAlert → ${maskEmail(email)} (no-op)`)
+    logEvent(this.logger, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendNewSessionAlert' })
   }
 
   /** @inheritdoc */
   async sendInvitation(
     _tenantId: string,
-    email: string,
+    _email: string,
     _inviteData: InviteData,
     _locale?: string
   ): Promise<void> {
-    this.logger.log(`sendInvitation → ${maskEmail(email)} (no-op)`)
+    logEvent(this.logger, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendInvitation' })
   }
 
   /** @inheritdoc */
   async sendWorkspaceInvitation(
     _tenantId: string,
-    email: string,
+    _email: string,
     _data: WorkspaceInviteData,
     _locale?: string
   ): Promise<void> {
-    this.logger.log(`sendWorkspaceInvitation → ${maskEmail(email)} (no-op)`)
+    logEvent(this.logger, 'AUTH_EMAIL_NOT_SENT', { kind: 'sendWorkspaceInvitation' })
   }
 }

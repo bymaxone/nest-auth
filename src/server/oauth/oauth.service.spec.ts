@@ -217,6 +217,9 @@ async function buildServiceWithOptions(options: object): Promise<OAuthService> {
 // OAuthService — initiateOAuth
 // ---------------------------------------------------------------------------
 
+/** What the two login events of an OAuth login have in common. */
+const OAUTH_LOGIN = { plane: 'dashboard', via: 'oauth' } as const
+
 describe('OAuthService', () => {
   let service: OAuthService
 
@@ -807,19 +810,20 @@ describe('OAuthService', () => {
       expect(result).toBe(AUTH_RESULT)
     })
 
-    // Pins the success log message. On a successful OAuth login the service emits a
-    // structured line carrying provider, userId, tenantId, and the resolved action.
-    // These fields are the audit trail for OAuth sign-ins; an emptied log string
-    // would silently drop them. Assert the load-bearing fields are present.
-    it('should log the success line with provider, userId, tenantId and action on create', async () => {
+    // Pins the success event. On a successful OAuth login the service emits the login event carrying the plane,
+    // the user, the tenant and that the login came through OAuth; neither the provider nor the hook's action is
+    // part of it. These fields are the audit trail for OAuth sign-ins.
+    it('should log the success event with the user, the tenant and the oauth route on create', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {})
       setupHappyPathCreate()
 
       await callCallback()
 
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining('provider=google userId=user-1 tenantId=tenant-1 action=create')
-      )
+      expectEvent(logSpy, 'AUTH_LOGIN_SUCCEEDED', {
+        ...OAUTH_LOGIN,
+        userId: 'user-1',
+        tenantId: 'tenant-1'
+      })
       logSpy.mockRestore()
     })
 
@@ -1051,20 +1055,16 @@ describe('OAuthService', () => {
       expect(mockUserRepo.createWithOAuth).not.toHaveBeenCalled()
     })
 
-    // Scenario: the collision above. Expected: the warning names the tenant and a MASKED
-    // address. Why: an operator correlating repeated collisions needs to know which tenant and
-    // roughly which account, and the log must not become a store of full addresses.
-    it('should log the refused create with a masked address', async () => {
+    // Scenario: the collision above. Expected: the refusal is an event that names no address, masked or not, and no
+    // tenant. Why: the log must not become a store of addresses, even masked ones.
+    it('should log the refused create without an address', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
       setupHappyPathCreate()
       mockUserRepo.findByEmail.mockResolvedValue(AUTH_USER)
 
       await expect(callCallback()).rejects.toThrow(AuthException)
 
-      const logged = warnSpy.mock.calls.map((call) => String(call[0])).join('\n')
-      expect(logged).toContain('oauth: create refused')
-      expect(logged).toContain(maskEmail(OAUTH_PROFILE.email))
-      expect(logged).not.toContain(OAUTH_PROFILE.email)
+      expectEvent(warnSpy, 'AUTH_OAUTH_CREATE_REFUSED', {}, [OAUTH_PROFILE.email, 'tenant-1'])
       warnSpy.mockRestore()
     })
 
@@ -1221,9 +1221,9 @@ describe('OAuthService', () => {
       // that received the authorization code, the PKCE verifier and the access token, and an
       // HTTP client attaching its request config to the error is the ordinary case.
       expect(loggerSpy.mock.calls[0]).toHaveLength(1)
-      expect(loggerSpy.mock.calls[0]?.[0]).toBe(
-        "OAuth plugin 'google' failed during code exchange or profile fetch: <error>"
-      )
+      expectEvent(loggerSpy, 'AUTH_OAUTH_EXCHANGE_FAILED', { detail: '<error>' }, [
+        'Network timeout'
+      ])
     })
 
     // Verifies that a plugin.fetchProfile() failure logs an error and throws OAUTH_FAILED.
@@ -1235,9 +1235,9 @@ describe('OAuthService', () => {
 
       await expect(callCallback()).rejects.toThrow(AuthException)
       expect(loggerSpy.mock.calls[0]).toHaveLength(1)
-      expect(loggerSpy.mock.calls[0]?.[0]).toBe(
-        "OAuth plugin 'google' failed during code exchange or profile fetch: <error>"
-      )
+      expectEvent(loggerSpy, 'AUTH_OAUTH_EXCHANGE_FAILED', { detail: '<error>' }, [
+        'Unverified email'
+      ])
     })
 
     // The measured shape of the risk, kept as a test. A plugin that echoes what it was given —
@@ -1266,12 +1266,11 @@ describe('OAuthService', () => {
 
       await expect(callCallback()).rejects.toThrow(AuthException)
 
-      const logged = String(loggerSpy.mock.calls[0]?.[0])
-      expect(logged).not.toContain('ya29.live-access-token')
       // The transformed form is absent too, which a named-value redaction could not have managed.
-      expect(logged).not.toContain(encoded)
-      expect(logged).toContain("OAuth plugin 'google' failed")
-      expect(logged).toContain('<error>')
+      expectEvent(loggerSpy, 'AUTH_OAUTH_EXCHANGE_FAILED', { detail: '<error>' }, [
+        'ya29.live-access-token',
+        encoded
+      ])
       loggerSpy.mockRestore()
     })
 
@@ -1514,7 +1513,7 @@ describe('OAuthService', () => {
      * circuits to the challenge branch. A future refactor that drops one of
      * those fields would surface here.
      */
-    it('should log the MFA challenge line with provider, userId, tenantId, and action', async () => {
+    it('should log the MFA challenge event with the user, the tenant and the oauth route', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {})
       const mfaEnabledUser = { ...AUTH_USER, mfaEnabled: true }
       mockRedis.getdel.mockResolvedValue(STORED_STATE)
@@ -1527,11 +1526,11 @@ describe('OAuthService', () => {
 
       await callCallback()
 
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          `provider=google userId=${mfaEnabledUser.id} tenantId=tenant-1 action=create`
-        )
-      )
+      expectEvent(logSpy, 'AUTH_LOGIN_MFA_CHALLENGED', {
+        ...OAUTH_LOGIN,
+        userId: mfaEnabledUser.id,
+        tenantId: 'tenant-1'
+      })
       logSpy.mockRestore()
     })
   })

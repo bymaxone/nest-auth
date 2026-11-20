@@ -28,7 +28,6 @@ import type {
 import type { AuthUser } from '../interfaces/user-repository.interface'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { logSafe } from '../utils/log-safe'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { notifyMfaChange } from '../utils/mfa-notify'
 import { assertPlaneTenant } from '../utils/mfa-plane-tenant'
@@ -104,8 +103,8 @@ export class MfaManagementService {
     await this.spendTotpAttempt('disable', scope, user, code, mfa)
     await this.clearFactor(scope)
 
-    this.logger.log(`disable: MFA disabled userId=${logSafe(userId)} context=${context}`)
-    this.notifyDisabled('disable', scope, user)
+    logEvent(this.logger, 'AUTH_MFA_DISABLED', { plane: context, userId })
+    this.notifyDisabled('mfa_disabled_notice', user)
     this.fireDisabledHook(scope, user, ip, userAgent)
   }
 
@@ -158,16 +157,14 @@ export class MfaManagementService {
     const user = await this.records.loadAccount(context, userId, tenantId)
 
     if (!user.mfaEnabled) {
-      this.logger.log(
-        `resetMfa: no second factor to remove userId=${logSafe(userId)} context=${context}`
-      )
+      logEvent(this.logger, 'AUTH_MFA_NOTHING_TO_RESET', { plane: context, userId })
       return
     }
 
     await this.clearFactor(scope)
 
     logEvent(this.logger, 'AUTH_MFA_RESET', { plane: context })
-    this.notifyDisabled('resetMfa', scope, user)
+    this.notifyDisabled('mfa_reset_notice', user)
     // No request context: this call does not come from one. Empty rather than invented, so a
     // consumer logging the hook cannot mistake a placeholder for a real address.
     this.fireDisabledHook(scope, user, '', '')
@@ -257,9 +254,7 @@ export class MfaManagementService {
     })
     if (!replaced) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
-    this.logger.log(
-      `regenerateRecoveryCodes: recovery codes regenerated userId=${logSafe(userId)} context=${context}`
-    )
+    logEvent(this.logger, 'AUTH_MFA_RECOVERY_CODES_REGENERATED', { plane: context, userId })
     this.fireRegeneratedHook(scope, user, ip, userAgent)
 
     return { recoveryCodes: plainCodes }
@@ -339,22 +334,15 @@ export class MfaManagementService {
   /**
    * Tells the account holder their second factor was turned off.
    *
-   * @param origin - The calling flow, for the log line.
-   * @param scope - The plane, account and tenant that changed.
+   * @param kind - The flow that turned the factor off, for the event.
    * @param user - The account, read for its address.
    */
   private notifyDisabled(
-    origin: string,
-    scope: AccountScope,
+    kind: 'mfa_disabled_notice' | 'mfa_reset_notice',
     user: AuthUser | AuthPlatformUser
   ): void {
-    notifyMfaChange(
-      this.logger,
-      this.emailProvider,
-      origin,
-      scope.userId,
-      user,
-      (provider, tenant, email) => provider.sendMfaDisabledNotification(tenant, email)
+    notifyMfaChange(this.logger, this.emailProvider, kind, user, (provider, tenant, email) =>
+      provider.sendMfaDisabledNotification(tenant, email)
     )
   }
 

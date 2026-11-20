@@ -16,8 +16,6 @@ interface LogEventSpec {
   readonly message: string
   /** The names of the fields the event may carry, each a value from a closed set or a number. */
   readonly fields: readonly string[]
-  /** When the event is written, in a sentence for the README. */
-  readonly when: string
 }
 
 /**
@@ -31,104 +29,263 @@ export const AUTH_LOG_EVENTS = {
   AUTH_LOGIN_LOCKED: {
     level: 'warn',
     message: 'login: account locked',
-    fields: ['plane'],
-    when: 'a login is refused because the account is at its failure ceiling'
+    fields: ['plane']
   },
   AUTH_LOGIN_INVALID_CREDENTIALS: {
     level: 'warn',
     message: 'login: invalid credentials',
-    fields: ['plane'],
-    when: 'a login is refused for an unknown account or a wrong password'
+    fields: ['plane']
   },
   AUTH_MFA_CODE_INVALID: {
     level: 'warn',
     message: 'MFA: invalid code',
-    fields: ['plane', 'flow'],
-    when: 'an MFA code is refused (flow: challenge, enable, disable, recovery_codes)'
+    fields: ['plane', 'flow']
   },
   AUTH_MFA_LOCKED: {
     level: 'warn',
     message: 'MFA: account locked',
-    fields: ['plane', 'flow'],
-    when: 'an MFA step is refused because the account is at its failure ceiling (flow: challenge, disable, recovery_codes)'
+    fields: ['plane', 'flow']
   },
   AUTH_MFA_RESET: {
     level: 'warn',
     message: 'MFA: removed administratively',
-    fields: ['plane'],
-    when: 'an administrator removes the MFA factor of an account'
+    fields: ['plane']
   },
   AUTH_PASSWORD_REJECTED: {
     level: 'warn',
     message: 'the current password was rejected',
-    fields: ['flow'],
-    when: 'a password re-proof is refused (flow: change_password, email_change)'
+    fields: ['flow']
   },
   AUTH_ACCOUNT_LOCKED: {
     level: 'warn',
     message: 'account locked',
-    fields: ['flow'],
-    when: 'a password re-proof is refused because the account is at its failure ceiling (flow: change_password, email_change, reauthentication)'
+    fields: ['flow']
   },
   AUTH_REAUTHENTICATION_REFUSED: {
     level: 'warn',
     message: 'reauthentication refused',
-    fields: ['plane', 'reason'],
-    when: 'a sensitive action is refused for lack of a recent authentication (reason: no_recent_authentication)'
+    fields: ['plane', 'reason']
   },
   AUTH_REFRESH_REUSE_DETECTED: {
     level: 'warn',
     message: 'refresh: reuse of a consumed token detected, revoking its family',
-    fields: ['plane', 'familyId'],
-    when: 'a refresh token that was already exchanged is presented again'
+    fields: ['plane', 'familyId']
   },
   AUTH_REFRESH_FAMILY_REVOKED: {
     level: 'warn',
     message: 'refresh: token family revoked after reuse detection',
-    fields: ['plane', 'familyId'],
-    when: 'the family of a reused refresh token has been revoked'
+    fields: ['plane', 'familyId']
   },
   AUTH_REFRESH_REFUSED: {
     level: 'warn',
     message: 'refresh: no valid session or grace window found',
-    fields: ['plane'],
-    when: 'a refresh token matches no live session and no grace window'
+    fields: ['plane']
   },
   AUTH_SESSION_LIFETIME_EXCEEDED: {
     level: 'warn',
     message: 'refresh: the session has outlived the absolute lifetime cap',
-    fields: [],
-    when: 'a rotation is refused because the login it descends from is older than jwt.absoluteSessionLifetimeDays'
+    fields: []
   },
   AUTH_TOKEN_REVOCATION_REFUSED: {
     level: 'warn',
     message: 'a dashboard token carrying no tenant is refused without a store read',
-    fields: ['reason'],
-    when: 'a revocation check cannot name the epoch key of a token (reason: missing_tenant)'
+    fields: ['reason']
   },
   AUTH_WS_TICKET_REFUSED: {
     level: 'warn',
     message: 'ws-ticket: refused',
-    fields: ['reason'],
-    when: 'a WebSocket ticket is refused (reason: mfa_not_satisfied, no_life_left, unknown_or_used, session_revoked)'
+    fields: ['reason']
   },
   AUTH_OAUTH_STATE_REFUSED: {
     level: 'warn',
     message: 'oauth: callback state refused',
-    fields: ['reason'],
-    when: 'an OAuth callback is refused (reason: not_bound, provider_mismatch, invalid_or_expired, unparseable)'
+    fields: ['reason']
   },
   AUTH_OTP_STORE_FAILED: {
     level: 'error',
     message: 'email verification: the code could not be stored',
-    fields: ['detail'],
-    when: 'the store refuses the write of an email-verification code'
+    fields: ['detail']
   },
   AUTH_IDENTIFIER_REFUSED: {
     level: 'error',
     message: 'brute-force: an identifier was refused',
-    fields: ['reason'],
-    when: 'an identifier passed to the lockout counter is not usable (reason: forbidden_characters, too_long)'
+    fields: ['reason']
+  },
+  AUTH_LOGIN_SUCCEEDED: {
+    level: 'log',
+    message: 'login: succeeded',
+    fields: ['plane', 'userId', 'tenantId', 'via']
+  },
+  AUTH_LOGIN_MFA_CHALLENGED: {
+    level: 'log',
+    message: 'login: MFA challenge issued',
+    fields: ['plane', 'userId', 'tenantId', 'via']
+  },
+  AUTH_LOGOUT: {
+    level: 'log',
+    message: 'logout',
+    fields: ['plane', 'userId']
+  },
+  AUTH_USER_REGISTERED: {
+    level: 'log',
+    message: 'register: user registered',
+    fields: ['userId', 'tenantId']
+  },
+  AUTH_TOKENS_ISSUED: {
+    level: 'log',
+    message: 'tokens issued for an existing user',
+    fields: ['userId', 'tenantId']
+  },
+  AUTH_EMAIL_VERIFIED: {
+    level: 'log',
+    message: 'email verified',
+    fields: ['userId', 'tenantId']
+  },
+  AUTH_ACCOUNT_UNLOCKED: {
+    level: 'log',
+    message: 'lockout cleared by an administrator',
+    fields: ['tenantId']
+  },
+  AUTH_EMAIL_CHANGE_REQUESTED: {
+    level: 'log',
+    message: 'email change: verification sent',
+    fields: ['userId']
+  },
+  AUTH_EMAIL_CHANGED: {
+    level: 'log',
+    message: 'email change: address changed',
+    fields: ['userId']
+  },
+  AUTH_INVITATION_CREATED: {
+    level: 'log',
+    message: 'invitation created',
+    fields: ['tenantId', 'actorUserId']
+  },
+  AUTH_INVITATION_REVOKED: {
+    level: 'log',
+    message: 'invitation withdrawn',
+    fields: ['tenantId', 'actorUserId']
+  },
+  AUTH_INVITATION_ACCEPTED: {
+    level: 'log',
+    message: 'invitation accepted',
+    fields: ['userId', 'tenantId']
+  },
+  AUTH_MFA_CHALLENGE_PASSED: {
+    level: 'log',
+    message: 'MFA: challenge passed',
+    fields: ['plane', 'userId']
+  },
+  AUTH_MFA_SETUP_STARTED: {
+    level: 'log',
+    message: 'MFA: setup initiated',
+    fields: ['plane', 'userId']
+  },
+  AUTH_MFA_ENABLED: {
+    level: 'log',
+    message: 'MFA: enabled',
+    fields: ['plane', 'userId']
+  },
+  AUTH_MFA_DISABLED: {
+    level: 'log',
+    message: 'MFA: disabled',
+    fields: ['plane', 'userId']
+  },
+  AUTH_MFA_RECOVERY_CODES_REGENERATED: {
+    level: 'log',
+    message: 'MFA: recovery codes regenerated',
+    fields: ['plane', 'userId']
+  },
+  AUTH_MFA_NOTHING_TO_RESET: {
+    level: 'log',
+    message: 'MFA: no second factor to remove',
+    fields: ['plane', 'userId']
+  },
+  AUTH_WS_TICKET_ISSUED: {
+    level: 'log',
+    message: 'ws-ticket: issued',
+    fields: ['userId', 'tenantId']
+  },
+  AUTH_REHASH_SKIPPED: {
+    level: 'log',
+    message: 'rehash on verify skipped: the stored hash changed',
+    fields: []
+  },
+  AUTH_LOCKOUT_STATE_UNREADABLE: {
+    level: 'warn',
+    message: 'login: lockout state unreadable for the onLockout hook',
+    fields: ['detail']
+  },
+  AUTH_EMAIL_CHANGE_TOKEN_STALE: {
+    level: 'warn',
+    message: 'email change: the token is no longer bound to the account password',
+    fields: []
+  },
+  AUTH_PASSWORD_RESET_TOKEN_STALE: {
+    level: 'warn',
+    message: 'password reset: the token was issued against a password that has since changed',
+    fields: []
+  },
+  AUTH_MFA_SETUP_KEY_CONSUMED: {
+    level: 'warn',
+    message: 'MFA: the setup key was consumed by a concurrent request',
+    fields: []
+  },
+  AUTH_INVITATION_REFUSED: {
+    level: 'warn',
+    message: 'invitation: refused',
+    fields: ['reason']
+  },
+  AUTH_OAUTH_CREATE_REFUSED: {
+    level: 'warn',
+    message: 'oauth: create refused, the account already exists',
+    fields: []
+  },
+  AUTH_OAUTH_PROVIDER_ERROR: {
+    level: 'warn',
+    message: 'oauth: the provider returned an error on the callback',
+    fields: ['error']
+  },
+  AUTH_OAUTH_EXCHANGE_FAILED: {
+    level: 'error',
+    message: 'oauth: the code exchange or profile fetch failed',
+    fields: ['detail']
+  },
+  AUTH_DELIVERY_FAILED: {
+    level: 'error',
+    message: 'delivery failed',
+    fields: ['kind', 'detail']
+  },
+  AUTH_PASSWORD_RESET_ROLLBACK_FAILED: {
+    level: 'error',
+    message: 'password reset: the rollback delete failed',
+    fields: ['detail']
+  },
+  AUTH_SESSION_EVICTION_SKIPPED: {
+    level: 'error',
+    message: 'session limit: eviction skipped',
+    fields: ['detail']
+  },
+  AUTH_SESSION_EVICTION_FAILED: {
+    level: 'error',
+    message: 'session limit: eviction failed',
+    fields: ['detail']
+  },
+  AUTH_SESSION_LIMIT_RESOLVER_INVALID: {
+    level: 'error',
+    message:
+      'session limit: maxSessionsResolver returned a value that is not a positive whole number',
+    fields: []
+  },
+  AUTH_EMAIL_NOT_SENT: {
+    level: 'log',
+    message: 'no-op email provider: nothing was sent',
+    fields: ['kind']
+  },
+  AUTH_MFA_SETUP_PAYLOAD_INVALID: {
+    level: 'warn',
+    message: 'MFA: a stored payload is not valid JSON',
+    fields: ['kind']
   }
 } as const satisfies Record<string, LogEventSpec>
 

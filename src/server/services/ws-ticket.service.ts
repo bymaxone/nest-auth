@@ -30,7 +30,6 @@ import { readStampedEpoch } from '../utils'
 import { AuthRevocationService } from './auth-revocation.service'
 import { logEvent } from '../observability/log-event'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { logSafe } from '../utils/log-safe'
 
 /**
  * Seconds a ticket is kept short of the access token's expiry, to cover the time between reading
@@ -104,9 +103,10 @@ export class WsTicketService {
     // token's expiry by the length of that lookup.
     const lifetime = this.lifetimeFor(payload)
     const ticket = await this.redis.mintWsTicket(snapshot, lifetime)
-    this.logger.log(
-      `ws-ticket: issued userId=${logSafe(payload.sub)} tenantId=${logSafe(payload.tenantId)}`
-    )
+    logEvent(this.logger, 'AUTH_WS_TICKET_ISSUED', {
+      userId: payload.sub,
+      tenantId: payload.tenantId
+    })
     return { ticket, expiresIn: lifetime }
   }
 

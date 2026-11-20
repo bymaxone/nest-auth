@@ -16,11 +16,13 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { expectEvent } from '../__tests__/log-events'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { LiveSessionParams } from '../index'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { describeChannelStatus } from '../utils/describe-error'
 import { SessionService } from './session.service'
 
 // ---------------------------------------------------------------------------
@@ -127,10 +129,11 @@ async function buildModule(hooksValue: unknown = mockHooks): Promise<SessionServ
 
 describe('SessionService', () => {
   let service: SessionService
+  let errorLog: jest.SpyInstance
 
   beforeEach(async () => {
     jest.clearAllMocks()
-    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
     // reset per-test resolver to undefined so tests that don't set it get the default
     mockOptions.sessions.maxSessionsResolver = undefined
     service = await buildModule()
@@ -553,16 +556,9 @@ describe('SessionService', () => {
       // Two over the default of five, so the default's eviction actually runs. Under the
       // unvalidated resolver `NaN` evicted nothing and reported success.
       expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hashes[0]}`)
-      // The whole message, not just its first fragment: an operator who sees this needs to
-      // know what the resolver returned, that the default took over, and why a cap that stops
-      // applying is the worse failure — the three things the three fragments carry.
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('maxSessionsResolver'))
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('falling back to defaultMaxSessions')
-      )
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('stops applying is worse than one that is merely wrong')
-      )
+      // The whole event, not just its code: it names the resolver, says the default took over, and
+      // carries nothing the resolver returned — the value is the consumer's and may be any text.
+      expectEvent(errorSpy, 'AUTH_SESSION_LIMIT_RESOLVER_INVALID', {}, [String(resolved), userId])
       errorSpy.mockRestore()
     })
 
@@ -790,11 +786,12 @@ describe('SessionService', () => {
       expect(mockRedis.srem).not.toHaveBeenCalled()
       expect(mockHooks.onSessionEvicted).not.toHaveBeenCalled()
       expect(errorSpy).toHaveBeenCalledTimes(1)
-      const logged = String(errorSpy.mock.calls[0]?.[0])
-      expect(logged).toContain('enforceSessionLimit')
-      expect(logged).toContain('a session record could not be read')
-      expect(logged).not.toContain(hashes[3] as string)
-      expect(logged).not.toContain('sd:')
+      expectEvent(
+        errorSpy,
+        'AUTH_SESSION_EVICTION_SKIPPED',
+        { detail: describeChannelStatus(new Error('x')) },
+        [hashes[3] as string, 'sd:', 'ECONNRESET', userId]
+      )
     })
 
     // Scenario: the same over-limit account where every detail reads fine except one that is absent.
@@ -1004,10 +1001,10 @@ describe('SessionService', () => {
       expect(delKeys).toContain(`rt:${badHash}`)
     })
 
-    // Scenario: a logged eviction-failure message must name the failing session and user.
-    // Expected: logger.error called with the exact enforceSessionLimit failure message. Why: kills the
-    // StringLiteral mutant on line 652 (message → '').
-    it('logs the eviction failure with the session and user in the message', async () => {
+    // Scenario: an eviction fails in the store. Expected: logger.error receives the eviction-failed event with
+    // the library's description of the failure, and neither the session nor the user. Why: kills the
+    // StringLiteral mutant on the event code and pins that no identity reaches it.
+    it('logs the eviction failure without the session or the user', async () => {
       const hashes = Array.from({ length: 6 }, (_, i) => sha256(`evict-msg-${i}`))
       mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
       mockRedis.get.mockImplementation((key: string) => {
@@ -1024,10 +1021,11 @@ describe('SessionService', () => {
         userAgent: userAgent
       })
 
-      expect(Logger.prototype.error).toHaveBeenCalledWith(
-        expect.stringContaining(
-          `enforceSessionLimit: failed to evict session ${hashes[0]} for user ${userId}: `
-        )
+      expectEvent(
+        errorLog,
+        'AUTH_SESSION_EVICTION_FAILED',
+        { detail: describeChannelStatus(new Error('x')) },
+        [hashes[0] as string, userId, 'Redis down']
       )
     })
 

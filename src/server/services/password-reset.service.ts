@@ -33,12 +33,9 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { answerResetRequest } from '../utils/answer-reset-request'
 import { classifyResetProof } from '../utils/classify-reset-proof'
 import { describeChannelStatus } from '../utils/describe-error'
-import { logSafe } from '../utils/log-safe'
 import { normalizeEmail } from '../utils/normalize-email'
-import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
-import { safeLogLine } from '../utils/safe-log-line'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { tenantScoped } from '../utils/tenant-scoped'
 
@@ -193,7 +190,7 @@ export class PasswordResetService {
     const { method } = this.options.passwordReset
     await this.answerResetRequest('initiateReset', dto.email, tenantId, start, (userId) =>
       method === 'otp'
-        ? this.sendOtp(dto.email, tenantId, userId)
+        ? this.sendOtp(dto.email, tenantId)
         : this.sendToken(dto.email, tenantId, userId)
     )
   }
@@ -338,8 +335,8 @@ export class PasswordResetService {
     // the email send is NOT awaited here. If this is changed to `await`, the email RTT is added
     // to the synchronous path, creating a timing difference between "user found" and "user not
     // found" responses.
-    await this.answerResetRequest('resendOtp', dto.email, tenantId, start, (userId) =>
-      this.sendOtp(dto.email, tenantId, userId)
+    await this.answerResetRequest('resendOtp', dto.email, tenantId, start, () =>
+      this.sendOtp(dto.email, tenantId)
     )
   }
 
@@ -641,7 +638,6 @@ export class PasswordResetService {
     if (send === undefined) return
 
     const provider = this.emailProvider
-    const withheld = [user.email]
 
     // An async IIFE rather than `Promise.resolve(send.call(...))`: the second evaluates the call
     // before the promise wraps it, so a provider that throws SYNCHRONOUSLY skipped this handler
@@ -657,13 +653,10 @@ export class PasswordResetService {
         // quoted body involved, which makes it the likeliest exposure of the set — and the
         // provider strips the address from ITS line and rethrows the original under
         // `onDeliveryError: 'rethrow'`, so this line was putting back what that one removed.
-        this.logger.error(
-          safeLogLine(
-            `notifyPasswordChanged: delivery failed for user ${logSafe(user.id)}: ` +
-              describeChannelStatus(err),
-            withheld
-          )
-        )
+        logEvent(this.logger, 'AUTH_DELIVERY_FAILED', {
+          kind: 'password_changed_notice',
+          detail: describeChannelStatus(err)
+        })
       }
     })()
   }
@@ -712,10 +705,7 @@ export class PasswordResetService {
     )
       return
 
-    this.logger.warn(
-      `reset: refusing a token issued against a password that has since changed ` +
-        `userId=${logSafe(context.userId)}`
-    )
+    logEvent(this.logger, 'AUTH_PASSWORD_RESET_TOKEN_STALE')
     throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
   }
 
@@ -803,27 +793,13 @@ export class PasswordResetService {
       try {
         await provider.sendPasswordResetToken(tenantId, email, rawToken)
       } catch (err: unknown) {
-        // Redacted, not raw: a relay that rejects by quoting the body puts `rawToken` into the
-        // error, and this token is a working password reset until its TTL expires. The recipient
-        // joins it — an SMTP rejection routinely names the address it refused, and the provider
-        // strips that from ITS line but rethrows the original here.
-        //
-        // Per field, with `safeLogLine` checking the assembled result. `userId` is deliberately
-        // NOT redacted against the token, and the asymmetry with the OTP path below is the point:
-        // an OTP is four to eight digits, so an identifier containing one by coincidence is real,
-        // while a 64-hex token can only appear inside an id derived FROM it, which no repository
-        // does. Redacting it anyway looked symmetric and was dead code the mutation gate found.
-        //
-        // `withheld` is for the fields THIS line composes, not for the error: nothing the channel
-        // wrote reaches the description at all, so there is nothing there to name.
-        const withheld = [rawToken, email]
-        this.logger.error(
-          safeLogLine(
-            `sendPasswordResetToken failed for user ${logSafe(userId)}: ` +
-              describeChannelStatus(err),
-            withheld
-          )
-        )
+        // The event carries no user id and no address, and the description is the library's own: a
+        // relay that rejects by quoting the body puts `rawToken` into the error, and this token is a
+        // working password reset until its TTL expires, so nothing the channel wrote comes through.
+        logEvent(this.logger, 'AUTH_DELIVERY_FAILED', {
+          kind: 'password_reset_token',
+          detail: describeChannelStatus(err)
+        })
         void this.redis.del(tokenKey).catch((delErr: unknown) => {
           // `delErr` comes from `redis.del` on a key that is a SHA-256 of the token, so no
           // quoted-body path can put a credential into it. That argument is still true and it is
@@ -832,9 +808,9 @@ export class PasswordResetService {
           // decides it is not whether a credential can be there but whether the text is this
           // library's to publish — an ioredis rejection is unbounded, carries no guarantee about
           // control characters, and names the key, which embeds the consumer's user id.
-          this.logger.error(
-            `pw_reset rollback delete failed for user ${logSafe(userId)}: ${describeChannelStatus(delErr)}`
-          )
+          logEvent(this.logger, 'AUTH_PASSWORD_RESET_ROLLBACK_FAILED', {
+            detail: describeChannelStatus(delErr)
+          })
         })
       }
     })()
@@ -844,7 +820,7 @@ export class PasswordResetService {
    * Generates and stores a password-reset OTP, then sends it to the user's email.
    * Errors are caught and logged — they must not propagate to `initiateReset`.
    */
-  private async sendOtp(email: string, tenantId: string, userId: string): Promise<void> {
+  private async sendOtp(email: string, tenantId: string): Promise<void> {
     if (!this.emailProvider) {
       this.logger.warn('sendOtp: no email provider configured — password reset OTP not sent')
       return
@@ -875,21 +851,12 @@ export class PasswordResetService {
         // SMTP rejection commonly names the recipient — which the provider removed from its own
         // line and then rethrew here.
         //
-        // Per field, with `safeLogLine` checking the assembled result rather than redacting it —
-        // see the verification-OTP site for why: redacting the assembled string lets either
-        // redaction alone satisfy the test, so neither is proven. `userId` is redacted against the
-        // otp because a reset code is short enough for an identifier to contain one.
-        //
-        // `withheld` is for the fields THIS line composes, not for the error: nothing the channel
-        // wrote reaches the description at all, so there is nothing there to name.
-        const withheld = [otp, email]
-        this.logger.error(
-          safeLogLine(
-            `sendPasswordResetOtp failed for user ${logSafe(redactSecrets(userId, withheld))}: ` +
-              describeChannelStatus(err),
-            withheld
-          )
-        )
+        // The event carries no user id and no address, and the description is the library's own, so
+        // the reset code a relay quotes back never reaches it.
+        logEvent(this.logger, 'AUTH_DELIVERY_FAILED', {
+          kind: 'password_reset_otp',
+          detail: describeChannelStatus(err)
+        })
       }
     })()
   }

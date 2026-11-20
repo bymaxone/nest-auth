@@ -55,6 +55,7 @@ import { RequestEncodingGuard } from '../guards/request-encoding.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
+import { logEvent } from '../observability/log-event'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type {
   BearerAuthResponse,
@@ -133,18 +134,24 @@ function readOAuthStateCookie(req: Request): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+/** The error codes RFC 6749 §4.1.2.1 defines for an authorization response that carries no code. */
+const AUTHORIZATION_ERROR_CODES: ReadonlySet<string> = new Set([
+  'invalid_request',
+  'unauthorized_client',
+  'access_denied',
+  'unsupported_response_type',
+  'invalid_scope',
+  'server_error',
+  'temporarily_unavailable'
+])
+
 /**
- * Renders an untrusted value for a log line, or `<malformed>` when it is not a plain code.
- *
- * Anything that reaches a log must not be able to end the record. The allowed shape —
- * lowercase letters, digits, `_` and `-`, up to 64 characters — covers every code RFC 6749
- * §4.1.2.1 defines and every provider name this library accepts, and admits no newline,
- * carriage return, or control character. A value outside it is replaced wholesale rather than
- * escaped: an operator reading `<malformed>` learns the useful thing, which is that the
- * provider sent something this library does not recognise.
+ * Reduces the `error` a provider sent to a value the log can carry: the code itself when RFC 6749
+ * §4.1.2.1 defines it, `other` for anything else. The value arrives in a query parameter with only a
+ * length bound, so it is never written as it came.
  */
-function logSafe(value: string): string {
-  return /^[a-z0-9_-]{1,64}$/.test(value) ? value : '<malformed>'
+function authorizationErrorCode(value: string): string {
+  return AUTHORIZATION_ERROR_CODES.has(value) ? value : 'other'
 }
 
 // ---------------------------------------------------------------------------
@@ -286,20 +293,17 @@ export class OAuthController {
     // The provider refused before it ever minted a code (RFC 6749 §4.1.2.1) — most often
     // because the user clicked "Cancel" at the consent screen. That is a normal outcome of a
     // normal flow, and it used to answer a raw `ValidationPipe` 400 for the missing `code`
-    // instead of the configured error redirect. The provider's value is logged and never
-    // echoed back: it would otherwise be provider-chosen text landing in a URL the browser
+    // instead of the configured error redirect. The provider's value is never echoed back: it
+    // would otherwise be provider-chosen text landing in a URL the browser
     // follows, and the caller learns nothing from it that `oauth_failed` does not already say.
     if (query.error !== undefined) {
-      // Both values are attacker-controlled and reach the log verbatim otherwise: `error` is a
-      // query parameter with only a length bound, and `provider` is a path segment Express has
-      // already percent-decoded, logged here before `resolvePlugin` ever applies its
-      // `^[a-z0-9-]{1,64}$` shape check. A newline in either forges whole log records — a
-      // fabricated "login success userId=admin" line sitting in the operator's SIEM. So the
-      // log carries the value only when it is recognisably a code, and says so when it is not.
-      // `error_description` is free-form prose by definition and is never logged at all.
-      this.logger.warn(
-        `callback: provider ${logSafe(provider)} returned error=${logSafe(query.error)}`
-      )
+      // `error` is a query parameter with only a length bound, so the event carries it only when it
+      // is one of the codes RFC 6749 §4.1.2.1 defines and says `other` otherwise. The provider is a
+      // path segment that has not met `resolvePlugin`'s shape check yet and is not part of the event,
+      // and `error_description` is free-form prose that is never logged at all.
+      logEvent(this.logger, 'AUTH_OAUTH_PROVIDER_ERROR', {
+        error: authorizationErrorCode(query.error)
+      })
       return this.handleCallbackFailure(res, new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED))
     }
 

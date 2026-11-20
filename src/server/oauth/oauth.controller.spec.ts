@@ -23,6 +23,7 @@ import type { Request, Response } from 'express'
 
 import { OAuthController } from './oauth.controller'
 import { OAuthService } from './oauth.service'
+import { expectEvent } from '../__tests__/log-events'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TokenDeliveryService } from '../services/token-delivery.service'
@@ -282,16 +283,15 @@ describe('OAuthController', () => {
       expect(mockRes.clearCookie).toHaveBeenCalledWith('oauth_state', expect.anything())
     })
 
-    // Neither value may reach the log verbatim. `error` is a query parameter with only a
-    // length bound and `provider` is a percent-decoded path segment logged before the plugin
-    // shape check runs, so a newline in either forges whole log records — a fabricated "login
-    // success userId=admin" line sitting in the operator's SIEM.
+    // The `error` value may not reach the log as it came: a newline in it would forge whole log records. The
+    // event carries `other` for anything RFC 6749 §4.1.2.1 does not define, and never the provider.
     it.each([
       ['a newline in the provider error', { error: 'a\nFAKE LOG LINE' }],
       ['a carriage return in the provider error', { error: 'a\rFAKE' }],
       ['an uppercase value', { error: 'ACCESS_DENIED' }],
-      ['an over-long value', { error: 'a'.repeat(65) }]
-    ])('should not let %s reach the log verbatim', async (_label, extra) => {
+      ['an over-long value', { error: 'a'.repeat(65) }],
+      ['a well-formed code the RFC does not define', { error: 'made_up_code' }]
+    ])('should write `other` for %s', async (_label, extra) => {
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
       const mockReq = makeReq()
       const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
@@ -304,16 +304,16 @@ describe('OAuthController', () => {
         mockRes
       )
 
-      const logged = warn.mock.calls.map((call) => String(call[0])).join('\n')
-      expect(logged).toContain('<malformed>')
-      expect(logged).not.toContain('FAKE')
-      expect(logged).not.toContain('ACCESS_DENIED')
+      expectEvent(warn, 'AUTH_OAUTH_PROVIDER_ERROR', { error: 'other' }, ['FAKE', 'google'])
       warn.mockRestore()
     })
 
-    // A recognisable code is logged as-is — the point is to keep the useful signal, not to
-    // blank every value.
-    it('should log a well-formed provider error code verbatim', async () => {
+    it.each(
+      (
+        'invalid_request unauthorized_client access_denied unsupported_response_type ' +
+        'invalid_scope server_error temporarily_unavailable'
+      ).split(' ')
+    )('should write the RFC 6749 code %s as it came', async (code) => {
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
       const mockReq = makeReq()
       const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
@@ -321,12 +321,12 @@ describe('OAuthController', () => {
 
       await controller.callback(
         'google',
-        { state: 'csrf-state-abc', error: 'access_denied' } as never,
+        { state: 'csrf-state-abc', error: code } as never,
         mockReq,
         mockRes
       )
 
-      expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).toContain('access_denied')
+      expectEvent(warn, 'AUTH_OAUTH_PROVIDER_ERROR', { error: code }, ['google'])
       warn.mockRestore()
     })
 

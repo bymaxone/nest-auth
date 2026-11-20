@@ -7,9 +7,9 @@
 
 import type { Logger } from '@nestjs/common'
 
-import { logSafe } from './log-safe'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { logEvent } from '../observability/log-event'
 
 /**
  * Shape stored in Redis during a pending MFA setup.
@@ -83,7 +83,7 @@ export function parseSetupData(raw: string, userId: string, logger: Logger): Mfa
     // trace of an event the docstring above calls either a downgrade of the stored value or an
     // internal bug. Both are things an operator needs to see, and neither is visible anywhere
     // else.
-    logger.warn(`parseSetupData: pending-setup payload is not valid JSON userId=${logSafe(userId)}`)
+    logEvent(logger, 'AUTH_MFA_SETUP_PAYLOAD_INVALID', { kind: 'setup' })
     // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so `!isMfaSetupData(parsed)` on the next statement refuses the record with the identical MFA_SETUP_REQUIRED.
     throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
   }
@@ -119,9 +119,7 @@ export function parsePlainRecoveryCodes(raw: string, userId: string, logger: Log
     // Same reasoning as `parseSetupData`, and a stronger case: AES-GCM authenticates the
     // ciphertext, so a decrypted value that will not parse means the plaintext itself was
     // written wrong. That is an internal bug, and it is otherwise silent.
-    logger.warn(
-      `parsePlainRecoveryCodes: decrypted payload is not valid JSON userId=${logSafe(userId)}`
-    )
+    logEvent(logger, 'AUTH_MFA_SETUP_PAYLOAD_INVALID', { kind: 'recovery_codes' })
     // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so the `!Array.isArray(parsed)` check on the next statement refuses it with the identical MFA_SETUP_REQUIRED.
     throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
   }

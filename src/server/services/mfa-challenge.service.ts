@@ -29,7 +29,6 @@ import type {
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent } from '../observability/log-event'
 import { markingPlane } from '../observability/observed-outcome'
-import { logSafe } from '../utils/log-safe'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { verifyRecoveryCode } from '../utils/mfa-recovery-codes'
 import { platformUserAsSafeUser, toSafePlatformUser, toSafeUser } from '../utils/mfa-safe-user'
@@ -179,9 +178,7 @@ export class MfaChallengeService {
       }
       await this.settleRecovery(user, scope, opened, recoveryIndex, mfa)
 
-      this.logger.log(
-        `challenge: MFA challenge passed userId=${logSafe(userId)} context=${context}`
-      )
+      logEvent(this.logger, 'AUTH_MFA_CHALLENGE_PASSED', { plane: context, userId })
       // Step 6: issue full tokens with mfaVerified: true.
       return context === 'dashboard'
         ? this.issueDashboardSession(user as AuthUser, userId, ip, userAgent)

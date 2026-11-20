@@ -31,6 +31,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { eventsReceived } from '../__tests__/log-events'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -285,7 +286,7 @@ describe('PasswordResetService — a password-reset request that fails', () => {
       rejectSend(new Error('smtp down'))
       await flush()
 
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/send\w+ failed for user/))
+      expect(eventsReceived(errorSpy)).toEqual(['AUTH_DELIVERY_FAILED'])
       expect(mockRedis.del.mock.calls.map((call) => call[0])).not.toContain(cooldownKey)
       expect(mockRedis.setnx).toHaveBeenCalledTimes(1)
     }

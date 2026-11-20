@@ -18,11 +18,10 @@ import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { AuthResult } from '../interfaces/auth-result.interface'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
-import { logSafe } from '../utils/log-safe'
-import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { hasRole } from '../utils/roles.util'
 import { runDetached } from '../utils/run-detached'
@@ -287,9 +286,7 @@ export class InvitationService {
     } catch (err: unknown) {
       throw new Error(describeChannelStatus(err))
     }
-    this.logger.log(
-      `invite: invitation created email=${maskEmail(normalizedEmail)} role=${logSafe(role)} tenantId=${logSafe(tenantId)} inviterUserId=${logSafe(inviterUserId)}`
-    )
+    logEvent(this.logger, 'AUTH_INVITATION_CREATED', { tenantId, actorUserId: inviterUserId })
   }
 
   /**
@@ -372,10 +369,7 @@ export class InvitationService {
     const raw = await this.redis.get(`inv:${tokenHash}`)
     const pending = raw === null ? null : this.parseInvitation(raw)
     if (pending !== null && !this.mayWithdraw(inviter, pending)) {
-      this.logger.warn(
-        `create: refused email=${maskEmail(email)} tenantId=${logSafe(tenantId)} ` +
-          `inviterRole=${logSafe(inviter.role)} — outranked by the pending invitation`
-      )
+      logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'outranked' })
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
     return tokenHash
@@ -417,10 +411,7 @@ export class InvitationService {
       const claim = await this.claimInviteeIndex(email, tenantId, tokenHash, ttl, approved)
       if (claim.claimed) return approved
     }
-    this.logger.warn(
-      `create: refused email=${maskEmail(email)} tenantId=${logSafe(tenantId)} ` +
-        `— the pending invitation kept changing under the rank check`
-    )
+    logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'changed_under_rank_check' })
     throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
   }
 
@@ -543,19 +534,13 @@ export class InvitationService {
     // precisely the disclosure the index hashes the address to prevent. The refusal is
     // recorded server-side, where an operator can see it and the prober cannot.
     if (invitation !== null && !this.mayWithdraw(revoker, invitation)) {
-      this.logger.warn(
-        `revokeInvitation: refused email=${maskEmail(normalizedEmail)} ` +
-          `tenantId=${logSafe(tenantId)} revokerUserId=${logSafe(revokerUserId)} — outranked by the invitation`
-      )
+      logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'revoke_outranked' })
       return false
     }
 
     await this.redis.del(indexKey)
     const removed = await this.redis.del(`inv:${tokenHash}`)
-    this.logger.log(
-      `revokeInvitation: invitation withdrawn email=${maskEmail(normalizedEmail)} ` +
-        `tenantId=${logSafe(tenantId)} revokerUserId=${logSafe(revokerUserId)}`
-    )
+    logEvent(this.logger, 'AUTH_INVITATION_REVOKED', { tenantId, actorUserId: revokerUserId })
     return removed
   }
 
@@ -627,10 +612,7 @@ export class InvitationService {
       hasRole(inviter.role, invitation.role, this.options.roles.hierarchy)
 
     if (!stillAuthorised) {
-      this.logger.warn(
-        `acceptInvitation: the inviter can no longer grant this invitation ` +
-          `inviterUserId=${logSafe(invitation.inviterUserId)} role=${logSafe(invitation.role)}`
-      )
+      logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'inviter_cannot_grant' })
       throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
     }
   }
@@ -776,10 +758,10 @@ export class InvitationService {
         userAgent
       })
     }
-
-    this.logger.log(
-      `acceptInvitation: invitation accepted userId=${logSafe(safeUser.id)} tenantId=${logSafe(invitation.tenantId)} role=${logSafe(invitation.role)}`
-    )
+    logEvent(this.logger, 'AUTH_INVITATION_ACCEPTED', {
+      userId: authUser.id,
+      tenantId: authUser.tenantId
+    })
 
     // afterInvitationAccepted is fire-and-forget: the account, the spend and the session are done.
     runDetached(

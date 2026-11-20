@@ -190,6 +190,9 @@ function onlyRecentAuth(present: boolean) {
   return async (key: string) => (present && key.startsWith('ra:') ? '1' : null)
 }
 
+/** The fields of an MFA success event for the dashboard user the suite works with. */
+const DASHBOARD_USER = { plane: 'dashboard', userId: 'user-1' } as const
+
 describe('MfaService', () => {
   let service: MfaService
 
@@ -529,9 +532,7 @@ describe('MfaService', () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
       expect(mockRedis.set).not.toHaveBeenCalled()
-      expect(logSpy).toHaveBeenCalledWith(
-        'setup: MFA setup initiated userId=user-1 context=dashboard'
-      )
+      expectEvent(logSpy, 'AUTH_MFA_SETUP_STARTED', DASHBOARD_USER)
       logSpy.mockRestore()
     })
 
@@ -680,10 +681,8 @@ describe('MfaService', () => {
       )
 
       // The refusal is deliberately opaque to the caller — it must not describe the payload — so
-      // this line is the only record that a stored record is corrupt, and which account's it is.
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('pending-setup payload is not valid JSON')
-      expect(warned).toContain('userId=user-1')
+      // this event is the only record that a stored record is corrupt; it names no account.
+      expectEvent(warnSpy, 'AUTH_MFA_SETUP_PAYLOAD_INVALID', { kind: 'setup' }, ['user-1'])
       warnSpy.mockRestore()
       try {
         await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
@@ -714,9 +713,7 @@ describe('MfaService', () => {
 
       // AES-GCM authenticates the ciphertext, so a decrypted value that will not parse means the
       // plaintext was written wrong — an internal bug, and otherwise entirely silent.
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('decrypted payload is not valid JSON')
-      expect(warned).toContain('userId=user-1')
+      expectEvent(warnSpy, 'AUTH_MFA_SETUP_PAYLOAD_INVALID', { kind: 'recovery_codes' }, ['user-1'])
       warnSpy.mockRestore()
     })
 
@@ -1053,9 +1050,7 @@ describe('MfaService', () => {
         tenantId: string
       }
       expect(dashboardHookUser.tenantId).toBe('tenant-1')
-      expect(logSpy).toHaveBeenCalledWith(
-        'verifyAndEnable: MFA enabled userId=user-1 context=dashboard'
-      )
+      expectEvent(logSpy, 'AUTH_MFA_ENABLED', DASHBOARD_USER)
       logSpy.mockRestore()
     })
 
@@ -1086,10 +1081,8 @@ describe('MfaService', () => {
 
       expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
-      // Pin the concurrent-consumption warn template (line 443).
-      expect(warnSpy).toHaveBeenCalledWith(
-        'verifyAndEnable: setup key consumed by concurrent request userId=user-1'
-      )
+      // Pin the concurrent-consumption event.
+      expectEvent(warnSpy, 'AUTH_MFA_SETUP_KEY_CONSUMED', {}, ['user-1'])
       warnSpy.mockRestore()
     })
 
@@ -1209,18 +1202,18 @@ describe('MfaService', () => {
       await Promise.resolve()
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalled()
-      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      // The ORIGIN is named, not just the fact of the failure. Three flows send an MFA notice and
+      // The FLOW is named, not just the fact of the failure. Three flows send an MFA notice and
       // they are different incidents: an administrative reset whose notice never arrives is how an
       // account takeover through the support desk stays silent.
-      expect(logged).toContain('verifyAndEnable: MFA notice delivery failed')
-      expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
-      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
-      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // Nothing the transport wrote reaches the event, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the exact event
       // is what keeps this from passing on a build that logs nothing at all.
-      expect(logged).not.toContain('recipient rejected')
-      expect(logged).not.toContain('550')
-      expect(logged).toBe('verifyAndEnable: MFA notice delivery failed for user user-1: <error>')
+      expectEvent(
+        errorSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'mfa_enabled_notice', detail: '<error>' },
+        [AUTH_USER_MFA_DISABLED.email, 'recipient rejected', '550', 'user-1']
+      )
       errorSpy.mockRestore()
     })
 
@@ -1562,11 +1555,9 @@ describe('MfaService', () => {
       // `if (this.options.sessions.enabled)` -> `if (true)` mutant (line 575).
       expect(mockSessionService.createSession).not.toHaveBeenCalled()
       // The afterLogin hook must be invoked (kills the dashboard BlockStatement emptying line 579)
-      // and the success log must carry userId/context (kills line 565).
+      // and the success event must carry the user and the plane (kills line 565).
       expect(mockHooks.afterLogin).toHaveBeenCalledTimes(1)
-      expect(logSpy).toHaveBeenCalledWith(
-        'challenge: MFA challenge passed userId=user-1 context=dashboard'
-      )
+      expectEvent(logSpy, 'AUTH_MFA_CHALLENGE_PASSED', DASHBOARD_USER)
       logSpy.mockRestore()
     })
 
@@ -2698,12 +2689,10 @@ describe('MfaService', () => {
       expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendMfaDisabledNotification).not.toHaveBeenCalled()
-      // The log is the only record this call happened at all — the return value is the same
-      // `undefined` a real reset produces, so without the line an operator cannot tell a
+      // The event is the only record this call happened at all — the return value is the same
+      // `undefined` a real reset produces, so without it an operator cannot tell a
       // no-op apart from a removal in the audit trail.
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining('resetMfa: no second factor to remove')
-      )
+      expectEvent(logSpy, 'AUTH_MFA_NOTHING_TO_RESET', DASHBOARD_USER)
       logSpy.mockRestore()
     })
 
@@ -2729,15 +2718,15 @@ describe('MfaService', () => {
       await Promise.resolve()
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalled()
-      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).toContain('resetMfa: MFA notice delivery failed')
-      expect(logged).not.toContain(AUTH_USER_MFA_ENABLED.email)
-      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
-      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // Nothing the transport wrote reaches the event, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the exact event
       // is what keeps this from passing on a build that logs nothing at all.
-      expect(logged).not.toContain('recipient rejected')
-      expect(logged).not.toContain('550')
-      expect(logged).toBe('resetMfa: MFA notice delivery failed for user user-1: <error>')
+      expectEvent(
+        errorSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'mfa_reset_notice', detail: '<error>' },
+        [AUTH_USER_MFA_ENABLED.email, 'recipient rejected', '550', 'user-1']
+      )
       warnSpy.mockRestore()
       errorSpy.mockRestore()
     })
@@ -3048,7 +3037,7 @@ describe('MfaService', () => {
         hmacSha256('disable:dashboard:8:tenant-1:user-1', HMAC_KEY)
       )
       // Pin the success log including the context (line 686).
-      expect(logSpy).toHaveBeenCalledWith('disable: MFA disabled userId=user-1 context=dashboard')
+      expectEvent(logSpy, 'AUTH_MFA_DISABLED', DASHBOARD_USER)
       // The afterMfaDisabled hook must be invoked (kills the BlockStatement emptying at line 694)
       // with the DASHBOARD projection that retains the real tenantId. The dashboard branch of the
       // `context === 'platform' ? ... : toSafeUser(...)` ternary (line 690) must be taken — kills
@@ -3116,17 +3105,17 @@ describe('MfaService', () => {
       await Promise.resolve()
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalled()
-      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
       // One argument, not two: the error object never reaches the logger.
       expect(errorSpy.mock.calls[0]).toHaveLength(1)
-      expect(logged).toContain('verifyAndEnable: MFA notice delivery failed')
-      expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
-      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
-      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // Nothing the transport wrote reaches the event, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the exact event
       // is what keeps this from passing on a build that logs nothing at all.
-      expect(logged).not.toContain('recipient rejected')
-      expect(logged).not.toContain('550')
-      expect(logged).toBe('verifyAndEnable: MFA notice delivery failed for user user-1: <error>')
+      expectEvent(
+        errorSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'mfa_enabled_notice', detail: '<error>' },
+        [AUTH_USER_MFA_DISABLED.email, 'recipient rejected', '550', 'user-1']
+      )
       errorSpy.mockRestore()
     })
 
@@ -3182,15 +3171,15 @@ describe('MfaService', () => {
       await Promise.resolve()
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalled()
-      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).toContain('disable: MFA notice delivery failed')
-      expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
-      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
-      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // Nothing the transport wrote reaches the event, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the exact event
       // is what keeps this from passing on a build that logs nothing at all.
-      expect(logged).not.toContain('recipient rejected')
-      expect(logged).not.toContain('550')
-      expect(logged).toBe('disable: MFA notice delivery failed for user user-1: <error>')
+      expectEvent(
+        errorSpy,
+        'AUTH_DELIVERY_FAILED',
+        { kind: 'mfa_disabled_notice', detail: '<error>' },
+        [AUTH_USER_MFA_DISABLED.email, 'recipient rejected', '550', 'user-1']
+      )
       errorSpy.mockRestore()
     })
 
@@ -3412,9 +3401,7 @@ describe('MfaService', () => {
 
       await service.setup('admin-1', 'platform', PASSWORD)
 
-      expect(logSpy).toHaveBeenCalledWith(
-        'setup: MFA setup initiated userId=admin-1 context=platform'
-      )
+      expectEvent(logSpy, 'AUTH_MFA_SETUP_STARTED', { plane: 'platform', userId: 'admin-1' })
       logSpy.mockRestore()
     })
   })
@@ -3765,9 +3752,7 @@ describe('MfaService', () => {
       }
       expect(persisted.mfaRecoveryCodes).not.toEqual(['$scrypt$old1', '$scrypt$old2'])
       expect(mockBruteForce.resetFailures).toHaveBeenCalled()
-      expect(logSpy).toHaveBeenCalledWith(
-        'regenerateRecoveryCodes: recovery codes regenerated userId=user-1 context=dashboard'
-      )
+      expectEvent(logSpy, 'AUTH_MFA_RECOVERY_CODES_REGENERATED', DASHBOARD_USER)
       // The afterMfaRecoveryCodesRegenerated hook must be invoked with the
       // dashboard projection (real tenantId).
       expect(mockHooks.afterMfaRecoveryCodesRegenerated).toHaveBeenCalledTimes(1)
