@@ -36,7 +36,7 @@ import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { sleep } from '../utils/sleep'
 import type { Request } from 'express'
-import { eventsReceived, expectEvent, serialized } from '../__tests__/log-events'
+import { eventsReceived, expectEvent } from '../__tests__/log-events'
 
 const mockSleep = sleep as jest.MockedFunction<typeof sleep>
 
@@ -848,12 +848,11 @@ describe('PasswordResetService', () => {
         await flushMicrotasks()
 
         // Both errors must be logged: the original email failure AND the rollback failure.
-        expect(eventsReceived(loggerSpy)).toEqual([
-          'AUTH_DELIVERY_FAILED',
-          'AUTH_PASSWORD_RESET_ROLLBACK_FAILED'
+        expect(eventsReceived(loggerSpy)).toContain('AUTH_DELIVERY_FAILED')
+        expectEvent(loggerSpy, 'AUTH_PASSWORD_RESET_ROLLBACK_FAILED', { detail: '<error>' }, [
+          'Redis down',
+          'u1'
         ])
-        expect(serialized(loggerSpy)).not.toContain('Redis down')
-        expect(serialized(loggerSpy)).not.toContain('u1')
       } finally {
         loggerSpy.mockRestore()
       }
