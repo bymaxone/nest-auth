@@ -1,5 +1,5 @@
 /**
- * @fileoverview A message override that holds `undefined` is unset: the default copy is sent, as if
+ * @fileoverview A message override that holds `undefined` or `null` is unset: the default copy is sent, as if
  * the key were absent, instead of a message with no body.
  *
  * @layer Test
@@ -21,6 +21,23 @@ describe('DefaultAuthEmailProvider overrides that are unset', () => {
     sink.send.mockResolvedValue({ messageId: 'mid' })
     const messages = Object.defineProperty({}, 'passwordResetToken', {
       value: undefined,
+      enumerable: true
+    })
+    const provider = new DefaultAuthEmailProvider(sink, { messages })
+
+    await provider.sendPasswordResetToken('tenant-1', 'user@example.com', 'TOK')
+
+    const sent = sink.send.mock.calls.at(-1)?.[0]
+    expect(sent?.subject.length).toBeGreaterThan(0)
+    expect(sent?.text).toContain('TOK')
+  })
+
+  // Scenario: an override key holding `null`. Expected: read as unset, so the default copy is sent.
+  it('keeps the default copy for an override that holds null', async () => {
+    const sink = makeSink()
+    sink.send.mockResolvedValue({ messageId: 'mid' })
+    const messages = Object.defineProperty({}, 'passwordResetToken', {
+      value: null,
       enumerable: true
     })
     const provider = new DefaultAuthEmailProvider(sink, { messages })

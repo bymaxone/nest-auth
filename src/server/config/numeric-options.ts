@@ -232,7 +232,7 @@ function validateMfaVerificationParameters(mfa: BymaxAuthModuleOptions['mfa']): 
     throw new Error(
       `[BymaxAuthModule] mfa.totpWindow must be between 0 and ${MAX_VERIFY_WINDOW} inclusive ` +
         `(received ${describeReceived(totpWindow)}). The window is counted in 30-second steps on either side ` +
-        `of the current time, so ${2 * totpWindow + 1} codes would be valid at once. RFC 6238 §5.2 ` +
+        `of the current time, so ${typeof totpWindow === 'number' ? 2 * totpWindow + 1 : '2N + 1'} codes would be valid at once. RFC 6238 §5.2 ` +
         `recommends at most one step of tolerance; the default of 1 accepts three codes. ` +
         `The bound matches the drift window the verifier actually applies, so a configured ` +
         `value means what it says and is never silently clamped. It must be a ` +
@@ -265,7 +265,9 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
   const graceSeconds =
     jwt.refreshGraceWindowSeconds ?? DEFAULT_OPTIONS.jwt.refreshGraceWindowSeconds
   const refreshExpiresInDays = jwt.refreshExpiresInDays ?? DEFAULT_OPTIONS.jwt.refreshExpiresInDays
-  const refreshLifetimeSeconds = refreshExpiresInDays * 86_400
+  const refreshLifetimeSeconds =
+    typeof refreshExpiresInDays === 'number' ? refreshExpiresInDays * 86_400 : Number.NaN
+  const isGraceNumber = typeof graceSeconds === 'number'
 
   if (
     !Number.isFinite(refreshExpiresInDays) ||
@@ -282,7 +284,7 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
     )
   }
 
-  if (graceSeconds >= refreshLifetimeSeconds) {
+  if (isGraceNumber && graceSeconds >= refreshLifetimeSeconds) {
     throw new Error(
       `[BymaxAuthModule] jwt.refreshGraceWindowSeconds (${graceSeconds} s) must be less than ` +
         `the refresh token lifetime jwt.refreshExpiresInDays * 86400 (${refreshLifetimeSeconds} s). ` +
@@ -291,11 +293,10 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
     )
   }
 
-  // The relative bound above is not enough on its own: a 6-day window under a 7-day refresh
-  // passes it. This window is the span in which an already-consumed refresh token buys a
-  // session, so it is the replay window for a stolen one — it exists to cover a single network
-  // retry, measured in seconds, not a policy knob measured in days.
+  // The relative bound is not enough alone: a 6-day window under a 7-day refresh passes it, yet this
+  // window is the replay window for a stolen refresh token, so it is measured in seconds.
   if (
+    !isGraceNumber ||
     !Number.isInteger(graceSeconds) ||
     graceSeconds < 0 ||
     graceSeconds > MAX_REFRESH_GRACE_WINDOW_SECONDS

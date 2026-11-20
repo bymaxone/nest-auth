@@ -307,6 +307,8 @@ export class PrismaUserRepository implements IUserRepository {
 
 Email delivery is fully delegated to the consumer — the library never imports a mailer SDK. Implement `IEmailProvider` with your transport of choice (Resend, SendGrid, SES, Nodemailer) and bind it to the `BYMAX_AUTH_EMAIL_PROVIDER` token.
 
+When the provider (or the `BYMAX_AUTH_HOOKS` object) is registered as a ready-made `useValue` object, `registerAsync` checks it when it is called: each member the library calls by name that is present must be a function (any other member of the object is yours and is not looked at), and the provider must carry the methods the library calls without a guard: `sendPasswordResetToken`, `sendPasswordResetOtp`, `sendEmailVerificationOtp`, `sendMfaEnabledNotification`, `sendMfaDisabledNotification` and `sendInvitation`. A class, a factory or an alias is not inspected.
+
 > [!WARNING]
 > Any user-supplied value (display name, tenant name, inviter name) interpolated into HTML email bodies MUST be escaped to prevent stored XSS in notification content. Tokens and OTPs are library-generated and safe, but `inviterName`, `tenantName`, device strings, and any consumer-supplied placeholder are attacker-controllable.
 
@@ -806,7 +808,9 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 | **controllers**       | Toggle individual controllers on/off — passed to `registerAsync()` itself, never returned from `useFactory` (which refuses it at startup)                                      | `auth`, `passwordReset` on; rest opt-in                |
 
 An option that is omitted, or that holds `undefined` or `null`, is unset and takes its default; it never means "no limit". To switch
-a cap off, use the documented value (`0` for `jwt.absoluteSessionLifetimeDays`), not an absent one.
+a cap off, use the documented value (`0` for `jwt.absoluteSessionLifetimeDays`), not an absent one. A host-defined map or a required value (`oauth.<provider>`, the `oauth` redirect URLs, `roles.hierarchy.<role>`, `workspaces.permissions.<action>`) refuses `null` by name.
+A flag must be exactly `true` or `false` (`workspaces.allowCreate` may also be a function), and an option with a documented set of values exactly one of them: anything else, an empty string and `'false'` included, is
+refused at startup naming the option, never read as off or as a default.
 
 > [!NOTE]
 > When a feature is not enabled (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead. A feature is enabled by `controllers.<name>: true` on the `registerAsync()` call together with its configuration group (`mfa.encryptionKey` and `mfa.issuer`, `sessions.enabled`, `platform.enabled`); either half alone leaves it unregistered or fails at startup.
@@ -905,7 +909,7 @@ a cap off, use the documented value (`0` for `jwt.absoluteSessionLifetimeDays`),
 > be `0..=2`: the window counts 30-second steps on _either_ side of now, so `2n + 1` codes are
 > valid at once (three at the default of 1). `mfa.recoveryCodeCount` must be `1..=50`,
 > because zero enrols an account with no way back if the authenticator is lost.
-> `password.blockSize` must be at least 8 and `password.parallelization` at least 1: scrypt's memory
+> `password.blockSize` must be at least 8 and `password.parallelization` between 1 and 16: scrypt's memory
 > cost is `128 * N * r`, so a smaller block size divides the hardness `password.costFactor`'s floor
 > exists to guarantee.
 

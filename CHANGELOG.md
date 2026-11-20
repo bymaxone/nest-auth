@@ -18,6 +18,48 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.10] - 2026-11-18
+
+A patch release.
+
+### Fixed
+
+- **A flag that is not `true` or `false`, and an option that is not one of its documented values, are refused at startup.**
+  A flag is read as `if (x)` in some places and `=== false` in others, so a value that is neither was decided by whichever
+  reader saw it: `rateLimit.enabled: ''` (an unset environment variable) switched the rate-limit guard off while the boot
+  check still read it as enabled, `emailVerification.required: ''` let login skip the verification, and `'false'` was
+  truthy. An option compared with `===` fell through to its default branch on a typo: `environment: 'prodution'` was read
+  as not production and dropped `Secure` from every cookie with no error, a misspelled `tokenDelivery` issued cookies, and a
+  misspelled `passwordReset.method` silently used the token flow. Every flag (a `controllers` flag passed to
+  `registerAsync` included; `workspaces.allowCreate` may also be a function) must be exactly `true` or `false`, and an
+  option with a documented set of values must be one of them, with no case folding. The refusal
+  names the type of a string and never prints it. A spec reads the option interfaces and fails when a new flag or
+  documented-set option is declared and not listed in the validator.
+- `registerAsync` inspects the hooks and the email provider when they are ready-made `useValue` objects: a hook that is
+  present and not a function, and an email provider without a method the library calls unguarded, are refused when it is
+  called instead of at the first event that fires them. A class, a factory or an alias is not inspected.
+
+- `oauth` and `roles` are read by property access too, so a typed configuration class whose `hierarchy`, `platformHierarchy`
+  or provider block is a getter on its prototype takes effect. 1.5.9 read the fixed-key groups that way and left these two
+  as given, so a class with such a getter reached the validators with no hierarchy or no provider block: startup failed
+  or OAuth stayed unconfigured, never a looser setting. A `null` in either is still refused by name.
+- `jwt.accessExpiresIn`'s refusals no longer quote the value: the unreadable case names the type received and the
+  too-long case states the lifetime in seconds.
+
+### Apply to a derived backend
+
+A configuration that booted before is refused at startup when it sets a flag or an option with a documented set of values to
+anything else. `undefined` and `null` still mean the default. An environment variable must be converted before it is passed
+(`process.env.X === 'true'`), and `environment` must be spelled exactly as documented. A
+`BYMAX_AUTH_EMAIL_PROVIDER` registered as an object needs the email methods the library calls without a guard; the
+other methods stay optional, and one that is present must be a function.
+
+Also refused at `registerAsync`: a `BYMAX_AUTH_EMAIL_PROVIDER` `useValue`, or a `BYMAX_AUTH_HOOKS` one that is not nullish, that is not an object, and a
+hook (any of the hooks the library calls by name) that is present and not a function. A `null` hook counts as absent.
+A `controllers` flag passed to `registerAsync` is checked like every other flag, and a `null` flag is unset.
+`workspaces.allowCreate` may be `true`, `false` or a function. A refusal of `jwt.accessExpiresIn` has new wording; a test
+or a log filter that matches the old text must change.
+
 ## [1.5.9] - 2026-11-17
 
 A patch release.
@@ -33,19 +75,25 @@ A patch release.
   instead of at boot; other numeric options had no check at all. One module, `config/numeric-options.ts`, now tests each
   value as a whole number (for the lifetime in days, a finite one) before it applies a range with a ceiling, because
   `Number.isInteger(1e300)` is true and a value that large overflows the expiry Redis accepts or the lifetime the cap compares to.
-- **An option that holds `undefined` or `null` is unset, so its default applies, never "no bound".** The defaults were
+- **An option that has a default and holds `undefined` or `null` is unset, so its default applies, never "no bound".** The defaults were
   spread under the host's group, so an own key holding `undefined` replaced the default: `Number(process.env.X) || undefined`
   switched the session cap (`sessions.defaultMaxSessions`) and the absolute lifetime cap off, which is the `NaN` bug reached
-  through a different value. The options are now read once with the unset keys dropped, at the top level and in each option group (the role
-  hierarchies are left as given), so every default and every validator sees the same thing. `null` follows the same
-  rule: some options refused it and some took it through `??`; all of them now read it as unset.
+  through a different value. The options are read once, by property access, into a plain object without the unset keys, at the top level and in
+  each option group with fixed keys, so a group that is a typed configuration class is read like an object literal and every default and
+  every validator sees the same thing. `null` follows the same rule: some options refused it and some took it through
+  `??`. The options that hold a host-defined map or a required value are the exception, and refuse `null` by name:
+  `oauth.successRedirectUrl`, `oauth.mfaRedirectUrl`, `oauth.errorRedirectUrl`, `oauth.<provider>`, each
+  `roles.hierarchy.<role>` and each `workspaces.permissions.<action>`. `oauth.<provider>` and
+  `roles.hierarchy.<role>` refuse `undefined` as well. `jwt.secret` and `roles.hierarchy` have no default, so a
+  `null` or `undefined` there is refused as required.
 - `jwt.accessCookieMaxAgeMs` has a floor of 1000: the cookie `Max-Age` is sent in whole seconds, so 1 to 999 became
   `Max-Age=0`, which deletes the cookie.
-- A refusal names the type of a value that is not a number (`received a string`) and never prints it, so a secret passed to
-  the wrong option does not reach a log. A message that said `Got: 1.1` for `jwt.refreshExpiresInDays` states the rule:
-  days × 86400 must be a whole number of seconds; 1.5 and 0.25 are, 1.1 is not.
-- A message override of `DefaultAuthEmailProvider` that holds `undefined` keeps the default copy instead of sending a
-  message with no body.
+- A refusal that receives a value that is not a number, `null` or `undefined` names its type (`received a string`) and does not print it, so a secret
+  passed to the wrong option does not reach a log; a number is printed, because `NaN` or `1e300` is what an operator needs to see.
+  `jwt.accessExpiresIn`'s refusal still quotes its value; it is fixed in 1.5.10. A message that said `Got: 1.1` for `jwt.refreshExpiresInDays` states the rule:
+  days × 86400 must be a whole number of seconds when computed in floating point; 1.5 and 0.25 are, 1.1 and 0.7 are not.
+- A message override of `DefaultAuthEmailProvider` that holds `undefined` keeps the default copy; it threw a `TypeError`
+  (`is not a function`) when the message was built.
 - `userStatusCacheTtlSeconds` has a ceiling of 3600 seconds. It is the window in which a suspended account still passes
   the dashboard guards, so it is a security bound and not a tuning knob.
 
@@ -75,10 +123,20 @@ each line says what was accepted until now:
   `jwt.refreshGraceWindowSeconds` (0 to 300): `NaN`, a fraction, and a numeric string, which the range checks let
   through. `Infinity` was already refused by the range.
 
-`null` and `undefined` mean "unset" for every option now: a host that passed `null` to an option that used to refuse it
+`null` and `undefined` mean "unset" for every option that has a default: a host that passed `null` to an option that used to refuse it
 boots with the default, and one that relied on an own key holding `undefined` to remove a cap gets the default cap. In
 `jwt.absoluteSessionLifetimeDays` a numeric string such as `'30'` is newly refused; a string was already refused for
 `jwt.refreshExpiresInDays`, which now also refuses more than 3650 days and a length that is not whole seconds.
+
+Also refused or changed:
+
+- `jwt.accessCookieMaxAgeMs` must be a whole number: `1500.5` booted before.
+- `password.parallelization` has a ceiling of 16, and `sessions.defaultMaxSessions` one of 1000.
+- A group or the options given as a class instance now take effect through their getters and prototype; those values
+  were ignored before, so a configuration that relied on the defaults for them now applies the values it declares.
+- Refusal messages read `(received …)` where they read `(current: …)` or `(got: …)`, and a string is no longer quoted
+  (the OAuth `callbackUrl`, `rateLimit.clientIpSource` and the redirect URLs); a test or a log filter that matches
+  the old text must change.
 
 A value read from an environment variable must be converted with `Number(...)` before it is passed, and checked for `NaN`.
 
@@ -5319,7 +5377,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.9...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.10...HEAD
+[1.5.10]: https://github.com/bymaxone/nest-auth/compare/v1.5.9...v1.5.10
 [1.5.9]: https://github.com/bymaxone/nest-auth/compare/v1.5.8...v1.5.9
 [1.5.8]: https://github.com/bymaxone/nest-auth/compare/v1.5.7...v1.5.8
 [1.5.7]: https://github.com/bymaxone/nest-auth/compare/v1.5.6...v1.5.7

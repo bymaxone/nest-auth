@@ -25,6 +25,7 @@ import { WorkspaceAccessService } from './services/workspace-access.service'
 import { WorkspaceInvitationService } from './services/workspace-invitation.service'
 import { WorkspaceEventsService } from './services/workspace-events.service'
 import { WorkspaceService } from './services/workspace.service'
+import { completeEmailProvider } from './__tests__/complete-email-provider'
 
 const OPTIONS: BymaxAuthModuleOptions = {
   jwt: { secret: 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B' },
@@ -182,7 +183,7 @@ describe('BymaxAuthModule — workspace invitations', () => {
   it('refuses to start when the email provider cannot deliver a workspace invitation', async () => {
     const module = await compile(
       WORKSPACES,
-      [...REPOSITORIES, { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: {} }],
+      [...REPOSITORIES, { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: completeEmailProvider() }],
       { workspaces: true, workspaceInvitations: true }
     )
 
