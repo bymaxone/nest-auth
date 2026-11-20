@@ -42,8 +42,7 @@ interface EnrolledMfaUser {
 
 /**
  * Registers a user, runs /mfa/setup and /mfa/verify-enable with a real TOTP code, and returns
- * the pre-enable tokens plus the secret and recovery codes; separate because Scenarios 2 and 3
- * run the identical enrolment (each on its own fresh app).
+ * the pre-enable tokens plus the secret and recovery codes.
  */
 async function enrollMfaUser(
   app: INestApplication,
@@ -77,7 +76,7 @@ async function enrollMfaUser(
   }
 }
 
-/** POSTs /login for tenant-1 and returns the response body; separate because the hooks log in repeatedly. */
+/** POSTs /login for tenant-1 and returns the response body. */
 async function loginBody(
   app: INestApplication,
   email: string,

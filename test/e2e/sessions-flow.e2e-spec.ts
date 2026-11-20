@@ -28,8 +28,7 @@ const UA_LINUX = 'Mozilla/5.0 (Linux X11)'
 const UA_IPHONE = 'Mozilla/5.0 (iPhone iOS)'
 
 /**
- * Registers the multi-device user and immediately logs the registration session out; separate
- * because it is pre-flight cleanup, not one of the three device logins under test.
+ * Registers the multi-device user and immediately logs the registration session out.
  */
 async function registerAndDropRegistrationSession(app: INestApplication): Promise<void> {
   // Register the user once. With emailVerification.required: false (the
@@ -53,8 +52,7 @@ async function registerAndDropRegistrationSession(app: INestApplication): Promis
 }
 
 /**
- * Logs in the multi-device user with a specific User-Agent and returns the token pair;
- * separate because the three device logins differ only by User-Agent.
+ * Logs in the multi-device user with a specific User-Agent and returns the token pair.
  */
 async function loginWithUserAgent(
   app: INestApplication,

@@ -76,8 +76,7 @@ function sessionIndexFor(userId: string, tenantId: string): string {
 }
 
 /**
- * Wraps the mock Redis `eval` so a nil Lua result reads as `null`; separate because the
- * rationale is long and unrelated to the scenario's request chain.
+ * Wraps the mock Redis `eval` so a nil Lua result reads as `null`.
  *
  * ioredis-mock returns `undefined` when a Lua script returns nil, but the
  * production `TokenManagerService.reissueTokens` checks `oldSessionJson !==
@@ -99,8 +98,7 @@ function normaliseNilEval(redis: BootstrappedTestApp['redis']): void {
 }
 
 /**
- * Registers the race account and logs it in, returning the login refresh token and user id; separate because the
- * request pair is plain setup ahead of the concurrent refreshes under test.
+ * Registers the race account and logs it in, returning the login refresh token and user id.
  */
 async function registerAndLoginRacer(
   app: INestApplication

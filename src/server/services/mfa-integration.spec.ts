@@ -167,7 +167,7 @@ const mockHooks = {}
 /** The account password every enrolment test re-proves. */
 const PASSWORD = 'correct horse battery staple'
 
-/** Seeds every mock with its safe default; separate so the hook stays short and the defaults read as one list. */
+/** Seeds every mock with its safe default. */
 function primeDefaultMocks(): void {
   // Default safe returns
   mockRedis.get.mockResolvedValue(null)
@@ -194,7 +194,7 @@ function primeDefaultMocks(): void {
   mockEmailProvider.sendMfaDisabledNotification.mockResolvedValue(undefined)
 }
 
-/** Compiles the testing module around the mocks; separate because the provider list is the bulk of the setup. */
+/** Compiles the testing module around the mocks. */
 async function compileMfaModule(): Promise<TestingModule> {
   return Test.createTestingModule({
     providers: [

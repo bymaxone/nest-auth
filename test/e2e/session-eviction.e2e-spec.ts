@@ -45,8 +45,7 @@ const UA_IPHONE = 'Mozilla/5.0 (iPhone iOS)'
 const MAX_PER_USER = 5
 
 /**
- * Registers the eviction user and immediately logs the registration session out; separate
- * because it is pre-flight cleanup, not one of the six device logins under test.
+ * Registers the eviction user and immediately logs the registration session out.
  */
 async function registerAndDropRegistrationSession(app: INestApplication): Promise<void> {
   // Register the user once. With emailVerification.required: false (the
@@ -71,8 +70,7 @@ async function registerAndDropRegistrationSession(app: INestApplication): Promis
 
 /**
  * Logs in with a specific User-Agent and returns the resulting token pair. Each login MUST
- * carry a unique User-Agent so each session is identifiable in the listSessions output;
- * separate so each device login reads as one call in the hook.
+ * carry a unique User-Agent so each session is identifiable in the listSessions output.
  */
 async function loginWithUserAgent(
   app: INestApplication,

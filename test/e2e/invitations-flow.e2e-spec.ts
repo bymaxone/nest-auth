@@ -100,7 +100,7 @@ function promoteToAdmin(repo: MockUserRepository, email: string): void {
 // Suite
 // ---------------------------------------------------------------------------
 
-/** Boots the app with invitations enabled; separate because both hooks need the identical config. */
+/** Boots the app with invitations enabled. */
 async function bootstrapInvitationsApp(): Promise<BootstrappedTestApp> {
   return bootstrapTestApp(
     { invitations: { enabled: true, tokenTtlSeconds: 3_600 } },
@@ -116,7 +116,7 @@ async function bootstrapInvitationsApp(): Promise<BootstrappedTestApp> {
   )
 }
 
-/** Registers a dashboard user in tenant-1; separate because the hooks register several accounts. */
+/** Registers a dashboard user in tenant-1. */
 async function registerUser(
   app: INestApplication,
   email: string,
@@ -128,7 +128,7 @@ async function registerUser(
     .send({ email, password, name, tenantId: 'tenant-1' })
 }
 
-/** Logs in and returns the access token; separate so each login reads as one call in the hooks. */
+/** Logs in and returns the access token. */
 async function loginAccessToken(
   app: INestApplication,
   email: string,
@@ -142,7 +142,7 @@ async function loginAccessToken(
 
 /**
  * Waits for the invitation email sent to `to` and returns the raw token embedded in it
- * (empty string when absent); separate because both hooks extract tokens the same way.
+ * (empty string when absent).
  * `generateSecureToken(32)` always emits exactly 64 hex chars, so one regex suffices.
  */
 async function readInvitationToken(sentEmails: CapturedEmail[], to: string): Promise<string> {
@@ -154,8 +154,7 @@ async function readInvitationToken(sentEmails: CapturedEmail[], to: string): Pro
 }
 
 /**
- * Reports whether the accepted invitee's session carries a recent-auth mark; separate because
- * it decodes the access token and builds the Redis key, which is unrelated to the HTTP chain.
+ * Reports whether the accepted invitee's session carries a recent-auth mark.
  */
 async function hasInviteeRecentAuthMark(
   app: INestApplication,

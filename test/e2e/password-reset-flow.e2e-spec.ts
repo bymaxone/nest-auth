@@ -77,7 +77,7 @@ async function waitForEmail(
   throw new Error(`Timed out waiting for email after ${timeoutMs}ms`)
 }
 
-/** Registers a dashboard user in tenant-1; separate because both chains open with the same request. */
+/** Registers a dashboard user in tenant-1. */
 async function registerUser(
   app: INestApplication,
   email: string,
@@ -89,14 +89,14 @@ async function registerUser(
     .send({ email, password, name, tenantId: 'tenant-1' })
 }
 
-/** POSTs /password/forgot-password for tenant-1; separate because both chains start the reset here. */
+/** POSTs /password/forgot-password for tenant-1. */
 function requestPasswordReset(app: INestApplication, email: string): Promise<request.Response> {
   return request(app.getHttpServer())
     .post('/password/forgot-password')
     .send({ email, tenantId: 'tenant-1' })
 }
 
-/** POSTs /login for tenant-1; separate because each chain logs in with the new (and old) password. */
+/** POSTs /login for tenant-1. */
 function loginAs(
   app: INestApplication,
   email: string,
@@ -107,7 +107,7 @@ function loginAs(
 
 /**
  * Waits for the OTP email sent to `to` and returns the 6-digit code embedded in it (empty
- * string when absent); separate to keep the OTP hook within the length limit.
+ * string when absent).
  */
 async function readResetOtp(sentEmails: CapturedEmail[], to: string): Promise<string> {
   const otpEmail = await waitForEmail(
