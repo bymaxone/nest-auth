@@ -165,6 +165,14 @@ const KEPT_GROUP_KEYS = {
   roles: { hierarchy: true, platformHierarchy: true } satisfies Keys<Group<'roles'>>
 }
 
+/** The keys of `oauth.google`, which a host may also give as a class, an accessor pair or a Proxy. */
+const OAUTH_GOOGLE_KEYS = {
+  clientId: true,
+  clientSecret: true,
+  callbackUrl: true,
+  scope: true
+} satisfies Keys<NonNullable<Group<'oauth'>['google']>>
+
 /** The `workspaces` sub-groups that hold plain settings, each with its keys. */
 const WORKSPACE_SUBGROUP_KEYS: Readonly<Record<string, readonly string[]>> = {
   accessDeniedEvents: ['max', 'windowSeconds']
@@ -251,6 +259,13 @@ export function dropUnset(options: BymaxAuthModuleOptions): BymaxAuthModuleOptio
   for (const [name, keys] of Object.entries(KEPT_GROUP_KEYS)) {
     const entry = copy[name]
     if (isObjectGroup(entry)) copy[name] = readKeptKeys(entry, Object.keys(keys))
+  }
+  const oauth = copy['oauth']
+  if (isObjectGroup(oauth)) {
+    const google = Reflect.get(oauth, 'google')
+    if (isObjectGroup(google)) {
+      Reflect.set(oauth, 'google', readKeptKeys(google, Object.keys(OAUTH_GOOGLE_KEYS)))
+    }
   }
   return Object.assign({} as BymaxAuthModuleOptions, copy)
 }

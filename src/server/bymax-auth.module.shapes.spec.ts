@@ -70,4 +70,45 @@ describe('BymaxAuthModule.registerAsync shapes', () => {
       })
     ).toThrow('controllers.mfa must be true or false (received a string)')
   })
+
+  // Scenario: `controllers` given as a string, number or array. Expected: refused by name and type. Why:
+  // every flag of a string reads as unset, so the registration would silently mount the defaults.
+  it.each([
+    ['a string', 'evil', 'a string'],
+    ['a number', 7, '7'],
+    ['a boolean', true, 'a boolean']
+  ])('refuses controllers given as %s', (_case, controllers, received) => {
+    expect(() =>
+      BymaxAuthModule.registerAsync({
+        useFactory: () => OPTIONS,
+        extraProviders: REQUIRED,
+        controllers: untyped<ControllerFlags>(controllers)
+      })
+    ).toThrow(`controllers must be an object (received ${received})`)
+  })
+
+  // Scenario: every flag is a getter that counts its reads. Expected: each is read once however many
+  // times the registration consults it. Why: a getter read twice can answer differently the second time,
+  // so the flag that was checked would not be the flag that was used.
+  it('reads each controller flag once', () => {
+    const reads: Record<string, number> = {}
+    const flags = {}
+    for (const name of ['auth', 'passwordReset', 'sessions', 'oauth', 'workspaces']) {
+      Object.defineProperty(flags, name, {
+        enumerable: true,
+        get: () => {
+          reads[name] = (reads[name] ?? 0) + 1
+          return false
+        }
+      })
+    }
+
+    BymaxAuthModule.registerAsync({
+      useFactory: () => OPTIONS,
+      extraProviders: REQUIRED,
+      controllers: untyped<ControllerFlags>(flags)
+    })
+
+    expect(reads).toEqual({ auth: 1, passwordReset: 1, sessions: 1, oauth: 1, workspaces: 1 })
+  })
 })

@@ -15,9 +15,10 @@
 import type { Provider } from '@nestjs/common'
 
 import { describeReceived } from './describe-received'
-import { validateControllerFlags } from './enum-boolean-options'
+import { readControllerFlags } from './enum-boolean-options'
 import { BYMAX_AUTH_EMAIL_PROVIDER, BYMAX_AUTH_HOOKS } from '../bymax-auth.constants'
 import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type { ControllerFlags } from '../interfaces/controller-flags.interface'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 
 /** The email methods the library calls with no guard, so a provider without one fails on that message. */
@@ -137,9 +138,14 @@ export function assertProviderShapes(providers: Provider[]): void {
  *
  * @param controllers - The host's `controllers`, if any.
  * @param providers - The host's `extraProviders`.
+ * @returns The controller flags that are set, read once, which is what the registration must use.
  * @throws {Error} naming the option or provider member that is not usable.
  */
-export function validateRegistrationShapes(controllers: unknown, providers: Provider[]): void {
-  validateControllerFlags(controllers)
+export function validateRegistrationShapes(
+  controllers: unknown,
+  providers: Provider[]
+): ControllerFlags {
+  const flags = readControllerFlags(controllers)
   assertProviderShapes(providers)
+  return flags
 }

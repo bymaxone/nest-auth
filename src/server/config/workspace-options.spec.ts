@@ -203,7 +203,7 @@ describe('resolveWorkspaceOptions', () => {
       expect(() =>
         resolveWorkspaceOptions(options({ permissions: { manageMembers: ['ghost'] } }))
       ).toThrow(
-        "workspaces.permissions.manageMembers names 'ghost', which is not a workspace role."
+        'workspaces.permissions.manageMembers names a role at position 0 that is not a workspace role.'
       )
     })
 
@@ -212,7 +212,9 @@ describe('resolveWorkspaceOptions', () => {
         resolveWorkspaceOptions(
           options({ permissions: { manageMembers: [42] as unknown as readonly string[] } })
         )
-      ).toThrow("workspaces.permissions.manageMembers names '42', which is not a workspace role.")
+      ).toThrow(
+        'workspaces.permissions.manageMembers names a role at position 0 that is not a workspace role.'
+      )
     })
 
     it('refuses the any-member marker on an action other than viewing members', () => {
@@ -222,13 +224,17 @@ describe('resolveWorkspaceOptions', () => {
             permissions: { manageMembers: [ANY_WORKSPACE_MEMBER] as unknown as readonly string[] }
           })
         )
-      ).toThrow(/permissions\.manageMembers names 'Symbol\(ANY_WORKSPACE_MEMBER\)'/)
+      ).toThrow(
+        /permissions\.manageMembers names a role at position 0 that is not a workspace role/
+      )
     })
 
     it('refuses an unknown role for viewing members, marker or not', () => {
       expect(() =>
         resolveWorkspaceOptions(options({ permissions: { viewMembers: ['ghost'] } }))
-      ).toThrow("workspaces.permissions.viewMembers names 'ghost', which is not a workspace role.")
+      ).toThrow(
+        'workspaces.permissions.viewMembers names a role at position 0 that is not a workspace role.'
+      )
     })
 
     it('accepts the any-member marker for viewing members', () => {

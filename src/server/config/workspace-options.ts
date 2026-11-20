@@ -138,12 +138,12 @@ function validateWorkspacePermissions(
   for (const [action, list] of Object.entries(permissions ?? {})) {
     if (list === undefined) continue
     assertArray(`workspaces.permissions.${action}`, list)
-    for (const role of list) {
+    for (const [position, role] of list.entries()) {
       const known = roles.has(role)
       if (!known && !(action === 'viewMembers' && role === ANY_WORKSPACE_MEMBER)) {
         throw new Error(
-          `[BymaxAuthModule] workspaces.permissions.${action} names '${String(role)}', which is ` +
-            `not a workspace role.`
+          `[BymaxAuthModule] workspaces.permissions.${action} names a role at position ${position} ` +
+            `that is not a workspace role.`
         )
       }
     }
