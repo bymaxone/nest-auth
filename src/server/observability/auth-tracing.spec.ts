@@ -23,12 +23,18 @@ type StartActiveSpan = (
 /** What the fake tracer does when a span is started; each case sets it. */
 let startActiveSpan: StartActiveSpan
 
+/** The names the seam asked the API for a tracer under. */
+const mockTracerNames: string[] = []
+
 jest.mock('@opentelemetry/api', () => ({
   trace: {
-    getTracer: () => ({
-      startActiveSpan: (...args: unknown[]) =>
-        startActiveSpan(...(args as Parameters<StartActiveSpan>))
-    })
+    getTracer: (name: string) => {
+      mockTracerNames.push(name)
+      return {
+        startActiveSpan: (...args: unknown[]) =>
+          startActiveSpan(...(args as Parameters<StartActiveSpan>))
+      }
+    }
   }
 }))
 
@@ -75,6 +81,7 @@ describe('AuthTracing', () => {
 
     expect(result).toBe('rotated')
     expect(seen).toEqual([['auth.refresh', { 'bymax.auth.plane': 'platform' }]])
+    expect(mockTracerNames).toContain('@bymax-one/nest-auth')
     expect(live.end).toHaveBeenCalledTimes(1)
     expect(live.setStatus).not.toHaveBeenCalled()
   })
@@ -102,7 +109,9 @@ describe('AuthTracing', () => {
   it.each([
     ['a plain error', new Error('SENTINEL-4242 secret@example.com')],
     ['a thrown string', 'SENTINEL-4242'],
-    ['an unshaped code', new AuthException('Auth.Weird Code' as never)]
+    ['an unshaped code', new AuthException('Auth.Weird Code' as never)],
+    ['a code with a prefix', new AuthException('x.auth.foo' as never)],
+    ['a code with a suffix', new AuthException('auth.foo.bar' as never)]
   ])('reports a generic code for %s', async (_case, failure) => {
     const live = span()
     startActiveSpan = (_name, _options, fn) => fn(live)
@@ -146,6 +155,24 @@ describe('AuthTracing', () => {
     const run = jest.fn(() => Promise.resolve('once'))
 
     await expect((await loaded()).span('auth.login', {}, run)).resolves.toBe('once')
+
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  // Scenario: the tracer calls the callback only after the operation already ran bare. Expected: it does not
+  // run a second time.
+  it('runs the operation once when the tracer calls back late', async () => {
+    const live = span()
+    let late: (() => unknown) | undefined
+    startActiveSpan = (_name, _options, fn) => {
+      late = () => fn(live)
+      return undefined
+    }
+    const run = jest.fn(() => Promise.resolve('once'))
+
+    await expect((await loaded()).span('auth.login', {}, run)).resolves.toBe('once')
+    late?.()
+    await Promise.resolve()
 
     expect(run).toHaveBeenCalledTimes(1)
   })
