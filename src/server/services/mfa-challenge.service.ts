@@ -27,7 +27,7 @@ import type {
   IPlatformUserRepository
 } from '../interfaces/platform-user-repository.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
-import { onPlane } from '../observability/observed-outcome'
+import { markingPlane } from '../observability/observed-outcome'
 import { logSafe } from '../utils/log-safe'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { verifyRecoveryCode } from '../utils/mfa-recovery-codes'
@@ -153,36 +153,39 @@ export class MfaChallengeService {
     } = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
     const scope: ChallengeScope = { userId, context, tenantId }
 
-    // Step 2: brute-force check.
-    await this.assertNotLocked(scope)
+    // The token verified, so its plane is known: every way the rest of the challenge can end carries it.
+    return markingPlane(context, async () => {
+      // Step 2: brute-force check.
+      await this.assertNotLocked(scope)
 
-    // Step 3: fetch the account, tenant-scoped, and re-check its status: the temp token outlives
-    // the login's own check by its whole TTL, and a blocked account must not spend the KDF below.
-    const user = await this.records.loadAccount(context, userId, tenantId)
-    if (!user.mfaEnabled || !user.mfaSecret) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
-    }
+      // Step 3: load the account, tenant-scoped, and re-check its status: a blocked account must not spend the KDF.
+      const user = await this.records.loadAccount(context, userId, tenantId)
+      if (!user.mfaEnabled || !user.mfaSecret) {
+        throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
+      }
 
-    // Step 4: decrypt the TOTP secret and validate the submitted code.
-    const opened = decryptWithRotation(user.mfaSecret, mfa)
-    const { valid, recoveryIndex } = await this.checkCode(user, scope, opened.secret, code, mfa)
-    if (!valid) await this.refuseWrongCode(scope)
-    await this.flowLockout.reset('challenge', context, userId, tenantId)
+      // Step 4: decrypt the TOTP secret and validate the submitted code.
+      const opened = decryptWithRotation(user.mfaSecret, mfa)
+      const { valid, recoveryIndex } = await this.checkCode(user, scope, opened.secret, code, mfa)
+      if (!valid) await this.refuseWrongCode(scope)
+      await this.flowLockout.reset('challenge', context, userId, tenantId)
 
-    // Step 5: consume the temp token — and the consume must WIN. Two concurrent submissions both
-    // observe the marker; without gating on which delete removed it, both issue a session. That
-    // is not benign on the recovery-code path, where one code and one token would mint two
-    // sessions. The loser is reported as an invalid temp token.
-    if (!(await this.tokenManager.consumeMfaTempToken(tempTokenJti))) {
-      throw onPlane(context, new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID))
-    }
-    await this.settleRecovery(user, scope, opened, recoveryIndex, mfa)
+      // Step 5: consume the temp token, and the consume must WIN: two concurrent submissions both see the
+      // marker, and on the recovery-code path one code and one token would mint two sessions. The loser is
+      // reported as an invalid temp token.
+      if (!(await this.tokenManager.consumeMfaTempToken(tempTokenJti))) {
+        throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+      }
+      await this.settleRecovery(user, scope, opened, recoveryIndex, mfa)
 
-    this.logger.log(`challenge: MFA challenge passed userId=${logSafe(userId)} context=${context}`)
-    // Step 6: issue full tokens with mfaVerified: true.
-    return context === 'dashboard'
-      ? this.issueDashboardSession(user as AuthUser, userId, ip, userAgent)
-      : this.issuePlatformSession(user as AuthPlatformUser, userId, ip, userAgent)
+      this.logger.log(
+        `challenge: MFA challenge passed userId=${logSafe(userId)} context=${context}`
+      )
+      // Step 6: issue full tokens with mfaVerified: true.
+      return context === 'dashboard'
+        ? this.issueDashboardSession(user as AuthUser, userId, ip, userAgent)
+        : this.issuePlatformSession(user as AuthPlatformUser, userId, ip, userAgent)
+    })
   }
 
   /**
@@ -199,7 +202,7 @@ export class MfaChallengeService {
     const { userId, context, tenantId } = scope
     if (await this.flowLockout.isLockedOut('challenge', context, userId, tenantId)) {
       this.logger.warn(`challenge: account locked userId=${logSafe(userId)}`)
-      throw onPlane(context, new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED))
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
   }
 
@@ -214,7 +217,7 @@ export class MfaChallengeService {
     const { userId, context, tenantId } = scope
     await this.flowLockout.recordFailure('challenge', context, userId, tenantId)
     this.logger.warn(`challenge: invalid MFA code userId=${logSafe(userId)} context=${context}`)
-    throw onPlane(context, new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE))
+    throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
   }
 
   /**

@@ -209,6 +209,48 @@ describe('MfaService.challenge — the plane of a refusal', () => {
     }
   )
 
+  // Scenario: every other way a challenge for a verified token can end, on each plane: the account cannot be
+  // loaded, MFA is not enabled on it, and issuing the session fails. Expected: the refusal carries the plane,
+  // whatever its code. Why: the plane is established once the token verifies, so a refusal added to the flow
+  // later is marked by being inside it.
+  describe.each(['dashboard', 'platform'] as const)('on %s', (plane) => {
+    const repo = (): typeof mockUserRepo =>
+      plane === 'dashboard' ? mockUserRepo : mockPlatformUserRepo
+
+    it('marks an account that cannot be loaded', async () => {
+      arrange(plane)
+      repo().findById.mockResolvedValue(null)
+
+      const error = await refusalOf(service.challenge('temp.jwt', '123456', '1.2.3.4', 'ua'))
+
+      expect(markedPlane(error)).toBe(plane)
+    })
+
+    it('marks an account without MFA', async () => {
+      arrange(plane)
+      repo().findById.mockResolvedValue({ ...(await repo().findById()), mfaEnabled: false })
+
+      const error = await refusalOf(service.challenge('temp.jwt', '123456', '1.2.3.4', 'ua'))
+
+      expect(codeOf(error)).toBe(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
+      expect(markedPlane(error)).toBe(plane)
+    })
+
+    it('marks a session that cannot be issued', async () => {
+      const { base32 } = generateTotpSecret()
+      arrange(plane, base32)
+      const failure = new AuthException(AUTH_ERROR_CODES.SERVICE_UNAVAILABLE)
+      mockTokenManager.issueTokens.mockRejectedValue(failure)
+      mockTokenManager.issuePlatformTokens.mockRejectedValue(failure)
+      const code = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const error = await refusalOf(service.challenge('temp.jwt', code, '1.2.3.4', 'ua'))
+
+      expect(error).toBe(failure)
+      expect(markedPlane(error)).toBe(plane)
+    })
+  })
+
   // Scenario: a temp token that does not verify. Expected: the verifier's own error, unmarked: no plane has
   // been established.
   it('leaves a token that does not verify unmarked', async () => {

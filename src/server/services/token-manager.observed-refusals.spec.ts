@@ -192,6 +192,18 @@ describe('the plane of a refused MFA temp token', () => {
       expect(codeOf(error)).toBe(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
       expect(markedPlane(error)).toBe(plane)
     })
+
+    // Scenario: the store fails while the entry is read. Expected: the failure is the store's own, unchanged, and
+    // carries the plane: whatever ends the check after the signature held is marked.
+    it('marks a failure of the store with its plane', async () => {
+      verify.mockReturnValue(claims[plane])
+      const failure = new Error('READONLY')
+      redis.get.mockRejectedValue(failure)
+
+      await expect(service.verifyMfaTempToken('temp.jwt')).rejects.toBe(failure)
+
+      expect(markedPlane(failure)).toBe(plane)
+    })
   })
 
   // Scenario: a token whose signature does not verify. Expected: refused, and no plane is marked, because the

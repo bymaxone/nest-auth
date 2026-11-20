@@ -63,3 +63,22 @@ export function onPlane<E extends Error>(plane: AuthPlane, error: E): E {
 export function markedPlane(error: unknown): AuthPlane | undefined {
   return typeof error === 'object' && error !== null ? PLANES.get(error) : undefined
 }
+
+/**
+ * Runs `run`, and marks whatever it throws with the plane before rethrowing it unchanged.
+ *
+ * It is how a flow that has already established the plane of its token says so for every way it can end,
+ * without a mark at each throw: a refusal added later is marked by being inside the call.
+ *
+ * @param plane - The plane of the verified token.
+ * @param run - The rest of the flow.
+ * @returns What `run` returns.
+ */
+export async function markingPlane<T>(plane: AuthPlane, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run()
+  } catch (error) {
+    if (error instanceof Error) onPlane(plane, error)
+    throw error
+  }
+}

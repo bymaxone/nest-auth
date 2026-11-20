@@ -27,7 +27,7 @@
     "src/server/services/session.service.ts": 1070,
     "src/server/services/token-delivery.service.spec.ts": 1176,
     "src/server/services/token-manager.service.spec.ts": 2696,
-    "src/server/services/token-manager.service.ts": 1403,
+    "src/server/services/token-manager.service.ts": 1398,
     "test/e2e/oauth-flow.e2e-spec.ts": 1289
   }
 }

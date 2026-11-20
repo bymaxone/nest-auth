@@ -25,7 +25,7 @@ import type {
 } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
-import { observed, onPlane } from '../observability/observed-outcome'
+import { markingPlane, observed } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -474,13 +474,9 @@ export class TokenManagerService {
       return this.rotateFromGrace(outcome.sessionJson, ip, userAgent, refreshTtl)
     }
     if (outcome.kind === 'reused') {
-      // Named, on both lines. This is the strongest compromise signal the library produces —
-      // a token that was already exchanged has been presented again — and it used to be
-      // logged as bare prose, with the account it concerns reaching only a consumer who had
-      // configured `onRefreshTokenReuseDetected`. The default hooks are no-ops, so on a
-      // default deployment the one unambiguous theft signal was anonymous in the log and
-      // nowhere else. An operator reading it could tell that something happened and not to
-      // whom (ASVS 16.2.1).
+      // Named, on both lines: this is the strongest compromise signal the library produces (a token that
+      // was already exchanged has been presented again), and the default hooks are no-ops, so the log is
+      // the only place an operator learns whose account it concerns (ASVS 16.2.1).
       //
       // Two lines rather than one: the detection is the finding and the revocation is the
       // response to it, and a `revokeFamily` that throws must not take the finding down with
@@ -1251,15 +1247,10 @@ export class TokenManagerService {
 
     await this.redis.set(`mfa:${sha256(jti)}`, userId, MFA_TEMP_TOKEN_TTL_SECONDS)
 
-    // The per-user MFA challenge counter is deliberately NOT reset here. It used to be, on
-    // the reasoning that "a fresh login proves renewed possession of the password" — but
-    // possession of the password is exactly the attacker's assumed capability in the threat
-    // model the second factor exists to cover. Resetting on every temp-token issuance let
-    // that attacker loop `login → five wrong codes → login` forever, so the per-account
-    // lockout never engaged and the only remaining control was the per-IP rate limit, which
-    // a distributed caller sidesteps. The counter is cleared by exactly one event: a
-    // SUCCESSFUL challenge (see `MfaService.challenge`), which is the only thing that proves
-    // possession of the factor being guessed.
+    // The per-user MFA challenge counter is deliberately NOT reset here: possession of the password is the
+    // attacker's assumed capability, so a reset on every temp-token issuance would let `login → five wrong
+    // codes → login` loop for ever and the per-account lockout would never engage. The counter is cleared by
+    // exactly one event, a SUCCESSFUL challenge (see `MfaService.challenge`), the only proof of the factor.
 
     return token
   }
@@ -1302,23 +1293,10 @@ export class TokenManagerService {
     jti: string
     tenantId?: string
   }> {
-    // The verifier's own error is wrapped rather than propagated. It used to travel out of here
-    // unchanged, and since nothing above catches it, a malformed `mfaTempToken` — from the body
-    // or from the `mfa_temp_token` cookie an OAuth callback plants — answered **500
-    // `auth.internal`** instead of 401. Three consequences, none of them visible from a unit
-    // test that only ever passed this a token it had just minted:
-    //
-    //   - an attacker-controlled input produced a 5xx, which is free noise in an operator's
-    //     error budget and hides the 500s that mean something;
-    //   - `MfaController` clears the temp cookie only for an `AuthException` it recognises, so
-    //     a browser holding a malformed cookie was never told to drop it and retried the same
-    //     dead value on every attempt;
-    //   - rust-auth maps the same failure to `MfaTempTokenInvalid`
-    //     (`token_manager.rs`, `verify_rotating(...).map_err(|_| AuthError::MfaTempTokenInvalid)`),
-    //     so the two backends answered one request differently.
-    //
-    // Every other failure below already answers `MFA_TEMP_TOKEN_INVALID`; this makes the
-    // verification failure say the same thing, which is also all a caller may be told.
+    // The verifier's own error is wrapped, never propagated: a malformed token, from the body or from the
+    // cookie an OAuth callback plants, answers 401 `MFA_TEMP_TOKEN_INVALID` like every other failure here, not
+    // a 500, and `MfaController` clears the temp cookie only for an `AuthException`. rust-auth maps the same
+    // failure to `MfaTempTokenInvalid`, so the two backends agree.
     let payload: MfaTempPayload
     try {
       payload = verifyWithRotation<MfaTempPayload>(this.jwtService, this.options, token)
@@ -1326,6 +1304,29 @@ export class TokenManagerService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
 
+    // Everything below runs for a token whose signature held, so the plane it names is a trusted claim and
+    // every refusal carries it: the shared challenge route counts a refusal on the plane of its token.
+    return markingPlane(payload.context, async () => {
+      this.assertMfaTempTokenBinding(payload)
+      await this.assertMfaTempTokenLive(payload)
+      return {
+        userId: payload.sub,
+        context: payload.context,
+        jti: payload.jti,
+        // Absent on a platform token, which has no tenant. A dashboard token without one was
+        // refused above, so a dashboard result always carries it.
+        ...(payload.tenantId !== undefined ? { tenantId: payload.tenantId } : {})
+      }
+    })
+  }
+
+  /**
+   * Refuses a temp token whose tenant claim does not fit its plane.
+   *
+   * @param payload - The claims of a token whose signature held.
+   * @throws {@link AuthException} with `MFA_TEMP_TOKEN_INVALID`.
+   */
+  private assertMfaTempTokenBinding(payload: MfaTempPayload): void {
     // Plane/tenant binding is mandatory and mutually exclusive: a dashboard challenge MUST carry
     // the tenant it was issued for; a platform challenge MUST NOT. A missing or misplaced claim is
     // an invalid token, never a fallback to the tenant-blind lookup — that lookup is exactly the
@@ -1340,48 +1341,42 @@ export class TokenManagerService {
       (payload.context === 'dashboard' && (payload.tenantId ?? '') === '') ||
       (payload.context === 'platform' && payload.tenantId !== undefined)
     ) {
-      throw onPlane(payload.context, new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID))
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
+  }
 
+  /**
+   * Refuses a temp token whose Redis entry is gone, names another account, or predates a bulk revocation.
+   *
+   * @param payload - The claims of a token whose signature held.
+   * @throws {@link AuthException} with `MFA_TEMP_TOKEN_INVALID`.
+   */
+  private async assertMfaTempTokenLive(payload: MfaTempPayload): Promise<void> {
     // GET (not GETDEL): keep the entry alive so wrong-TOTP attempts can
     // retry under the same token. consumeMfaTempToken deletes it once
     // the caller has confirmed the code is valid.
     const storedUserId = await this.redis.get(`mfa:${sha256(payload.jti)}`)
 
     if (storedUserId === null) {
-      throw onPlane(payload.context, new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID))
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
 
     // Defence-in-depth: cross-check the Redis-stored userId against the JWT sub claim.
     // In the current threat model this requires a forged JWT (which requires the secret),
     // but an explicit comparison makes the relationship between the two values auditable.
     if (storedUserId !== payload.sub) {
-      throw onPlane(payload.context, new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID))
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
 
-    // The same bulk-revocation gate the access-token guards apply, on the plane the challenge
-    // was issued for. A password reset bumps the epoch and kills every access token, but
-    // nothing deleted an outstanding `mfa:` record — so a challenge token minted before the
-    // reset stayed redeemable for its whole TTL, and completing it handed back a full session
-    // under the new epoch. The reset is supposed to end everything the old credential could
-    // still reach, and this was the one credential it did not reach.
-    //
-    // The check lives here rather than in `MfaService.challenge` so every caller of the temp
+    // The bulk-revocation gate the access-token guards apply, on the plane the challenge was issued for: a
+    // password reset bumps the epoch, and an outstanding `mfa:` record must not let a token minted before it
+    // complete into a full session. It lives here, not in `MfaService.challenge`, so every caller of the temp
     // token inherits it.
     if (
       readStampedEpoch(payload) <
       (await this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, payload.context))
     ) {
-      throw onPlane(payload.context, new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID))
-    }
-
-    return {
-      userId: payload.sub,
-      context: payload.context,
-      jti: payload.jti,
-      // Absent on a platform token, which has no tenant. A dashboard token without one was
-      // refused above, so a dashboard result always carries it.
-      ...(payload.tenantId !== undefined ? { tenantId: payload.tenantId } : {})
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
   }
 
