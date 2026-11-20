@@ -68,22 +68,34 @@ describe('AuthHealthProbe', () => {
   })
 
   // Scenario: the caller gives up while the store has not answered, and the store then answers or fails.
-  // Expected: every continuation the probe attached to the store's promise handles a rejection, so neither
-  // ending is left unhandled; and the late ending changes nothing for the next probe.
+  // Expected: both continuations the probe attached to the store's promise handle a rejection, so neither
+  // ending is left unhandled, and the next probe asks the store afresh and is answered.
   it.each([
     ['answers', (late: ReturnType<typeof deferred<string>>) => late.resolve('PONG')],
     ['fails', (late: ReturnType<typeof deferred<string>>) => late.reject(new Error('ECONNRESET'))]
   ])('handles the store ending after the wait when it %s', async (_case, settle) => {
     const late = deferred<string>()
     const attached = jest.spyOn(late.promise, 'then')
-    const probe = new AuthHealthProbe({ ping: () => late.promise })
+    const asked = jest
+      .fn<Promise<string>, []>()
+      .mockReturnValueOnce(late.promise)
+      .mockResolvedValue('PONG')
+    const probe = new AuthHealthProbe({ ping: asked })
+    const controller = new AbortController()
 
-    await expect(probe.ping(AbortSignal.abort())).rejects.toThrow('did not answer in time')
+    const waiting = probe.ping(controller.signal)
+    controller.abort()
+    await expect(waiting).rejects.toThrow('did not answer in time')
     settle(late)
     await new Promise((resolve) => setImmediate(resolve))
 
-    expect(attached).toHaveBeenCalled()
+    // The probe's own bookkeeping and the wait for the caller each attached a continuation, and both
+    // handle a rejection.
+    expect(attached).toHaveBeenCalledTimes(2)
     for (const [, onRejected] of attached.mock.calls) expect(typeof onRejected).toBe('function')
+    // The late ending leaves the next probe to ask the store afresh and get its answer.
+    await expect(probe.ping()).resolves.toBe(true)
+    expect(asked).toHaveBeenCalledTimes(2)
   })
 
   // Scenario: several probes arrive while one PING is pending, then it settles and another probe arrives.
