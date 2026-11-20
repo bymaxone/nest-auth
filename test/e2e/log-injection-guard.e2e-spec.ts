@@ -595,6 +595,11 @@ describe('log-injection guard (E2E)', () => {
         problems.push(property.getText(source))
         return
       }
+      // A computed key names its field at run time, so the field it writes cannot be judged here.
+      if (property.name !== undefined && ts.isComputedPropertyName(property.name)) {
+        problems.push(property.getText(source))
+        return
+      }
       const name = property.name?.getText(source) ?? ''
       const value = ts.isShorthandPropertyAssignment(property)
         ? property.name
@@ -612,8 +617,12 @@ describe('log-injection guard (E2E)', () => {
       if (!ok) problems.push(property.getText(source))
     }
 
+    const isEventCall = (node: ts.CallExpression): boolean =>
+      callName(node) === 'logEvent' ||
+      (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'logEvent')
+
     const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node) && callName(node) === 'logEvent') {
+      if (ts.isCallExpression(node) && isEventCall(node)) {
         const fields = node.arguments[2]
         if (fields !== undefined) {
           if (ts.isObjectLiteralExpression(fields)) fields.properties.forEach(checkField)
@@ -646,6 +655,15 @@ describe('log-injection guard (E2E)', () => {
     ["logEvent(l, 'AUTH_X', { detail: String(err) })", 1],
     ["logEvent(l, 'AUTH_X', { userId: `${req.query.id}` })", 1],
     ["logEvent(l, 'AUTH_X', { userId: req.body.id })", 1],
+    ["logEvent(l, 'AUTH_X', { [key]: 'ok' })", 1],
+    ["logEvent(l, 'AUTH_X', { reason: someVariable })", 1],
+    ["logEvent(l, 'AUTH_X', { plane: context, flow, kind })", 0],
+    ["logEvent(l, 'AUTH_X', { reason: { nested: 'ok' } })", 1],
+    ["logEvent(l, 'AUTH_X', { reason: ['ok'] })", 1],
+    ["logEvent(l, 'AUTH_X', fields)", 1],
+    ["events.logEvent(l, 'AUTH_X', { reason: req.body.reason })", 1],
+    ["logEvent(l, 'AUTH_X', { detail: describeError(err, []) })", 1],
+    ["logEvent(l, 'AUTH_X', { error: describeChannelStatus(err) })", 1],
     ["logEvent(l, 'AUTH_X', { tenantId: err.message })", 1],
     ["logEvent(l, 'AUTH_X', { ...req.body })", 1],
     ["logEvent(l, 'AUTH_X', { ...record })", 1],
