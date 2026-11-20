@@ -494,9 +494,8 @@ describe('PasswordResetService', () => {
       expect(first).not.toBe(second)
     })
 
-    // Both refusals below answer with a code that says nothing about which account or why, so
-    // these lines are the only record of a caller holding a token and guessing at the password
-    // behind it.
+    // Both refusals below answer with a code that says nothing about why, so these events are the record
+    // of a caller holding a token and guessing at the password behind it. They name the flow, no account.
     it('records the lockout as an event that names no account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       // `Once`, because `clearAllMocks` resets calls but keeps implementations — a persistent
@@ -511,8 +510,8 @@ describe('PasswordResetService', () => {
       warnSpy.mockRestore()
     })
 
-    // The wrong-password refusal, counted against the same budget: `invalid_credentials` says
-    // nothing about which account, so the log line carries it.
+    // The wrong-password refusal, counted against the same budget: `invalid_credentials` says nothing
+    // about why, so the event carries the flow; it names no account.
     it('records a rejected password as an event that names no account', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockPasswordService.compare.mockResolvedValueOnce(false)

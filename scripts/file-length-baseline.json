@@ -19,14 +19,14 @@
     "src/server/services/auth.service.ts": 1479,
     "src/server/services/invitation.service.spec.ts": 1554,
     "src/server/services/mfa.service.spec.ts": 4624,
-    "src/server/services/password-reset.service.spec.ts": 2675,
+    "src/server/services/password-reset.service.spec.ts": 2674,
     "src/server/services/password-reset.service.ts": 989,
     "src/server/services/password.service.spec.ts": 919,
     "src/server/services/platform-auth.service.spec.ts": 1012,
     "src/server/services/session.service.spec.ts": 2754,
     "src/server/services/session.service.ts": 1070,
     "src/server/services/token-delivery.service.spec.ts": 1176,
-    "src/server/services/token-manager.service.spec.ts": 2659,
+    "src/server/services/token-manager.service.spec.ts": 2657,
     "src/server/services/token-manager.service.ts": 1395,
     "test/e2e/oauth-flow.e2e-spec.ts": 1289
   }

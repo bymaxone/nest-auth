@@ -2188,11 +2188,9 @@ describe('TokenManagerService', () => {
       warnSpy.mockRestore()
     })
 
-    // The unknown-owner line on the PLATFORM plane. `reissuePlatformTokens` builds its warning
-    // through the same `ownerFragment`, and nothing but this pins that it does: the plane's other
-    // replay tests hand back a populated `ownerId`, so the empty case ran only on the dashboard
-    // side. A regression could restore a bare `userId=` here — on the plane whose accounts hold
-    // the most authority — without a single test going red.
+    // The revocation event on the PLATFORM plane when the family names no owner. The event carries the
+    // plane and the family and never an owner, and nothing but this pins that on the plane whose accounts
+    // hold the most authority: the plane's other replay tests hand back a populated `ownerId`.
     it('writes the revocation event naming the family and no owner on the platform plane', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.get.mockResolvedValue(null)

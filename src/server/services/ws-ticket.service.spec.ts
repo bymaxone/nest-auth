@@ -423,14 +423,13 @@ describe('WsTicketService', () => {
   // ---------------------------------------------------------------------------
 
   describe('observability', () => {
-    // The two lines below are what an operator has to correlate a socket with an account. Both
-    // assert the identifying FIELD rather than the prose, so rewording the message stays free
-    // while emptying it does not.
+    // The two refusals below are written as events, so each assertion checks the code and the reason it
+    // carries, and that no account appears in what the logger received.
 
     // Scenario: an enrolled session that never cleared its challenge tries to mint. Expected:
-    // the refusal names the user. Why: this is the one refusal that means "a second factor was
-    // skipped", and it is invisible in the response — `mfa_required` is what a first, honest
-    // attempt gets too.
+    // the refusal is the event with reason `mfa_not_satisfied`, and it names no user. Why: this is the one
+    // refusal that means "a second factor was skipped", and it is invisible in the response —
+    // `mfa_required` is what a first, honest attempt gets too.
     it('should record, without naming the user, a refused session that skipped its second factor', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
 

@@ -1245,9 +1245,9 @@ describe('AuthService', () => {
     })
 
     // Scenario: locked account. Expected: thrown AuthException carries
-    // details.retryAfterSeconds=543 and a warn log naming the masked email/tenant. Why: kills
-    // the `{ retryAfterSeconds: remainingSeconds }` -> `{}` ObjectLiteral mutant (line 191:69)
-    // and pins the warn log template (line 189).
+    // details.retryAfterSeconds=543 and a warn event on the dashboard plane that carries no address. Why:
+    // kills the `{ retryAfterSeconds: remainingSeconds }` -> `{}` ObjectLiteral mutant (line 191:69)
+    // and pins the warn event.
     it('should include retryAfterSeconds in the ACCOUNT_LOCKED details and warn-log it', async () => {
       expect.assertions(3)
       mockBruteForce.isLockedOut.mockResolvedValue(true)
