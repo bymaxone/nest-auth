@@ -69,6 +69,11 @@ function throwing(
 
 const refused = (code: AuthErrorCode): AuthException => new AuthException(code)
 
+/** A library exception whose body carries no usable code, which nothing in the library throws today. */
+function oddlyShaped(body: object): AuthException {
+  return Object.assign(new AuthException(AUTH_ERROR_CODES.FORBIDDEN), { getResponse: () => body })
+}
+
 describe('@ObserveAuth', () => {
   // Scenario: the decorator is applied. Expected: the operation and the plane are on the handler.
   it('records the operation and the plane on the handler', () => {
@@ -123,7 +128,10 @@ describe('AuthObservabilityInterceptor — logins', () => {
   it.each([
     [refused(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)],
     [new Error('boom')],
-    ['a thrown string']
+    ['a thrown string'],
+    [oddlyShaped({})],
+    [oddlyShaped({ error: {} })],
+    [oddlyShaped({ error: { code: 7 } })]
   ])('counts nothing for %p', async (failure) => {
     const { interceptor, tally } = build()
 
