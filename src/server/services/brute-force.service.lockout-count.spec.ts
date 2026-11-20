@@ -1,6 +1,8 @@
 /**
  * @fileoverview A lockout is counted once, at the failure that reaches the threshold, and the count is
  * optional: with no tally registered, recording a failure updates the counter in Redis and succeeds.
+ *
+ * @layer Test
  */
 
 import { Test } from '@nestjs/testing'

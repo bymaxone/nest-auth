@@ -2,6 +2,8 @@
  * @fileoverview A challenge that is refused for a locked account or a wrong code marks the refusal with the
  * plane of the token it verified, on both planes, so the shared route can count it where it belongs. The
  * answer the caller receives is unchanged. A token that does not verify names no plane and is not marked.
+ *
+ * @layer Test
  */
 
 import { createHash } from 'node:crypto'

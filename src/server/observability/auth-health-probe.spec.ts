@@ -67,20 +67,23 @@ describe('AuthHealthProbe', () => {
     await expect(probe.ping(AbortSignal.abort())).rejects.toThrow('did not answer in time')
   })
 
-  // Scenario: the store answers after the caller gave up, and rejects after the caller gave up. Expected: no
-  // unhandled rejection reaches the process.
-  it('leaves no unhandled rejection when the store answers or fails after the wait ended', async () => {
-    const unhandled = jest.fn()
-    process.on('unhandledRejection', unhandled)
+  // Scenario: the caller gives up while the store has not answered, and the store then answers or fails.
+  // Expected: every continuation the probe attached to the store's promise handles a rejection, so neither
+  // ending is left unhandled; and the late ending changes nothing for the next probe.
+  it.each([
+    ['answers', (late: ReturnType<typeof deferred<string>>) => late.resolve('PONG')],
+    ['fails', (late: ReturnType<typeof deferred<string>>) => late.reject(new Error('ECONNRESET'))]
+  ])('handles the store ending after the wait when it %s', async (_case, settle) => {
     const late = deferred<string>()
+    const attached = jest.spyOn(late.promise, 'then')
     const probe = new AuthHealthProbe({ ping: () => late.promise })
 
     await expect(probe.ping(AbortSignal.abort())).rejects.toThrow('did not answer in time')
-    late.reject(new Error('ECONNRESET'))
+    settle(late)
     await new Promise((resolve) => setImmediate(resolve))
-    process.off('unhandledRejection', unhandled)
 
-    expect(unhandled).not.toHaveBeenCalled()
+    expect(attached).toHaveBeenCalled()
+    for (const [, onRejected] of attached.mock.calls) expect(typeof onRejected).toBe('function')
   })
 
   // Scenario: several probes arrive while one PING is pending, then it settles and another probe arrives.

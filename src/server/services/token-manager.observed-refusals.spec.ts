@@ -2,6 +2,8 @@
  * @fileoverview A refused refresh says which kind of refusal it was, to the metrics only: a replayed token
  * is marked as reuse and a session past its absolute cap as expired, on both planes, while the answer the
  * caller receives is the same `REFRESH_TOKEN_INVALID` as for any other refused token.
+ *
+ * @layer Test
  */
 
 import { JwtService } from '@nestjs/jwt'
