@@ -18,6 +18,23 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **The lists a host keeps in its options are read once and what is checked is what is kept.** The permissions of the
+  workspaces (`manageWorkspace`, `deleteWorkspace`, `manageMembers`, `viewMembers`) were validated through their own
+  entries and then read again by property and kept as the host's arrays: a typed configuration class that served them on
+  its prototype was never validated, and a change by the host after start reached the authorization table. They are read
+  by property like the other groups and kept as copies, and so are `jwt.previousSecrets`,
+  `mfa.previousEncryptionKeys` and `apiKeys.scopes`, whose strength and format checks ran once at start.
+  `jwt`, `mfa`, `apiKeys` and `workspaces.permissions` must be objects: a function, an array or a primitive given for
+  one is refused with `[BymaxAuthModule] <option> must be an object (received …)`.
+- **An id is never blank, the text of a missing value, an error or a buffer.** A string or a printed text that is empty
+  or only whitespace, `undefined` or `null`, and an `Error`, a `Buffer` or any other view of bytes, are refused as an id
+  with `auth.internal`.
+- **The ids of the rows the workspace access reads are compared with the ones asked about.** The id of the workspace, the
+  workspace of the membership and the user of the membership are compared exactly, as the tenant already was; a
+  repository that answers another row is denied access and nothing is cached.
+
 ## [1.5.13] - 2026-11-21
 
 A patch release.
