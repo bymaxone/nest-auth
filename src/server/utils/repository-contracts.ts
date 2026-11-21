@@ -263,7 +263,7 @@ export const MEMBERSHIP_REPOSITORY_CONTRACT: RepositoryContract<IMembershipRepos
 
 /**
  * The fields that are credentials: a copy hands them on only as visible as the host's own record made them, so no
- * spread of the copy can carry them out, and the library reads them by name, so a spread that loses one fails closed.
+ * spread of the copy can carry them out.
  */
 export const CREDENTIAL_FIELDS: ReadonlySet<string> = new Set([
   'passwordHash',
