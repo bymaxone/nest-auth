@@ -100,10 +100,12 @@ function configurationError(error: unknown): Error {
 }
 
 /**
- * Every field the library reads by name from a record a repository returns: the fields of the user, platform user,
- * API key, workspace and membership interfaces. They are read by name after the object is enumerated, because an
- * object that answers by name and lists nothing (a lazy entity, a Proxy with only a `get`) cannot be copied by
- * listing it. A spec pins that the list covers every field of those interfaces.
+ * Every field the library reads by name from an answer of a repository: the fields of the user, platform user, API key,
+ * workspace and membership interfaces and of the result envelopes the repositories return (a page, the outcome of
+ * removing a user's memberships, the outcome of creating a workspace). They are read by name after the object is
+ * enumerated, because an object that answers by name and lists nothing (a lazy entity, a Proxy with only a `get`, a
+ * record whose fields live on its prototype) cannot be copied by listing it. A spec pins that the list covers each of
+ * those interfaces.
  */
 export const RECORD_FIELDS = [
   'createdAt',
@@ -114,6 +116,7 @@ export const RECORD_FIELDS = [
   'expiresAt',
   'id',
   'invitedByUserId',
+  'items',
   'label',
   'lastLoginAt',
   'lastUsedAt',
@@ -121,10 +124,13 @@ export const RECORD_FIELDS = [
   'mfaRecoveryCodes',
   'mfaSecret',
   'name',
+  'nextCursor',
   'oauthProvider',
   'oauthProviderId',
   'passwordHash',
   'platformId',
+  'removed',
+  'result',
   'revokedAt',
   'role',
   'scopes',
@@ -133,7 +139,8 @@ export const RECORD_FIELDS = [
   'updatedAt',
   'userId',
   'workspace',
-  'workspaceId'
+  'workspaceId',
+  'workspaceIds'
 ] as const
 
 /** The accessors a record inherits below the root prototype, which a spread would lose. Inherited data is not walked. */

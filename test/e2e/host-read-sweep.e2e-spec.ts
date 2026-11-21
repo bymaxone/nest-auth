@@ -8,6 +8,8 @@
  *
  * A host error that escapes unwrapped reaches the HTTP filter or a log as the host wrote it, and a code path that
  * reads a field in an unexpected order is found by the sweep where no hand-written case would look.
+ *
+ * @layer Test
  */
 import { Test } from '@nestjs/testing'
 

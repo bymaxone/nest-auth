@@ -21,10 +21,17 @@ import {
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { ApiKeyPrincipal, AuthApiKey } from '../interfaces/api-key-repository.interface'
-import type { MembershipWithWorkspace } from '../interfaces/membership-repository.interface'
+import type {
+  MembershipPage,
+  MembershipWithWorkspace,
+  RemoveAllMembershipsResult
+} from '../interfaces/membership-repository.interface'
 import type { AuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { AuthUser } from '../interfaces/user-repository.interface'
-import type { AuthWorkspace } from '../interfaces/workspace-repository.interface'
+import type {
+  AuthWorkspace,
+  CreateWorkspaceResult
+} from '../interfaces/workspace-repository.interface'
 import {
   callFactory,
   copyHostRecord,
@@ -311,7 +318,33 @@ describe('copyHostRecord', () => {
     expect(Object.keys(copy)).toEqual([])
   })
 
-  it('covers every field of every record interface in the by-name list', () => {
+  // Scenario: the result envelopes of the repositories (a page, the outcome of removing a user's memberships, of creating
+  // a workspace) held on a prototype. Expected: every envelope field is found by name. Why: the services read
+  // `page.items` and `outcome.result` the way they read a record's fields.
+  it('finds the fields of the result envelopes by name when they live on a prototype', () => {
+    const page = Object.create({ items: [{ id: 'w1' }], nextCursor: null }) as Record<
+      string,
+      unknown
+    >
+    const outcome = Object.create({ result: 'ok', removed: [], workspaceIds: ['w2'] }) as Record<
+      string,
+      unknown
+    >
+
+    const copied = copyHostRecord({ page, outcome }) as {
+      page: Record<string, unknown>
+      outcome: Record<string, unknown>
+    }
+
+    expect(copied.page['items']).toEqual([{ id: 'w1' }])
+    expect(copied.page['nextCursor']).toBeNull()
+    expect(copied.outcome['result']).toBe('ok')
+    expect(copied.outcome['removed']).toEqual([])
+    expect(copied.outcome['workspaceIds']).toEqual(['w2'])
+  })
+
+  it('covers every field of every record interface and result envelope in the by-name list', () => {
+    type KeysOfUnion<T> = T extends unknown ? keyof T : never
     type Declared =
       | keyof AuthUser
       | keyof AuthPlatformUser
@@ -319,6 +352,9 @@ describe('copyHostRecord', () => {
       | keyof ApiKeyPrincipal
       | keyof AuthWorkspace
       | keyof MembershipWithWorkspace
+      | keyof MembershipPage<unknown>
+      | KeysOfUnion<RemoveAllMembershipsResult>
+      | KeysOfUnion<CreateWorkspaceResult>
     const covered: Exclude<Declared, (typeof RECORD_FIELDS)[number]> extends never ? true : never =
       true
 
