@@ -18,14 +18,23 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.12] - 2026-11-21
+
+A patch release.
+
 ### Fixed
 
 - **A host getter, Proxy or factory that throws no longer leaves the library as the host's own error.** The options a
-  host returns are read inside one boundary: a failure ends as `[BymaxAuthModule] the options could not be read…` with the
-  host's error as its `cause` and none of its text. Each record a repository returns is copied once, so a getter that
-  throws ends as `auth.internal` with the cause, and a failure of the repository itself is the same error; a typed
-  `HttpException` (such as `AuthException`) the repository throws goes out as it is. The library's own services read the repositories through this
-  guarded view, and the token the module exports is still the host's own instance.
+  host returns are read inside one boundary: a failure ends as `[BymaxAuthModule] the options could not be read…` with
+  the host's error as its `cause` and none of its text. Each repository the host provides is read through a guarded
+  view that the library's own services use: an answer is read for the fields its method promises and for nothing
+  else (a contract for each repository method, checked by the compiler), so an entity whose
+  relation throws until it is loaded still answers, a field the contract names that throws ends as `auth.internal`
+  with the cause, and a failure of the repository itself is the same error. A typed `HttpException` the repository
+  throws goes out as it is. Any other own data field of the host's record is passed on by reference without being read, host
+  callbacks (`maxSessionsResolver`) still receive the host's own entity, the token the module exports is still the
+  host's own instance, and `OAuthModule.register` used on its own provides its own guarded view. The public
+  declarations are unchanged: `check:api` against 1.5.11 reports no difference.
 
 ## [1.5.11] - 2026-11-20
 
@@ -5461,7 +5470,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.11...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.12...HEAD
+[1.5.12]: https://github.com/bymaxone/nest-auth/compare/v1.5.11...v1.5.12
 [1.5.11]: https://github.com/bymaxone/nest-auth/compare/v1.5.10...v1.5.11
 [1.5.10]: https://github.com/bymaxone/nest-auth/compare/v1.5.9...v1.5.10
 [1.5.9]: https://github.com/bymaxone/nest-auth/compare/v1.5.8...v1.5.9
