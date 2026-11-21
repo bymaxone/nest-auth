@@ -99,6 +99,43 @@ function configurationError(error: unknown): Error {
   )
 }
 
+/**
+ * Every field the library reads by name from a record a repository returns: the fields of the user, platform user,
+ * API key, workspace and membership interfaces. They are read by name after the object is enumerated, because an
+ * object that answers by name and lists nothing (a lazy entity, a Proxy with only a `get`) cannot be copied by
+ * listing it. A spec pins that the list covers every field of those interfaces.
+ */
+export const RECORD_FIELDS = [
+  'createdAt',
+  'deletionScheduledAt',
+  'digest',
+  'email',
+  'emailVerified',
+  'expiresAt',
+  'id',
+  'invitedByUserId',
+  'label',
+  'lastLoginAt',
+  'lastUsedAt',
+  'mfaEnabled',
+  'mfaRecoveryCodes',
+  'mfaSecret',
+  'name',
+  'oauthProvider',
+  'oauthProviderId',
+  'passwordHash',
+  'platformId',
+  'revokedAt',
+  'role',
+  'scopes',
+  'status',
+  'tenantId',
+  'updatedAt',
+  'userId',
+  'workspace',
+  'workspaceId'
+] as const
+
 /** The fields a record inherits below the root prototype: accessors and data, which a spread would lose, but no methods. */
 function inheritedFields(value: object): string[] {
   const names: string[] = []
@@ -163,6 +200,12 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
         configurable: true
       })
     } else copy[key] = copied
+  }
+  for (const key of RECORD_FIELDS) {
+    if (Object.hasOwn(copy, key)) continue
+    const read = source[key]
+    if (read !== undefined && typeof read !== 'function')
+      copy[key] = copyValue(read, seen, depth + 1)
   }
   return copy
 }

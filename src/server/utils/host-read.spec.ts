@@ -11,13 +11,19 @@ import {
 } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import type { ApiKeyPrincipal, AuthApiKey } from '../interfaces/api-key-repository.interface'
+import type { MembershipWithWorkspace } from '../interfaces/membership-repository.interface'
+import type { AuthPlatformUser } from '../interfaces/platform-user-repository.interface'
+import type { AuthUser } from '../interfaces/user-repository.interface'
+import type { AuthWorkspace } from '../interfaces/workspace-repository.interface'
 import {
   callFactory,
   copyHostRecord,
   withGuardedViews,
   guardRepository,
   hostHasKey,
-  readHostOptions
+  readHostOptions,
+  RECORD_FIELDS
 } from './host-read'
 
 /** The host's own failure, with text a library error must never repeat. */
@@ -269,6 +275,40 @@ describe('copyHostRecord', () => {
     expect(copy['helper']).toBeUndefined()
     expect(fromClass['tenantId']).toBe('t1')
     expect(fromClass['describe']).toBeUndefined()
+  })
+
+  // Scenario: a record that answers by name and lists nothing (a lazy entity or a Proxy with only a get trap). Expected:
+  // every field of the record interfaces is still read by name, and the list covers each interface. Why: no
+  // enumeration can find a field the object never lists, and the services read `user.mfaEnabled`, not a key list.
+  it('reads the fields of the record interfaces by name from an object that lists none', () => {
+    const answers: Record<string, unknown> = {
+      mfaEnabled: true,
+      status: 'ACTIVE',
+      passwordHash: 'h'
+    }
+    const lazy = new Proxy({}, { get: (_target, key) => answers[String(key)] })
+
+    const copy = copyHostRecord(lazy) as Record<string, unknown>
+
+    expect(copy['mfaEnabled']).toBe(true)
+    expect(copy['status']).toBe('ACTIVE')
+    expect(copy['passwordHash']).toBe('h')
+    expect(Object.keys(copy).sort()).toEqual(['mfaEnabled', 'passwordHash', 'status'])
+  })
+
+  it('covers every field of every record interface in the by-name list', () => {
+    type Declared =
+      | keyof AuthUser
+      | keyof AuthPlatformUser
+      | keyof AuthApiKey
+      | keyof ApiKeyPrincipal
+      | keyof AuthWorkspace
+      | keyof MembershipWithWorkspace
+    const covered: Exclude<Declared, (typeof RECORD_FIELDS)[number]> extends never ? true : never =
+      true
+
+    expect(covered).toBe(true)
+    expect(new Set(RECORD_FIELDS).size).toBe(RECORD_FIELDS.length)
   })
 
   // Scenario: a record with an own key named __proto__ (what JSON.parse of user input produces). Expected: it stays an
