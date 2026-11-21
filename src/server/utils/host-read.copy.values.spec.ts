@@ -169,6 +169,12 @@ describe('the kinds of the contract', () => {
     expect(Object.hasOwn(lenient, 'name')).toBe(false)
     expect(real.createdAt.getTime()).toBe(7)
     expect(real.lastLoginAt.getTime()).toBe(9)
+  })
+
+  // Scenario: the same fields served as a function, a symbol, a bigint and a plain object, and a date as a string, a
+  // number, a boolean, a NaN, an object and an array. Expected: the garbage is refused, the strings and numbers a driver
+  // serves for a date are kept, and `null` passes. Why: an ISO string is how a driver without a date transform answers.
+  it('refuses a function, a symbol and a bigint there, and keeps the dates a driver serves', () => {
     for (const field of ['createdAt', 'lastLoginAt', 'name', 'email', 'oauthProvider'])
       for (const [, garbage] of [
         ['a function', (): void => undefined],
