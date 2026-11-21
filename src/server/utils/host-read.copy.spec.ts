@@ -1,7 +1,7 @@
 /**
- * @fileoverview The copy of a record a repository returned: what a spread of the record shows, the fields the
- * library reads by name, the kinds passed on by reference, the bounds of the copy and the guarantees that a hidden
- * field stays hidden and a getter nobody asked for is never evaluated.
+ * @fileoverview The copy of an answer a repository returned: what a spread of the record shows, the fields its
+ * contract names read by name, the kinds passed on by reference, the bounds of the copy and the guarantees that a hidden
+ * field stays hidden and a field the contract does not name is never read.
  *
  * @layer Test
  */
@@ -11,19 +11,12 @@ import { runInNewContext } from 'node:vm'
 import { BYMAX_AUTH_REDIS_CLIENT, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { ApiKeyPrincipal, AuthApiKey } from '../interfaces/api-key-repository.interface'
-import type {
-  MembershipPage,
-  MembershipWithWorkspace,
-  RemoveAllMembershipsResult
-} from '../interfaces/membership-repository.interface'
-import type { AuthPlatformUser } from '../interfaces/platform-user-repository.interface'
-import type { AuthUser } from '../interfaces/user-repository.interface'
-import type {
-  AuthWorkspace,
-  CreateWorkspaceResult
-} from '../interfaces/workspace-repository.interface'
-import { copyHostRecord, guardRepository, RECORD_FIELDS, withGuardedViews } from './host-read'
+import { copyHostRecord, guardRepository, withGuardedViews } from './host-read'
+import {
+  API_KEY_REPOSITORY_CONTRACT,
+  MEMBERSHIP_REPOSITORY_CONTRACT,
+  USER_REPOSITORY_CONTRACT
+} from './repository-contracts'
 
 /** The host's own failure, with text a library error must never repeat. */
 const fault = new Error('host-text-that-must-not-leak')
@@ -32,29 +25,50 @@ const fault = new Error('host-text-that-must-not-leak')
 const codeOf = (error: unknown): string =>
   ((error as AuthException).getResponse() as { error: { code: string } }).error.code
 
+/** What a record of the user repository is read for. */
+const USER = USER_REPOSITORY_CONTRACT.findById
+
+/** What a page of the memberships of a user, each with its workspace, is read for. */
+const PAGE = MEMBERSHIP_REPOSITORY_CONTRACT.listForUser
+
 describe('copyHostRecord', () => {
   // Scenario: values that are not objects. Expected: returned as they are.
   it.each([[null], [undefined], [3], ['text'], [true]])('returns %p as it is', (value) => {
-    expect(copyHostRecord(value)).toBe(value)
+    expect(copyHostRecord(value, USER)).toBe(value)
   })
 
-  // Scenario: a record with nested data under the fields the library reads. Expected: an equal copy sharing nothing
-  // mutable with the original. Why: the library reads these fields, so what it reads must not change under it.
-  it('copies a record, its nested objects and its arrays', () => {
-    const record = {
-      id: 'u',
-      workspace: { items: ['a', { b: 1 }] },
-      createdAt: new Date(5)
+  // Scenario: a page of memberships with their workspaces, the nested records and the dates among its fields.
+  // Expected: an equal copy sharing nothing mutable with the original. Why: the library reads these fields, so what
+  // it reads must not change under it.
+  it('copies a record, its nested records and its arrays', () => {
+    const membership = {
+      tenantId: 't1',
+      workspaceId: 'w1',
+      userId: 'u1',
+      role: 'ADMIN',
+      status: 'ACTIVE',
+      invitedByUserId: null,
+      createdAt: new Date(6),
+      updatedAt: new Date(7),
+      workspace: {
+        id: 'w1',
+        tenantId: 't1',
+        name: 'W',
+        status: 'ACTIVE',
+        createdAt: new Date(5),
+        deletionScheduledAt: null
+      }
     }
-    const copy = copyHostRecord(record) as typeof record
+    const page = { items: [membership], nextCursor: null }
+    const copy = copyHostRecord(page, PAGE) as typeof page
 
-    expect(copy).toEqual(record)
-    expect(copy).not.toBe(record)
-    expect(copy.workspace).not.toBe(record.workspace)
-    expect(copy.workspace.items).not.toBe(record.workspace.items)
-    expect(copy.workspace.items[1]).not.toBe(record.workspace.items[1])
-    expect(copy.createdAt).not.toBe(record.createdAt)
-    expect(copy.createdAt.getTime()).toBe(5)
+    expect(copy).toEqual(page)
+    expect(copy).not.toBe(page)
+    expect(copy.items).not.toBe(page.items)
+    expect(copy.items[0]).not.toBe(membership)
+    expect(copy.items[0]?.workspace).not.toBe(membership.workspace)
+    expect(copy.items[0]?.workspace.createdAt).not.toBe(membership.workspace.createdAt)
+    expect(copy.items[0]?.workspace.createdAt.getTime()).toBe(5)
   })
 
   // Scenario: an entity class with a getter on its prototype. Expected: the getter's value is readable by name on the
@@ -62,14 +76,14 @@ describe('copyHostRecord', () => {
   it('keeps the value of an accessor a class defines on its prototype', () => {
     class Entity {
       id = 'e1'
-      get label(): string {
+      get email(): string {
         return 'computed'
       }
     }
 
-    const copy = copyHostRecord(new Entity()) as Record<string, unknown>
+    const copy = copyHostRecord(new Entity(), USER) as Record<string, unknown>
 
-    expect(copy['label']).toBe('computed')
+    expect(copy['email']).toBe('computed')
     expect(copy).toEqual({ id: 'e1' })
   })
 
@@ -84,25 +98,26 @@ describe('copyHostRecord', () => {
       id = 'd1'
     }
 
-    const copy = copyHostRecord(new Derived()) as Record<string, unknown>
+    const copy = copyHostRecord(new Derived(), USER) as Record<string, unknown>
 
     expect(copy['role']).toBe('base')
     expect(copy['id']).toBe('d1')
   })
 
-  // Scenario: values that are not data. Expected: passed on as they are, not copied into plain objects.
+  // Scenario: values that are not data, held by fields of the contract and by a field of the host's own. Expected:
+  // passed on as they are, not copied into plain objects.
   it('passes opaque values through by reference', () => {
     const map = new Map([['k', 1]])
     const bytes = new Uint8Array([1, 2])
     const url = new URL('https://a.example')
-    const record = copyHostRecord({ map, bytes, url, fn: copyHostRecord }) as Record<
-      string,
-      unknown
-    >
+    const record = copyHostRecord(
+      { lastLoginAt: map, mfaRecoveryCodes: bytes, oauthProvider: url, fn: copyHostRecord },
+      USER
+    ) as Record<string, unknown>
 
-    expect(record['map']).toBe(map)
-    expect(record['bytes']).toBe(bytes)
-    expect(record['url']).toBe(url)
+    expect(record['lastLoginAt']).toBe(map)
+    expect(record['mfaRecoveryCodes']).toBe(bytes)
+    expect(record['oauthProvider']).toBe(url)
     expect(record['fn']).toBe(copyHostRecord)
   })
 
@@ -115,7 +130,7 @@ describe('copyHostRecord', () => {
     Object.defineProperty(record, 'status', { get: () => 'ACTIVE', enumerable: false })
     Object.defineProperty(record, 'mfaEnabled', { value: true, enumerable: false })
 
-    const copy = copyHostRecord(record) as Record<string, unknown>
+    const copy = copyHostRecord(record, USER) as Record<string, unknown>
 
     expect(copy['passwordHash']).toBe('hash')
     expect(copy['status']).toBe('ACTIVE')
@@ -133,16 +148,16 @@ describe('copyHostRecord', () => {
     const map = foreign<Map<string, number>>('new Map([["a", 1]])')
     const plain = foreign<Record<string, number>>('({ a: 1 })')
 
-    const copy = copyHostRecord({ date, map, plain }) as {
-      date: Date
-      map: unknown
-      plain: Record<string, number>
+    const copy = copyHostRecord({ createdAt: date, lastLoginAt: map, name: plain }, USER) as {
+      createdAt: Date
+      lastLoginAt: unknown
+      name: Record<string, number>
     }
 
-    expect(JSON.stringify(copy.date)).toBe(JSON.stringify(new Date(5)))
-    expect(copy.date.getTime()).toBe(5)
-    expect(copy.map).toBe(map)
-    expect(Object.getOwnPropertyNames(copy.plain)).toEqual(['a'])
+    expect(JSON.stringify(copy.createdAt)).toBe(JSON.stringify(new Date(5)))
+    expect(copy.createdAt.getTime()).toBe(5)
+    expect(copy.lastLoginAt).toBe(map)
+    expect(Object.getOwnPropertyNames(copy.name)).toEqual(['a'])
     expect(JSON.stringify(copy)).toContain('"a":1')
   })
 
@@ -164,8 +179,8 @@ describe('copyHostRecord', () => {
     })
     Object.defineProperty(Base.prototype, 'tenantId', { value: 't1', enumerable: false })
 
-    const fromClass = copyHostRecord(new Base()) as Record<string, unknown>
-    const copy = copyHostRecord(record) as Record<string, unknown>
+    const fromClass = copyHostRecord(new Base(), USER) as Record<string, unknown>
+    const copy = copyHostRecord(record, USER) as Record<string, unknown>
 
     expect(copy['mfaEnabled']).toBe(true)
     expect(copy['role']).toBe('user')
@@ -176,9 +191,9 @@ describe('copyHostRecord', () => {
   })
 
   // Scenario: a record that answers by name and lists nothing (a lazy entity or a Proxy with only a get trap). Expected:
-  // every field of the record interfaces is still read by name, and the list covers each interface. Why: no
-  // enumeration can find a field the object never lists, and the services read `user.mfaEnabled`, not a key list.
-  it('reads the fields of the record interfaces by name from an object that lists none', () => {
+  // every field of the contract is still read by name. Why: no enumeration can find a field the object never lists,
+  // and the services read `user.mfaEnabled`, not a key list.
+  it('reads the fields of the contract by name from an object that lists none', () => {
     const answers: Record<string, unknown> = {
       mfaEnabled: true,
       status: 'ACTIVE',
@@ -186,7 +201,7 @@ describe('copyHostRecord', () => {
     }
     const lazy = new Proxy({}, { get: (_target, key) => answers[String(key)] })
 
-    const copy = copyHostRecord(lazy) as Record<string, unknown>
+    const copy = copyHostRecord(lazy, USER) as Record<string, unknown>
 
     expect(copy['mfaEnabled']).toBe(true)
     expect(copy['status']).toBe('ACTIVE')
@@ -194,55 +209,36 @@ describe('copyHostRecord', () => {
     expect(Object.keys(copy)).toEqual([])
   })
 
-  // Scenario: the result envelopes of the repositories (a page, the outcome of removing a user's memberships, of creating
-  // a workspace) held on a prototype. Expected: every envelope field is found by name. Why: the services read
-  // `page.items` and `outcome.result` the way they read a record's fields.
+  // Scenario: the result envelopes of the repositories (a page, the outcome of removing a user's memberships) held on
+  // a prototype. Expected: every envelope field of the contract is found by name, and the records among them are
+  // copied by their own contract. Why: the services read `page.items` and `outcome.result` the way they read a
+  // record's fields.
   it('finds the fields of the result envelopes by name when they live on a prototype', () => {
-    const page = Object.create({ items: [{ id: 'w1' }], nextCursor: null }) as Record<
-      string,
-      unknown
-    >
-    const outcome = Object.create({ result: 'ok', removed: [], workspaceIds: ['w2'] }) as Record<
-      string,
-      unknown
-    >
+    const page = Object.create({ items: [], nextCursor: 'c' }) as object
+    const outcome = Object.create({
+      result: 'ok',
+      removed: [{ workspaceId: 'w1', role: 'MEMBER' }],
+      workspaceIds: ['w2']
+    }) as object
 
-    const copied = copyHostRecord({ page, outcome }) as {
-      page: Record<string, unknown>
-      outcome: Record<string, unknown>
-    }
+    const pageCopy = copyHostRecord(page, PAGE) as Record<string, unknown>
+    const outcomeCopy = copyHostRecord(
+      outcome,
+      MEMBERSHIP_REPOSITORY_CONTRACT.removeAllForUser
+    ) as Record<string, unknown>
 
-    expect(copied.page['items']).toEqual([{ id: 'w1' }])
-    expect(copied.page['nextCursor']).toBeNull()
-    expect(copied.outcome['result']).toBe('ok')
-    expect(copied.outcome['removed']).toEqual([])
-    expect(copied.outcome['workspaceIds']).toEqual(['w2'])
-  })
-
-  it('covers every field of every record interface and result envelope in the by-name list', () => {
-    type KeysOfUnion<T> = T extends unknown ? keyof T : never
-    type Declared =
-      | keyof AuthUser
-      | keyof AuthPlatformUser
-      | keyof AuthApiKey
-      | keyof ApiKeyPrincipal
-      | keyof AuthWorkspace
-      | keyof MembershipWithWorkspace
-      | keyof MembershipPage<unknown>
-      | KeysOfUnion<RemoveAllMembershipsResult>
-      | KeysOfUnion<CreateWorkspaceResult>
-    const covered: Exclude<Declared, (typeof RECORD_FIELDS)[number]> extends never ? true : never =
-      true
-
-    expect(covered).toBe(true)
-    expect(new Set(RECORD_FIELDS).size).toBe(RECORD_FIELDS.length)
+    expect(pageCopy['items']).toEqual([])
+    expect(pageCopy['nextCursor']).toBe('c')
+    expect(outcomeCopy['result']).toBe('ok')
+    expect(outcomeCopy['removed']).toEqual([{ workspaceId: 'w1', role: 'MEMBER' }])
+    expect(outcomeCopy['workspaceIds']).toEqual(['w2'])
   })
 
   // Scenario: a class whose prototype holds a shared handle (a model's connection, a class-level client) nested deeper
-  // than the copy follows. Expected: the record is copied, the handle is left behind, and the listed fields that live
-  // on the prototype still arrive. Why: copying the prototype's data would walk a connection graph per record and could
-  // turn a valid lookup into an internal error.
-  it('does not walk shared data held on a prototype, and still finds its listed fields', () => {
+  // than the copy follows. Expected: the record is copied, the handle is left behind, and the fields of the contract
+  // that live on the prototype still arrive. Why: copying the prototype's data would walk a connection graph per record
+  // and could turn a valid lookup into an internal error.
+  it('does not walk shared data held on a prototype, and still finds the fields of the contract', () => {
     let deep: Record<string, unknown> = { leaf: true }
     for (let level = 0; level < 20; level += 1) deep = { next: deep }
     class Doc {
@@ -250,22 +246,22 @@ describe('copyHostRecord', () => {
     }
     Object.assign(Doc.prototype, { connection: deep, mfaEnabled: true })
 
-    const copy = copyHostRecord(new Doc()) as Record<string, unknown>
+    const copy = copyHostRecord(new Doc(), USER) as Record<string, unknown>
 
     expect(copy['id']).toBe('u1')
     expect(copy['mfaEnabled']).toBe(true)
     expect(copy['connection']).toBeUndefined()
   })
 
-  // Scenario: the limits and shapes of the copy, each one a bound a mutant could move. Expected: a record nested exactly
+  // Scenario: the limits and shapes of the copy, each one a bound a mutant could move. Expected: a value nested exactly
   // at the limit is copied and one level deeper is refused with the library's text; arrays follow the same limit, are
   // copied to their length, and a cyclic array is copied once; a record with no prototype is copied; the descriptor of
-  // a copied __proto__ key is a plain data property; a listed name that is a method is left behind; a getter of a
-  // listed name is read once; a listed field nested past the limit is refused.
+  // a copied __proto__ key is a plain data property; a name of the contract that is a method is left behind; a getter
+  // of a field of the contract is read once; a field of the contract nested past the limit is refused.
   describe('bounds of the copy', () => {
     const nest = (levels: number): Record<string, unknown> => {
       let value: Record<string, unknown> = { leaf: true }
-      for (let level = 0; level < levels; level += 1) value = { workspace: value }
+      for (let level = 0; level < levels; level += 1) value = { next: value }
       return value
     }
     const causeOf = (thunk: () => unknown): unknown => {
@@ -278,8 +274,8 @@ describe('copyHostRecord', () => {
     }
 
     it('copies a record nested exactly at the limit and refuses one level deeper, saying why', () => {
-      expect(() => copyHostRecord(nest(16))).not.toThrow()
-      expect(causeOf(() => copyHostRecord(nest(17)))).toBe(
+      expect(() => copyHostRecord({ name: nest(15) }, USER)).not.toThrow()
+      expect(causeOf(() => copyHostRecord({ name: nest(16) }, USER))).toBe(
         'the record nests deeper than the library follows'
       )
     })
@@ -290,28 +286,28 @@ describe('copyHostRecord', () => {
       const cyclic: unknown[] = [1, 2]
       cyclic.push(cyclic)
 
-      const copy = copyHostRecord({ scopes: [1, 2], items: cyclic }) as {
+      const copy = copyHostRecord({ scopes: [1, 2], mfaRecoveryCodes: cyclic }, USER) as {
         scopes: unknown[]
-        items: unknown[]
+        mfaRecoveryCodes: unknown[]
       }
 
-      expect(causeOf(() => copyHostRecord({ scopes: deep }))).toBeDefined()
+      expect(causeOf(() => copyHostRecord({ mfaRecoveryCodes: deep }, USER))).toBeDefined()
       expect(copy.scopes).toEqual([1, 2])
       expect(copy.scopes).toHaveLength(2)
-      expect(copy.items[2]).toBe(copy.items)
+      expect(copy.mfaRecoveryCodes[2]).toBe(copy.mfaRecoveryCodes)
     })
 
     it('copies a record that has no prototype', () => {
       const bare = Object.create(null) as Record<string, unknown>
       bare['id'] = 'u1'
 
-      expect((copyHostRecord(bare) as Record<string, unknown>)['id']).toBe('u1')
+      expect((copyHostRecord(bare, USER) as Record<string, unknown>)['id']).toBe('u1')
     })
 
     it('defines a copied __proto__ key as a plain data property', () => {
-      const copy = copyHostRecord(JSON.parse('{"meta":{"__proto__":1}}')) as { meta: object }
+      const copy = copyHostRecord(JSON.parse('{"name":{"__proto__":1}}'), USER) as { name: object }
 
-      expect(Object.getOwnPropertyDescriptor(copy.meta, '__proto__')).toEqual({
+      expect(Object.getOwnPropertyDescriptor(copy.name, '__proto__')).toEqual({
         value: 1,
         writable: true,
         enumerable: true,
@@ -323,9 +319,10 @@ describe('copyHostRecord', () => {
       Object.defineProperty(Object.prototype, 'zz', { set(): void {}, configurable: true })
       Object.defineProperty(Object.prototype, 'status', { set(): void {}, configurable: true })
       try {
-        const copy = copyHostRecord({ zz: 1, id: 'u1', name: 'n' }) as Record<string, unknown>
+        const copy = copyHostRecord({ zz: 1, id: 'u1', name: 'n' }, USER) as Record<string, unknown>
         const lazy = copyHostRecord(
-          new Proxy({}, { get: (_t, key) => (key === 'status' ? 'ACTIVE' : undefined) })
+          new Proxy({}, { get: (_t, key) => (key === 'status' ? 'ACTIVE' : undefined) }),
+          USER
         ) as Record<string, unknown>
 
         expect(Object.hasOwn(copy, 'zz')).toBe(true)
@@ -343,7 +340,7 @@ describe('copyHostRecord', () => {
         }
       }
 
-      expect((copyHostRecord(new Doc()) as Record<string, unknown>)['status']).toBeUndefined()
+      expect((copyHostRecord(new Doc(), USER) as Record<string, unknown>)['status']).toBeUndefined()
     })
 
     it('reads the getter of a listed field once', () => {
@@ -357,7 +354,7 @@ describe('copyHostRecord', () => {
         enumerable: true
       })
 
-      copyHostRecord(record)
+      copyHostRecord(record, USER)
 
       expect(reads).toBe(1)
     })
@@ -365,10 +362,10 @@ describe('copyHostRecord', () => {
     it('applies the limit to a listed field answered by name', () => {
       const lazy = new Proxy(
         {},
-        { get: (_target, key) => (key === 'workspace' ? nest(16) : undefined) }
+        { get: (_target, key) => (key === 'mfaSecret' ? nest(16) : undefined) }
       )
 
-      expect(causeOf(() => copyHostRecord(lazy))).toBe(
+      expect(causeOf(() => copyHostRecord(lazy, USER))).toBe(
         'the record nests deeper than the library follows'
       )
     })
@@ -382,7 +379,7 @@ describe('copyHostRecord', () => {
           }
         }
       )
-      const view = guardRepository(hostile as { find(): Promise<unknown> })
+      const view = guardRepository(hostile as { find(): Promise<unknown> }, {})
 
       expect(Reflect.get(view, Symbol.iterator)).toBeUndefined()
     })
@@ -409,7 +406,7 @@ describe('copyHostRecord', () => {
     let state: Record<string, unknown> = { leaf: true }
     for (let level = 0; level < 60; level += 1) state = { next: state }
 
-    const copy = copyHostRecord({ id: 'u1', state }) as { id: string; state: unknown }
+    const copy = copyHostRecord({ id: 'u1', state }, USER) as { id: string; state: unknown }
 
     expect(copy.id).toBe('u1')
     expect(copy.state).toBe(state)
@@ -440,7 +437,7 @@ describe('copyHostRecord', () => {
     }
     const entity = new Hydrated()
 
-    const copy = copyHostRecord(entity) as Record<string, unknown>
+    const copy = copyHostRecord(entity, USER) as Record<string, unknown>
 
     expect(copy['email']).toBe('a@b.c')
     expect(copy['passwordHash']).toBe('h')
@@ -448,10 +445,10 @@ describe('copyHostRecord', () => {
     expect(copy['_options']).toBe(entity._options)
   })
 
-  // Scenario: an entity with getters the library never reads (an unloaded relation, a computed view), one on the
-  // prototype and one hidden on the instance, beside the fields it does read. Expected: the copy is made, the getters
-  // are never evaluated, and the contract fields arrive. Why: evaluating a getter nobody asked for would fail every
-  // lookup of an entity whose relation is not loaded.
+  // Scenario: an entity with getters the contract does not name (an unloaded relation, a computed view), one on the
+  // prototype, one hidden on the instance and one own and enumerable, beside the fields it does read. Expected: the
+  // copy is made, none of the getters is evaluated, and the fields of the contract arrive. Why: evaluating a getter
+  // nobody asked for would fail every lookup of an entity whose relation is not loaded.
   it('never evaluates a getter the library does not read', () => {
     let evaluated = 0
     class Entity {
@@ -472,11 +469,19 @@ describe('copyHostRecord', () => {
       },
       enumerable: false
     })
+    Object.defineProperty(entity, 'ownRelation', {
+      get: () => {
+        evaluated += 1
+        throw new Error('relation not loaded')
+      },
+      enumerable: true
+    })
 
-    const copy = copyHostRecord(entity) as Record<string, unknown>
+    const copy = copyHostRecord(entity, USER) as Record<string, unknown>
 
     expect(copy['id']).toBe('u1')
     expect(copy['status']).toBe('ACTIVE')
+    expect(copy['ownRelation']).toBeUndefined()
     expect(evaluated).toBe(0)
   })
 
@@ -499,7 +504,7 @@ describe('copyHostRecord', () => {
     })
     Object.defineProperty(record, 'status', { value: 'ACTIVE', enumerable: false })
 
-    const copy = copyHostRecord(record) as Record<string, unknown>
+    const copy = copyHostRecord(record, USER) as Record<string, unknown>
 
     expect(copy['status']).toBe('ACTIVE')
     expect(copy['role']).toBe('user')
@@ -513,32 +518,36 @@ describe('copyHostRecord', () => {
   // own key of the copy and the copy's prototype is untouched. Why: assigning it would swap the copy's prototype for the
   // copied value, and the copy would inherit names the original did not own.
   it('keeps a __proto__ key an own property and does not change the prototype of the copy', () => {
-    const record = JSON.parse('{"meta":{"__proto__":{"role":"ADMIN"},"a":1}}') as object
-    const copy = copyHostRecord(record) as { meta: Record<string, unknown> }
+    const record = JSON.parse('{"name":{"__proto__":{"role":"ADMIN"},"a":1}}') as object
+    const copy = copyHostRecord(record, USER) as { name: Record<string, unknown> }
 
-    expect(Object.getPrototypeOf(copy.meta)).toBe(Object.prototype)
-    expect(Object.keys(copy.meta)).toContain('__proto__')
-    expect(copy.meta['role']).toBeUndefined()
+    expect(Object.getPrototypeOf(copy.name)).toBe(Object.prototype)
+    expect(Object.keys(copy.name)).toContain('__proto__')
+    expect(copy.name['role']).toBeUndefined()
   })
 
-  // Scenario: a record that holds itself. Expected: one copy that holds itself, not a stack overflow.
+  // Scenario: a membership whose workspace is the membership itself. Expected: one copy that holds itself, not a stack
+  // overflow.
   it('copies a cycle once', () => {
-    const record: { workspace?: unknown } = {}
-    record.workspace = record
-    const copy = copyHostRecord(record) as { workspace?: unknown }
+    const membership: { workspace?: unknown } = {}
+    membership.workspace = membership
+    const copy = copyHostRecord({ items: [membership], nextCursor: null }, PAGE) as {
+      items: { workspace?: unknown }[]
+    }
 
-    expect(copy.workspace).toBe(copy)
-    expect(copy).not.toBe(record)
+    expect(copy.items[0]?.workspace).toBe(copy.items[0])
+    expect(copy.items[0]).not.toBe(membership)
   })
 
-  // Scenario: a record nested deeper than the library follows. Expected: the internal error, not a crash.
-  it('refuses a record nested past the limit as an internal error', () => {
+  // Scenario: a value of the contract nested deeper than the library follows. Expected: the internal error, not a
+  // crash.
+  it('refuses a value nested past the limit as an internal error', () => {
     let deep: Record<string, unknown> = {}
-    for (let level = 0; level < 20; level += 1) deep = { workspace: deep }
+    for (let level = 0; level < 20; level += 1) deep = { next: deep }
 
     expect.assertions(2)
     try {
-      copyHostRecord(deep)
+      copyHostRecord({ name: deep }, USER)
     } catch (error) {
       expect(codeOf(error)).toBe(AUTH_ERROR_CODES.INTERNAL)
       expect((error as Error).cause).toBeInstanceOf(Error)
@@ -555,7 +564,7 @@ describe('copyHostRecord', () => {
 
     expect.assertions(3)
     try {
-      copyHostRecord(record)
+      copyHostRecord(record, USER)
     } catch (error) {
       expect(codeOf(error)).toBe(AUTH_ERROR_CODES.INTERNAL)
       expect((error as Error).cause).toBe(fault)

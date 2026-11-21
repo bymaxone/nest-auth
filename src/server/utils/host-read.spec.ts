@@ -18,6 +18,7 @@ import {
 } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import type { ErasedContract, ErasedRepositoryContract } from './repository-contracts'
 import {
   callFactory,
   copyHostRecord,
@@ -30,6 +31,19 @@ import {
 
 /** The host's own failure, with text a library error must never repeat. */
 const fault = new Error('host-text-that-must-not-leak')
+
+/** What the test repositories promise to answer: a record with an `id`, and nothing else. */
+const RECORD: ErasedContract = { fields: { id: true }, nested: {} }
+
+/** The promise of each method of the host fixture below. */
+const ANSWERS: ErasedRepositoryContract = {
+  find: RECORD,
+  missing: RECORD,
+  fail: 'value',
+  typed: 'value',
+  http: 'value',
+  sync: 'value'
+}
 
 /** The code of an `AuthException`. */
 const codeOf = (error: unknown): string =>
@@ -182,7 +196,7 @@ describe('guardRepository', () => {
   // Scenario: a method that answers a record. Expected: a copy, the call made on the host (its `this`), and members
   // that are not functions passed through. Why: the view must behave as the repository, only safer.
   it('answers a copy of the record from the host method, and passes plain members through', async () => {
-    const guarded = guardRepository(host)
+    const guarded = guardRepository(host, ANSWERS)
     const answer = await guarded.find('a')
 
     expect(answer).toEqual(record)
@@ -192,11 +206,35 @@ describe('guardRepository', () => {
     await expect(guarded.missing()).resolves.toBeNull()
   })
 
+  // Scenario: a method whose contract is a plain value, a method the interface does not have, and a method promised to
+  // answer a list that answers something else. Expected: the plain value comes back (a date as a copy), the extra
+  // method's answer goes out as the host gave it, and the list that is no list ends in the internal error. Why: only
+  // the answers of the methods of the interface are read, and one that breaks its promise is the host's failure.
+  it('answers a value as a value, leaves an unpromised method alone and refuses a list that is no list', async () => {
+    const when = new Date(5)
+    const extra = { untouched: true }
+    const guarded = guardRepository(
+      {
+        count: async (): Promise<unknown> => when,
+        extra: async (): Promise<unknown> => extra,
+        rows: async (): Promise<unknown> => ({ not: 'a list' })
+      },
+      { count: 'value', rows: { list: RECORD } }
+    )
+
+    const counted = (await guarded.count()) as Date
+
+    expect(counted).not.toBe(when)
+    expect(counted.getTime()).toBe(5)
+    await expect(guarded.extra()).resolves.toBe(extra)
+    await expect(guarded.rows()).rejects.toBeInstanceOf(AuthException)
+  })
+
   // Scenario: a method that rejects, or throws before it answers. Expected: the internal error with the cause.
   it.each([['fail'], ['sync']] as const)(
     'ends %s in the internal error with the cause',
     async (name) => {
-      const guarded = guardRepository(host)
+      const guarded = guardRepository(host, ANSWERS)
 
       await expect(guarded[name]()).rejects.toMatchObject({ cause: fault })
       await expect(guarded[name]()).rejects.toBeInstanceOf(AuthException)
@@ -207,7 +245,7 @@ describe('guardRepository', () => {
   it.each([['typed'], ['http']] as const)(
     'lets the typed error of %s through, as the same instance',
     async (name) => {
-      const guarded = guardRepository(host)
+      const guarded = guardRepository(host, ANSWERS)
 
       await expect(guarded[name]()).rejects.toBe(typedErrors[name])
     }
@@ -227,7 +265,7 @@ describe('guardRepository against a hostile repository', () => {
         }
       }
     )
-    const guarded = guardRepository(hostile as { find(): Promise<unknown> })
+    const guarded = guardRepository(hostile as { find(): Promise<unknown> }, ANSWERS)
 
     const read = (): Promise<unknown> => guarded.find()
 
@@ -242,7 +280,7 @@ describe('guardRepository against a hostile repository', () => {
   it('wraps a repository whose own methods are frozen', async () => {
     const user = { id: 'u1' }
     const frozen = Object.freeze({ findById: async (): Promise<unknown> => user })
-    const guarded = guardRepository(frozen)
+    const guarded = guardRepository(frozen, { findById: RECORD })
 
     const answer = await guarded.findById()
 
@@ -270,9 +308,12 @@ describe('guardRepository against a hostile repository', () => {
       return { rows, reads: () => reads }
     }
     const alone = counted()
-    copyHostRecord(await (async (): Promise<unknown> => alone.rows)())
+    copyHostRecord(await (async (): Promise<unknown> => alone.rows)(), { list: RECORD })
     const through = counted()
-    const guarded = guardRepository({ find: async (): Promise<unknown> => through.rows })
+    const guarded = guardRepository(
+      { find: async (): Promise<unknown> => through.rows },
+      { find: { list: RECORD } }
+    )
 
     await guarded.find()
 
@@ -290,7 +331,7 @@ describe('guardRepository against a hostile repository', () => {
         }
       }
     )
-    const view = guardRepository(hostile as { find(): Promise<unknown> })
+    const view = guardRepository(hostile as { find(): Promise<unknown> }, ANSWERS)
 
     await expect(Promise.resolve(view)).resolves.toBe(view)
   })
@@ -306,7 +347,7 @@ describe('guardRepository against a hostile repository', () => {
     'onApplicationShutdown'
   ])('does not expose the %s hook of the repository', (hook) => {
     const hooks = { [hook]: jest.fn(), find: jest.fn() }
-    const guarded = guardRepository(hooks) as Record<string, unknown>
+    const guarded = guardRepository(hooks, ANSWERS) as Record<string, unknown>
 
     expect(guarded[hook]).toBeUndefined()
     expect(typeof guarded['find']).toBe('function')
@@ -329,11 +370,14 @@ describe('hostEntityOf', () => {
     }
     const entity = new Entity()
     const other = new Entity()
-    const guarded = guardRepository({
-      one: async (): Promise<unknown> => entity,
-      many: async (): Promise<unknown> => [entity, other],
-      none: async (): Promise<unknown> => null
-    })
+    const guarded = guardRepository(
+      {
+        one: async (): Promise<unknown> => entity,
+        many: async (): Promise<unknown> => [entity, other],
+        none: async (): Promise<unknown> => null
+      },
+      { one: RECORD, many: { list: RECORD }, none: RECORD }
+    )
 
     const one = (await guarded.one()) as Entity
     const many = (await guarded.many()) as Entity[]

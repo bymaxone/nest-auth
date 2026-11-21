@@ -27,6 +27,15 @@ import {
   BYMAX_AUTH_USER_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
+import {
+  API_KEY_REPOSITORY_CONTRACT,
+  MEMBERSHIP_REPOSITORY_CONTRACT,
+  PLATFORM_USER_REPOSITORY_CONTRACT,
+  USER_REPOSITORY_CONTRACT,
+  WORKSPACE_REPOSITORY_CONTRACT,
+  type ErasedContract,
+  type ErasedRepositoryContract
+} from './repository-contracts'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 
@@ -99,53 +108,6 @@ function configurationError(error: unknown): Error {
   )
 }
 
-/**
- * Every field the library reads by name from an answer of a repository: the fields of the user, platform user, API key,
- * workspace and membership interfaces and of the result envelopes the repositories return (a page, the outcome of
- * removing a user's memberships, the outcome of creating a workspace). They are read by name after the object is
- * enumerated, because an object that answers by name and lists nothing (a lazy entity, a Proxy with only a `get`, a
- * record whose fields live on its prototype) cannot be copied by listing it. A spec pins that the list covers each of
- * those interfaces.
- */
-export const RECORD_FIELDS = [
-  'createdAt',
-  'deletionScheduledAt',
-  'digest',
-  'email',
-  'emailVerified',
-  'expiresAt',
-  'id',
-  'invitedByUserId',
-  'items',
-  'label',
-  'lastLoginAt',
-  'lastUsedAt',
-  'mfaEnabled',
-  'mfaRecoveryCodes',
-  'mfaSecret',
-  'name',
-  'nextCursor',
-  'oauthProvider',
-  'oauthProviderId',
-  'passwordHash',
-  'platformId',
-  'removed',
-  'result',
-  'revokedAt',
-  'role',
-  'scopes',
-  'status',
-  'tenantId',
-  'updatedAt',
-  'userId',
-  'workspace',
-  'workspaceId',
-  'workspaceIds'
-] as const
-
-/** The names of {@link RECORD_FIELDS}, for the question whether a field is one the library reads. */
-const FIELD_NAMES: ReadonlySet<string> = new Set(RECORD_FIELDS)
-
 /** The checks for the values a record may hold that are not data to copy: a copy of them would not be them. */
 const OPAQUE: readonly ((value: unknown) => boolean)[] = [
   types.isMap,
@@ -179,12 +141,10 @@ function define(copy: object, key: string, value: unknown, enumerable: boolean):
 const ENTITIES = new WeakMap<object, object>()
 
 /**
- * A plain copy of a record: each field a spread would show is defined on the copy with its value read once, and the
- * fields the library reads by name are copied deep (arrays and dates copied, the other kinds by reference). A field
- * that is not one of those is handed on by reference. A getter on the prototype that the library does not name is
- * never evaluated.
+ * A plain copy of a value the contract names no fields of: dates and arrays copied, objects copied field by field,
+ * the other kinds of object by reference.
  */
-function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number): unknown {
+function copyData(value: unknown, seen: WeakMap<object, unknown>, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value
   if (depth > MAX_RECORD_DEPTH) throw new Error('the record nests deeper than the library follows')
   const known = seen.get(value)
@@ -194,40 +154,92 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
     const copy: unknown[] = []
     seen.set(value, copy)
     for (let index = 0; index < value.length; index += 1)
-      copy.push(copyValue(value[index], seen, depth + 1))
+      copy.push(copyData(value[index], seen, depth + 1))
     return copy
   }
   if (isOpaque(value)) return value
   const copy: Record<string, unknown> = {}
   seen.set(value, copy)
-  ENTITIES.set(copy, value)
   const source = value as Record<string, unknown>
-  for (const key of Object.keys(value)) {
-    // Only what the library reads is copied deep. Any other field of the host's own (an ORM instance carries its
-    // state, its options and its relations in such fields) is handed on by reference, so no shape the host gives a
-    // record can exceed what the copy follows.
-    const field = source[key]
-    define(copy, key, FIELD_NAMES.has(key) ? copyValue(field, seen, depth + 1) : field, true)
-  }
-  for (const key of RECORD_FIELDS) {
-    if (Object.hasOwn(copy, key)) continue
-    const read = source[key]
-    if (read !== undefined && typeof read !== 'function')
-      define(copy, key, copyValue(read, seen, depth + 1), false)
-  }
+  for (const key of Object.keys(value))
+    define(copy, key, copyData(source[key], seen, depth + 1), true)
   return copy
 }
 
 /**
- * Copies a record a repository returned, so a failed read of it ends here.
+ * Copies the fields of a record that its contract names, and hands the rest of the record on without reading it.
+ * A field the contract names is read by name once, so it is found wherever the host keeps it (an own field, a
+ * prototype getter, a lazy entity that lists nothing), and a field that is not own and enumerable stays hidden on the
+ * copy. Any other own field that holds data is handed on by reference through its descriptor, which evaluates
+ * nothing; one that is an accessor is left out, because reading it is what the contract forbids.
+ */
+function copyRecord(
+  value: object,
+  contract: Extract<ErasedContract, { fields: unknown }>,
+  seen: WeakMap<object, unknown>,
+  depth: number
+): unknown {
+  const copy: Record<string, unknown> = {}
+  seen.set(value, copy)
+  ENTITIES.set(copy, value)
+  const source = value as Record<string, unknown>
+  const done = new Set<string>()
+  const take = (field: string, enumerable: boolean): void => {
+    done.add(field)
+    const read = source[field]
+    if (read === undefined || typeof read === 'function') return
+    const nested = Object.hasOwn(contract.nested, field) ? contract.nested[field] : undefined
+    const copied =
+      nested === undefined
+        ? copyData(read, seen, depth + 1)
+        : applyContract(read, nested, seen, depth + 1)
+    define(copy, field, copied, enumerable)
+  }
+  for (const key of Object.keys(value)) {
+    if (Object.hasOwn(contract.fields, key)) {
+      take(key, true)
+      continue
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (descriptor !== undefined && 'value' in descriptor) define(copy, key, descriptor.value, true)
+  }
+  for (const field of Object.keys(contract.fields)) if (!done.has(field)) take(field, false)
+  return copy
+}
+
+/** What the guarded view answers for a value, given what its method promises. */
+function applyContract(
+  value: unknown,
+  contract: ErasedContract,
+  seen: WeakMap<object, unknown>,
+  depth: number
+): unknown {
+  if (contract === 'value') return copyData(value, seen, depth)
+  if (value === null || typeof value !== 'object') return value
+  const known = seen.get(value)
+  if (known !== undefined) return known
+  if ('list' in contract) {
+    if (!Array.isArray(value)) throw new Error('the answer is not the list its method promises')
+    const copy: unknown[] = []
+    seen.set(value, copy)
+    for (let index = 0; index < value.length; index += 1)
+      copy.push(applyContract(value[index], contract.list, seen, depth + 1))
+    return copy
+  }
+  return copyRecord(value, contract, seen, depth)
+}
+
+/**
+ * Copies what a repository method returned, so a failed read of it ends here.
  *
  * @param record - What the repository returned.
+ * @param contract - What the method promises to return, and so what is read from it.
  * @returns A plain copy, or `record` itself when it is not an object.
  * @throws {@link AuthException} `INTERNAL` whose `cause` is the host's error.
  */
-export function copyHostRecord(record: unknown): unknown {
+export function copyHostRecord(record: unknown, contract: ErasedContract): unknown {
   try {
-    return copyValue(record, new WeakMap(), 0)
+    return applyContract(record, contract, new WeakMap(), 0)
   } catch (error: unknown) {
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
   }
@@ -257,12 +269,14 @@ export function hostEntityOf<T>(record: T): T {
 }
 
 /**
- * Wraps a repository of the host so that every record it returns is copied once.
+ * Wraps a repository of the host so that every record it returns is copied once, reading from each answer only the
+ * fields its method promises.
  *
  * @param host - The host's repository.
+ * @param contract - What each method of the repository promises to return.
  * @returns A repository with the same methods, answering with plain copies.
  */
-export function guardRepository<T extends object>(host: T): T {
+export function guardRepository<T extends object>(host: T, contract: ErasedRepositoryContract): T {
   // The target is a separate object: a proxy over a frozen host would have to return each own member untouched.
   return new Proxy({} as T, {
     get(_target, key): unknown {
@@ -289,19 +303,28 @@ export function guardRepository<T extends object>(host: T): T {
           if (error instanceof HttpException) throw error
           throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
         }
-        return copyHostRecord(answer)
+        // A method the interface does not have is not one the library calls: its answer goes out as the host gave it.
+        const promised =
+          typeof key === 'string' && Object.hasOwn(contract, key) ? contract[key] : undefined
+        return promised === undefined ? answer : copyHostRecord(answer, promised)
       }
     }
   })
 }
 
-/** The guarded token of each repository the host may provide, keyed by the host's token. */
-const GUARDED_BY_HOST: ReadonlyMap<symbol, symbol> = new Map([
-  [BYMAX_AUTH_USER_REPOSITORY, GUARDED_USER_REPOSITORY],
-  [BYMAX_AUTH_PLATFORM_USER_REPOSITORY, GUARDED_PLATFORM_USER_REPOSITORY],
-  [BYMAX_AUTH_API_KEY_REPOSITORY, GUARDED_API_KEY_REPOSITORY],
-  [BYMAX_AUTH_WORKSPACE_REPOSITORY, GUARDED_WORKSPACE_REPOSITORY],
-  [BYMAX_AUTH_MEMBERSHIP_REPOSITORY, GUARDED_MEMBERSHIP_REPOSITORY]
+/** The guarded token and the contract of each repository the host may provide, keyed by the host's token. */
+const GUARDED_BY_HOST: ReadonlyMap<symbol, readonly [symbol, ErasedRepositoryContract]> = new Map([
+  [BYMAX_AUTH_USER_REPOSITORY, [GUARDED_USER_REPOSITORY, USER_REPOSITORY_CONTRACT]],
+  [
+    BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
+    [GUARDED_PLATFORM_USER_REPOSITORY, PLATFORM_USER_REPOSITORY_CONTRACT]
+  ],
+  [BYMAX_AUTH_API_KEY_REPOSITORY, [GUARDED_API_KEY_REPOSITORY, API_KEY_REPOSITORY_CONTRACT]],
+  [BYMAX_AUTH_WORKSPACE_REPOSITORY, [GUARDED_WORKSPACE_REPOSITORY, WORKSPACE_REPOSITORY_CONTRACT]],
+  [
+    BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
+    [GUARDED_MEMBERSHIP_REPOSITORY, MEMBERSHIP_REPOSITORY_CONTRACT]
+  ]
 ])
 
 /**
@@ -310,12 +333,17 @@ const GUARDED_BY_HOST: ReadonlyMap<symbol, symbol> = new Map([
  *
  * @param host - The token the host provides its repository under.
  * @param guarded - The internal token of the view.
+ * @param contract - What each method of the repository promises to return.
  * @returns A provider resolving `guarded` to the guarded view of what `host` resolves to.
  */
-export function guardedViewProvider(host: symbol, guarded: symbol): Provider {
+export function guardedViewProvider(
+  host: symbol,
+  guarded: symbol,
+  contract: ErasedRepositoryContract
+): Provider {
   return {
     provide: guarded,
-    useFactory: (repository: object): object => guardRepository(repository),
+    useFactory: (repository: object): object => guardRepository(repository, contract),
     inject: [host]
   }
 }
@@ -338,6 +366,6 @@ export function withGuardedViews(providers: Provider[]): Provider[] {
           typeof provider !== 'function' && 'provide' in provider && provider.provide === host
       )
     )
-    .map(([host, guarded]) => guardedViewProvider(host, guarded))
+    .map(([host, [guarded, contract]]) => guardedViewProvider(host, guarded, contract))
   return [...providers, ...views]
 }

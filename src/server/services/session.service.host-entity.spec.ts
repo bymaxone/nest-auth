@@ -14,6 +14,7 @@ import {
 } from '../bymax-auth.constants'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { guardRepository } from '../utils/host-read'
+import { USER_REPOSITORY_CONTRACT } from '../utils/repository-contracts'
 import { SessionService } from './session.service'
 
 /** An entity whose limit is a prototype getter and whose permission is a prototype method. */
@@ -73,7 +74,10 @@ describe('SessionService with a guarded user repository', () => {
   // there cannot reach what the library reads.
   it('hands maxSessionsResolver the entity the repository returned', async () => {
     const entity = new Plan()
-    const guarded = guardRepository({ findById: async (): Promise<unknown> => entity })
+    const guarded = guardRepository(
+      { findById: async (): Promise<unknown> => entity },
+      { findById: USER_REPOSITORY_CONTRACT.findById }
+    )
     const resolver = jest.fn(async (user: unknown): Promise<number> => {
       const plan = user as Plan
       return plan.allows() ? plan.limit : 1

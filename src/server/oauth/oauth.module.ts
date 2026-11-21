@@ -36,6 +36,7 @@ import { OAuthService } from './oauth.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { OAuthProviderPlugin } from '../interfaces/oauth-provider.interface'
 import { guardedViewProvider } from '../utils/host-read'
+import { USER_REPOSITORY_CONTRACT } from '../utils/repository-contracts'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -108,7 +109,11 @@ export class OAuthModule {
     return [
       { provide: OAUTH_PLUGINS, useValue: buildOAuthPlugins(options) },
       OAuthService,
-      guardedViewProvider(BYMAX_AUTH_USER_REPOSITORY, GUARDED_USER_REPOSITORY)
+      guardedViewProvider(
+        BYMAX_AUTH_USER_REPOSITORY,
+        GUARDED_USER_REPOSITORY,
+        USER_REPOSITORY_CONTRACT
+      )
     ]
   }
 

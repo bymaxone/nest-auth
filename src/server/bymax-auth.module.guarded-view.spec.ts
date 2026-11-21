@@ -29,7 +29,7 @@ describe('BymaxAuthModule guarded repository view', () => {
   // gets the host's own instance. Why: a failed read of a record must end in the library's error, while a host
   // that injects the token from this module keeps its own repository.
   it('gives the library services the guarded view and keeps the exported token the host instance', async () => {
-    const record = { id: 'u1', scopes: ['a'] }
+    const record = { id: 'u1', mfaRecoveryCodes: ['a'] }
     const repository = { findByEmail: jest.fn().mockResolvedValue(record) }
     const module = await Test.createTestingModule({
       imports: [
@@ -50,7 +50,7 @@ describe('BymaxAuthModule guarded repository view', () => {
     expect(seen).not.toBe(repository)
     expect(answered).toEqual(record)
     expect(answered).not.toBe(record)
-    expect(answered.scopes).not.toBe(record.scopes)
+    expect(answered.mfaRecoveryCodes).not.toBe(record.mfaRecoveryCodes)
     expect(module.get(RepoProbe).repo).toBe(repository)
   })
 
