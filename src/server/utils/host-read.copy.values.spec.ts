@@ -120,6 +120,33 @@ describe('the values of the contract', () => {
   // is the host's own object, so `String(id)` is the real id, two users never share an id and the date keeps its
   // methods; a plain object in the same place is still copied. Why: a plain copy of such an instance has the fields
   // and none of the behavior, and every id would print as "[object Object]".
+  // Scenario: a plain object with no prototype in a field of the contract, and the kinds of object whose state is not in
+  // their fields (a Map, a Set, a Promise, a buffer, an Error, a URL). Expected: the plain object is copied, each of the
+  // kinds is the host's own object. Why: a copy of a Map would be an empty object that answers to nothing.
+  it('copies a plain object without a prototype and keeps the kinds that hold their state apart', () => {
+    const bare = Object.assign(Object.create(null) as object, { a: 1 })
+    const kinds = [
+      new Map([['k', 1]]),
+      new Set([1]),
+      new WeakMap(),
+      Promise.resolve(1),
+      /x/u,
+      new Error('e'),
+      new Uint8Array([1]),
+      new ArrayBuffer(1),
+      new URL('https://a.example')
+    ]
+
+    const copy = copyHostRecord({ name: bare, mfaRecoveryCodes: kinds }, USER) as {
+      name: object
+      mfaRecoveryCodes: unknown[]
+    }
+
+    expect(copy.name).toEqual({ a: 1 })
+    expect(copy.name).not.toBe(bare)
+    kinds.forEach((kind, index) => expect(copy.mfaRecoveryCodes[index]).toBe(kind))
+  })
+
   it('keeps the instance of a class of the host in a field of the contract by reference', () => {
     class ObjectIdLike {
       constructor(private readonly hex: string) {}

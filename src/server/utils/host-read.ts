@@ -133,25 +133,6 @@ function configurationError(error: unknown): Error {
   )
 }
 
-/** The checks for the values a record may hold that are not data to copy: a copy of them would not be them. */
-const OPAQUE: readonly ((value: unknown) => boolean)[] = [
-  types.isMap,
-  types.isSet,
-  types.isWeakMap,
-  types.isWeakSet,
-  types.isPromise,
-  types.isRegExp,
-  types.isNativeError,
-  types.isAnyArrayBuffer,
-  ArrayBuffer.isView,
-  (value): boolean => value instanceof URL
-]
-
-/** Whether a value is one of the {@link OPAQUE} kinds, and is passed on as it is. The checks hold across realms. */
-function isOpaque(value: object): boolean {
-  return OPAQUE.some((check) => check(value))
-}
-
 /**
  * Sets a field on a copy by defining it, never by assigning it: a key named `__proto__` (what `JSON.parse` of user
  * input produces) would swap the prototype, and a name that is a setter on `Object.prototype` would be silently
@@ -208,9 +189,9 @@ function copyData(value: unknown, seen: Seen, depth: number): unknown {
       copy.push(copyData(value[index], seen, depth + 1))
     return copy
   }
-  if (isOpaque(value)) return value
-  // An instance of a class of the host (an id type, a date library's date) is what the host's code compares and prints:
-  // a plain copy of it would be another object with the fields and none of the behavior.
+  // An instance of a class (an id type, a date library's date, a Map, a Promise, a buffer) is what the host's code
+  // compares and prints, and its state is not in its fields: a plain copy of it would be another object with none of
+  // the behavior.
   if (!isPlainObject(value)) return value
   const copy: Record<string, unknown> = {}
   seen.data.set(value, copy)
