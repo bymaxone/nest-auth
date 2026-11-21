@@ -45,10 +45,25 @@ const MAX_RECORD_DEPTH = 16
 /** The most elements of an array and the most keys of an object a copy follows; a host that answers more is refused. */
 const MAX_BREADTH = 100_000
 
-/** What a copy remembers so that a value reached twice is copied once, kept apart for data and for records. */
+/**
+ * What a copy remembers so that a value reached twice is copied once: data by value, and what was copied under a
+ * contract by value and contract together, because the same object copied under another contract is another copy.
+ */
 interface Seen {
   readonly data: WeakMap<object, unknown>
-  readonly records: WeakMap<object, unknown>
+  readonly contracts: WeakMap<object, Map<ErasedContract, unknown>>
+}
+
+/** What was already copied from a value under a contract. */
+function copiedUnder(seen: Seen, value: object, contract: ErasedContract): unknown {
+  return seen.contracts.get(value)?.get(contract)
+}
+
+/** Remembers a copy of a value under a contract. */
+function rememberUnder(seen: Seen, value: object, contract: ErasedContract, copy: unknown): void {
+  const copies = seen.contracts.get(value) ?? new Map<ErasedContract, unknown>()
+  copies.set(contract, copy)
+  seen.contracts.set(value, copies)
 }
 
 /**
@@ -206,7 +221,7 @@ function copyRecord(
   depth: number
 ): unknown {
   const copy: Record<string, unknown> = {}
-  seen.records.set(value, copy)
+  rememberUnder(seen, value, contract, copy)
   ENTITIES.set(copy, value)
   const source = value as Record<string, unknown>
   const done = new Set<string>()
@@ -244,13 +259,13 @@ function applyContract(
 ): unknown {
   if (contract === 'value') return copyData(value, seen, depth)
   if (value === null || typeof value !== 'object') return value
-  const known = seen.records.get(value)
+  const known = copiedUnder(seen, value, contract)
   if (known !== undefined) return known
   if ('list' in contract) {
     if (!Array.isArray(value)) throw new Error('the answer is not the list its method promises')
     refuseBreadth(value.length)
     const copy: unknown[] = []
-    seen.records.set(value, copy)
+    rememberUnder(seen, value, contract, copy)
     for (let index = 0; index < value.length; index += 1)
       copy.push(applyContract(value[index], contract.list, seen, depth + 1))
     return copy
@@ -269,7 +284,7 @@ function applyContract(
  */
 export function copyHostRecord(record: unknown, contract: ErasedContract): unknown {
   try {
-    return applyContract(record, contract, { data: new WeakMap(), records: new WeakMap() }, 0)
+    return applyContract(record, contract, { data: new WeakMap(), contracts: new WeakMap() }, 0)
   } catch (error: unknown) {
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
   }

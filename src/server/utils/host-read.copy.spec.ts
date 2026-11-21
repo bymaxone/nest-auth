@@ -310,17 +310,30 @@ describe('copyHostRecord', () => {
       )
     })
 
-    it('copies a list of records to exactly its length and a list that holds itself once', () => {
-      const rows = [{ id: 'a' }, { id: 'b' }]
-      const loop: unknown[] = []
-      loop.push(loop)
+    it('copies a list of records to exactly its length, and what is reached twice under one contract once', () => {
+      const row = { id: 'a' }
+      const inner = [row]
+      const rows = [row, { id: 'b' }, row]
 
       const copy = copyHostRecord(rows, { list: USER }) as unknown[]
-      const looped = copyHostRecord(loop, { list: USER }) as unknown[]
+      const nested = copyHostRecord([inner, inner], { list: { list: USER } }) as unknown[][]
 
       expect(copy).toEqual(rows)
-      expect(copy).toHaveLength(2)
-      expect(looped[0]).toBe(looped)
+      expect(copy).toHaveLength(3)
+      expect(copy[2]).toBe(copy[0])
+      expect(nested[1]).toBe(nested[0])
+      expect(nested[0]?.[0]).not.toBe(row)
+    })
+
+    it('refuses a list that is offered where a record is promised, saying why', () => {
+      const loop: unknown[] = []
+      loop.push(loop)
+      const items: unknown[] = []
+      items.push({ workspace: items })
+      const reason = 'the answer is not the record its method promises'
+
+      expect(causeOf(() => copyHostRecord(loop, { list: USER }))).toBe(reason)
+      expect(causeOf(() => copyHostRecord({ items, nextCursor: null }, PAGE))).toBe(reason)
     })
 
     it('copies a plain object that holds itself once, inside a field of the contract', () => {
@@ -658,17 +671,35 @@ describe('copyHostRecord', () => {
     expect(copy.name['role']).toBeUndefined()
   })
 
-  // Scenario: a membership whose workspace is the membership itself. Expected: one copy that holds itself, not a stack
-  // overflow.
-  it('copies a cycle once', () => {
-    const membership: { workspace?: unknown } = {}
-    membership.workspace = membership
-    const copy = copyHostRecord({ items: [membership], nextCursor: null }, PAGE) as {
-      items: { workspace?: unknown }[]
+  // Scenario: an object that is both a membership of a page and its own workspace. Expected: each is a copy made by the
+  // contract of its own place and neither is the other, while a field the workspace contract does not name (its own
+  // `workspace`) is handed on by reference. Why: the same object copied under another contract is another copy, and
+  // a copy reused across contracts would hand one place the fields of the other.
+  it('copies an object reached under two contracts once under each', () => {
+    const both: Record<string, unknown> = {
+      tenantId: 't1',
+      workspaceId: 'w1',
+      userId: 'u1',
+      role: 'ADMIN',
+      status: 'ACTIVE',
+      invitedByUserId: null,
+      createdAt: new Date(1),
+      updatedAt: new Date(2),
+      id: 'w1',
+      name: 'W',
+      deletionScheduledAt: null
     }
+    both['workspace'] = both
 
-    expect(copy.items[0]?.workspace).toBe(copy.items[0])
-    expect(copy.items[0]).not.toBe(membership)
+    const copy = copyHostRecord({ items: [both], nextCursor: null }, PAGE) as {
+      items: { role: string; workspace: Record<string, unknown> }[]
+    }
+    const item = copy.items[0]
+
+    expect(item?.role).toBe('ADMIN')
+    expect(item?.workspace).not.toBe(item)
+    expect(item?.workspace['name']).toBe('W')
+    expect(item?.workspace['workspace']).toBe(both)
   })
 
   // Scenario: a value of the contract nested deeper than the library follows. Expected: the internal error, not a
