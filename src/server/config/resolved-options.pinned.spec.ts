@@ -66,6 +66,9 @@ describe('the role hierarchy of the resolved options', () => {
     ['is missing, with roles undefined', undefined, 'roles.hierarchy is required'],
     ['is missing, with roles null', null, 'roles.hierarchy is required'],
     ['is null', { hierarchy: null }, 'roles.hierarchy is required'],
+    ['is missing, with roles an array', [], 'roles.hierarchy is required'],
+    ['is missing, with roles a string', 'ADMIN', 'roles.hierarchy is required'],
+    ['is missing, with roles a number', 7, 'roles.hierarchy is required'],
     ['is not an object', { hierarchy: 'ADMIN' }, 'roles.hierarchy'],
     ['is an array', { hierarchy: ['ADMIN'] }, 'roles.hierarchy'],
     [
@@ -207,17 +210,20 @@ describe('the role hierarchy of the resolved options', () => {
     expect(resolved.workspaces?.roles.hierarchy).toEqual({ owner: ['editor'], editor: [] })
   })
 
-  // Scenario: the roles written as a function that carries a hierarchy, which is not a group the options accept. Expected:
-  // the function is left as the host wrote it, its hierarchy is neither copied nor replaced, and what is not a group is
-  // refused by the checks that follow as before. Why: the pin replaces a hierarchy in a group `dropUnset` made, and must
-  // never write into an object the host owns.
-  it('leaves a function that carries a hierarchy as the host wrote it', () => {
-    const hierarchy = { MEMBER: [] }
+  // Scenario: the roles written as a function that carries a hierarchy, which the checks accept as a group, and the host
+  // changing that hierarchy after the options resolved. Expected: the resolved roles are a copy, the host's function and
+  // its hierarchy are untouched, and the change does not reach the resolved options. Why: a hierarchy the host can still
+  // change after validation is the defect the pin exists to close, whatever the host wrote the group as.
+  it('copies the hierarchy of a function that carries one and never writes to the function', () => {
+    const hierarchy: Record<string, string[]> = { MEMBER: [] }
     const roles = Object.assign(() => undefined, { hierarchy })
 
     const resolved = resolveOptions(optionsWith(roles))
+    hierarchy['MEMBER']?.push('ADMIN')
+    hierarchy['ADMIN'] = []
 
-    expect(resolved.roles).toBe(roles)
+    expect(resolved.roles).not.toBe(roles)
     expect(roles.hierarchy).toBe(hierarchy)
+    expect(resolved.roles.hierarchy).toEqual({ MEMBER: [] })
   })
 })
