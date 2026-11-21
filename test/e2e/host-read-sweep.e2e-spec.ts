@@ -11,9 +11,12 @@
  *
  * @layer Test
  */
+import { types } from 'node:util'
+
 import { Test } from '@nestjs/testing'
 
 import {
+  BYMAX_AUTH_API_KEY_REPOSITORY,
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_REDIS_CLIENT,
   BYMAX_AUTH_USER_REPOSITORY
@@ -21,8 +24,28 @@ import {
 import { BymaxAuthModule } from '../../src/server/bymax-auth.module'
 import { AUTH_ERROR_CODES } from '../../src/server/errors/auth-error-codes'
 import { AuthException } from '../../src/server/errors/auth-exception'
+import { resolveOptions } from '../../src/server/config/resolved-options'
+import { AuthRedisService } from '../../src/server/redis/auth-redis.service'
+import { WorkspaceAccessService } from '../../src/server/services/workspace-access.service'
+import { guardRepository } from '../../src/server/utils/host-read'
+import {
+  MEMBERSHIP_REPOSITORY_CONTRACT,
+  WORKSPACE_REPOSITORY_CONTRACT
+} from '../../src/server/utils/repository-contracts'
+import { PasswordService } from '../../src/server/services/password.service'
+import { ApiKeyService } from '../../src/server/services/api-key.service'
+import { ApiKeyVerifierService } from '../../src/server/services/api-key-verifier.service'
 import { AuthService } from '../../src/server/services/auth.service'
-import { bootstrapTestApp, JWT_SECRET, MFA_ENCRYPTION_KEY } from './setup'
+import { MemoryApiKeyRepository } from '../../src/server/services/__tests__/api-key-fixtures'
+import { PlatformAuthService } from '../../src/server/services/platform-auth.service'
+import {
+  bootstrapTestApp,
+  createMockRedis,
+  createMockUserRepository,
+  createRedis,
+  JWT_SECRET,
+  MFA_ENCRYPTION_KEY
+} from './setup'
 
 /** The error a host read throws; its text must never reach the library's error. */
 class HostFault extends Error {
@@ -50,7 +73,9 @@ function trapped<T>(target: T, trap: Trap, fault: HostFault): T {
     get(object, key, receiver) {
       tick()
       const value: unknown = Reflect.get(object, key, receiver)
-      return typeof value === 'function' ? value : trapped(value, trap, fault)
+      // A method of a date only runs on the date itself, so it is bound to it: a Proxy of a date answers `getTime`.
+      if (typeof value === 'function') return types.isDate(object) ? value.bind(object) : value
+      return trapped(value, trap, fault)
     },
     has(object, key) {
       tick()
@@ -99,7 +124,12 @@ async function sweep<C>(
       error = caught
     }
     trap.on = false
-    if (trap.n < at) return { ops: trap.n, failures }
+    if (trap.n < at) {
+      // The run that never reached trap N is the run without a fault: it has to succeed, or the sweep stopped at an
+      // error of its own and never read what comes after it.
+      if (error !== undefined) failures.push(`${at}: the run without a fault failed`)
+      return { ops: trap.n, failures }
+    }
     if (error === undefined) {
       failures.push(`${at}: swallowed`)
       continue
@@ -135,6 +165,112 @@ const wrapsFault = (error: unknown, fault: HostFault): boolean =>
   !error.message.includes(fault.message)
 
 const request = { headers: { 'user-agent': 'sweep' }, ip: '127.0.0.1', socket: {}, cookies: {} }
+
+/** A module with the API key repository whose row answers through the traps, and a key issued before they are armed. */
+async function apiKeyHarness(
+  trap: Trap,
+  fault: HostFault
+): Promise<{ verifier: ApiKeyVerifierService; key: string; close: () => Promise<void> }> {
+  const repository = new MemoryApiKeyRepository()
+  const module = await Test.createTestingModule({
+    imports: [
+      BymaxAuthModule.registerAsync({
+        useFactory: () => ({
+          jwt: { secret: JWT_SECRET },
+          roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+          environment: 'test' as const,
+          secureCookies: false,
+          rateLimit: { enabled: false as const },
+          tokenDelivery: 'bearer' as const,
+          apiKeys: {
+            enabled: true,
+            pepper: 'pepper-for-e2e-0123456789abcdefABCDEF!!',
+            scopes: ['read'],
+            lastUsedFlushSeconds: 3600
+          }
+        }),
+        extraProviders: [
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: createMockUserRepository() },
+          { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: createMockRedis() },
+          { provide: BYMAX_AUTH_API_KEY_REPOSITORY, useValue: repository }
+        ]
+      })
+    ]
+  }).compile()
+  const issued = await module.get(ApiKeyService, { strict: false }).issue({
+    label: 'sweep',
+    scopes: ['read']
+  })
+  const find = repository.findById.bind(repository)
+  repository.findById = async (...args: Parameters<typeof find>) => {
+    const row = await find(...args)
+    return row === null ? row : trapped(row, trap, fault)
+  }
+  return {
+    verifier: module.get(ApiKeyVerifierService, { strict: false }),
+    key: issued.key,
+    close: () => module.close()
+  }
+}
+
+/** The resolved options of a module with workspaces enabled. */
+function workspaceOptions(): ReturnType<typeof resolveOptions> {
+  return resolveOptions({
+    jwt: { secret: JWT_SECRET },
+    roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+    rateLimit: { clientIpSource: 'peer' },
+    workspaces: {
+      enabled: true,
+      roles: { hierarchy: { owner: ['editor'], editor: [] }, ownerRole: 'owner' }
+    }
+  })
+}
+
+/** The access service over the guarded workspace and membership repositories, one of whose rows answers through the traps. */
+function accessService(
+  which: 'workspace' | 'membership',
+  ref: { tenantId: string; workspaceId: string; userId: string },
+  trap: Trap,
+  fault: HostFault
+): WorkspaceAccessService {
+  const options = workspaceOptions()
+  const row = {
+    workspace: {
+      id: 'w1',
+      tenantId: 't1',
+      name: 'W',
+      status: 'active',
+      createdAt: new Date(0),
+      deletionScheduledAt: null
+    },
+    membership: {
+      ...ref,
+      role: 'editor',
+      status: 'active',
+      invitedByUserId: null,
+      createdAt: new Date(0),
+      updatedAt: new Date(0)
+    }
+  }
+  const answer = <T extends object>(value: T, mine: boolean): T =>
+    mine ? trapped(value, trap, fault) : value
+  const workspaces = guardRepository(
+    {
+      findById: async (): Promise<unknown> => answer(row.workspace, which === 'workspace')
+    },
+    WORKSPACE_REPOSITORY_CONTRACT
+  )
+  const memberships = guardRepository(
+    { find: async (): Promise<unknown> => answer(row.membership, which === 'membership') },
+    MEMBERSHIP_REPOSITORY_CONTRACT
+  )
+  return new WorkspaceAccessService(
+    new AuthRedisService(createRedis(), options),
+    workspaces as never,
+    memberships as never,
+    options
+  )
+}
 
 describe('the host-read sweep', () => {
   jest.setTimeout(300_000)
@@ -204,7 +340,109 @@ describe('the host-read sweep', () => {
       200
     )
 
-    expect(outcome.ops).toBeGreaterThan(10)
+    expect(outcome.ops).toBeGreaterThan(25)
     expect(outcome.failures).toEqual([])
   })
+
+  // Scenario: the platform user the repository returns to a platform login. Expected: every read that throws ends in
+  // AuthException INTERNAL with the fault as its cause. Why: the platform plane reads its own record by its own
+  // contract, and a host row whose getter throws must become the library's internal error.
+  it('ends every failed read of a returned platform user in an internal error with the cause', async () => {
+    const outcome = await sweep(
+      async (trap, fault) => {
+        const booted = await bootstrapTestApp(
+          { platform: { enabled: true } },
+          { listen: false, controllers: { auth: true, platform: true } }
+        )
+        const passwordHash = await booted.app.get(PasswordService).hash('SuperSecret123!')
+        booted.platformRepo.seed({
+          id: 'p1',
+          email: 'admin@example.com',
+          name: 'A',
+          passwordHash,
+          role: 'SUPER_ADMIN',
+          status: 'active',
+          mfaEnabled: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          lastLoginAt: null
+        })
+        const find = booted.platformRepo.findByEmail.bind(booted.platformRepo)
+        booted.platformRepo.findByEmail = async (...args: Parameters<typeof find>) => {
+          const user = await find(...args)
+          return user === null ? user : trapped(user, trap, fault)
+        }
+        return { service: booted.app.get(PlatformAuthService), close: () => booted.app.close() }
+      },
+      async ({ service, close }) => {
+        try {
+          return await service.login(
+            { email: 'admin@example.com', password: 'SuperSecret123!' },
+            '127.0.0.1',
+            'sweep'
+          )
+        } finally {
+          await close()
+        }
+      },
+      (error, fault) =>
+        wrapsFault(error, fault) &&
+        error instanceof AuthException &&
+        (error.getResponse() as { error: { code: string } }).error.code ===
+          AUTH_ERROR_CODES.INTERNAL,
+      200
+    )
+
+    expect(outcome.ops).toBeGreaterThan(24)
+    expect(outcome.failures).toEqual([])
+  })
+
+  // Scenario: the API key row the repository returns to the verification of a key. Expected: every read that throws
+  // ends in AuthException INTERNAL with the fault as its cause. Why: the verifier reads the digest, the scopes and the
+  // two dates of the row, and a host row whose getter throws must not let the host's own error out.
+  it('ends every failed read of a returned API key in an internal error with the cause', async () => {
+    const outcome = await sweep(
+      apiKeyHarness,
+      async ({ verifier, key, close }) => {
+        try {
+          return await verifier.verify(key)
+        } finally {
+          await close()
+        }
+      },
+      (error, fault) =>
+        wrapsFault(error, fault) &&
+        error instanceof AuthException &&
+        (error.getResponse() as { error: { code: string } }).error.code ===
+          AUTH_ERROR_CODES.INTERNAL,
+      200
+    )
+
+    expect(outcome.ops).toBeGreaterThan(20)
+    expect(outcome.failures).toEqual([])
+  })
+
+  // Scenario: the workspace and the membership rows the repositories return to the resolution of a member's access.
+  // Expected: every read that throws, in either row, ends in AuthException INTERNAL with the fault as its cause. Why:
+  // the workspace plane reads two repositories by two contracts, and a host row whose getter throws must become the
+  // library's internal error whichever repository it came from.
+  it.each(['workspace', 'membership'] as const)(
+    'ends every failed read of a returned %s row in an internal error with the cause',
+    async (which) => {
+      const ref = { tenantId: 't1', workspaceId: 'w1', userId: 'u1' }
+      const outcome = await sweep(
+        async (trap, fault) => accessService(which, ref, trap, fault),
+        (service) => service.resolveMembership(ref),
+        (error, fault) =>
+          wrapsFault(error, fault) &&
+          error instanceof AuthException &&
+          (error.getResponse() as { error: { code: string } }).error.code ===
+            AUTH_ERROR_CODES.INTERNAL,
+        200
+      )
+
+      expect(outcome.ops).toBeGreaterThan(12)
+      expect(outcome.failures).toEqual([])
+    }
+  )
 })

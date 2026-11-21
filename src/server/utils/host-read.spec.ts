@@ -33,16 +33,19 @@ import {
 const fault = new Error('host-text-that-must-not-leak')
 
 /** What the test repositories promise to answer: a record with an `id`, and nothing else. */
-const RECORD: ErasedContract = { fields: { id: true }, nested: {} }
+const RECORD: ErasedContract = { fields: { id: 'id' }, nested: {} }
+
+/** The same record, for a method that may find nothing. */
+const FOUND_OR_NOT: ErasedContract = { ...RECORD, nullable: true }
 
 /** The promise of each method of the host fixture below. */
 const ANSWERS: ErasedRepositoryContract = {
   find: RECORD,
-  missing: RECORD,
-  fail: 'value',
-  typed: 'value',
-  http: 'value',
-  sync: 'value'
+  missing: FOUND_OR_NOT,
+  fail: 'void',
+  typed: 'void',
+  http: 'void',
+  sync: 'void'
 }
 
 /** The code of an `AuthException`. */
@@ -219,7 +222,7 @@ describe('guardRepository', () => {
         extra: async (): Promise<unknown> => extra,
         rows: async (): Promise<unknown> => ({ not: 'a list' })
       },
-      { count: 'value', rows: { list: RECORD } }
+      { count: 'date', rows: { list: RECORD } }
     )
 
     const counted = (await guarded.count()) as Date
@@ -228,6 +231,30 @@ describe('guardRepository', () => {
     expect(counted.getTime()).toBe(5)
     await expect(guarded.extra()).resolves.toBe(extra)
     await expect(guarded.rows()).rejects.toBeInstanceOf(AuthException)
+  })
+
+  // Scenario: the host rejects with an error that is a Proxy whose prototype read throws, so the test for a typed error
+  // is itself a failed read of the host. Expected: the internal error with that error as its cause. Why: the check of
+  // the error sits in the catch, where a throw would otherwise let the host's own error out.
+  it('ends a rejection whose type cannot be read in the internal error with the cause', async () => {
+    const hostile = new Proxy(new Error('hostile'), {
+      getPrototypeOf: () => {
+        throw fault
+      }
+    })
+    const guarded = guardRepository(
+      {
+        async find(): Promise<never> {
+          throw hostile
+        }
+      },
+      { find: RECORD }
+    )
+
+    const error = (await guarded.find().catch((caught: unknown) => caught)) as AuthException
+
+    expect(error).toBeInstanceOf(AuthException)
+    expect(Object.is(error.cause, hostile)).toBe(true)
   })
 
   // Scenario: a method that rejects, or throws before it answers. Expected: the internal error with the cause.
@@ -376,7 +403,7 @@ describe('hostEntityOf', () => {
         many: async (): Promise<unknown> => [entity, other],
         none: async (): Promise<unknown> => null
       },
-      { one: RECORD, many: { list: RECORD }, none: RECORD }
+      { one: RECORD, many: { list: RECORD }, none: FOUND_OR_NOT }
     )
 
     const one = (await guarded.one()) as Entity

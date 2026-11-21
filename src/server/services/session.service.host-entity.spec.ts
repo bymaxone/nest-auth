@@ -13,14 +13,16 @@ import {
   GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { userRecord } from '../utils/__tests__/host-records'
 import { guardRepository } from '../utils/host-read'
 import { USER_REPOSITORY_CONTRACT } from '../utils/repository-contracts'
 import { SessionService } from './session.service'
 
 /** An entity whose limit is a prototype getter and whose permission is a prototype method. */
 class Plan {
-  id = 'u1'
-  tenantId = 'tenant-1'
+  constructor() {
+    Object.assign(this, userRecord({ tenantId: 'tenant-1' }))
+  }
   get limit(): number {
     return 3
   }
