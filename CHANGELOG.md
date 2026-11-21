@@ -68,6 +68,15 @@ A patch release.
   kept those fields out of the token payload. They are now enumerable, except the credentials (`passwordHash`,
   `mfaSecret`, `mfaRecoveryCodes`, `digest`), which are as visible as the host's record made them, so no spread of the
   copy can carry them out.
+- **Apply to a derived backend:** a repository has to serve every field its interface requires, as the type the
+  interface declares. A record that does not now ends as `auth.internal` (HTTP 500, no token) where 1.5.11 and earlier
+  accepted it: a field a service decides on that is absent (`mfaEnabled`, `emailVerified`, `status`, `role` or
+  `tenantId` missing from the row, which used to read as the default of its type, so an absent `mfaEnabled` was a user
+  without a second factor); a number where a string is declared (a numeric `tenantId`); a wrapper where a boolean is
+  declared (`new Boolean(false)` is truthy); a date of another class, or an Invalid Date, where a deadline is declared;
+  and a function, a symbol or a bigint in any field the contract names. A real `false` for `mfaEnabled` still logs in,
+  and a real `true` still gets the second-factor challenge. A column that holds nothing may be `null` or absent where
+  the interface marks the field optional.
 
 ## [1.5.11] - 2026-11-20
 
