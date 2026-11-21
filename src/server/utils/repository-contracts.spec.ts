@@ -7,7 +7,24 @@
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import type { AuthApiKey, IApiKeyRepository } from '../interfaces/api-key-repository.interface'
+import type {
+  AuthMembership,
+  IMembershipRepository,
+  MembershipPage,
+  MembershipWithWorkspace,
+  RemoveAllMembershipsResult
+} from '../interfaces/membership-repository.interface'
+import type {
+  AuthPlatformUser,
+  IPlatformUserRepository
+} from '../interfaces/platform-user-repository.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
+import type {
+  AuthWorkspace,
+  CreateWorkspaceResult,
+  IWorkspaceRepository
+} from '../interfaces/workspace-repository.interface'
 import { guardRepository } from './host-read'
 import {
   API_KEY_REPOSITORY_CONTRACT,
@@ -181,15 +198,32 @@ describe('the tables of contracts are checked by the compiler', () => {
   type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
   type NotAssignable<A, B> = [A] extends [B] ? false : true
   type RecordContract<R> = Extract<Contract<R>, { fields: unknown }>
+  type KeysOfContract<R> = keyof RecordContract<R>['fields']
 
   // Scenario: the shape a table has to take, stated as types. Expected: the methods a table must hold are exactly the
-  // methods of the repository interface, the fields of an entry are exactly the keys of the record, and a table that
-  // leaves a method out or an entry that leaves a key out is not assignable. Why: a method or a field added to an
-  // interface must not be forgotten in the table, and a misspelt one must not be silently ignored. Each constant
-  // below fails to compile if its claim stops holding, so `typecheck` is the assertion.
-  it('holds exactly the methods of the interface and exactly the keys of the record', () => {
-    const methods: Same<keyof RepositoryContract<IUserRepository>, keyof IUserRepository> = true
-    const fields: Same<keyof RecordContract<AuthUser>['fields'], keyof AuthUser> = true
+  // methods of each repository interface, the fields of an entry are exactly the keys of each record the repositories
+  // answer with, and a table that leaves a method out or an entry that leaves a key out is not assignable. Why: a
+  // method or a field added to an interface must not be forgotten in the table, and a misspelt one must not be
+  // silently ignored. Each constant below fails to compile if its claim stops holding, so `typecheck` is the assertion.
+  it('holds exactly the methods of each interface and exactly the keys of each record', () => {
+    const methods: [
+      Same<keyof RepositoryContract<IUserRepository>, keyof IUserRepository>,
+      Same<keyof RepositoryContract<IPlatformUserRepository>, keyof IPlatformUserRepository>,
+      Same<keyof RepositoryContract<IApiKeyRepository>, keyof IApiKeyRepository>,
+      Same<keyof RepositoryContract<IWorkspaceRepository>, keyof IWorkspaceRepository>,
+      Same<keyof RepositoryContract<IMembershipRepository>, keyof IMembershipRepository>
+    ] = [true, true, true, true, true]
+    const fields: [
+      Same<KeysOfContract<AuthUser>, keyof AuthUser>,
+      Same<KeysOfContract<AuthPlatformUser>, keyof AuthPlatformUser>,
+      Same<KeysOfContract<AuthApiKey>, keyof AuthApiKey>,
+      Same<KeysOfContract<AuthWorkspace>, keyof AuthWorkspace>,
+      Same<KeysOfContract<AuthMembership>, keyof AuthMembership>,
+      Same<KeysOfContract<MembershipWithWorkspace>, keyof MembershipWithWorkspace>,
+      Same<KeysOfContract<MembershipPage<AuthMembership>>, keyof MembershipPage<AuthMembership>>,
+      Same<KeysOfContract<RemoveAllMembershipsResult>, 'result' | 'removed' | 'workspaceIds'>,
+      Same<KeysOfContract<CreateWorkspaceResult>, 'status' | 'workspace'>
+    ] = [true, true, true, true, true, true, true, true, true]
     const missingMethod: NotAssignable<
       Pick<RepositoryContract<IUserRepository>, 'findById'>,
       RepositoryContract<IUserRepository>
@@ -199,6 +233,6 @@ describe('the tables of contracts are checked by the compiler', () => {
       Contract<AuthUser>
     > = true
 
-    expect([methods, fields, missingMethod, forgottenField]).toEqual([true, true, true, true])
+    expect([methods, fields, missingMethod, forgottenField].flat()).not.toContain(false)
   })
 })

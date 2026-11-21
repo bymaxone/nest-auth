@@ -42,6 +42,15 @@ import { AuthException } from '../errors/auth-exception'
 /** The most levels of nesting a record copy follows; a record deeper than this is not a record. */
 const MAX_RECORD_DEPTH = 16
 
+/** The most elements of an array and the most keys of an object a copy follows; a host that answers more is refused. */
+const MAX_BREADTH = 100_000
+
+/** What a copy remembers so that a value reached twice is copied once, kept apart for data and for records. */
+interface Seen {
+  readonly data: WeakMap<object, unknown>
+  readonly records: WeakMap<object, unknown>
+}
+
 /**
  * Runs the reads of the host's options and ends a failure of the host's own in the library's configuration error.
  *
@@ -140,29 +149,49 @@ function define(copy: object, key: string, value: unknown, enumerable: boolean):
 /** The object the host's repository returned behind each copy of it. Filled by the copy itself, which is the only read. */
 const ENTITIES = new WeakMap<object, object>()
 
+/** Refuses an array or an object that holds more than a copy follows. */
+function refuseBreadth(size: number): void {
+  if (size > MAX_BREADTH) throw new Error('the answer holds more than the library follows')
+}
+
+/**
+ * Whether a value is a date: one by its internal slot, which holds across realms, or a Proxy of the host that answers
+ * as one (a Proxy has no slot, and `getTime` on it works only through its own trap).
+ */
+function isDateLike(value: object): value is Date {
+  return (
+    types.isDate(value) ||
+    (types.isProxy(value) &&
+      typeof (value as Partial<Date>).getTime === 'function' &&
+      typeof (value as Partial<Date>).toISOString === 'function')
+  )
+}
+
 /**
  * A plain copy of a value the contract names no fields of: dates and arrays copied, objects copied field by field,
  * the other kinds of object by reference.
  */
-function copyData(value: unknown, seen: WeakMap<object, unknown>, depth: number): unknown {
+function copyData(value: unknown, seen: Seen, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value
   if (depth > MAX_RECORD_DEPTH) throw new Error('the record nests deeper than the library follows')
-  const known = seen.get(value)
+  const known = seen.data.get(value)
   if (known !== undefined) return known
-  if (types.isDate(value)) return new Date(value.getTime())
+  if (isDateLike(value)) return new Date(Number(value.getTime()))
   if (Array.isArray(value)) {
+    refuseBreadth(value.length)
     const copy: unknown[] = []
-    seen.set(value, copy)
+    seen.data.set(value, copy)
     for (let index = 0; index < value.length; index += 1)
       copy.push(copyData(value[index], seen, depth + 1))
     return copy
   }
   if (isOpaque(value)) return value
   const copy: Record<string, unknown> = {}
-  seen.set(value, copy)
+  seen.data.set(value, copy)
   const source = value as Record<string, unknown>
-  for (const key of Object.keys(value))
-    define(copy, key, copyData(source[key], seen, depth + 1), true)
+  const keys = Object.keys(value)
+  refuseBreadth(keys.length)
+  for (const key of keys) define(copy, key, copyData(source[key], seen, depth + 1), true)
   return copy
 }
 
@@ -176,11 +205,11 @@ function copyData(value: unknown, seen: WeakMap<object, unknown>, depth: number)
 function copyRecord(
   value: object,
   contract: Extract<ErasedContract, { fields: unknown }>,
-  seen: WeakMap<object, unknown>,
+  seen: Seen,
   depth: number
 ): unknown {
   const copy: Record<string, unknown> = {}
-  seen.set(value, copy)
+  seen.records.set(value, copy)
   ENTITIES.set(copy, value)
   const source = value as Record<string, unknown>
   const done = new Set<string>()
@@ -195,7 +224,9 @@ function copyRecord(
         : applyContract(read, nested, seen, depth + 1)
     define(copy, field, copied, enumerable)
   }
-  for (const key of Object.keys(value)) {
+  const keys = Object.keys(value)
+  refuseBreadth(keys.length)
+  for (const key of keys) {
     if (Object.hasOwn(contract.fields, key)) {
       take(key, true)
       continue
@@ -211,21 +242,23 @@ function copyRecord(
 function applyContract(
   value: unknown,
   contract: ErasedContract,
-  seen: WeakMap<object, unknown>,
+  seen: Seen,
   depth: number
 ): unknown {
   if (contract === 'value') return copyData(value, seen, depth)
   if (value === null || typeof value !== 'object') return value
-  const known = seen.get(value)
+  const known = seen.records.get(value)
   if (known !== undefined) return known
   if ('list' in contract) {
     if (!Array.isArray(value)) throw new Error('the answer is not the list its method promises')
+    refuseBreadth(value.length)
     const copy: unknown[] = []
-    seen.set(value, copy)
+    seen.records.set(value, copy)
     for (let index = 0; index < value.length; index += 1)
       copy.push(applyContract(value[index], contract.list, seen, depth + 1))
     return copy
   }
+  if (Array.isArray(value)) throw new Error('the answer is not the record its method promises')
   return copyRecord(value, contract, seen, depth)
 }
 
@@ -239,9 +272,18 @@ function applyContract(
  */
 export function copyHostRecord(record: unknown, contract: ErasedContract): unknown {
   try {
-    return applyContract(record, contract, new WeakMap(), 0)
+    return applyContract(record, contract, { data: new WeakMap(), records: new WeakMap() }, 0)
   } catch (error: unknown) {
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
+  }
+}
+
+/** Whether a failure is a typed error the host chose to throw. The test is itself a read of the host's error. */
+function isTypedError(error: unknown): error is HttpException {
+  try {
+    return error instanceof HttpException
+  } catch {
+    return false
   }
 }
 
@@ -300,7 +342,7 @@ export function guardRepository<T extends object>(host: T, contract: ErasedRepos
           answer = await (member as (...parameters: unknown[]) => unknown).apply(host, args)
         } catch (error: unknown) {
           // A typed error the host chose to throw (a unique-key conflict it maps to `AuthException`) goes out as it is.
-          if (error instanceof HttpException) throw error
+          if (isTypedError(error)) throw error
           throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
         }
         // A method the interface does not have is not one the library calls: its answer goes out as the host gave it.

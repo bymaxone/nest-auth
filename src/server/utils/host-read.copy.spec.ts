@@ -347,6 +347,75 @@ describe('copyHostRecord', () => {
       )
     })
 
+    it('refuses an array or an object that holds more than the library follows', () => {
+      const many = (size: number): unknown[] => Array.from({ length: size }, () => 0)
+      const keyed = (size: number): Record<string, number> =>
+        Object.fromEntries(Array.from({ length: size }, (_, index) => [`k${index}`, 1]))
+      const refusal = 'the answer holds more than the library follows'
+
+      expect(() => copyHostRecord({ mfaRecoveryCodes: many(100_000) }, USER)).not.toThrow()
+      expect(causeOf(() => copyHostRecord({ mfaRecoveryCodes: many(100_001) }, USER))).toBe(refusal)
+      expect(() => copyHostRecord({ name: keyed(100_000) }, USER)).not.toThrow()
+      expect(causeOf(() => copyHostRecord({ name: keyed(100_001) }, USER))).toBe(refusal)
+      expect(() => copyHostRecord(many(100_000), { list: 'value' })).not.toThrow()
+      expect(causeOf(() => copyHostRecord(many(100_001), { list: 'value' }))).toBe(refusal)
+      expect(() => copyHostRecord(keyed(100_000), USER)).not.toThrow()
+      expect(causeOf(() => copyHostRecord(keyed(100_001), USER))).toBe(refusal)
+    })
+
+    it('refuses an array where its method promises a record, saying why', () => {
+      expect(causeOf(() => copyHostRecord([{ id: 'u1' }], USER))).toBe(
+        'the answer is not the record its method promises'
+      )
+    })
+
+    it('keeps what was copied as data apart from what is copied as a record', () => {
+      const workspace = { id: 'w1', name: 'W', createdAt: new Date(5) }
+      Object.defineProperty(workspace, 'status', { value: 'ACTIVE', enumerable: false })
+      const membership = { role: workspace, workspace }
+
+      const copy = copyHostRecord({ items: [membership], nextCursor: null }, PAGE) as {
+        items: { workspace: Record<string, unknown> }[]
+      }
+
+      expect(copy.items[0]?.workspace['status']).toBe('ACTIVE')
+      expect(Object.keys(copy.items[0]?.workspace ?? {})).not.toContain('status')
+    })
+
+    it('copies a date a Proxy of the host answers as, and nothing else a Proxy wraps', () => {
+      const moment = new Proxy(new Date(5), {
+        get: (target, key) => {
+          const member: unknown = Reflect.get(target, key, target)
+          return typeof member === 'function' ? member.bind(target) : member
+        }
+      })
+      const plain = new Proxy({ a: 1 }, {})
+
+      const copy = copyHostRecord({ createdAt: moment, name: plain }, USER) as {
+        createdAt: Date
+        name: unknown
+      }
+
+      expect(copy.createdAt).toBeInstanceOf(Date)
+      expect(copy.createdAt.getTime()).toBe(5)
+      expect(copy.name).toEqual({ a: 1 })
+      expect(copy.name).not.toBeInstanceOf(Date)
+    })
+
+    it('finds the fields of the contract on an ancestor that has no prototype of its own', () => {
+      const root = Object.assign(Object.create(null) as object, {
+        passwordHash: 'x',
+        email: 'a@b.c'
+      })
+      const record = Object.assign(Object.create(root) as Record<string, unknown>, { id: 'u1' })
+
+      const copy = copyHostRecord(record, USER) as Record<string, unknown>
+
+      expect(copy['passwordHash']).toBe('x')
+      expect(copy['email']).toBe('a@b.c')
+      expect(Object.keys(copy)).toEqual(['id'])
+    })
+
     it('copies a record that has no prototype', () => {
       const bare = Object.create(null) as Record<string, unknown>
       bare['id'] = 'u1'
