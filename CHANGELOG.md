@@ -25,8 +25,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   plain object, a class that only has `toString`. Comparisons with the tenant of a request already failed closed, but
   the value is written into the claims of a token, where two tenants whose ids are objects both serialize to `{}`. Any
   value that is not a string now ends as `auth.internal`. **Apply to a derived backend:** a repository that serves the
-  tenant as an object (an id type of a driver) has to serve it as a string; the ids of users and workspaces keep
-  accepting a string, a finite number or an instance of a class of the host.
+  tenant as an object (an id type of a driver) has to serve it as a string.
+- **An id names one row.** The ids of users, workspaces and memberships were accepted as a string, a finite number or
+  any instance of a class of the host, so a `Map` or a `Date` was an id, and two of them printed the same in a claim,
+  a key or the scope of a query. An id is now a non-empty string, a safe integer, or an object of the host that prints
+  as a non-empty text of its own (the id type of a document database, kept as the host's own object, printed once when
+  it is read). A `Date`, a `RegExp`, a `Map`, a `Set`, a `Promise`, an array, a plain object, a function, a boolean, a
+  fraction, an integer past the safe range and an object that prints as nothing or as `[object ...]` end as
+  `auth.internal`. **Apply to a derived backend:** a repository that serves a numeric id as a fraction or past
+  2^53 has to serve it as a string.
 
 ## [1.5.12] - 2026-11-21
 

@@ -64,7 +64,8 @@ type LenientKind<V> = [V] extends [string]
  * promised and `?` when it may be absent, so a required field has no `?` and one that holds a record or a list of them
  * is `nested`. A field that only informs (an id, a name, a date the library returns or displays) may be lenient: `~id`,
  * `~string` or `~date`, which accept absence and `null`, and an object of the host's own classes, and refuse a function,
- * a symbol and a bigint.
+ * a symbol and a bigint. A `~id` is narrower still: it must name one row, so it is a non-empty string, a safe integer or
+ * an object of the host that prints as a text of its own.
  */
 export type FieldSpec<V> =
   | `${BaseKind<NonNullable<V>>}${null extends V ? '|null' : ''}${undefined extends V ? '?' : ''}`

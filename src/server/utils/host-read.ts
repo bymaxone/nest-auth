@@ -208,6 +208,22 @@ function copyStrings(value: unknown): string[] {
 }
 
 /**
+ * An id: what names one row and cannot name two, because an id reaches claims, keys and the scope of a query. A
+ * non-empty string, a safe integer, or an instance of a class of the host (an id type of a driver) that prints as a
+ * non-empty text of its own, kept as the host's own object. A date and a regular expression print as text and are
+ * refused by kind; a Map, a Set, a Promise and a plain object print as `[object ...]`, which every one of its kind
+ * shares. The text is read once, here.
+ */
+function readId(value: unknown): unknown {
+  if (typeof value === 'string') return accept(value !== '', value)
+  if (typeof value === 'number') return accept(Number.isSafeInteger(value), value)
+  if (!isHostInstance(value) || types.isDate(value) || types.isRegExp(value))
+    throw new Error(WRONG_KIND)
+  const printed = String(value)
+  return accept(printed !== '' && !printed.startsWith('[object '), value)
+}
+
+/**
  * An id, a name or any other string a field only informs with: a string, a finite number, or an instance of a class of
  * the host (an id type of a driver) kept as the host's own object. A function, a symbol, a bigint and the rest are
  * refused.
@@ -241,7 +257,7 @@ const READERS = {
   number: (value: unknown): unknown => accept(Number.isFinite(value), value),
   date: copyDate,
   strings: copyStrings,
-  '~id': readInforming,
+  '~id': readId,
   '~string': readInforming,
   '~date': readInformingDate
 } as const
