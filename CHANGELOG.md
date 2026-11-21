@@ -29,8 +29,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Changed
 
-- **`OAuthModule.register` used on its own no longer wires `OAuthService`.** `OAuthService` now reads the user
-  repository through the guarded view the module builds under an internal token that the package does not export, so a
+- **`OAuthModule.register` used on its own no longer resolves `OAuthService`.** `OAuthService` now reads the user
+  repository through the guarded view `BymaxAuthModule` builds under an internal token that the package does not export, so a
   module that provides `OAuthModule.register(...)` without `BymaxAuthModule` leaves that dependency unresolved. The
   documented path, `BymaxAuthModule`, registers the controller, the service and the view together and is unchanged.
   **Apply to a derived backend:** a backend that imports `OAuthModule.register(...)` directly (the module is documented
