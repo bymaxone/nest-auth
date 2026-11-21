@@ -41,7 +41,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   store or repository operation that failed (`AUTH_STORE_FAILED`, `AUTH_STORE_DEGRADED`), a stored record that does not
   parse, a missing email provider, an unavailable breach check, a refused API-key route, an unhandled exception. They
   carry the name of the hook or the operation from a closed set, and the library's description of the failure, never
-  the text of the error. Only three operator-guidance sentences that name no value remain as plain text. An account an
+  the text of the error. An account an
   OAuth login creates now writes `AUTH_USER_REGISTERED` with `via: oauth`.
 - `rxjs` is declared as a peer dependency of the server entry. It is already required by `@nestjs/common`, and the
   interceptor that counts the observed routes imports it.
