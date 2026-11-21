@@ -11,6 +11,8 @@
  *
  * @layer Test
  */
+import { types } from 'node:util'
+
 import { Test } from '@nestjs/testing'
 
 import {
@@ -71,7 +73,9 @@ function trapped<T>(target: T, trap: Trap, fault: HostFault): T {
     get(object, key, receiver) {
       tick()
       const value: unknown = Reflect.get(object, key, receiver)
-      return typeof value === 'function' ? value : trapped(value, trap, fault)
+      // A method of a date only runs on the date itself, so it is bound to it: a Proxy of a date answers `getTime`.
+      if (typeof value === 'function') return types.isDate(object) ? value.bind(object) : value
+      return trapped(value, trap, fault)
     },
     has(object, key) {
       tick()
@@ -120,7 +124,12 @@ async function sweep<C>(
       error = caught
     }
     trap.on = false
-    if (trap.n < at) return { ops: trap.n, failures }
+    if (trap.n < at) {
+      // The run that never reached trap N is the run without a fault: it has to succeed, or the sweep stopped at an
+      // error of its own and never read what comes after it.
+      if (error !== undefined) failures.push(`${at}: the run without a fault failed`)
+      return { ops: trap.n, failures }
+    }
     if (error === undefined) {
       failures.push(`${at}: swallowed`)
       continue
@@ -331,7 +340,7 @@ describe('the host-read sweep', () => {
       200
     )
 
-    expect(outcome.ops).toBeGreaterThan(10)
+    expect(outcome.ops).toBeGreaterThan(25)
     expect(outcome.failures).toEqual([])
   })
 
@@ -384,7 +393,7 @@ describe('the host-read sweep', () => {
       200
     )
 
-    expect(outcome.ops).toBeGreaterThan(5)
+    expect(outcome.ops).toBeGreaterThan(24)
     expect(outcome.failures).toEqual([])
   })
 
@@ -409,7 +418,7 @@ describe('the host-read sweep', () => {
       200
     )
 
-    expect(outcome.ops).toBeGreaterThan(3)
+    expect(outcome.ops).toBeGreaterThan(20)
     expect(outcome.failures).toEqual([])
   })
 
@@ -432,7 +441,7 @@ describe('the host-read sweep', () => {
         200
       )
 
-      expect(outcome.ops).toBeGreaterThan(3)
+      expect(outcome.ops).toBeGreaterThan(12)
       expect(outcome.failures).toEqual([])
     }
   )
