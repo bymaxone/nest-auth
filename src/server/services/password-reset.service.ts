@@ -28,7 +28,7 @@ import type {
   IUserRepository,
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
-import { logEvent } from '../observability/log-event'
+import { logEvent, logDelivery } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { answerResetRequest } from '../utils/answer-reset-request'
 import { classifyResetProof } from '../utils/classify-reset-proof'
@@ -188,7 +188,7 @@ export class PasswordResetService {
     const start = Date.now()
 
     const { method } = this.options.passwordReset
-    await this.answerResetRequest('initiateReset', dto.email, tenantId, start, (userId) =>
+    await this.answerResetRequest(dto.email, tenantId, start, (userId) =>
       method === 'otp'
         ? this.sendOtp(dto.email, tenantId)
         : this.sendToken(dto.email, tenantId, userId)
@@ -335,7 +335,7 @@ export class PasswordResetService {
     // the email send is NOT awaited here. If this is changed to `await`, the email RTT is added
     // to the synchronous path, creating a timing difference between "user found" and "user not
     // found" responses.
-    await this.answerResetRequest('resendOtp', dto.email, tenantId, start, () =>
+    await this.answerResetRequest(dto.email, tenantId, start, () =>
       this.sendOtp(dto.email, tenantId)
     )
   }
@@ -346,7 +346,6 @@ export class PasswordResetService {
 
   /** Runs one `forgot-password` or `resend-otp` request through the shared failure rule. */
   private answerResetRequest(
-    label: 'initiateReset' | 'resendOtp',
     email: string,
     tenantId: string,
     start: number,
@@ -355,7 +354,6 @@ export class PasswordResetService {
     return answerResetRequest(
       { redis: this.redis, logger: this.logger },
       {
-        label,
         cooldownKey: `resend:${PASSWORD_RESET_PURPOSE}:${this.otpIdentifier(tenantId, email)}`,
         cooldownSeconds: RESEND_COOLDOWN_SECONDS,
         floorMs: ANTI_ENUM_MIN_MS,
@@ -653,10 +651,7 @@ export class PasswordResetService {
         // quoted body involved, which makes it the likeliest exposure of the set — and the
         // provider strips the address from ITS line and rethrows the original under
         // `onDeliveryError: 'rethrow'`, so this line was putting back what that one removed.
-        logEvent(this.logger, 'AUTH_DELIVERY_FAILED', {
-          kind: 'password_changed_notice',
-          detail: describeChannelStatus(err)
-        })
+        logDelivery(this.logger, 'password_changed_notice', err)
       }
     })()
   }
@@ -739,7 +734,7 @@ export class PasswordResetService {
               ...createEmptyHookContext(),
               plane: 'dashboard'
             }),
-          'afterPasswordReset hook threw'
+          'afterPasswordReset'
         )
       }
     }
@@ -755,7 +750,7 @@ export class PasswordResetService {
    */
   private async sendToken(email: string, tenantId: string, userId: string): Promise<void> {
     if (!this.emailProvider) {
-      this.logger.warn('sendToken: no email provider configured — password reset token not sent')
+      logEvent(this.logger, 'AUTH_PROVIDER_MISSING', { flow: 'password_reset_token' })
       return
     }
 
@@ -796,10 +791,7 @@ export class PasswordResetService {
         // The event carries no user id and no address, and the description is the library's own: a
         // relay that rejects by quoting the body puts `rawToken` into the error, and this token is a
         // working password reset until its TTL expires, so nothing the channel wrote comes through.
-        logEvent(this.logger, 'AUTH_DELIVERY_FAILED', {
-          kind: 'password_reset_token',
-          detail: describeChannelStatus(err)
-        })
+        logDelivery(this.logger, 'password_reset_token', err)
         void this.redis.del(tokenKey).catch((delErr: unknown) => {
           // `delErr` comes from `redis.del` on a key that is a SHA-256 of the token, so no
           // quoted-body path can put a credential into it. That argument is still true and it is
@@ -822,7 +814,7 @@ export class PasswordResetService {
    */
   private async sendOtp(email: string, tenantId: string): Promise<void> {
     if (!this.emailProvider) {
-      this.logger.warn('sendOtp: no email provider configured — password reset OTP not sent')
+      logEvent(this.logger, 'AUTH_PROVIDER_MISSING', { flow: 'password_reset_otp' })
       return
     }
 
@@ -853,10 +845,7 @@ export class PasswordResetService {
         //
         // The event carries no user id and no address, and the description is the library's own, so
         // the reset code a relay quotes back never reaches it.
-        logEvent(this.logger, 'AUTH_DELIVERY_FAILED', {
-          kind: 'password_reset_otp',
-          detail: describeChannelStatus(err)
-        })
+        logDelivery(this.logger, 'password_reset_otp', err)
       }
     })()
   }
@@ -904,7 +893,7 @@ export class PasswordResetService {
     } catch {
       // Corrupted storage, not an expired or replayed token: indistinguishable to the caller
       // by design, and distinguishable to an operator only here.
-      this.logger.warn('reset: stored reset context is not parseable JSON')
+      logEvent(this.logger, 'AUTH_RECORD_INVALID', { record: 'reset_context' })
       // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so the shape check immediately below refuses the record with the identical code. Same log, same error, same order.
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }

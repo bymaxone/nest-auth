@@ -23,6 +23,7 @@ import { CONTEXT, WORKSPACE_REF, workspaceRow } from './__tests__/workspace-serv
 import { invitationKey } from '../constants/workspace-invitation-keys'
 import { sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { expectEvent } from '../__tests__/log-events'
 
 const HASH = sha256(TOKEN)
 const VERIFIED = { email: EMAIL, emailVerified: true }
@@ -262,9 +263,7 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       await expect(
         h.service.completeOAuth(invitation, user('new', { email: EMAIL }), true, CONTEXT)
       ).resolves.toEqual({ workspaceId: 'w1', role: 'viewer' })
-      expect(error).toHaveBeenCalledWith(
-        expect.stringContaining('afterInvitationAccepted hook threw')
-      )
+      expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterInvitationAccepted', how: 'threw' })
     })
   })
 

@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common'
 
+import { eventOf } from '../__tests__/log-events'
 import { runDetached } from './run-detached'
 
 describe('runDetached', () => {
@@ -22,7 +23,7 @@ describe('runDetached', () => {
   // The effect runs, nothing is logged, and nothing is returned for the caller to wait on.
   it('runs the effect and logs nothing when it succeeds', async () => {
     const run = jest.fn().mockResolvedValue(undefined)
-    expect(runDetached(logger, run, 'effect failed')).toBeUndefined()
+    expect(runDetached(logger, run, 'afterLogin')).toBeUndefined()
     await drain()
     expect(run).toHaveBeenCalledTimes(1)
     expect(error).not.toHaveBeenCalled()
@@ -30,26 +31,26 @@ describe('runDetached', () => {
 
   // The caller is never held up by a slow effect.
   it('returns before a pending effect settles', () => {
-    runDetached(logger, () => new Promise(() => undefined), 'effect failed')
+    runDetached(logger, () => new Promise(() => undefined), 'afterLogin')
     expect(error).not.toHaveBeenCalled()
   })
 
-  // A rejection and a synchronous throw are both caught, and both log the label and the SHAPE
-  // of the error — never the text the failing party wrote.
+  // A rejection and a synchronous throw are both caught, and the event carries the hook and how it
+  // failed, never the text the failing party wrote.
   it.each([
-    ['a rejection', () => Promise.reject(new Error('secret=ABC123'))],
+    ['a rejection', () => Promise.reject(new Error('secret=ABC123')), 'rejected'],
     [
       'a synchronous throw',
       () => {
         throw new Error('secret=ABC123')
-      }
+      },
+      'threw'
     ]
-  ])('logs %s under the label without the error text', async (_name, run) => {
-    runDetached(logger, run, 'effect failed')
+  ])('logs %s as a failed hook without the error text', async (_name, run, how) => {
+    runDetached(logger, run, 'afterLogin')
     await drain()
     expect(error).toHaveBeenCalledTimes(1)
-    const line = String(error.mock.calls[0]?.[0])
-    expect(line.startsWith('effect failed: ')).toBe(true)
-    expect(line).not.toContain('ABC123')
+    expect(error).toHaveBeenCalledWith(eventOf('AUTH_HOOK_FAILED', { hook: 'afterLogin', how }))
+    expect(JSON.stringify(error.mock.calls)).not.toContain('ABC123')
   })
 })

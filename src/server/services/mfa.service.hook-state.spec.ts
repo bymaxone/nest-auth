@@ -23,6 +23,7 @@ import {
 import { encrypt } from '../crypto/aes-gcm'
 import { generateHotp, generateTotpSecret } from '../crypto/totp'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { expectEvent } from '../__tests__/log-events'
 import { BruteForceService } from './brute-force.service'
 import { MFA_COLLABORATORS } from './__tests__/mfa-collaborators'
 import { MfaService } from './mfa.service'
@@ -318,7 +319,7 @@ describe('MfaService — the account handed to the MFA hooks', () => {
         service.verifyAndEnable('user-1', code, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).resolves.toBeUndefined()
 
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('afterMfaEnabled hook threw'))
+      expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterMfaEnabled', how: 'threw' })
     })
 
     it('does not fail disable, and logs afterMfaDisabled', async () => {
@@ -331,7 +332,7 @@ describe('MfaService — the account handed to the MFA hooks', () => {
         service.disable('user-1', code, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).resolves.toBeUndefined()
 
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('afterMfaDisabled hook threw'))
+      expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterMfaDisabled', how: 'threw' })
     })
 
     it('does not fail regenerateRecoveryCodes, and logs the regeneration hook', async () => {
@@ -351,9 +352,10 @@ describe('MfaService — the account handed to the MFA hooks', () => {
         )
       ).resolves.toHaveProperty('recoveryCodes')
 
-      expect(error).toHaveBeenCalledWith(
-        expect.stringContaining('afterMfaRecoveryCodesRegenerated hook threw')
-      )
+      expectEvent(error, 'AUTH_HOOK_FAILED', {
+        hook: 'afterMfaRecoveryCodesRegenerated',
+        how: 'threw'
+      })
     })
   })
 })

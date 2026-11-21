@@ -37,7 +37,7 @@ export class WorkspaceEventsService {
     runDetached(
       this.logger,
       () => this.hooks.onWorkspaceEvent?.(event, context),
-      `onWorkspaceEvent hook failed for ${event.type}`
+      'onWorkspaceEvent'
     )
   }
 }

@@ -4,7 +4,7 @@
  * `afterRegister`, `afterLogin` and `afterEmailVerified` run after the account, the session or the
  * flag has been written. A hook declared `void` may throw before it returns a promise, and a throw
  * that escaped would answer a finished flow as a failure, which a caller might retry. Each flow
- * must still answer, and the failure must be logged by name. Kept apart from
+ * must still answer, and the failure must be logged as an event naming the hook. Kept apart from
  * `auth.service.spec.ts` because that file is over the size limit.
  *
  * @layer Test
@@ -15,6 +15,7 @@ import type { Request } from 'express'
 
 import { AuthService } from './auth.service'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { expectEvent } from '../__tests__/log-events'
 
 const USER = {
   id: 'user-1',
@@ -107,7 +108,7 @@ describe('AuthService with a hook that throws synchronously', () => {
 
     await expect(service.register(dto, REQUEST)).resolves.toBeDefined()
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('afterRegister hook threw'))
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterRegister', how: 'threw' }, ['hook broke'])
   })
 
   it('still answers login, and logs afterLogin', async () => {
@@ -116,7 +117,7 @@ describe('AuthService with a hook that throws synchronously', () => {
 
     await expect(service.login(dto, REQUEST)).resolves.toBeDefined()
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('afterLogin hook threw'))
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterLogin', how: 'threw' }, ['hook broke'])
   })
 
   it('still answers issueTokensForUserId, and logs afterLogin', async () => {
@@ -126,7 +127,7 @@ describe('AuthService with a hook that throws synchronously', () => {
       service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'jest')
     ).resolves.toBeDefined()
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('afterLogin hook threw'))
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterLogin', how: 'threw' }, ['hook broke'])
   })
 
   it('still answers verifyEmail, and logs afterEmailVerified', async () => {
@@ -136,6 +137,8 @@ describe('AuthService with a hook that throws synchronously', () => {
       service.verifyEmail('tenant-1', 'user@example.com', '123456', REQUEST)
     ).resolves.toBeUndefined()
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('afterEmailVerified hook threw'))
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterEmailVerified', how: 'threw' }, [
+      'hook broke'
+    ])
   })
 })

@@ -37,6 +37,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   fields; no event carries an email address, a provider name, a token or text a host or a store wrote. The no-op email provider logs which method was called and no address. A host logger
   that is asynchronous and rejects is the host's own unhandled rejection and ends the process unless the application
   handles it.
+  Every other line the library wrote is an event too: a failed hook or fire-and-forget step (`AUTH_HOOK_FAILED`), a
+  store or repository operation that failed (`AUTH_STORE_FAILED`, `AUTH_STORE_DEGRADED`), a stored record that does not
+  parse, a missing email provider, an unavailable breach check, a refused API-key route, an unhandled exception. They
+  carry the name of the hook or the operation from a closed set, and the library's description of the failure, never
+  the text of the error. Only three operator-guidance sentences that name no value remain as plain text. An account an
+  OAuth login creates now writes `AUTH_USER_REGISTERED` with `via: oauth`.
 - `rxjs` is declared as a peer dependency of the server entry. It is already required by `@nestjs/common`, and the
   interceptor that counts the observed routes imports it.
 

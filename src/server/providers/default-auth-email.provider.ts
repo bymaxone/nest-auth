@@ -47,7 +47,7 @@ import type {
   SessionAlertInfo,
   WorkspaceInviteData
 } from '../interfaces/email-provider.interface'
-import { describeChannelStatus } from '../utils/describe-error'
+import { logDelivery } from '../observability/log-event'
 
 /**
  * The delivery channel {@link DefaultAuthEmailProvider} sends through.
@@ -756,7 +756,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       // base64. With nothing consumer-authored left, there is nothing to name at this call site:
       // `redactSecrets`, `logSafe` and `safeLogLine` are all gone from it, because a line
       // assembled only from constants has no seam for a value to straddle.
-      this.logger.error(`delivery failed sending ${label}: ${describeChannelStatus(error)}`)
+      logDelivery(this.logger, label, error)
       // Log first, then honour the configured policy: a deployment on 'rethrow' wants the failure
       // to reach the caller that reacts to it, not to be absorbed here.
       //

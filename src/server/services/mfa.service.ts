@@ -367,7 +367,7 @@ export class MfaService {
             userAgent,
             sanitizedHeaders: {}
           }),
-        'afterMfaEnabled hook threw'
+        'afterMfaEnabled'
       )
     }
   }

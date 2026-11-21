@@ -8,6 +8,7 @@
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
+import { expectEvent } from '../__tests__/log-events'
 import { InvitationService } from './invitation.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
@@ -102,9 +103,9 @@ describe('InvitationService afterInvitationAccepted hook', () => {
 
     await expect(accept(service)).resolves.toBe(RESULT)
 
-    expect(logged).toHaveBeenCalledWith(
-      expect.stringContaining('afterInvitationAccepted hook threw')
-    )
+    expectEvent(logged, 'AUTH_HOOK_FAILED', { hook: 'afterInvitationAccepted', how: 'threw' }, [
+      'hook broke'
+    ])
   })
 
   it('answers the acceptance when the hook rejects, and logs it', async () => {
@@ -114,9 +115,9 @@ describe('InvitationService afterInvitationAccepted hook', () => {
     await expect(accept(service)).resolves.toBe(RESULT)
     await new Promise((resolve) => setImmediate(resolve))
 
-    expect(logged).toHaveBeenCalledWith(
-      expect.stringContaining('afterInvitationAccepted hook threw')
-    )
+    expectEvent(logged, 'AUTH_HOOK_FAILED', { hook: 'afterInvitationAccepted', how: 'rejected' }, [
+      'hook down'
+    ])
   })
 
   it('answers the acceptance without logging a failure when there is no hooks container', async () => {

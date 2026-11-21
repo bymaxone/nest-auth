@@ -490,12 +490,12 @@ describe('EmailChangeService', () => {
 
         await service.confirmChange({ token: TOKEN })
 
-        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-        expect(logged).toContain('notification to the previous address failed')
-        expect(logged).not.toContain(NEW_EMAIL)
-        expect(logged).not.toContain('rejected')
-        expect(logged).not.toContain('550')
-        expect(logged).toBe('confirmChange: notification to the previous address failed: <error>')
+        expectEvent(
+          loggerSpy,
+          'AUTH_DELIVERY_FAILED',
+          { kind: 'email_change_notice', detail: '<error>' },
+          [NEW_EMAIL, 'rejected', '550']
+        )
       } finally {
         loggerSpy.mockRestore()
       }
@@ -638,9 +638,10 @@ describe('EmailChangeService', () => {
       await expect(service.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
 
       expect(mockUserRepo.updateEmail).toHaveBeenCalled()
-      expect(errorSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
-        'notification to the previous address failed'
-      )
+      expectEvent(errorSpy, 'AUTH_DELIVERY_FAILED', {
+        kind: 'email_change_notice',
+        detail: '<error>'
+      })
       errorSpy.mockRestore()
     })
 

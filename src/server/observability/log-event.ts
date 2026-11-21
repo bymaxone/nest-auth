@@ -8,6 +8,8 @@ import type { LoggerService } from '@nestjs/common'
 
 import { AUTH_LOG_EVENTS } from './log-events'
 import type { AuthLogEvent } from './log-events'
+import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
+import { describeChannelStatus } from '../utils/describe-error'
 
 /** A field value: a closed string, a number or a flag; never an object a host or a store built. */
 export type LogFieldValue = string | number | boolean
@@ -36,4 +38,75 @@ export function logEvent(
   } catch {
     // The host's logger has no say in what the flow that logged does next.
   }
+}
+
+/** What can fail beside a flow: a hook of the host, or a step the library runs without awaiting. */
+export type HookStep =
+  keyof IAuthHooks | 'updateLastLogin' | 'accessDenied' | 'maxSessionsResolver' | 'onApiKeyRequest'
+
+/** The named steps whose failure is reported as a store or repository event; the set is closed. */
+export type StoreOperation =
+  | 'account_status_cache_write'
+  | 'api_key_last_used_flush'
+  | 'api_key_lookup'
+  | 'cache_invalidation'
+  | 'dead_member_prune'
+  | 'grace_pointer_prune'
+  | 'invitation_withdraw'
+  | 'logout_marker_clear'
+  | 'logout_owner_keep'
+  | 'mfa_lock_release'
+  | 'mfa_reencryption'
+  | 'new_session_user_lookup'
+  | 'rehash_on_verify'
+  | 'reset_account_lookup'
+  | 'reset_cooldown_release'
+  | 'reset_cooldown_store'
+  | 'reset_issue'
+  | 'session_cleanup'
+  | 'session_detail_read'
+  | 'session_detail_rotation'
+  | 'workspace_cache_read'
+  | 'workspace_cache_write'
+
+/** Writes that a hook or a fire-and-forget step failed, by its name and how it failed. */
+export function logHook(
+  logger: Pick<LoggerService, 'log' | 'warn' | 'error'>,
+  hook: HookStep,
+  how: 'threw' | 'rejected'
+): void {
+  logEvent(logger, 'AUTH_HOOK_FAILED', { hook, how })
+}
+
+/**
+ * Writes that a named store or repository step failed, with the library's description of the failure and never the
+ * text of the error.
+ *
+ * @param event - `AUTH_STORE_FAILED` when the flow reports it, `AUTH_STORE_DEGRADED` when the flow goes on without it.
+ */
+export function logStore(
+  logger: Pick<LoggerService, 'log' | 'warn' | 'error'>,
+  event: 'AUTH_STORE_FAILED' | 'AUTH_STORE_DEGRADED',
+  operation: StoreOperation,
+  err: unknown
+): void {
+  logEvent(logger, event, { operation, detail: describeChannelStatus(err) })
+}
+
+/** Writes that a notification could not be delivered: which kind, and the description of the failure. */
+export function logDelivery(
+  logger: Pick<LoggerService, 'log' | 'warn' | 'error'>,
+  kind: string,
+  err: unknown
+): void {
+  logEvent(logger, 'AUTH_DELIVERY_FAILED', { kind, detail: describeChannelStatus(err) })
+}
+
+/** Writes that an exception reached a filter of the library, on which surface, with the description of it. */
+export function logUnhandled(
+  logger: Pick<LoggerService, 'log' | 'warn' | 'error'>,
+  surface: 'http' | 'ws',
+  err: unknown
+): void {
+  logEvent(logger, 'AUTH_UNHANDLED_EXCEPTION', { surface, detail: describeChannelStatus(err) })
 }

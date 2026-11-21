@@ -7,11 +7,14 @@ import type { Logger } from '@nestjs/common'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { expectEvent } from '../__tests__/log-events'
 import type { AuthRedisService } from '../redis/auth-redis.service'
 import { rememberPendingLogout, settlePendingLogout } from './pending-logout'
 
 const KEY = 'lp:abc'
 const OWNER = { userId: 'user-1', tenantId: 'tenant-1' }
+const KEPT = { operation: 'logout_owner_keep', detail: '<error>' }
+const CLEARED = { operation: 'logout_marker_clear', detail: '<error>' }
 const REFUSED = new Error('READONLY You can not write against a read only replica')
 
 describe('pending logout marker', () => {
@@ -19,6 +22,7 @@ describe('pending logout marker', () => {
   const logger = { warn: jest.fn() }
   const asRedis = redis as unknown as AuthRedisService
   const asLogger = logger as unknown as Logger
+  const warned: jest.SpyInstance = logger.warn
 
   beforeEach(() => {
     jest.resetAllMocks()
@@ -62,10 +66,7 @@ describe('pending logout marker', () => {
       ).resolves.toBeUndefined()
 
       expect(logger.warn).toHaveBeenCalledTimes(1)
-      const logged = String(logger.warn.mock.calls[0]?.[0])
-      expect(logged).toContain('the owner could not be kept for a retry')
-      expect(logged).not.toContain(KEY)
-      expect(logged).not.toContain('user-1')
+      expectEvent(warned, 'AUTH_STORE_DEGRADED', KEPT, [KEY, 'user-1'])
     })
   })
 
@@ -103,9 +104,7 @@ describe('pending logout marker', () => {
         error: { code: AUTH_ERROR_CODES.INTERNAL }
       })
       expect(logger.warn).toHaveBeenCalledTimes(1)
-      const logged = String(logger.warn.mock.calls[0]?.[0])
-      expect(logged).toContain('the retry marker could not be cleared')
-      expect(logged).not.toContain(KEY)
+      expectEvent(warned, 'AUTH_STORE_DEGRADED', CLEARED, [KEY])
       expect(redis.get).not.toHaveBeenCalled()
       expect(redis.set).not.toHaveBeenCalled()
     })
@@ -175,10 +174,7 @@ describe('pending logout marker', () => {
 
         await refusedCode()
 
-        const logged = logger.warn.mock.calls.map((call) => String(call[0])).join('\n')
-        expect(logged).toContain('the retry marker could not be cleared')
-        expect(logged).not.toContain(KEY)
-        expect(logged).not.toContain('user-1')
+        expectEvent(warned, 'AUTH_STORE_DEGRADED', CLEARED, [KEY, 'user-1'])
       })
     })
   })

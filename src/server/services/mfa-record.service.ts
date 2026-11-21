@@ -26,9 +26,9 @@ import type {
   IPlatformUserRepository
 } from '../interfaces/platform-user-repository.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
+import { logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeChannelStatus } from '../utils/describe-error'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { assertDashboardTenant } from '../utils/mfa-plane-tenant'
 import { encryptMfaSecret, holdsSecret, type MfaSecretKeys } from '../utils/mfa-secret-cipher'
@@ -158,9 +158,7 @@ export class MfaRecordService {
         }
       })
     } catch (err: unknown) {
-      this.logger.error(
-        `re-encryption under the current MFA key failed: ${describeChannelStatus(err)}`
-      )
+      logStore(this.logger, 'AUTH_STORE_FAILED', 'mfa_reencryption', err)
     }
   }
 
@@ -268,9 +266,7 @@ export class MfaRecordService {
     try {
       await this.redis.eval(RELEASE_LOCK_LUA, [lockKey], [lockToken])
     } catch (err: unknown) {
-      this.logger.warn(
-        `MFA transition lock release failed, the lock expires on its own: ${describeChannelStatus(err)}`
-      )
+      logStore(this.logger, 'AUTH_STORE_DEGRADED', 'mfa_lock_release', err)
     }
   }
 

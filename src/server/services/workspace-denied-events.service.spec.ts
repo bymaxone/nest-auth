@@ -16,6 +16,7 @@ import { WorkspaceAccessRefusal } from '../errors/workspace-access-refusal'
 import type { WorkspaceRefusalReason } from '../errors/workspace-access-refusal'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 import type { AuthRedisService } from '../redis/auth-redis.service'
+import { expectEvent } from '../__tests__/log-events'
 
 const REF = { tenantId: 't1', userId: 'u1', workspaceId: 'w1', surface: 'http' as const }
 
@@ -99,10 +100,11 @@ async function deny(
 
 describe('WorkspaceDeniedEventsService', () => {
   let warn: jest.SpyInstance
+  let error: jest.SpyInstance
 
   beforeEach(() => {
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
-    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
   })
 
   afterEach(() => {
@@ -380,9 +382,7 @@ describe('WorkspaceDeniedEventsService', () => {
 
     await expect(deny(service)).resolves.toBeUndefined()
 
-    expect(jest.mocked(Logger.prototype.error)).toHaveBeenCalledWith(
-      expect.stringMatching(/^access\.denied was not reported: /)
-    )
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'accessDenied', how: 'rejected' })
   })
 
   it('survives a failure while reading the suppressed count', async () => {

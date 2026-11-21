@@ -25,11 +25,10 @@ import type {
 } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
-import { logEvent } from '../observability/log-event'
+import { logEvent, logHook } from '../observability/log-event'
 import { markingPlane, observed } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
-import { describeChannelStatus } from '../utils/describe-error'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { serializeSession } from '../utils/serialize-session'
 import { dashboardSessionDetail, platformSessionExtra } from '../utils/session-detail'
@@ -535,13 +534,11 @@ export class TokenManagerService {
           { userId, familyId },
           { ...createEmptyHookContext(), plane, ip, userAgent }
         )
-      ).catch((err: unknown) => {
-        this.logger.error(`onRefreshTokenReuseDetected hook threw: ${describeChannelStatus(err)}`)
+      ).catch(() => {
+        logHook(this.logger, 'onRefreshTokenReuseDetected', 'rejected')
       })
-    } catch (err: unknown) {
-      this.logger.error(
-        `onRefreshTokenReuseDetected hook threw synchronously: ${describeChannelStatus(err)}`
-      )
+    } catch {
+      logHook(this.logger, 'onRefreshTokenReuseDetected', 'threw')
     }
   }
 
@@ -743,7 +740,7 @@ export class TokenManagerService {
     try {
       parsed = JSON.parse(json)
     } catch {
-      this.logger.warn('parseSession: malformed session JSON in Redis')
+      logEvent(this.logger, 'AUTH_RECORD_INVALID', { record: 'session_json' })
       // Stryker disable CallExpression: equivalent — the warn above has already been emitted, and
       // with this throw deleted `parsed` stays undefined, so the shape check immediately below
       // refuses the record with the identical AuthException and code. No test can separate the

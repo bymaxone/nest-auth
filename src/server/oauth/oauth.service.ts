@@ -439,14 +439,14 @@ export class OAuthService {
     runDetached(
       this.logger,
       () => this.userRepo.updateLastLogin({ id: safeUser.id, tenantId: safeUser.tenantId }),
-      'oauth: updateLastLogin failed'
+      'updateLastLogin'
     )
     if (this.hooks?.afterLogin) {
       const afterLogin = this.hooks.afterLogin.bind(this.hooks)
       runDetached(
         this.logger,
         () => afterLogin(safeUser, { ...hookContext, userId: safeUser.id }),
-        'oauth: afterLogin hook threw'
+        'afterLogin'
       )
     }
     return result
@@ -613,7 +613,7 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
     }
 
-    return this.userRepo.createWithOAuth({
+    const created = await this.userRepo.createWithOAuth({
       email: profile.email,
       name: derivedName,
       tenantId,
@@ -625,6 +625,12 @@ export class OAuthService {
       oauthProvider: provider,
       oauthProviderId: profile.providerId
     })
+    logEvent(this.logger, 'AUTH_USER_REGISTERED', {
+      userId: created.id,
+      tenantId: created.tenantId,
+      via: 'oauth'
+    })
+    return created
   }
 
   /**

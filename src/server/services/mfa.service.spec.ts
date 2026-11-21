@@ -4165,9 +4165,8 @@ describe('MfaService', () => {
       expect(decrypt(update.mfaSecret, VALID_ENCRYPTION_KEY)).toBe(base32)
     })
 
-    // Scenario: the re-encryption write fails. Expected: the challenge still succeeded. Why:
-    // the retired key still opens the secret, so a failed migration costs nothing but the
-    // migration — failing the login over it would turn housekeeping into an outage.
+    // Scenario: the re-encryption write fails. Expected: the challenge still succeeded. Why: the
+    // retired key still opens the secret, so a failed migration costs only the migration.
     it('should not fail the challenge when the re-encryption write fails', async () => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
       const { encrypt } = await import('../crypto/aes-gcm')
@@ -4190,9 +4189,10 @@ describe('MfaService', () => {
       ).resolves.toBe(ROTATION_AUTH_RESULT)
       await new Promise((resolve) => setImmediate(resolve))
 
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('re-encryption under the current MFA key failed: ')
-      )
+      expectEvent(errorSpy, 'AUTH_STORE_FAILED', {
+        operation: 'mfa_reencryption',
+        detail: '<error>'
+      })
       errorSpy.mockRestore()
     })
 

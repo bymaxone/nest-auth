@@ -599,8 +599,8 @@ describe('InvitationService', () => {
         service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
       ).rejects.toThrow(AuthException)
       // The invitee gets the same code as for an expired token, by design. The operator gets
-      // the one line that says the record was corrupted rather than stale.
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('not parseable JSON'))
+      // the one event that says the record was corrupted rather than stale.
+      expectEvent(warnSpy, 'AUTH_RECORD_INVALID', { record: 'stored_invitation' })
       warnSpy.mockRestore()
     })
 
@@ -904,23 +904,23 @@ describe('InvitationService', () => {
       ).resolves.toBe(AUTH_RESULT)
     })
 
-    // Verifies that a throwing afterInvitationAccepted hook is logged and does not propagate.
+    // A rejecting afterInvitationAccepted hook is logged by name and does not propagate.
     it('should log the error and still return AuthResult when afterInvitationAccepted hook throws', async () => {
-      // Arrange
       mockHooks.afterInvitationAccepted.mockRejectedValue(new Error('hook failed'))
       const dto = { token: VALID_TOKEN, name: 'Invited User', password: 'Secure123!' }
-      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
 
       // Act — service must resolve even though the hook will reject
       const result = await service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
 
       // Flush microtask queue so the fire-and-forget .catch handler runs
       await new Promise<void>((resolve) => setImmediate(resolve))
-
-      // Assert
       expect(result).toBe(AUTH_RESULT)
-      expect(loggerSpy).toHaveBeenCalledWith('afterInvitationAccepted hook threw: <error>')
-      loggerSpy.mockRestore()
+      expectEvent(logged, 'AUTH_HOOK_FAILED', {
+        hook: 'afterInvitationAccepted',
+        how: 'rejected'
+      })
+      logged.mockRestore()
     })
   })
 

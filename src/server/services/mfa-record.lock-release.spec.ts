@@ -10,6 +10,7 @@ import { Logger } from '@nestjs/common'
 
 import { MfaRecordService } from './mfa-record.service'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { expectEvent } from '../__tests__/log-events'
 
 const OPTIONS = { hmacKey: 'k'.repeat(48), blockedStatuses: [] } as never
 const USER = { id: 'u1', tenantId: 't1', status: 'active', mfaEnabled: false }
@@ -78,10 +79,9 @@ describe('MfaRecordService.transition lock release', () => {
     )
   })
 
-  // Scenario: a release that fails. Expected: a warning that says the lock will expire, and nothing
-  // from the error's text beyond what the log helper allows. Why: the failure is not silent, and a
-  // store's message may carry a host name.
-  it('says in the log that the lock will expire on its own', async () => {
+  // Scenario: a release that fails. Expected: one degraded-store event and nothing from the error's
+  // text. Why: the failure is not silent, and a store's message may carry a host name.
+  it('logs a degraded store when the lock cannot be released', async () => {
     const { service, redis } = build()
     redis.eval.mockRejectedValue(new Error('connection lost'))
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation()
@@ -89,7 +89,9 @@ describe('MfaRecordService.transition lock release', () => {
     await service.transition('dashboard', 'u1', 't1', () => WRITE)
 
     expect(warn).toHaveBeenCalledTimes(1)
-    expect(String(warn.mock.calls[0]?.[0])).toMatch(/expires on its own/)
+    expectEvent(warn, 'AUTH_STORE_DEGRADED', { operation: 'mfa_lock_release', detail: '<error>' }, [
+      'connection lost'
+    ])
   })
 
   // Scenario: an ordinary release. Expected: one compare-and-delete with this call's nonce and no

@@ -5,6 +5,7 @@ import { Reflector } from '@nestjs/core'
 import { API_KEY_SCOPES_KEY, ApiKeyScopes } from '../decorators/api-key-scopes.decorator'
 import { formatApiKey } from '../crypto/api-key'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { eventOf } from '../__tests__/log-events'
 import type { ApiKeyAccessEvent, HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import { ApiKeyVerifierService } from '../services/api-key-verifier.service'
 import {
@@ -90,7 +91,7 @@ interface Harness {
   guard: ApiKeyGuard
   repo: MemoryApiKeyRepository
   events: Array<{ event: ApiKeyAccessEvent; context: HookContext }>
-  errors: string[]
+  errors: unknown[]
 }
 
 function build(
@@ -113,9 +114,9 @@ function build(
           }
         }
       : options.hooks
-  const errors: string[] = []
+  const errors: unknown[] = []
   jest.spyOn(Logger.prototype, 'error').mockImplementation((m) => {
-    errors.push(String(m))
+    errors.push(m)
   })
   return { guard: new ApiKeyGuard(new Reflector(), verifier, opts, hooks), repo, events, errors }
 }
@@ -252,8 +253,10 @@ describe('ApiKeyGuard', () => {
         await codeOf(guard.canActivate(contextFor(Plain, 'read', request(SENTINEL_KEY))))
       ).toBe(AUTH_ERROR_CODES.INTERNAL)
       expect(events[0]?.event).toMatchObject({ outcome: 'denied', reason: 'store_error' })
-      expect(errors.join('\n')).not.toContain(SENTINEL_SECRET)
-      expect(errors[0]).toContain('api-key: key store unavailable cause=')
+      expect(JSON.stringify(errors)).not.toContain(SENTINEL_SECRET)
+      expect(errors).toEqual([
+        eventOf('AUTH_STORE_FAILED', { operation: 'api_key_lookup', detail: '<error>' })
+      ])
     })
   })
 
@@ -281,19 +284,20 @@ describe('ApiKeyGuard', () => {
       expect(repo.calls).toEqual([])
     })
 
-    // The verb is client-supplied and the pattern is host-authored; neither may break the line.
-    it('keeps the log line to one line whatever the method and route contain', async () => {
+    // The verb is client-supplied and the pattern is host-authored; neither reaches the log.
+    it('writes nothing of the method or the route to the log', async () => {
       const { guard, errors } = build()
       const req = request(SENTINEL_KEY, {
         method: 'GET\nforged: entry',
         route: { path: '/a\r\nb' }
       })
       await codeOf(guard.canActivate(contextFor(Undeclared, 'bare', req)))
-      expect(errors[0]).not.toMatch(/[\r\n]/)
+      expect(errors).toEqual([eventOf('AUTH_API_KEY_REFUSED', { reason: 'unscoped_route' })])
+      expect(JSON.stringify(errors)).not.toContain('forged')
     })
 
-    // It is an event too, and the operator is told which route to fix.
-    it('is audited and logged with the route', async () => {
+    // It is an audit event too, and the log records the refusal of an unscoped route.
+    it('is audited and logged as a refused unscoped route', async () => {
       const { guard, events, errors } = build()
       await codeOf(guard.canActivate(contextFor(Undeclared, 'bare', request(SENTINEL_KEY))))
       expect(events[0]?.event).toMatchObject({
@@ -303,7 +307,7 @@ describe('ApiKeyGuard', () => {
         route: '/videos/:id',
         requiredScopes: []
       })
-      expect(errors[0]).toContain('GET /videos/:id is guarded but declares no scopes; refused')
+      expect(errors).toEqual([eventOf('AUTH_API_KEY_REFUSED', { reason: 'unscoped_route' })])
     })
   })
 
@@ -474,27 +478,28 @@ describe('ApiKeyGuard', () => {
           AUTH_ERROR_CODES.INTERNAL
         )
         expect(req.apiKey).toBeUndefined()
-        expect(errors.join('\n')).toContain('auditMode is required but no onApiKeyRequest hook')
+        expect(errors).toEqual([eventOf('AUTH_API_KEY_REFUSED', { reason: 'audit_hook_missing' })])
       })
     })
 
     describe('in best-effort mode', () => {
       // A failing hook never changes the answer, however it fails.
       it.each([
-        ['rejects', () => Promise.reject(new Error('siem down'))],
+        ['rejects', () => Promise.reject(new Error('siem down')), 'rejected'],
         [
           'throws synchronously',
           () => {
             throw new Error('siem down')
-          }
+          },
+          'threw'
         ]
-      ])('admits the request when the hook %s', async (_name, onApiKeyRequest) => {
+      ])('admits the request when the hook %s', async (_name, onApiKeyRequest, how) => {
         const { guard, errors } = build({ hooks: { onApiKeyRequest } })
         await expect(
           guard.canActivate(contextFor(Plain, 'read', request(SENTINEL_KEY)))
         ).resolves.toBe(true)
         await new Promise((resolve) => setImmediate(resolve))
-        expect(errors.join('\n')).toContain('audit hook failed')
+        expect(errors).toEqual([eventOf('AUTH_HOOK_FAILED', { hook: 'onApiKeyRequest', how })])
       })
 
       // The request does not wait for a slow hook.
@@ -540,7 +545,9 @@ describe('ApiKeyGuard', () => {
           AUTH_ERROR_CODES.INTERNAL
         )
         expect(req.apiKey).toBeUndefined()
-        expect(errors.join('\n')).toContain('audit hook failed')
+        expect(errors).toEqual([
+          eventOf('AUTH_HOOK_FAILED', { hook: 'onApiKeyRequest', how: 'threw' })
+        ])
       })
 
       // A refusal stays the refusal it was even when its own audit row cannot be written.
@@ -581,9 +588,9 @@ describe('ApiKeyGuard', () => {
       ['undeclared route', {}, Undeclared, 'bare', undefined],
       ['malformed', {}, Plain, 'read', `${SENTINEL_KEY}!`]
     ])('%s', async (_name, patch, cls, method, header) => {
-      const capturedLogs: string[] = []
+      const capturedLogs: unknown[] = []
       jest.spyOn(Logger.prototype, 'warn').mockImplementation((m) => {
-        capturedLogs.push(String(m))
+        capturedLogs.push(m)
       })
       const { guard, events, errors } = build({ rows: [makeRow(patch)] })
       const req = request(header ?? SENTINEL_KEY)

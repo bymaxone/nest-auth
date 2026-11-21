@@ -18,7 +18,7 @@ import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { AuthResult } from '../interfaces/auth-result.interface'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
-import { logEvent } from '../observability/log-event'
+import { logEvent, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -427,7 +427,7 @@ export class InvitationService {
    */
   private async withdrawRecord(tokenKey: string): Promise<void> {
     await this.redis.del(tokenKey).catch((err: unknown) => {
-      this.logger.warn(`invite: could not withdraw the record — ${describeChannelStatus(err)}`)
+      logStore(this.logger, 'AUTH_STORE_DEGRADED', 'invitation_withdraw', err)
     })
   }
 
@@ -686,7 +686,7 @@ export class InvitationService {
       // A record that exists but does not parse is corrupted storage, not an expired or
       // forged invitation — the caller cannot tell the two apart (both answer the same code)
       // and only this line does.
-      this.logger.warn('acceptInvitation: stored invitation is not parseable JSON')
+      logEvent(this.logger, 'AUTH_RECORD_INVALID', { record: 'stored_invitation' })
       // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone the unparsed record fails `isStoredInvitation` on the next line and raises the identical INVALID_INVITATION_TOKEN.
       throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
     }
@@ -774,7 +774,7 @@ export class InvitationService {
           userAgent,
           sanitizedHeaders: sanitizeHeaders(headers)
         }),
-      'afterInvitationAccepted hook threw'
+      'afterInvitationAccepted'
     )
 
     return result

@@ -36,6 +36,10 @@ jest.mock('../utils/sleep', () => ({ sleep: jest.fn().mockResolvedValue(undefine
 
 const mockSleep = sleep as jest.MockedFunction<typeof sleep>
 
+/** Asserts that `spy` received the hook-failure event, and that none of `absent` reached it. */
+const expectHook = (spy: jest.SpyInstance, hook: string, how: string, absent: string[] = []) =>
+  expectEvent(spy, 'AUTH_HOOK_FAILED', { hook, how }, absent)
+
 /** The arguments `issueTokens` receives from a caller that presented a credential. */
 const provedArgs = (user: unknown, ip: string, userAgent: string): unknown[] => [
   user,
@@ -317,9 +321,12 @@ describe('AuthService', () => {
     it('should log the registered userId and tenantId on success', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       await service.register(dto, mockReq)
-      expectEvent(logSpy, 'AUTH_USER_REGISTERED', { userId: USER.id, tenantId: 'tenant-1' }, [
-        'user@example.com'
-      ])
+      expectEvent(
+        logSpy,
+        'AUTH_USER_REGISTERED',
+        { userId: USER.id, tenantId: 'tenant-1', via: 'password' },
+        ['user@example.com']
+      )
       logSpy.mockRestore()
     })
 
@@ -530,9 +537,7 @@ describe('AuthService', () => {
         mockReq
       )
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        'sendVerificationOtp: no email provider configured — OTP not sent'
-      )
+      expectEvent(warnSpy, 'AUTH_PROVIDER_MISSING', { flow: 'email_verification_otp' })
       expect(mockOtpService.generate).not.toHaveBeenCalled()
       warnSpy.mockRestore()
     })
@@ -547,7 +552,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('afterRegister hook threw: '))
+      expectHook(loggerSpy, 'afterRegister', 'rejected', ['hook error'])
       loggerSpy.mockRestore()
     })
 
@@ -782,17 +787,10 @@ describe('AuthService', () => {
       await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
       await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
 
-      const mismatchWarnings = warnSpy.mock.calls.filter(([line]) =>
-        String(line).includes('outside the requested tenant')
-      )
-      expect(mismatchWarnings).toHaveLength(1)
-      // The line has to name what is actually wrong, which is the repository's own contract — not
-      // the request. The symptom is "logins fail for a valid password"; the cause is a
-      // `findByEmail` that ignores the argument it was given. Without the second clause the
-      // operator is told a tenant mismatch happened and left to guess where.
-      expect(String(mismatchWarnings[0]?.[0])).toContain(
-        'IUserRepository.findByEmail scopes by its tenantId argument'
-      )
+      expect(
+        eventsReceived(warnSpy).filter((event) => event === 'AUTH_TENANT_SCOPE_VIOLATED')
+      ).toHaveLength(1)
+      expectEvent(warnSpy, 'AUTH_TENANT_SCOPE_VIOLATED', {}, ['someone-elses-tenant'])
       warnSpy.mockRestore()
     })
 
@@ -1078,12 +1076,13 @@ describe('AuthService', () => {
     it.each([
       [
         'throws synchronously',
+        'threw',
         () => {
           throw new Error('siem down')
         }
       ],
-      ['rejects', () => Promise.reject(new Error('siem down'))]
-    ])('still locks out when the onLockout hook %s', async (_label, impl) => {
+      ['rejects', 'rejected', () => Promise.reject(new Error('siem down'))]
+    ])('still locks out when the onLockout hook %s', async (_label, how, impl) => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       mockPasswordService.compare.mockResolvedValue(false)
       mockBruteForce.isLockedOut.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
@@ -1094,9 +1093,7 @@ describe('AuthService', () => {
       await Promise.resolve()
       await Promise.resolve()
 
-      // The hook name reaches the log, which is the only thing that tells an operator WHICH
-      // hook is down when several are wired.
-      expect(errorSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain('onLockout')
+      expectEvent(errorSpy, 'AUTH_HOOK_FAILED', { hook: 'onLockout', how }, ['siem down'])
       errorSpy.mockRestore()
     })
 
@@ -1113,9 +1110,7 @@ describe('AuthService', () => {
       await Promise.resolve()
       await Promise.resolve()
 
-      expect(errorSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
-        'onLoginFailed hook threw'
-      )
+      expectHook(errorSpy, 'onLoginFailed', 'rejected', ['siem unreachable'])
       errorSpy.mockRestore()
     })
 
@@ -1391,15 +1386,11 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('updateLastLogin failed: '))
+      expectHook(loggerSpy, 'updateLastLogin', 'rejected', ['db error'])
       loggerSpy.mockRestore()
     })
 
-    // The redaction list on that line is the only reason it names a value, so something has to
-    // prove it removes one. A repository quoting the parameter it failed on is the ordinary shape
-    // — an ORM error routinely carries the failing query's arguments — and `user.id` is the single
-    // value this call passed it, which is what makes naming it a claim this site can honestly
-    // make. Without this the list was unobservable: emptying it changed no assertion.
+    // A repository quoting the parameter it failed on is the ordinary ORM shape; the id must not reach the log.
     it('removes the id it handed the repository from an error that quotes it', async () => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       mockUserRepo.updateLastLogin.mockRejectedValue(
@@ -1409,9 +1400,7 @@ describe('AuthService', () => {
       await service.login(dto, mockReq)
       await new Promise((r) => setImmediate(r))
 
-      const logged = String(loggerSpy.mock.calls.at(-1)?.[0])
-      expect(logged).toContain('updateLastLogin failed: ')
-      expect(logged).not.toContain(USER.id)
+      expectHook(loggerSpy, 'updateLastLogin', 'rejected', [USER.id])
       loggerSpy.mockRestore()
     })
 
@@ -1425,7 +1414,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('afterLogin hook threw: '))
+      expectHook(loggerSpy, 'afterLogin', 'rejected', ['hook error'])
       loggerSpy.mockRestore()
     })
 
@@ -1723,14 +1712,11 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('afterLogout hook threw: '))
+      expectHook(loggerSpy, 'afterLogout', 'rejected', ['hook error'])
       loggerSpy.mockRestore()
     })
 
-    // Same duty on the hook path. `afterLogout(userId, createEmptyHookContext())` hands over
-    // exactly one value and an empty context, which is why this is one of the three sites that
-    // may still name what it passed rather than going opaque — and naming it only means something
-    // if a test drives an error that contains it.
+    // An error quoting the account id handed to the hook must not carry it into the log.
     it('removes the id it handed the hook from an error that quotes it', async () => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
@@ -1745,9 +1731,7 @@ describe('AuthService', () => {
       await service.logout('access.token', 'raw-refresh')
       await new Promise((r) => setImmediate(r))
 
-      const logged = String(loggerSpy.mock.calls.at(-1)?.[0])
-      expect(logged).toContain('afterLogout hook threw: ')
-      expect(logged).not.toContain('user-1')
+      expectHook(loggerSpy, 'afterLogout', 'rejected', ['user-1'])
       loggerSpy.mockRestore()
     })
 
@@ -1779,9 +1763,7 @@ describe('AuthService', () => {
 
       await expect(service.logout('access.jwt', 'raw-refresh')).resolves.toBe('real-owner')
 
-      const logged = String(loggerSpy.mock.calls.at(-1)?.[0])
-      expect(logged).toContain('afterLogout hook threw synchronously: ')
-      expect(logged).not.toContain('real-owner')
+      expectHook(loggerSpy, 'afterLogout', 'threw', ['real-owner'])
       loggerSpy.mockRestore()
     })
   })
@@ -2328,7 +2310,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('updateLastLogin failed: '))
+      expectHook(loggerSpy, 'updateLastLogin', 'rejected', ['db error'])
       loggerSpy.mockRestore()
     })
 
@@ -2347,9 +2329,7 @@ describe('AuthService', () => {
       await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       await new Promise((r) => setImmediate(r))
 
-      const logged = String(loggerSpy.mock.calls.at(-1)?.[0])
-      expect(logged).toContain('updateLastLogin failed: ')
-      expect(logged).not.toContain(USER.id)
+      expectHook(loggerSpy, 'updateLastLogin', 'rejected', [USER.id])
       loggerSpy.mockRestore()
     })
 
@@ -2371,7 +2351,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('afterLogin hook threw: '))
+      expectHook(loggerSpy, 'afterLogin', 'rejected', ['hook error'])
       loggerSpy.mockRestore()
     })
 
@@ -2577,13 +2557,13 @@ describe('AuthService', () => {
         tenantId: USER.tenantId,
         verified: true
       })
-      const logged = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')
-      expect(logged).toContain('verifyEmail: cache invalidation failed')
-      // The account id is passed to `describeError` as a value to redact, so a Redis client that
-      // echoes the key it failed on cannot put a real user id into a log line. Pinned by asserting
-      // the id is ABSENT: asserting only the prefix leaves the redaction list free to be emptied.
-      expect(logged).not.toContain(USER.id)
-      expect(logged).toContain('<redacted>')
+      // A Redis client that echoes the key it failed on must not put a user id into the log.
+      expectEvent(
+        errSpy,
+        'AUTH_STORE_FAILED',
+        { operation: 'cache_invalidation', detail: '<error>' },
+        [USER.id]
+      )
       errSpy.mockRestore()
     })
 
@@ -2636,9 +2616,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith(
-        expect.stringContaining('afterEmailVerified hook threw: ')
-      )
+      expectHook(loggerSpy, 'afterEmailVerified', 'rejected', ['hook error'])
       loggerSpy.mockRestore()
     })
   })
@@ -3069,7 +3047,7 @@ describe('AuthService', () => {
       // SESSION_NOT_FOUND must be swallowed silently — the cleanup-failed warning must NOT fire.
       // Kills the `if (errCode !== SESSION_NOT_FOUND)` -> `if (true)` ConditionalExpression
       // mutant (line 305), which would warn for the SESSION_NOT_FOUND case too.
-      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('session cleanup failed'))
+      expect(eventsReceived(warnSpy)).not.toContain('AUTH_STORE_DEGRADED')
       warnSpy.mockRestore()
     })
 
@@ -3088,7 +3066,10 @@ describe('AuthService', () => {
       await sessionEnabledService.logout('access.jwt', 'raw-refresh-token')
 
       // Assert — warning is logged but logout still completes without throwing
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session cleanup failed'))
+      expectEvent(warnSpy, 'AUTH_STORE_DEGRADED', {
+        operation: 'session_cleanup',
+        detail: '<error>'
+      })
       warnSpy.mockRestore()
     })
 
@@ -3106,7 +3087,10 @@ describe('AuthService', () => {
       await sessionEnabledService.logout('access.jwt', 'raw-refresh-token')
 
       // Assert — warning is logged for any non-SESSION_NOT_FOUND rejection
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session cleanup failed'))
+      expectEvent(warnSpy, 'AUTH_STORE_DEGRADED', {
+        operation: 'session_cleanup',
+        detail: '<error>'
+      })
       warnSpy.mockRestore()
     })
 
@@ -3155,9 +3139,10 @@ describe('AuthService', () => {
       ).resolves.not.toThrow()
 
       await new Promise((r) => setImmediate(r))
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('session detail rotation failed')
-      )
+      expectEvent(warnSpy, 'AUTH_STORE_DEGRADED', {
+        operation: 'session_detail_rotation',
+        detail: '<error>'
+      })
       warnSpy.mockRestore()
     })
   })
@@ -3423,9 +3408,10 @@ describe('AuthService', () => {
       await expect(service.login(dto, mockReq)).resolves.toBeDefined()
       await new Promise((resolve) => setImmediate(resolve))
 
-      expect(errorSpy).toHaveBeenCalledWith(
-        'rehash on verify failed — the stored hash is unchanged: <error>'
-      )
+      expectEvent(errorSpy, 'AUTH_STORE_FAILED', {
+        operation: 'rehash_on_verify',
+        detail: '<error>'
+      })
       errorSpy.mockRestore()
     })
   })

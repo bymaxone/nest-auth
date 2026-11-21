@@ -19,6 +19,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { expectEvent } from '../__tests__/log-events'
 import { BruteForceService } from './brute-force.service'
 import { OtpService } from './otp.service'
 import { PasswordResetService } from './password-reset.service'
@@ -93,6 +94,6 @@ describe('PasswordResetService with a hook that throws synchronously', () => {
       undefined
     )
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('afterPasswordReset hook threw'))
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterPasswordReset', how: 'threw' })
   })
 })

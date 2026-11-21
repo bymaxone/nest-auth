@@ -17,7 +17,7 @@ import type {
   IUserRepository,
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
-import { logEvent } from '../observability/log-event'
+import { logEvent, logHook, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { runDetached } from '../utils/run-detached'
@@ -369,11 +369,11 @@ export class SessionService {
           runDetached(
             this.logger,
             () => onNewSession(toSafeUser(user), minimalSessionInfo, context),
-            'onNewSession hook threw'
+            'onNewSession'
           )
         })
         .catch((err: unknown) => {
-          this.logger.error(`onNewSession hook — findById failed: ${describeChannelStatus(err)}`)
+          logStore(this.logger, 'AUTH_STORE_FAILED', 'new_session_user_lookup', err)
         })
     }
 
@@ -413,7 +413,7 @@ export class SessionService {
     void this.redis
       .pruneExpiredGraceMembers(this.indexKey(userId, tenantId), 'rp:')
       .catch((err: unknown) => {
-        this.logger.warn(`listSessions: grace-pointer prune failed: ${describeChannelStatus(err)}`)
+        logStore(this.logger, 'AUTH_STORE_DEGRADED', 'grace_pointer_prune', err)
       })
 
     const members = await this.redis.smembers(this.indexKey(userId, tenantId))
@@ -443,9 +443,7 @@ export class SessionService {
     void this.redis
       .pruneDeadMembers(this.indexKey(userId, tenantId), staleKeys)
       .catch((err: unknown) => {
-        this.logger.error(
-          `listSessions: failed to prune ${staleKeys.length} dead member(s): ${describeChannelStatus(err)}`
-        )
+        logStore(this.logger, 'AUTH_STORE_FAILED', 'dead_member_prune', err)
       })
 
     // After the cleanup has been dispatched, not before: a read fault costs the caller the listing
@@ -478,7 +476,7 @@ export class SessionService {
       // A read that throws is an infrastructure fault, not a stale member. The guarded prune
       // still sees the member as a candidate, and only this line says which one happened, so a
       // Redis outage does not read as a tidy-up.
-      this.logger.warn(`listSessions: session detail read failed hash=${hash.slice(0, 8)}`)
+      logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_detail_read', error)
       return { kind: 'failed', member, error }
     }
 
@@ -982,7 +980,7 @@ export class SessionService {
         runDetached(
           this.logger,
           () => onSessionEvicted(userId, entry.memberHash, context),
-          'onSessionEvicted hook threw'
+          'onSessionEvicted'
         )
       }
     }
@@ -1053,10 +1051,8 @@ export class SessionService {
         return defaultMaxSessions
       }
       return resolved
-    } catch (err: unknown) {
-      this.logger.error(
-        `maxSessionsResolver threw — falling back to defaultMaxSessions: ${describeChannelStatus(err)}`
-      )
+    } catch {
+      logHook(this.logger, 'maxSessionsResolver', 'threw')
       return defaultMaxSessions
     }
   }

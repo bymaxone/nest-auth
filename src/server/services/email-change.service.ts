@@ -17,7 +17,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
-import { logEvent } from '../observability/log-event'
+import { logEvent, logDelivery } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -375,9 +375,7 @@ export class EmailChangeService implements OnModuleInit {
       // rule is to publish none of the channel's text rather than to strip parts of it. This is
       // the second line the same failure reaches under `onDeliveryError: 'rethrow'`, and
       // containing a value in one place and not the other contains it nowhere.
-      this.logger.error(
-        `confirmChange: notification to the previous address failed: ` + describeChannelStatus(err)
-      )
+      logDelivery(this.logger, 'email_change_notice', err)
     }
   }
 }

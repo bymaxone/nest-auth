@@ -25,6 +25,7 @@ import {
 import type { Harness } from './__tests__/workspace-invitation-accept-harness'
 import { CONTEXT, WORKSPACE_REF, workspaceRow } from './__tests__/workspace-service-harness'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { expectEvent } from '../__tests__/log-events'
 import type { AuthException } from '../errors/auth-exception'
 import type { AuthMembership } from '../interfaces/membership-repository.interface'
 import type { BootstrapInvitationRecord } from '../interfaces/workspace-invitation.interface'
@@ -365,9 +366,7 @@ describe('WorkspaceInvitationAcceptService', () => {
       await expect(h.service.acceptSignup(SIGNUP, REQUEST)).resolves.toBeDefined()
       await new Promise((resolve) => setImmediate(resolve))
 
-      expect(error).toHaveBeenCalledWith(
-        expect.stringContaining('afterInvitationAccepted hook threw')
-      )
+      expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterInvitationAccepted', how: 'rejected' })
 
       expect(afterInvitationAccepted).toHaveBeenCalledWith(expect.objectContaining({ id: 'new' }), {
         plane: 'dashboard',
@@ -389,9 +388,7 @@ describe('WorkspaceInvitationAcceptService', () => {
 
       await expect(h.service.acceptSignup(SIGNUP, REQUEST)).resolves.toBeDefined()
 
-      expect(error).toHaveBeenCalledWith(
-        expect.stringContaining('afterInvitationAccepted hook threw')
-      )
+      expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterInvitationAccepted', how: 'threw' })
       expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).toBeNull()
     })
 

@@ -507,7 +507,9 @@ describe('PlatformAuthService', () => {
       expect(result).toBe(PLATFORM_AUTH_RESULT)
       // Drain microtask queue so the fire-and-forget rejection handler runs.
       await Promise.resolve()
-      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('updateLastLogin failed: '))
+      expectEvent(loggerSpy, 'AUTH_HOOK_FAILED', { hook: 'updateLastLogin', how: 'rejected' }, [
+        'DB timeout'
+      ])
       loggerSpy.mockRestore()
     })
   })
@@ -595,9 +597,9 @@ describe('PlatformAuthService', () => {
 
       await expect(withHooks.logout('access.jwt', rawRefreshToken)).resolves.toBe(userId)
 
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('afterPlatformLogout hook threw synchronously: ')
-      )
+      expectEvent(errorSpy, 'AUTH_HOOK_FAILED', { hook: 'afterPlatformLogout', how: 'threw' }, [
+        'sync boom'
+      ])
       errorSpy.mockRestore()
     })
 
@@ -614,9 +616,7 @@ describe('PlatformAuthService', () => {
       await expect(withHooks.logout('access.jwt', rawRefreshToken)).resolves.toBe(userId)
       await flushMicrotasks()
 
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('afterPlatformLogout hook threw: ')
-      )
+      expectEvent(errorSpy, 'AUTH_HOOK_FAILED', { hook: 'afterPlatformLogout', how: 'rejected' })
       errorSpy.mockRestore()
     })
 

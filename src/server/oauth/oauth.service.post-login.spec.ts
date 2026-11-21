@@ -18,6 +18,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { AuthException } from '../errors/auth-exception'
+import { expectEvent } from '../__tests__/log-events'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
@@ -230,7 +231,7 @@ describe('OAuthService — after a successful sign-in', () => {
 
     // Neither side effect may turn a completed sign-in into a failure, and neither may leak
     // the account id or the hook's own text into the log.
-    it('should still sign in when updateLastLogin fails, and log without the id', async () => {
+    it('should still sign in when updateLastLogin fails, and log the step without the id', async () => {
       setupHappyPathCreate()
       const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
       mockUserRepo.updateLastLogin.mockRejectedValue(new Error(`boom ${AUTH_USER.id}`))
@@ -238,31 +239,33 @@ describe('OAuthService — after a successful sign-in', () => {
       await expect(callCallback()).resolves.toBe(AUTH_RESULT)
       await drain()
 
-      const lines = error.mock.calls.map((c) => String(c[0]))
-      expect(lines.some((l) => l.includes('updateLastLogin failed'))).toBe(true)
-      expect(lines.join('\n')).not.toContain(AUTH_USER.id)
+      expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'updateLastLogin', how: 'rejected' }, [
+        AUTH_USER.id
+      ])
     })
 
     it.each([
-      ['rejects', () => Promise.reject(new Error('siem secret=XYZ'))],
+      ['rejects', () => Promise.reject(new Error('siem secret=XYZ')), 'rejected'],
       [
         'throws synchronously',
         () => {
           throw new Error('siem secret=XYZ')
-        }
+        },
+        'threw'
       ]
-    ])('should still sign in when afterLogin %s, and log without its text', async (_n, impl) => {
-      setupHappyPathCreate()
-      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
-      mockHooks.afterLogin.mockImplementation(impl)
+    ])(
+      'should still sign in when afterLogin %s, and log without its text',
+      async (_n, impl, how) => {
+        setupHappyPathCreate()
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+        mockHooks.afterLogin.mockImplementation(impl)
 
-      await expect(callCallback()).resolves.toBe(AUTH_RESULT)
-      await drain()
+        await expect(callCallback()).resolves.toBe(AUTH_RESULT)
+        await drain()
 
-      const lines = error.mock.calls.map((c) => String(c[0]))
-      expect(lines.some((l) => l.includes('afterLogin hook threw'))).toBe(true)
-      expect(lines.join('\n')).not.toContain('XYZ')
-    })
+        expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterLogin', how }, ['XYZ'])
+      }
+    )
 
     // A host with no `afterLogin` implementation is the ordinary case.
     it('should sign in when the hooks object has no afterLogin', async () => {

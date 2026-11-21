@@ -18,9 +18,9 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IPlatformUserRepository } from '../interfaces/platform-user-repository.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
+import { logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeChannelStatus } from '../utils/describe-error'
 
 /**
  * The two cache keys naming one dashboard account.
@@ -216,9 +216,7 @@ export class AccountStatusService {
     try {
       await this.redis.set(key, value, ttl)
     } catch (err: unknown) {
-      this.logger.warn(
-        `account status cache write failed, the next request reads the repository again: ${describeChannelStatus(err)}`
-      )
+      logStore(this.logger, 'AUTH_STORE_DEGRADED', 'account_status_cache_write', err)
     }
   }
 

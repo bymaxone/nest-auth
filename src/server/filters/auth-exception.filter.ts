@@ -9,7 +9,7 @@ import type { Request, Response } from 'express'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import { describeChannelStatus } from '../utils/describe-error'
+import { logUnhandled } from '../observability/log-event'
 
 /** The body shape every auth error serializes to. */
 interface AuthErrorEnvelope {
@@ -245,7 +245,7 @@ export class AuthExceptionFilter implements ExceptionFilter {
     // anything the surrounding application threw — including, under `onDeliveryError: 'rethrow'`,
     // a relay error quoting a live OTP. An empty list did not make the line safe; it only removed
     // the one defence that was being attempted.
-    this.logger.error(`unhandled exception: ${describeChannelStatus(exception)}`)
+    logUnhandled(this.logger, 'http', exception)
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       error: {
         code: AUTH_ERROR_CODES.INTERNAL,

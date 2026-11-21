@@ -39,6 +39,7 @@ import type {
   IWorkspaceRepository,
   WorkspaceRef
 } from '../interfaces/workspace-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { exceedsCodePoints } from '../utils/code-points'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
@@ -245,7 +246,7 @@ export class WorkspaceAccessService {
       return parseRead(reply)
     } catch {
       // The cache is advisory: an unreachable store must cost a repository read, not a request.
-      this.logger.warn('Workspace membership cache unavailable; reading the repositories.')
+      logEvent(this.logger, 'AUTH_STORE_DEGRADED', { operation: 'workspace_cache_read' })
       return null
     }
   }
@@ -275,7 +276,7 @@ export class WorkspaceAccessService {
         ]
       )
     } catch {
-      this.logger.warn('Workspace membership cache unavailable; the answer was not cached.')
+      logEvent(this.logger, 'AUTH_STORE_DEGRADED', { operation: 'workspace_cache_write' })
     }
   }
 

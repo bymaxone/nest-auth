@@ -21,10 +21,9 @@ import type {
   HookContext,
   IAuthHooks
 } from '../interfaces/auth-hooks.interface'
+import { logEvent, logHook, logStore } from '../observability/log-event'
 import { ApiKeyVerifierService } from '../services/api-key-verifier.service'
 import { resolveClientAddress } from '../utils/client-address'
-import { describeChannelStatus } from '../utils/describe-error'
-import { logSafe } from '../utils/log-safe'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
 /** A request after this guard admitted it. */
@@ -71,10 +70,7 @@ export class ApiKeyGuard implements CanActivate {
 
     // Route configuration first, and before any credential work.
     if (required === null) {
-      this.logger.error(
-        `api-key: ${logSafe(request.method)} ${logSafe(base.route)} is guarded but declares no ` +
-          `scopes; refused`
-      )
+      logEvent(this.logger, 'AUTH_API_KEY_REFUSED', { reason: 'unscoped_route' })
       await this.audit(request, { ...base, outcome: 'denied', reason: 'route_undeclared' })
       throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
     }
@@ -83,7 +79,7 @@ export class ApiKeyGuard implements CanActivate {
     try {
       verdict = await this.verifier.verify(request.headers[this.options.apiKeys.header])
     } catch (err: unknown) {
-      this.logger.error(`api-key: key store unavailable cause=${describeChannelStatus(err)}`)
+      logStore(this.logger, 'AUTH_STORE_FAILED', 'api_key_lookup', err)
       await this.audit(request, { ...base, outcome: 'denied', reason: 'store_error' })
       throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
     }
@@ -152,9 +148,7 @@ export class ApiKeyGuard implements CanActivate {
     if (hook === undefined) {
       // Auditing was demanded and nothing can write it, so the request is not admitted.
       if (this.options.apiKeys.auditMode !== 'required') return true
-      this.logger.error(
-        'api-key: auditMode is required but no onApiKeyRequest hook is implemented; refusing'
-      )
+      logEvent(this.logger, 'AUTH_API_KEY_REFUSED', { reason: 'audit_hook_missing' })
       return false
     }
     const event: ApiKeyAccessEvent = {
@@ -170,17 +164,17 @@ export class ApiKeyGuard implements CanActivate {
       try {
         await run()
         return true
-      } catch (err: unknown) {
-        this.logger.error(`api-key: audit hook failed cause=${describeChannelStatus(err)}`)
+      } catch {
+        logHook(this.logger, 'onApiKeyRequest', 'threw')
         return false
       }
     }
     try {
-      void Promise.resolve(run()).catch((err: unknown) => {
-        this.logger.error(`api-key: audit hook failed cause=${describeChannelStatus(err)}`)
+      void Promise.resolve(run()).catch(() => {
+        logHook(this.logger, 'onApiKeyRequest', 'rejected')
       })
-    } catch (err: unknown) {
-      this.logger.error(`api-key: audit hook failed cause=${describeChannelStatus(err)}`)
+    } catch {
+      logHook(this.logger, 'onApiKeyRequest', 'threw')
     }
     return true
   }

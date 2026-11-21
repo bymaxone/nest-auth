@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { Injectable, Logger } from '@nestjs/common'
 
 import type { IPasswordBreachChecker } from '../interfaces/password-breach-checker.interface'
+import { logEvent } from '../observability/log-event'
 
 /** The range endpoint. The digest prefix is appended to it, so the request is `/range/{prefix}`. */
 const HIBP_RANGE_URL = 'https://api.pwnedpasswords.com/range/'
@@ -102,14 +103,14 @@ export class HibpBreachChecker implements IPasswordBreachChecker {
         signal: abort
       })
       if (!response.ok) {
-        this.logger.warn(`breach check unavailable (status ${response.status}) — password allowed`)
+        logEvent(this.logger, 'AUTH_BREACH_CHECK_UNAVAILABLE', { reason: 'unavailable' })
         return null
       }
       return await response.text()
     } catch {
       // Timeout, DNS failure, TLS failure, offline — all the same decision. The message
       // carries no password material, only that the check did not happen.
-      this.logger.warn('breach check unreachable — password allowed')
+      logEvent(this.logger, 'AUTH_BREACH_CHECK_UNAVAILABLE', { reason: 'unreachable' })
       return null
     }
   }

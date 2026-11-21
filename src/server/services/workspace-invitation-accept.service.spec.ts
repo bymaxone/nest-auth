@@ -39,6 +39,7 @@ import type { IUserRepository } from '../interfaces/user-repository.interface'
 import type { IWorkspaceRepository } from '../interfaces/workspace-repository.interface'
 import { invitationKey } from '../constants/workspace-invitation-keys'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { expectEvent } from '../__tests__/log-events'
 import type { AuthMembership } from '../interfaces/membership-repository.interface'
 
 describe('WorkspaceInvitationAcceptService', () => {
@@ -178,7 +179,7 @@ describe('WorkspaceInvitationAcceptService', () => {
       await expectRefusedUnspent(h, AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
     })
 
-    it('logs, without naming anyone, that the inviter can no longer grant the role', async () => {
+    it('logs a refused invitation, without naming anyone, when the inviter can no longer grant', async () => {
       const h = build()
       await seed(h)
       h.memberships.find.mockResolvedValue(null)
@@ -186,9 +187,7 @@ describe('WorkspaceInvitationAcceptService', () => {
 
       await code(h.service.accept(CALLER, TOKEN, CONTEXT))
 
-      expect(warn).toHaveBeenCalledWith(
-        'workspace invitation: the inviter can no longer grant the invited role'
-      )
+      expectEvent(warn, 'AUTH_INVITATION_REFUSED', { reason: 'inviter_cannot_grant' })
     })
 
     it.each([

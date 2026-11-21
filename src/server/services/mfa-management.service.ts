@@ -375,7 +375,7 @@ export class MfaManagementService {
             userAgent,
             sanitizedHeaders: {}
           }),
-        'afterMfaDisabled hook threw'
+        'afterMfaDisabled'
       )
     }
   }
@@ -411,7 +411,7 @@ export class MfaManagementService {
             userAgent,
             sanitizedHeaders: {}
           }),
-        'afterMfaRecoveryCodesRegenerated hook threw'
+        'afterMfaRecoveryCodesRegenerated'
       )
     }
   }

@@ -60,6 +60,7 @@ async function flushMicrotasks(ticks = 2): Promise<void> {
 // Test doubles
 // ---------------------------------------------------------------------------
 
+const LOOKUP_FAILED = { operation: 'reset_account_lookup', detail: '<error>' } as const
 const JWT_SECRET = 'test-secret-32-characters-minimum'
 const HMAC_KEY = createHash('sha256')
   .update(`bymax-auth:hmac-key:v1:${JWT_SECRET}`, 'utf8')
@@ -977,8 +978,7 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(mockEmailProvider.sendPasswordResetToken).not.toHaveBeenCalled()
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no email provider configured'))
-
+      expectEvent(warnSpy, 'AUTH_PROVIDER_MISSING', { flow: 'password_reset_token' })
       warnSpy.mockRestore()
     })
 
@@ -1026,7 +1026,7 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(getErrorCode(failure)).toBe(AUTH_ERROR_CODES.INTERNAL)
-      expect(errorSpy).toHaveBeenCalledWith('initiateReset: account lookup failed: <error>')
+      expectEvent(errorSpy, 'AUTH_STORE_FAILED', LOOKUP_FAILED)
       expect(mockSleep).toHaveBeenCalledTimes(1)
       errorSpy.mockRestore()
     })
@@ -1338,8 +1338,8 @@ describe('PasswordResetService', () => {
       // Assert
       expect(getErrorCode(caught)).toBe(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
       // The holder gets the same code as for a replayed token, by design. The operator gets
-      // the one line that says the record was corrupted rather than spent.
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('not parseable JSON'))
+      // the one event that says the record was corrupted rather than spent.
+      expectEvent(warnSpy, 'AUTH_RECORD_INVALID', { record: 'reset_context' })
       warnSpy.mockRestore()
     })
 
@@ -2270,7 +2270,7 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(getErrorCode(failure)).toBe(AUTH_ERROR_CODES.INTERNAL)
-      expect(errorSpy).toHaveBeenCalledWith('resendOtp: account lookup failed: <error>')
+      expectEvent(errorSpy, 'AUTH_STORE_FAILED', LOOKUP_FAILED)
       errorSpy.mockRestore()
     })
 
@@ -2309,7 +2309,7 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(mockEmailProvider.sendPasswordResetOtp).not.toHaveBeenCalled()
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no email provider configured'))
+      expectEvent(warnSpy, 'AUTH_PROVIDER_MISSING', { flow: 'password_reset_otp' })
       warnSpy.mockRestore()
     })
 
@@ -2601,9 +2601,7 @@ describe('PasswordResetService', () => {
       await flushMicrotasks()
 
       // Assert
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('afterPasswordReset hook threw: ')
-      )
+      expectEvent(errorSpy, 'AUTH_HOOK_FAILED', { hook: 'afterPasswordReset', how: 'rejected' })
       errorSpy.mockRestore()
     })
   })
