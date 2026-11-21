@@ -9,6 +9,7 @@ import type { LoggerService } from '@nestjs/common'
 import { AUTH_LOG_EVENTS } from './log-events'
 import type { AuthLogEvent } from './log-events'
 import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type { AuthEmailKind } from '../providers/default-auth-email.provider'
 import { describeChannelStatus } from '../utils/describe-error'
 
 /** A field value: a closed string, a number or a flag; never an object a host or a store built. */
@@ -93,10 +94,22 @@ export function logStore(
   logEvent(logger, event, { operation, detail: describeChannelStatus(err) })
 }
 
+/** The notifications whose failed delivery is reported: the flow's own, or a kind of the bundled email provider. */
+export type DeliveryKind =
+  | AuthEmailKind
+  | 'email_verification_otp'
+  | 'password_changed_notice'
+  | 'password_reset_token'
+  | 'password_reset_otp'
+  | 'mfa_enabled_notice'
+  | 'mfa_disabled_notice'
+  | 'mfa_reset_notice'
+  | 'email_change_notice'
+
 /** Writes that a notification could not be delivered: which kind, and the description of the failure. */
 export function logDelivery(
   logger: Pick<LoggerService, 'log' | 'warn' | 'error'>,
-  kind: string,
+  kind: DeliveryKind,
   err: unknown
 ): void {
   logEvent(logger, 'AUTH_DELIVERY_FAILED', { kind, detail: describeChannelStatus(err) })

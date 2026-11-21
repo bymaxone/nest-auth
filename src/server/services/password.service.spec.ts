@@ -197,11 +197,10 @@ describe('PasswordService', () => {
     })
 
     // The checker is documented to fail open and is the CONSUMER's implementation, so the
-    // contract is enforced here rather than assumed. A throw escaping from every
-    // path that sets a password — registration, reset, invitation acceptance would all start
-    // failing because an advisory corpus was unreachable, which is the documented behaviour
-    // inverted and worst during an incident. A refusal to answer is not evidence against the
-    // password.
+    // contract is enforced here rather than assumed. A throw escaping the checker would fail
+    // every path that sets a password — registration, reset, invitation acceptance — because an
+    // advisory corpus was unreachable, which is the documented behaviour inverted and worst
+    // during an incident. A refusal to answer is not evidence against the password.
     it.each([
       ['a rejected promise', async () => Promise.reject(new Error('corpus unreachable'))],
       [

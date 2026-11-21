@@ -501,7 +501,8 @@ describe('log-injection guard (E2E)', () => {
 
   // The library has no interpolation left in a direct logger call, so the detector reports none; the classification
   // rows below are what show it can still see one.
-  it('finds no interpolation in a direct logger call', () => {
+  it('finds no interpolation in a direct logger call, in the files it was given', () => {
+    expect(files.length).toBeGreaterThan(100)
     expect(everything).toEqual([])
   })
 
@@ -662,13 +663,14 @@ describe('log-injection guard (E2E)', () => {
   // Scenario: every `logEvent` call in the library. Expected: no field outside the rule above. Why: an event
   // field is where a value this library did not author would enter an event.
   it('writes only fields the library composed or an account id into an event', () => {
-    const calls = files
-    const problems = calls.flatMap((file) =>
+    const written = files.filter((file) => /logEvent\(/.test(readFileSync(file, 'utf8')))
+    const problems = written.flatMap((file) =>
       eventFieldProblems(readFileSync(file, 'utf8')).map(
         (field) => `${file.slice(SRC_ROOT.length + 1)}: ${field}`
       )
     )
 
+    expect(written.length).toBeGreaterThan(20)
     expect(problems).toEqual([])
   })
 
