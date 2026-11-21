@@ -29,6 +29,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **The time of a real date is the time it holds.** A subclass of `Date` that overrides `getTime` was asked for its
   time, so a host could name a deadline other than the one the date carries. A real date is read through
   `Date.prototype.getTime`; a Proxy of a date, which has no slot, is still read through its own `getTime`.
+- **A read follows a bounded number of nodes in all.** The cap of 100 000 elements or keys applied to each array and
+  each object, so a list of records that each stayed under it could still make a copy walk as many nodes as the host
+  served. A read now follows at most 1 000 000 nodes (the elements of lists, the own keys of records and the strings of
+  lists of strings); an answer that holds more ends as `auth.internal`.
 - **An id names one row.** The ids of users, workspaces and memberships were accepted as a string, a finite number or
   any instance of a class of the host, so a `Map` or a `Date` was an id, and two of them printed the same in a claim,
   a key or the scope of a query. An id is now a non-empty string, a safe integer, or an object of the host that prints

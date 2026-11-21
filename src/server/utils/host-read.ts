@@ -43,19 +43,28 @@ import { AuthException } from '../errors/auth-exception'
 /** The most elements of an array and the most keys of an object a copy follows; a host that answers more is refused. */
 const MAX_BREADTH = 100_000
 
-/** What a copy remembers so that a value reached twice under a contract is copied once, by value and contract together. */
-type Seen = WeakMap<object, Map<ErasedContract, unknown>>
+/** The most nodes a read follows in all: the elements of lists, the own keys of records and the strings of lists. */
+const MAX_NODES = 1_000_000
+
+/**
+ * What one read keeps: what was copied, so that a value reached twice under a contract is copied once, by value and
+ * contract together, and how many nodes it may still follow.
+ */
+interface Read {
+  readonly copies: WeakMap<object, Map<ErasedContract, unknown>>
+  nodes: number
+}
 
 /** What was already copied from a value under a contract. */
-function copiedUnder(seen: Seen, value: object, contract: ErasedContract): unknown {
-  return seen.get(value)?.get(contract)
+function copiedUnder(read: Read, value: object, contract: ErasedContract): unknown {
+  return read.copies.get(value)?.get(contract)
 }
 
 /** Remembers a copy of a value under a contract. */
-function rememberUnder(seen: Seen, value: object, contract: ErasedContract, copy: unknown): void {
-  const copies = seen.get(value) ?? new Map<ErasedContract, unknown>()
+function rememberUnder(read: Read, value: object, contract: ErasedContract, copy: unknown): void {
+  const copies = read.copies.get(value) ?? new Map<ErasedContract, unknown>()
   copies.set(contract, copy)
-  seen.set(value, copies)
+  read.copies.set(value, copies)
 }
 
 /**
@@ -136,9 +145,14 @@ function define(copy: object, key: string, value: unknown, enumerable: boolean):
 /** The object the host's repository returned behind each copy of it. Filled by the copy itself, which is the only read. */
 const ENTITIES = new WeakMap<object, object>()
 
-/** Refuses an array or an object that holds more than a copy follows. */
-function refuseBreadth(size: number): void {
-  if (size > MAX_BREADTH) throw new Error('the answer holds more than the library follows')
+/**
+ * Follows `size` elements or keys of an array or an object, or refuses when the container holds more than a copy
+ * follows or the read has followed more than it may in all.
+ */
+function follow(read: Read, size: number): void {
+  read.nodes -= size
+  if (size > MAX_BREADTH || read.nodes < 0)
+    throw new Error('the answer holds more than the library follows')
 }
 
 /**
@@ -205,9 +219,9 @@ function copyDate(value: unknown): Date {
 }
 
 /** A copy of a list of strings. */
-function copyStrings(value: unknown): string[] {
+function copyStrings(value: unknown, read: Read): string[] {
   if (!Array.isArray(value)) throw new Error(WRONG_KIND)
-  refuseBreadth(value.length)
+  follow(read, value.length)
   const copy: string[] = []
   for (let index = 0; index < value.length; index += 1) {
     const element: unknown = value[index]
@@ -297,10 +311,10 @@ function readNull(nullable: boolean): null {
 }
 
 /** What a method answers that is no record: its kind, or nothing for a method that answers nothing. */
-function readScalar(value: unknown, spec: string): unknown {
+function readScalar(value: unknown, spec: string, run: Read): unknown {
   const { base, nullable } = parseSpec(spec)
   if (base === 'void') return undefined
-  return value === null ? readNull(nullable) : READERS[base as ReaderName](value)
+  return value === null ? readNull(nullable) : READERS[base as ReaderName](value, run)
 }
 
 /**
@@ -313,13 +327,13 @@ function readScalar(value: unknown, spec: string): unknown {
  * other own field that holds data is handed on by reference through its descriptor, which evaluates nothing; one that
  * is an accessor is left out, because reading it is what the contract forbids.
  */
-function copyRecord(value: object, contract: RecordContract, seen: Seen): unknown {
+function copyRecord(value: object, contract: RecordContract, run: Read): unknown {
   const copy: Record<string, unknown> = {}
-  rememberUnder(seen, value, contract, copy)
+  rememberUnder(run, value, contract, copy)
   ENTITIES.set(copy, value)
   const source = value as Record<string, unknown>
   const keys = Object.keys(value)
-  refuseBreadth(keys.length)
+  follow(run, keys.length)
   for (const key of keys) {
     if (Object.hasOwn(contract.fields, key)) continue
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
@@ -328,38 +342,38 @@ function copyRecord(value: object, contract: RecordContract, seen: Seen): unknow
   const own = new Set(keys)
   for (const [field, spec] of Object.entries(contract.fields)) {
     const { base, nullable, optional } = parseSpec(spec)
-    const read = source[field]
-    if (read === undefined) {
+    const held = source[field]
+    if (held === undefined) {
       if (optional) continue
       throw new Error(ABSENT)
     }
     const copied =
-      read === null
+      held === null
         ? readNull(nullable || optional)
         : base === 'nested'
-          ? applyContract(read, contract.nested[field] as Structured, seen)
-          : READERS[base as ReaderName](read)
+          ? applyContract(held, contract.nested[field] as Structured, run)
+          : READERS[base as ReaderName](held, run)
     define(copy, field, copied, own.has(field) || !CREDENTIAL_FIELDS.has(field))
   }
   return copy
 }
 
 /** What the guarded view answers for an object, given the record or list its method promises. */
-function applyContract(value: unknown, contract: Structured, seen: Seen): unknown {
+function applyContract(value: unknown, contract: Structured, run: Read): unknown {
   if (typeof value !== 'object' || value === null) throw new Error(WRONG_KIND)
-  const known = copiedUnder(seen, value, contract)
+  const known = copiedUnder(run, value, contract)
   if (known !== undefined) return known
   if ('list' in contract) {
     if (!Array.isArray(value)) throw new Error('the answer is not the list its method promises')
-    refuseBreadth(value.length)
+    follow(run, value.length)
     const copy: unknown[] = []
-    rememberUnder(seen, value, contract, copy)
+    rememberUnder(run, value, contract, copy)
     for (let index = 0; index < value.length; index += 1)
-      copy.push(applyContract(value[index], contract.list as Structured, seen))
+      copy.push(applyContract(value[index], contract.list as Structured, run))
     return copy
   }
   if (Array.isArray(value)) throw new Error('the answer is not the record its method promises')
-  return copyRecord(value, contract, seen)
+  return copyRecord(value, contract, run)
 }
 
 /**
@@ -373,10 +387,11 @@ function applyContract(value: unknown, contract: Structured, seen: Seen): unknow
  */
 export function copyHostRecord(record: unknown, contract: ErasedContract): unknown {
   try {
-    if (typeof contract === 'string') return readScalar(record, contract)
+    const run: Read = { copies: new WeakMap(), nodes: MAX_NODES }
+    if (typeof contract === 'string') return readScalar(record, contract, run)
     // A method that may find nothing answers nothing; any other method owes a record or a list.
     if ((record === null || record === undefined) && contract.nullable === true) return record
-    return applyContract(record, contract, new WeakMap())
+    return applyContract(record, contract, run)
   } catch (error: unknown) {
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
   }
