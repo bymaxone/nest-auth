@@ -1,3 +1,5 @@
+import { runInNewContext } from 'node:vm'
+
 import { HttpException } from '@nestjs/common'
 
 import {
@@ -215,6 +217,29 @@ describe('copyHostRecord', () => {
     expect(copy['status']).toBe('ACTIVE')
     expect(copy['mfaEnabled']).toBe(true)
     expect(copy['id']).toBe('u1')
+  })
+
+  // Scenario: values made in another realm (a vm context, which is what a test runner or a driver bundle can hand
+  // over). Expected: a date is still a date, a map stays a map by reference, and a plain object from there is copied
+  // without an own __proto__ key. Why: `instanceof` is false across realms, so such a date was copied as an object that
+  // holds the prototype of its realm, and the response that carried it failed to serialize.
+  it('treats values from another realm as the kinds they are', () => {
+    const foreign = <T>(source: string): T => runInNewContext(source) as T
+    const date = foreign<Date>('new Date(5)')
+    const map = foreign<Map<string, number>>('new Map([["a", 1]])')
+    const plain = foreign<Record<string, number>>('({ a: 1 })')
+
+    const copy = copyHostRecord({ date, map, plain }) as {
+      date: Date
+      map: unknown
+      plain: Record<string, number>
+    }
+
+    expect(JSON.stringify(copy.date)).toBe(JSON.stringify(new Date(5)))
+    expect(copy.date.getTime()).toBe(5)
+    expect(copy.map).toBe(map)
+    expect(Object.getOwnPropertyNames(copy.plain)).toEqual(['a'])
+    expect(JSON.stringify(copy)).toContain('"a":1')
   })
 
   // Scenario: a record with an own key named __proto__ (what JSON.parse of user input produces). Expected: it stays an

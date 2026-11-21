@@ -10,6 +10,8 @@
  * @layer Utility
  */
 
+import { types } from 'node:util'
+
 import { HttpException } from '@nestjs/common'
 import type { Provider } from '@nestjs/common'
 
@@ -102,7 +104,7 @@ function inheritedAccessors(value: object): string[] {
   const names: string[] = []
   for (
     let proto: object | null = Object.getPrototypeOf(value) as object | null;
-    proto !== null && proto !== Object.prototype;
+    proto !== null && Object.getPrototypeOf(proto) !== null;
     proto = Object.getPrototypeOf(proto) as object | null
   ) {
     for (const name of Object.getOwnPropertyNames(proto)) {
@@ -112,22 +114,23 @@ function inheritedAccessors(value: object): string[] {
   return names
 }
 
-/** The values a record may hold that are not data to copy: a copy of them would not be them. */
-const OPAQUE: readonly (abstract new (...args: never[]) => object)[] = [
-  Map,
-  Set,
-  WeakMap,
-  WeakSet,
-  Promise,
-  RegExp,
-  Error,
-  ArrayBuffer,
-  URL
+/** The checks for the values a record may hold that are not data to copy: a copy of them would not be them. */
+const OPAQUE: readonly ((value: unknown) => boolean)[] = [
+  types.isMap,
+  types.isSet,
+  types.isWeakMap,
+  types.isWeakSet,
+  types.isPromise,
+  types.isRegExp,
+  types.isNativeError,
+  types.isAnyArrayBuffer,
+  ArrayBuffer.isView,
+  (value): boolean => value instanceof URL
 ]
 
-/** Whether a value is one of the {@link OPAQUE} kinds, or a view over bytes, and is passed on as it is. */
+/** Whether a value is one of the {@link OPAQUE} kinds, and is passed on as it is. The checks hold across realms. */
 function isOpaque(value: object): boolean {
-  return ArrayBuffer.isView(value) || OPAQUE.some((kind) => value instanceof kind)
+  return OPAQUE.some((check) => check(value))
 }
 
 /** A plain copy of a record: its own and inherited accessor values, arrays and dates copied, the rest by reference. */
@@ -136,7 +139,7 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
   if (depth > MAX_RECORD_DEPTH) throw new Error('the record nests deeper than the library follows')
   const known = seen.get(value)
   if (known !== undefined) return known
-  if (value instanceof Date) return new Date(value.getTime())
+  if (types.isDate(value)) return new Date(value.getTime())
   if (Array.isArray(value)) {
     const copy: unknown[] = []
     seen.set(value, copy)

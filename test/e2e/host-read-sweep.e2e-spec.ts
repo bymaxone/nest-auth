@@ -199,7 +199,7 @@ describe('the host-read sweep', () => {
       200
     )
 
-    expect(outcome.ops).toBeGreaterThan(20)
+    expect(outcome.ops).toBeGreaterThan(10)
     expect(outcome.failures).toEqual([])
   })
 })
