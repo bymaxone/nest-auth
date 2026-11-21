@@ -39,7 +39,7 @@ A patch release.
   fields; no event carries an email address, a provider name, a token or text a host or a store wrote. The no-op email provider logs which method was called and no address. A host logger
   that is asynchronous and rejects is the host's own unhandled rejection and ends the process unless the application
   handles it.
-  Every other line the library wrote is an event too: a failed hook or fire-and-forget step (`AUTH_HOOK_FAILED`), a
+  Every other line the library wrote is an event too, bar the operator guidance sentences: a failed hook or fire-and-forget step (`AUTH_HOOK_FAILED`), a
   store or repository operation that failed (`AUTH_STORE_FAILED`, `AUTH_STORE_DEGRADED`), a stored record that does not
   parse, a missing email provider, an unavailable breach check, a refused API-key route, an unhandled exception. They
   carry the name of the hook or the operation from a closed set, and the library's description of the failure, never
@@ -82,7 +82,7 @@ peers. `rxjs` is now declared as a peer of the server entry; `@nestjs/common` al
 matching outcome types. `BruteForceService` takes an optional third constructor argument, the tally, and the methods of
 `NoOpEmailProvider` name their address parameter `_email` instead of `email` (the types are the same).
 
-What changes at run time is the log. Every line the library writes is an object, `{ ...fields, event, message }`, with
+What changes at run time is the log. Every line the library writes, bar the operator guidance sentences, is an object, `{ ...fields, event, message }`, with
 the code and the message of the README "Log events" table, and the text of the old lines is gone. A log filter, an
 alert or a test that matches the old text must match the event code instead, and a host logger now receives an object
 where it used to receive a string. A refusal or failure carries no user, tenant, address or provider; a success or
