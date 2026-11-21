@@ -213,12 +213,7 @@ function copyStrings(value: unknown): string[] {
  * refused.
  */
 function readInforming(value: unknown): unknown {
-  return accept(
-    typeof value === 'string' ||
-      (typeof value === 'number' && Number.isFinite(value)) ||
-      isHostInstance(value),
-    value
-  )
+  return accept(typeof value === 'string' || Number.isFinite(value) || isHostInstance(value), value)
 }
 
 /**
@@ -227,8 +222,7 @@ function readInforming(value: unknown): unknown {
  * library's date, an Invalid Date) is kept as the host's own object; anything else is refused. The time is read once.
  */
 function readInformingDate(value: unknown): unknown {
-  if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value)))
-    return value
+  if (typeof value === 'string' || Number.isFinite(value)) return value
   if (!isHostInstance(value)) throw new Error(WRONG_KIND)
   if (!isDateLike(value as object)) return value
   const time: unknown = (value as Date).getTime()
@@ -244,8 +238,7 @@ function readInformingDate(value: unknown): unknown {
 const READERS = {
   boolean: (value: unknown): unknown => accept(typeof value === 'boolean', value),
   string: (value: unknown): unknown => accept(typeof value === 'string', value),
-  number: (value: unknown): unknown =>
-    accept(typeof value === 'number' && Number.isFinite(value), value),
+  number: (value: unknown): unknown => accept(Number.isFinite(value), value),
   id: (value: unknown): unknown =>
     accept(typeof value === 'string' || isHostInstance(value), value),
   date: copyDate,
@@ -358,11 +351,8 @@ function applyContract(value: unknown, contract: Structured, seen: Seen): unknow
 export function copyHostRecord(record: unknown, contract: ErasedContract): unknown {
   try {
     if (typeof contract === 'string') return readScalar(record, contract)
-    if (record === null || record === undefined) {
-      // A method that may find nothing answers nothing; any other method owes a record or a list.
-      if (contract.nullable === true) return record
-      throw new Error(WRONG_KIND)
-    }
+    // A method that may find nothing answers nothing; any other method owes a record or a list.
+    if ((record === null || record === undefined) && contract.nullable === true) return record
     return applyContract(record, contract, new WeakMap())
   } catch (error: unknown) {
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })

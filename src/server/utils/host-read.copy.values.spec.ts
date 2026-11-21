@@ -463,4 +463,34 @@ describe('the kinds of the contract', () => {
     expect(strings.scopes).toEqual(['first'])
     expect(date.createdAt.getTime()).toBe(5)
   })
+
+  // Scenario: an object that has the chain of a date and none of its state, as an object and behind a Proxy, and a Proxy
+  // of an object that only has the methods of a date, in the strict date fields that decide a deadline. Expected: each is
+  // refused with the library's reason, not read as a date. Why: only the slot, or the chain read through a Proxy, makes a
+  // date; the methods alone, or a chain without the slot, would let any object name the time of a deadline.
+  it('refuses what only looks like a date where a deadline is read', () => {
+    const forged = Object.create(Date.prototype) as object
+    const lookalike = new Proxy({ getTime: (): number => 5, toISOString: (): string => 'x' }, {})
+
+    for (const looks of [forged, lookalike])
+      expect(causeOf(() => copyHostRecord({ ...apiKeyRecord(), expiresAt: looks }, KEY))).toBe(
+        WRONG_KIND
+      )
+  })
+
+  // Scenario: a null-prototype object as an id, and own fields that are undefined where the interface allows absence.
+  // Expected: the object is refused as the kind it is not, and the undefined own fields are not defined on the copy.
+  // Why: a plain object is no instance of a class of the host, and an own `undefined` is absence, not a value to copy.
+  it('refuses a null-prototype object as an id and does not define an own undefined', () => {
+    const bare = Object.assign(Object.create(null) as object, { hex: 'x' })
+
+    const copy = copyHostRecord(
+      { ...userRecord(), mfaSecret: undefined, mfaRecoveryCodes: undefined, name: undefined },
+      USER
+    ) as Record<string, unknown>
+
+    expect(causeOf(() => copyHostRecord(userRecord({ id: bare as never }), USER))).toBe(WRONG_KIND)
+    for (const field of ['mfaSecret', 'mfaRecoveryCodes', 'name'])
+      expect(Object.hasOwn(copy, field)).toBe(false)
+  })
 })
