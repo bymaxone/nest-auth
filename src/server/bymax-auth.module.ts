@@ -99,11 +99,7 @@ import { WorkspaceInvitationService } from './services/workspace-invitation.serv
 import { WorkspaceInvitationStore } from './services/workspace-invitation.store'
 import { WorkspaceService } from './services/workspace.service'
 import { WsTicketService } from './services/ws-ticket.service'
-import {
-  guardedRepositoryProviders,
-  readHostOptions,
-  readHostOptionsAsync
-} from './utils/host-read'
+import { guardedProviders, hostHasKey, readHostOptions, callFactory } from './utils/host-read'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -342,22 +338,15 @@ export class BymaxAuthModule {
       provide: BYMAX_AUTH_OPTIONS,
       useFactory: async (...args: unknown[]): Promise<ResolvedOptions> => {
         // Nest supplies the injected values, and their types are the consumer's declaration.
-        const { value: userOptions } = await readHostOptionsAsync(async () =>
-          options.useFactory(...(args as never[]))
-        )
+        const { value: userOptions } = await callFactory(options.useFactory, args)
 
         // `controllers` belongs on the `registerAsync()` call, never in the factory's return
         // value. Nest decides a module's shape before any factory runs, so a `controllers` key
         // here is read by nothing: the flags are silently dropped and the endpoints they were
         // meant to enable are simply absent — a 404 whose cause is in a different object from
         // the one the developer edited. It was documented; documentation is not a control.
-        // Every read of what the host returned happens inside `readHostOptions`, so a getter or a Proxy that throws
-        // ends as the configuration error with its cause.
-        if (
-          readHostOptions(
-            () => 'controllers' in (userOptions as unknown as Record<string, unknown>)
-          )
-        ) {
+        // Every read of what the host returned is inside the boundary of `host-read`.
+        if (hostHasKey(userOptions, 'controllers')) {
           throw new Error(
             '[BymaxAuthModule] `controllers` must be passed to registerAsync() itself, not ' +
               'returned from useFactory — the module is assembled before the factory runs, so ' +
@@ -595,9 +584,7 @@ export class BymaxAuthModule {
           imports: options.imports ?? [],
           useFactory: async (...args: unknown[]) => {
             // Nest supplies the injected values, and their types are the consumer's declaration.
-            const { value: userOptions } = await readHostOptionsAsync(async () =>
-              options.useFactory(...(args as never[]))
-            )
+            const { value: userOptions } = await callFactory(options.useFactory, args)
             return {
               secret: readHostOptions(() => userOptions.jwt.secret),
               // Stryker disable next-line ObjectLiteral: jsonwebtoken defaults to HS256 and TokenManagerService overrides signOptions per call, so the emptied `signOptions` produces identical signing
@@ -610,8 +597,7 @@ export class BymaxAuthModule {
       providers: [
         // Consumer-supplied providers first so they can override internal ones.
         ...extraProviders,
-        // The guarded view of each repository, which the library's own services inject.
-        ...guardedRepositoryProviders(extraProviders),
+        ...guardedProviders(extraProviders),
         // Resolved options (depends on consumer's inject tokens).
         resolvedOptionsProvider,
         // Which controllers this registration mounted, and the contributor that reads it.

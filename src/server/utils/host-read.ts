@@ -69,6 +69,25 @@ export async function readHostOptionsAsync<T>(
   }
 }
 
+/**
+ * Calls the host's options factory inside the same boundary as {@link readHostOptionsAsync}.
+ *
+ * @param factory - The host's `useFactory`.
+ * @param args - What Nest injected into it.
+ * @returns A holder of the options the factory answered.
+ */
+export function callFactory<T>(
+  factory: (...args: never[]) => T | Promise<T>,
+  args: unknown[]
+): Promise<{ readonly value: T }> {
+  return readHostOptionsAsync(async () => factory(...(args as never[])))
+}
+
+/** Whether the host's object holds the key, the read being inside the boundary of {@link readHostOptions}. */
+export function hostHasKey(host: object, key: string): boolean {
+  return readHostOptions(() => key in host)
+}
+
 /** The library's configuration error for a host failure; the library's own `[BymaxAuthModule]` errors pass through. */
 function configurationError(error: unknown): Error {
   if (error instanceof Error && error.message.startsWith('[BymaxAuthModule]')) return error
@@ -182,7 +201,7 @@ const GUARDED_BY_HOST: ReadonlyMap<symbol, symbol> = new Map([
  * @param providers - The host's `extraProviders`.
  * @returns One provider per repository the host supplied.
  */
-export function guardedRepositoryProviders(providers: Provider[]): Provider[] {
+export function guardedProviders(providers: Provider[]): Provider[] {
   return [...GUARDED_BY_HOST]
     .filter(([host]) =>
       providers.some(
