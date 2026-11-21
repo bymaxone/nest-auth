@@ -33,6 +33,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   each object, so a list of records that each stayed under it could still make a copy walk as many nodes as the host
   served. A read now follows at most 1 000 000 nodes (the elements of lists, the own keys of records and the strings of
   lists of strings); an answer that holds more ends as `auth.internal`.
+- **Access to a workspace is refused when the repository answers with a row of another tenant.** The workspace and the
+  membership read for a tenant, a workspace and a user are now checked to carry the tenant that was asked about; the
+  key given to a repository is not a proof of the row it returned.
 - **An id names one row.** The ids of users, workspaces and memberships were accepted as a string, a finite number or
   any instance of a class of the host, so a `Map` or a `Date` was an id, and two of them printed the same in a claim,
   a key or the scope of a query. An id is now a non-empty string, a safe integer, or an object of the host that prints
