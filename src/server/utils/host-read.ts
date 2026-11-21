@@ -155,8 +155,7 @@ function isOpaque(value: object): boolean {
 /**
  * Sets a field on a copy by defining it, never by assigning it: a key named `__proto__` (what `JSON.parse` of user
  * input produces) would swap the prototype, and a name that is a setter on `Object.prototype` would be silently
- * dropped. A field is enumerable only when it was enumerable on the record, so a spread of the copy shows what a
- * spread of the record showed and a hidden field is still readable by name.
+ * dropped. The caller says whether the field shows in a spread of the copy.
  */
 function define(copy: object, key: string, value: unknown, enumerable: boolean): void {
   Object.defineProperty(copy, key, { value, enumerable, writable: true, configurable: true })
@@ -225,8 +224,8 @@ function copyData(value: unknown, seen: Seen, depth: number): unknown {
 /**
  * Copies the fields of a record that its contract names, and hands the rest of the record on without reading it.
  * A field the contract names is read by name once, so it is found wherever the host keeps it (an own field, a
- * prototype getter, a lazy entity that lists nothing), and a field that is not own and enumerable stays hidden on the
- * copy. Any other own field that holds data is handed on by reference through its descriptor, which evaluates
+ * prototype getter, a lazy entity that lists nothing), and it shows in a spread of the copy, except a credential, which
+ * shows only if the host's own record showed it. Any other own field that holds data is handed on by reference through its descriptor, which evaluates
  * nothing; one that is an accessor is left out, because reading it is what the contract forbids.
  */
 function copyRecord(
