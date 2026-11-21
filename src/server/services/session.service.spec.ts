@@ -25,6 +25,10 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { SessionService } from './session.service'
 
+const expectErrorEvent = (...args: DropFirst<Parameters<typeof expectEvent>>) =>
+  expectEvent(Logger.prototype.error as jest.Mock, ...args)
+type DropFirst<T extends unknown[]> = T extends [unknown, ...infer R] ? R : never
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -841,7 +845,10 @@ describe('SessionService', () => {
       await flushMicrotasks()
 
       // Assert — error was logged, not thrown
-      expect(Logger.prototype.error).toHaveBeenCalledWith('onSessionEvicted hook threw: <error>')
+      expectErrorEvent('AUTH_HOOK_FAILED', {
+        hook: 'onSessionEvicted',
+        how: 'rejected'
+      })
     })
 
     // Scenario: the onNewSession hook receives a short (8-char) sessionHash, not the full hash.
@@ -1029,10 +1036,8 @@ describe('SessionService', () => {
       )
     })
 
-    // Scenario: when maxSessionsResolver throws, the failure is logged with the exact fallback message.
-    // Expected: logger.error called with the resolver-fallback message. Why: kills the StringLiteral
-    // mutant on line 692 (message → '').
-    it('logs the exact fallback message when maxSessionsResolver throws', async () => {
+    // Scenario: maxSessionsResolver throws. Expected: a hook-failed event naming the resolver.
+    it('logs a hook failure when maxSessionsResolver throws', async () => {
       const resolver = jest
         .fn<Promise<number>, [unknown]>()
         .mockRejectedValue(new Error('resolver boom'))
@@ -1050,15 +1055,13 @@ describe('SessionService', () => {
         userAgent: userAgent
       })
 
-      expect(Logger.prototype.error).toHaveBeenCalledWith(
-        expect.stringContaining(`maxSessionsResolver threw — falling back to defaultMaxSessions: `)
-      )
+      expectErrorEvent('AUTH_HOOK_FAILED', { hook: 'maxSessionsResolver', how: 'threw' }, [
+        'resolver boom'
+      ])
     })
 
-    // Scenario: the onNewSession hook rejection is logged with the exact "hook threw" message.
-    // Expected: logger.error called with 'onNewSession hook threw'. Why: kills the StringLiteral mutant
-    // on line 284 (message → '').
-    it('logs the exact message when the onNewSession hook rejects', async () => {
+    // Scenario: the onNewSession hook rejects. Expected: a hook-failed event naming the hook.
+    it('logs a hook failure when the onNewSession hook rejects', async () => {
       mockHooks.onNewSession.mockRejectedValue(new Error('hook boom'))
 
       await service.createSession({
@@ -1070,15 +1073,11 @@ describe('SessionService', () => {
       })
       await flushMicrotasks()
 
-      expect(Logger.prototype.error).toHaveBeenCalledWith(
-        expect.stringContaining(`onNewSession hook threw: `)
-      )
+      expectErrorEvent('AUTH_HOOK_FAILED', { hook: 'onNewSession', how: 'rejected' }, ['hook boom'])
     })
 
-    // Scenario: a findById rejection inside the onNewSession flow is logged with the exact message.
-    // Expected: logger.error called with 'onNewSession hook — findById failed'. Why: kills the
-    // StringLiteral mutant on line 289 (message → '').
-    it('logs the exact message when findById rejects inside the onNewSession flow', async () => {
+    // Scenario: a findById rejection inside the onNewSession flow. Expected: a store-failed event.
+    it('logs a store failure when findById rejects inside the onNewSession flow', async () => {
       mockUserRepo.findById.mockRejectedValue(new Error('db boom'))
 
       await service.createSession({
@@ -1090,8 +1089,10 @@ describe('SessionService', () => {
       })
       await flushMicrotasks()
 
-      expect(Logger.prototype.error).toHaveBeenCalledWith(
-        expect.stringContaining(`onNewSession hook — findById failed: `)
+      expectErrorEvent(
+        'AUTH_STORE_FAILED',
+        { operation: 'new_session_user_lookup', detail: '<error>' },
+        ['db boom']
       )
     })
   })
@@ -1394,12 +1395,12 @@ describe('SessionService', () => {
       // A failed read and a genuinely stale member are pruned alike — both leave the index —
       // so without this line a Redis outage reads as a tidy-up, and the sessions it silently
       // dropped never come back.
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session detail read failed'))
-      // Truncated: the full hash is the session's identifier in Redis, and a log line is the
-      // wrong place to put one. Eight characters is enough to correlate, not enough to use.
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain(throwHash.slice(0, 8))
-      expect(warned).not.toContain(throwHash)
+      expectEvent(
+        warnSpy,
+        'AUTH_STORE_DEGRADED',
+        { operation: 'session_detail_read', detail: '<error>' },
+        [throwHash, throwHash.slice(0, 8)]
+      )
       warnSpy.mockRestore()
     })
 
@@ -1445,11 +1446,9 @@ describe('SessionService', () => {
 
       await flushMicrotasks()
 
-      // Counted, not named: an operator seeing a run of these needs the scale, and a log line is
-      // the wrong place for a session identifier.
-      expect(Logger.prototype.error).toHaveBeenCalledWith(
-        expect.stringContaining(`listSessions: failed to prune 1 dead member(s): `)
-      )
+      expectErrorEvent('AUTH_STORE_FAILED', { operation: 'dead_member_prune', detail: '<error>' }, [
+        'prune failed'
+      ])
     })
 
     // Verifies that sorts results newest-first (descending createdAt).
@@ -2681,9 +2680,10 @@ describe('SessionService', () => {
         ).resolves.toEqual([])
         // Let the fire-and-forget rejection settle before asserting on the log.
         await Promise.resolve()
-        // Named, not merely counted: an operator seeing a run of these needs to know the prune
-        // is what failed, not the listing — the two have different remedies.
-        expect(warn).toHaveBeenCalledWith('listSessions: grace-pointer prune failed: <error>')
+        expectEvent(warn, 'AUTH_STORE_DEGRADED', {
+          operation: 'grace_pointer_prune',
+          detail: '<error>'
+        })
       } finally {
         warn.mockRestore()
       }

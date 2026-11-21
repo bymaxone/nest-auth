@@ -74,6 +74,11 @@ describe('the log event catalog', () => {
       'error',
       'detail',
       'familyId',
+      'hook',
+      'how',
+      'operation',
+      'record',
+      'surface',
       'userId',
       'tenantId',
       'actorUserId'

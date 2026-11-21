@@ -26,7 +26,6 @@ describe('answerResetRequest under a store outage', () => {
   /** One request that began just now. */
   function request(): ResetRequest {
     return {
-      label: 'initiateReset',
       cooldownKey: 'cooldown:k',
       cooldownSeconds: 60,
       floorMs: FLOOR_MS,

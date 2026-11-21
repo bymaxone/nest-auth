@@ -8,6 +8,8 @@
 import { scryptSync } from 'node:crypto'
 
 import { Logger } from '@nestjs/common'
+
+import { expectEvent } from '../__tests__/log-events'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_BREACH_CHECKER, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
@@ -195,11 +197,10 @@ describe('PasswordService', () => {
     })
 
     // The checker is documented to fail open and is the CONSUMER's implementation, so the
-    // contract is enforced here rather than assumed. A throw used to propagate out of every
-    // path that sets a password — registration, reset, invitation acceptance would all start
-    // failing because an advisory corpus was unreachable, which is the documented behaviour
-    // inverted and worst during an incident. A refusal to answer is not evidence against the
-    // password.
+    // contract is enforced here rather than assumed. A throw escaping the checker would fail
+    // every path that sets a password — registration, reset, invitation acceptance — because an
+    // advisory corpus was unreachable, which is the documented behaviour inverted and worst
+    // during an incident. A refusal to answer is not evidence against the password.
     it.each([
       ['a rejected promise', async () => Promise.reject(new Error('corpus unreachable'))],
       [
@@ -211,7 +212,7 @@ describe('PasswordService', () => {
       ['a non-Error rejection', async () => Promise.reject('string rejection')]
     ])('admits the password when the checker answers with %s', async (_label, impl) => {
       mockBreachChecker.isBreached.mockImplementation(impl)
-      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
 
       try {
         await expect(
@@ -219,11 +220,13 @@ describe('PasswordService', () => {
         ).resolves.toBeUndefined()
         // Silent admission would make an outage indistinguishable from a corpus that had
         // nothing to say, so the operator gets a line.
-        expect(errorSpy).toHaveBeenCalledTimes(1)
+        expect(warnSpy).toHaveBeenCalledTimes(1)
         // Never the plaintext, whatever else goes in the log.
-        expect(JSON.stringify(errorSpy.mock.calls[0])).not.toContain('a-long-unique-passphrase')
+        expectEvent(warnSpy, 'AUTH_BREACH_CHECK_UNAVAILABLE', { reason: 'threw' }, [
+          'a-long-unique-passphrase'
+        ])
       } finally {
-        errorSpy.mockRestore()
+        warnSpy.mockRestore()
       }
     })
 
@@ -247,29 +250,21 @@ describe('PasswordService', () => {
       ['echoed behind a reply-code prefix', '424 Correct Horse!', (p: string) => p]
     ])('withholds a password the checker %s in its error', async (_why, plain, build) => {
       mockBreachChecker.isBreached.mockRejectedValue(new Error(build(plain)))
-      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
 
       try {
         await expect(service.assertNotCompromised(plain)).resolves.toBeUndefined()
 
-        const logged = String(errorSpy.mock.calls[0]?.[0])
-        // One argument: the error object never reaches the logger, which would print its stack
-        // and whatever properties the client hung on it.
-        expect(errorSpy.mock.calls[0]).toHaveLength(1)
-        expect(logged).not.toContain(plain)
-        // The attacker's own test, since the encoded row would satisfy the line above while the
-        // password was still recoverable.
-        const decoded = logged
-          .split(/[^A-Za-z0-9+/=]+/)
-          .map((chunk) => Buffer.from(chunk, 'base64').toString('utf8'))
-          .join(' ')
-        expect(decoded).not.toContain(plain)
-        // Not even a fragment: three characters of a password is three characters of a password.
-        expect(logged).not.toContain(plain.slice(0, 3))
-        // Still a diagnosis: the operator has to be able to tell this from silence.
-        expect(logged).toContain('admitting the password')
+        // One argument: the error object never reaches the logger. Neither the plaintext, its
+        // base64 form, nor even its first three characters may appear in the event.
+        expect(warnSpy.mock.calls[0]).toHaveLength(1)
+        expectEvent(warnSpy, 'AUTH_BREACH_CHECK_UNAVAILABLE', { reason: 'threw' }, [
+          plain,
+          Buffer.from(plain).toString('base64'),
+          plain.slice(0, 3)
+        ])
       } finally {
-        errorSpy.mockRestore()
+        warnSpy.mockRestore()
       }
     })
   })

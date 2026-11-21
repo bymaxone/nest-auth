@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import { Logger } from '@nestjs/common'
 
+import { eventOf, serialized } from '../__tests__/log-events'
 import type { InviteData, SessionAlertInfo } from '../interfaces/email-provider.interface'
 import {
   AUTH_EMAIL_KINDS,
@@ -12,6 +13,10 @@ import {
   type DeliveryErrorPolicyMap
 } from './default-auth-email.provider'
 import { WORKSPACE_INVITE } from './__tests__/workspace-invite.fixture'
+
+/** The delivery-failure event for `kind`, whose cause is described as `detail`. */
+const failed = (kind: string, detail = '<error>'): ReturnType<typeof eventOf> =>
+  eventOf('AUTH_DELIVERY_FAILED', { kind, detail })
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -316,25 +321,25 @@ describe('DefaultAuthEmailProvider', () => {
     // stand-in is the whole description. That is the contract on EVERY path here, not only the
     // credential-bearing ones: a relay is as free to re-encode what it quotes when the body held
     // an address as when it held a code, and a substring match sees through neither.
-    expect(errorSpy).toHaveBeenCalledWith('delivery failed sending mfaEnabled: <error>')
+    expect(errorSpy).toHaveBeenCalledWith(failed('mfaEnabled'))
   })
 
   // The error OBJECT never reaches the logger — only the description built from it. Asserted on
   // the call's arity because that is the property that matters: a second argument would hand Nest
   // the raw error, and Nest prints its stack and its own properties, which is where a channel
   // hides the server's full reply (nodemailer's `response`, for one).
-  it('passes no error object to the logger, only a rendered line', async () => {
+  it('passes no error object to the logger, only the event object', async () => {
     sink.send.mockRejectedValueOnce(new Error('channel down'))
     await provider.sendMfaEnabledNotification('tenant-1', 'user@example.com')
     expect(errorSpy.mock.calls[0]).toHaveLength(1)
   })
 
-  // The log line names the message but never the recipient — a log reaches a wider audience than
+  // The event names the message kind but never the recipient — a log reaches a wider audience than
   // the inbox the mail was going to.
   it('keeps the recipient out of the failure log', async () => {
     sink.send.mockRejectedValueOnce(new Error('channel down'))
     await provider.sendPasswordResetToken('tenant-1', 'secret@example.com', 'TOK')
-    const logged = errorSpy.mock.calls[0]?.[0] as string
+    const logged = serialized(errorSpy)
     expect(logged).not.toContain('secret@example.com')
   })
 
@@ -560,7 +565,7 @@ describe('DefaultAuthEmailProvider', () => {
     )
     // A credential path, so nothing the channel wrote reaches the line — neither the message nor
     // the name, whatever either happened to contain.
-    expect(errorSpy).toHaveBeenCalledWith('delivery failed sending passwordResetToken: <error>')
+    expect(errorSpy).toHaveBeenCalledWith(failed('passwordResetToken'))
   })
 
   // The rethrown error is the ORIGINAL, unlaundered. Deliberate, and asserted so a later "let us
@@ -640,13 +645,13 @@ describe('DefaultAuthEmailProvider', () => {
 
       await send(provider)
 
-      const logged = errorSpy.mock.calls[0]?.[0] as string
+      const logged = serialized(errorSpy)
       // The credential is gone AND so is the channel's prose. What survives is the message's own
       // label, which this file wrote, and the stand-in saying a throw happened.
       expect(logged).not.toContain(secret)
       expect(logged).not.toContain('rejected by policy')
       expect(logged).not.toContain('550')
-      expect(logged).toBe(`delivery failed sending ${label}: <error>`)
+      expect(errorSpy).toHaveBeenCalledWith(failed(label))
     }
   )
 
@@ -668,7 +673,7 @@ describe('DefaultAuthEmailProvider', () => {
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', otp)
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
+    const logged = serialized(errorSpy)
     // Asserting the absence of the digits would pass while the leak is live — encoded, they are
     // not there to find. The assertion has to be the one an attacker would run: decode whatever
     // survived and look for the code in the plaintext.
@@ -679,7 +684,7 @@ describe('DefaultAuthEmailProvider', () => {
     expect(decoded).not.toContain(otp)
     expect(logged).not.toContain(otp)
     expect(logged).not.toContain('550')
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
+    expect(errorSpy).toHaveBeenCalledWith(failed('passwordResetOtp'))
   })
 
   // The measurement that killed the shape check, kept as a test because the shape check LOOKED
@@ -697,7 +702,7 @@ describe('DefaultAuthEmailProvider', () => {
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', otp)
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
+    const logged = serialized(errorSpy)
     // The attacker's own test: decode whatever survived and look for the code in the plaintext.
     // Asserting the absence of the digits passes while the leak is live, because encoded they are
     // not there to find.
@@ -707,7 +712,7 @@ describe('DefaultAuthEmailProvider', () => {
       .join(' ')
     expect(decoded).not.toContain(otp)
     expect(logged).not.toContain('MTIzNDU2')
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
+    expect(errorSpy).toHaveBeenCalledWith(failed('passwordResetOtp'))
   })
 
   // The status was the last channel-derived field and it is gone, for a reason the independence
@@ -722,10 +727,10 @@ describe('DefaultAuthEmailProvider', () => {
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', otp)
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
+    const logged = serialized(errorSpy)
     // Not even the first three digits, which is what a reply-code parser would have kept.
     expect(logged).not.toContain(otp.slice(0, 3))
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
+    expect(errorSpy).toHaveBeenCalledWith(failed('passwordResetOtp'))
   })
 
   // The error's NAME is the other field the channel controls, and dropping the message while
@@ -747,13 +752,12 @@ describe('DefaultAuthEmailProvider', () => {
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', '112233')
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
+    const logged = serialized(errorSpy)
     expect(logged).not.toContain('rejected by policy')
     expect(logged).not.toContain('SmtpError')
     expect(logged).not.toContain('RelayTail')
-    // A stand-in that names what happened, not an empty gap: a line reading `delivery failed for
-    // "x": ` tells an operator nothing about why the name is missing.
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
+    // A stand-in that names what happened, not an empty gap.
+    expect(errorSpy).toHaveBeenCalledWith(failed('passwordResetOtp'))
   })
 
   // A channel reports "send failed BECAUSE the relay said", and the quoted body lands one level
@@ -768,20 +772,20 @@ describe('DefaultAuthEmailProvider', () => {
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', '550123')
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
+    const logged = serialized(errorSpy)
     // The whole line. The links stay visibly separated so an operator can tell "the send failed"
     // from "the relay said" — and on a credential path each link contributes only its stand-in,
     // never the relay's prose and nothing parsed off it.
     expect(logged).not.toContain('550123')
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error> <- <error>')
+    expect(errorSpy).toHaveBeenCalledWith(failed('passwordResetOtp', '<error> <- <error>'))
   })
-  // The subject NEVER reaches the log line — the message's label does. A subject comes from the
+  // The subject NEVER reaches the log; the message's kind does. A subject comes from the
   // `messages` catalogue, which a consumer may override with arbitrary code, so logging it
-  // publishes a string this library did not write. Redacting it was the earlier answer and is not
-  // enough: a renderer that TRANSFORMS a value defeats a substring match, and `Code 123-456` for
-  // the OTP `123456` is a reasonable-looking thing to write, as is its base64.
+  // publishes a string this library did not write. Redaction is not enough: a renderer that
+  // TRANSFORMS a value defeats a substring match, and `Code 123-456` for the OTP `123456` is a
+  // reasonable-looking thing to write, as is its base64.
   //
-  // Asserted with an override that would be unmistakable if it leaked, and on the whole line, so
+  // Asserted with an override that would be unmistakable if it leaked, and on the whole event, so
   // this also pins that nothing else consumer-authored slipped in beside it.
   it('publishes the message label rather than the rendered subject', async () => {
     const messages = {
@@ -792,13 +796,12 @@ describe('DefaultAuthEmailProvider', () => {
 
     await custom.sendMfaEnabledNotification('t', 'u@example.com')
 
-    expect(errorSpy).toHaveBeenCalledWith('delivery failed sending mfaEnabled: <error>')
+    expect(errorSpy).toHaveBeenCalledWith(failed('mfaEnabled'))
   })
 
-  // Every method's label, because the label is now the ONLY thing identifying which message
-  // failed — the rendered subject is gone from the line. An empty or wrong one leaves an operator
-  // with a delivery failure and no way to tell a reset code from an invitation, and nine of these
-  // were unpinned when the subject stopped being logged.
+  // Every method's kind, because the kind is the ONLY thing identifying which message failed. An
+  // empty or wrong one leaves an operator with a delivery failure and no way to tell a reset code
+  // from an invitation.
   it.each([
     [
       'passwordResetToken',
@@ -832,12 +835,12 @@ describe('DefaultAuthEmailProvider', () => {
         p.sendNewSessionAlert('t', 'u@e.com', { device: 'd', ip: '1.2.3.4', sessionHash: 'h' })
     ],
     ['invitation', (p: DefaultAuthEmailProvider) => p.sendInvitation('t', 'u@e.com', INVITE)]
-  ])('names %s in the line when its send fails', async (label, send) => {
+  ])('names %s as the kind when its send fails', async (label, send) => {
     sink.send.mockRejectedValueOnce(new Error('channel down'))
 
     await send(provider)
 
-    expect(errorSpy).toHaveBeenCalledWith(`delivery failed sending ${label}: <error>`)
+    expect(errorSpy).toHaveBeenCalledWith(failed(label))
   })
 
   // `name` and `message` are typed `string` but are ordinary writable properties, and an error
@@ -876,9 +879,8 @@ describe('DefaultAuthEmailProvider', () => {
       provider.sendPasswordResetOtp('t', 'u@example.com', '777777')
     ).resolves.toBeUndefined()
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).toContain('delivery failed')
-    expect(logged).not.toContain('777777')
+    expect(errorSpy).toHaveBeenCalledWith(failed('passwordResetOtp'))
+    expect(serialized(errorSpy)).not.toContain('777777')
   })
 
   // A `toString` that throws is the same hazard one level down: `String()` on a non-string field
@@ -902,7 +904,7 @@ describe('DefaultAuthEmailProvider', () => {
     await expect(
       provider.sendPasswordResetOtp('t', 'u@example.com', '888888')
     ).resolves.toBeUndefined()
-    expect(errorSpy.mock.calls[0]?.[0]).toBe('delivery failed sending passwordResetOtp: <error>')
+    expect(errorSpy).toHaveBeenCalledWith(failed('passwordResetOtp'))
   })
 
   // Even asking "is this an Error?" runs code the thrower controls: `instanceof` performs the
@@ -926,22 +928,17 @@ describe('DefaultAuthEmailProvider', () => {
     // treated a hostile classification as an Error would produce a plausible `Error: unreachable`
     // line and satisfy any weaker assertion. The contract is that a value whose own classification
     // is hostile is reported as a non-error, which is what it has earned.
-    expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed sending passwordResetOtp: <non-error: object>'
-    )
+    expect(errorSpy).toHaveBeenCalledWith(failed('passwordResetOtp', '<non-error: object>'))
   })
 
   // A thrown `undefined` is legal — `Promise.reject()` produces one. The cause-walk guard that
-  // stops the chain would otherwise skip the body entirely and return an empty description,
-  // emitting `delivery failed for "X": ` with a dangling colon and no diagnosis whatsoever.
+  // stops the chain would otherwise skip the body entirely and return an empty description.
   it('describes a rejection that carries no value at all', async () => {
     sink.send.mockRejectedValueOnce(undefined)
 
     await provider.sendMfaEnabledNotification('t', 'u@example.com')
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed sending mfaEnabled: <non-error: undefined>'
-    )
+    expect(errorSpy).toHaveBeenCalledWith(failed('mfaEnabled', '<non-error: undefined>'))
   })
 
   // A channel may reject with something that is not an Error at all. Stringifying it would run
@@ -953,9 +950,8 @@ describe('DefaultAuthEmailProvider', () => {
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', '999999')
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).not.toContain('999999')
-    expect(logged).toContain('<non-error: object>')
+    expect(errorSpy).toHaveBeenCalledWith(failed('passwordResetOtp', '<non-error: object>'))
+    expect(serialized(errorSpy)).not.toContain('999999')
   })
 
   // A quoted body carries more than credentials, so these two get the same treatment. Both notices
@@ -996,11 +992,11 @@ describe('DefaultAuthEmailProvider', () => {
 
       await send(provider)
 
-      const logged = errorSpy.mock.calls[0]?.[0] as string
+      const logged = serialized(errorSpy)
       expect(logged).not.toContain(rendered)
       expect(logged).not.toContain('rejected by policy')
       expect(logged).not.toContain('550')
-      expect(logged).toBe(`delivery failed sending ${label}: <error>`)
+      expect(errorSpy).toHaveBeenCalledWith(failed(label))
     }
   )
 
@@ -1013,7 +1009,7 @@ describe('DefaultAuthEmailProvider', () => {
 
     await provider.sendMfaEnabledNotification('t', 'recipient@example.com')
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
+    const logged = serialized(errorSpy)
     // Nothing the transport wrote reaches the line, so the address cannot — not because it was
     // matched and removed, but because its carrier was never published.
     //
@@ -1023,7 +1019,7 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).not.toContain('recipient@example.com')
     expect(logged).not.toContain('recipient rejected')
     expect(logged).not.toContain('550')
-    expect(logged).toBe('delivery failed sending mfaEnabled: <error>')
+    expect(errorSpy).toHaveBeenCalledWith(failed('mfaEnabled'))
   })
 
   // The COMPOSITION of two clean components can spell a secret neither contains. `name` and
@@ -1036,8 +1032,7 @@ describe('DefaultAuthEmailProvider', () => {
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', 'Error: boom')
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).not.toContain('Error: boom')
+    expect(serialized(errorSpy)).not.toContain('Error: boom')
   })
 
   // Redaction runs per component, and things happen AFTER it: `logSafe` replaces a
@@ -1045,17 +1040,16 @@ describe('DefaultAuthEmailProvider', () => {
   // links are joined with a separator. Each writes text the per-component pass never saw, so a
   // caller whose declared secret is one of those markers gets it published by the function meant
   // to remove it. Here the message is a bare newline, `logSafe` turns it into `<malformed>`, and
-  // that string is the declared secret — so the finished line must not contain it.
+  // that string is the declared secret — so the finished event must not contain it.
   it('removes a secret that redaction itself created downstream', async () => {
     sink.send.mockRejectedValueOnce(new Error('\n'))
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', '<malformed>')
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).not.toContain('<malformed>')
+    expect(serialized(errorSpy)).not.toContain('<malformed>')
   })
 
-  // The bound is on the WHOLE line, not on each link of the chain. Capping per link lets a
+  // The bound is on the WHOLE description, not on each link of the chain. Capping per link lets a
   // three-deep chain contribute three times the budget — measured at 608 characters for a limit
   // of 200 — which defeats the point: the cap exists so a channel cannot relay an unbounded
   // quantity of its own text into a log, and a cause chain is the channel's text just as its
@@ -1069,8 +1063,10 @@ describe('DefaultAuthEmailProvider', () => {
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', '246813')
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged.length).toBeLessThan(270)
+    expect(errorSpy).toHaveBeenCalledWith(
+      failed('passwordResetOtp', '<error> <- <error> <- <error>')
+    )
+    expect(serialized(errorSpy).length).toBeLessThan(270)
   })
 
   // ---------------------------------------------------------------------------

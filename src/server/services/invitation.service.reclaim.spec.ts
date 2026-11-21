@@ -22,6 +22,7 @@ import {
 } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { expectEvent } from '../__tests__/log-events'
 import { InvitationService } from './invitation.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
@@ -153,7 +154,12 @@ describe('InvitationService — the claim repeated after the record is written',
         response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
       })
 
-      expect(String(warn.mock.calls[0]?.[0])).toContain('could not withdraw the record')
+      expectEvent(
+        warn,
+        'AUTH_STORE_DEGRADED',
+        { operation: 'invitation_withdraw', detail: '<error>' },
+        ['still down']
+      )
       expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
       warn.mockRestore()
     })
@@ -171,7 +177,12 @@ describe('InvitationService — the claim repeated after the record is written',
         service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
       ).rejects.toBe(failure)
 
-      expect(String(warn.mock.calls[0]?.[0])).toContain('could not withdraw the record')
+      expectEvent(
+        warn,
+        'AUTH_STORE_DEGRADED',
+        { operation: 'invitation_withdraw', detail: '<error>' },
+        ['still down']
+      )
       expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
       warn.mockRestore()
     })

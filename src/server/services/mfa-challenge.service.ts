@@ -345,7 +345,7 @@ export class MfaChallengeService {
     runDetached(
       this.logger,
       () => this.userRepo.updateLastLogin({ id: safeUser.id, tenantId: safeUser.tenantId }),
-      'challenge: updateLastLogin failed'
+      'updateLastLogin'
     )
 
     if (this.hooks.afterLogin) {
@@ -354,7 +354,7 @@ export class MfaChallengeService {
         this.logger,
         () =>
           afterLogin(safeUser, { plane: 'dashboard', userId, ip, userAgent, sanitizedHeaders: {} }),
-        'challenge: afterLogin hook threw'
+        'afterLogin'
       )
     }
 
@@ -388,7 +388,7 @@ export class MfaChallengeService {
     runDetached(
       this.logger,
       () => (this.platformUserRepo as IPlatformUserRepository).updateLastLogin(platformUser.id),
-      'challenge: platform updateLastLogin failed'
+      'updateLastLogin'
     )
 
     if (this.hooks.afterLogin) {
@@ -403,7 +403,7 @@ export class MfaChallengeService {
             userAgent,
             sanitizedHeaders: {}
           }),
-        'challenge: afterLogin hook threw'
+        'afterLogin'
       )
     }
 

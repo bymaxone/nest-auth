@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common'
 
+import { expectEvent } from '../__tests__/log-events'
 import { ApiKeyLastUsedService } from './api-key-last-used.service'
 import { KEY_ID, MemoryApiKeyRepository, makeOptions, makeRow } from './__tests__/api-key-fixtures'
 
@@ -98,8 +99,12 @@ describe('ApiKeyLastUsedService', () => {
     service.record(KEY_ID, at(1))
     await jest.advanceTimersByTimeAsync(60_000)
     expect(warn).toHaveBeenCalledTimes(1)
-    expect(String(warn.mock.calls[0]?.[0])).toContain('api-key: last-used flush failed cause=')
-    expect(String(warn.mock.calls[0]?.[0])).not.toContain('SHOULD-NOT-LEAK')
+    expectEvent(
+      warn,
+      'AUTH_STORE_DEGRADED',
+      { operation: 'api_key_last_used_flush', detail: '<error>' },
+      ['SHOULD-NOT-LEAK']
+    )
     // Nothing is recorded again: the retry must come from the entries the failure kept.
     repo.failWith = null
     await jest.advanceTimersByTimeAsync(60_000)

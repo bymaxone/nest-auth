@@ -43,6 +43,7 @@ import type {
   IWorkspaceRepository,
   WorkspaceRef
 } from '../interfaces/workspace-repository.interface'
+import { logEvent } from '../observability/log-event'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -209,7 +210,7 @@ export class WorkspaceInvitationAcceptService {
       runDetached(
         this.logger,
         () => this.hooks.afterInvitationAccepted?.(toSafeUser(user), context),
-        'afterInvitationAccepted hook threw'
+        'afterInvitationAccepted'
       )
     }
     return accepted
@@ -326,7 +327,7 @@ export class WorkspaceInvitationAcceptService {
       membership?.status === 'active' &&
       this.ceiling.mayActOn(membership.role, record.role)
     if (!stands) {
-      this.logger.warn('workspace invitation: the inviter can no longer grant the invited role')
+      logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'inviter_cannot_grant' })
       throw invalidToken()
     }
   }
@@ -497,7 +498,7 @@ export class WorkspaceInvitationAcceptService {
     runDetached(
       this.logger,
       () => this.hooks.afterInvitationAccepted?.(user, context),
-      'afterInvitationAccepted hook threw'
+      'afterInvitationAccepted'
     )
     return result
   }

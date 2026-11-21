@@ -19,6 +19,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { expectEvent } from '../__tests__/log-events'
 import { BruteForceService } from './brute-force.service'
 import { MFA_COLLABORATORS } from './__tests__/mfa-collaborators'
 import { MfaService } from './mfa.service'
@@ -279,9 +280,9 @@ describe('MfaService — challenge completion side effects', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
-      'challenge: platform updateLastLogin failed'
-    )
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'updateLastLogin', how: 'rejected' }, [
+      'db down'
+    ])
   })
 
   // A failing last-login write must not undo a challenge that already passed.
@@ -304,12 +305,14 @@ describe('MfaService — challenge completion side effects', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain('updateLastLogin failed')
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'updateLastLogin', how: 'rejected' }, [
+      'db down'
+    ])
   })
 
   // A hook that throws SYNCHRONOUSLY must not undo a challenge that has already passed and
-  // issued its tokens, on either plane; the failure is logged by label only, never by the text
-  // the host's hook wrote.
+  // issued its tokens, on either plane; the failure is logged by hook name only, never by the
+  // text the host's hook wrote.
   it.each(['dashboard', 'platform'] as const)(
     'should complete the %s challenge when afterLogin throws synchronously',
     async (context) => {
@@ -351,9 +354,7 @@ describe('MfaService — challenge completion side effects', () => {
         service.challenge('mfa.temp', validCode, '1.2.3.4', 'Browser')
       ).resolves.toBeDefined()
 
-      const lines = error.mock.calls.map((c) => String(c[0]))
-      expect(lines.some((l) => l.includes('challenge: afterLogin hook threw'))).toBe(true)
-      expect(lines.join('\n')).not.toContain('XYZ')
+      expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterLogin', how: 'threw' }, ['XYZ'])
     }
   )
 })

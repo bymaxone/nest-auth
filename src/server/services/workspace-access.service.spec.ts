@@ -29,6 +29,7 @@ import type {
   IWorkspaceRepository
 } from '../interfaces/workspace-repository.interface'
 import type { AuthRedisService } from '../redis/auth-redis.service'
+import { expectEvent } from '../__tests__/log-events'
 import { WorkspaceAccessService } from './workspace-access.service'
 
 const SECRET = 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B'
@@ -378,9 +379,7 @@ describe('WorkspaceAccessService', () => {
 
       await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
       expect(fills(redis)).toEqual([])
-      expect(warn).toHaveBeenCalledWith(
-        'Workspace membership cache unavailable; reading the repositories.'
-      )
+      expectEvent(warn, 'AUTH_STORE_DEGRADED', { operation: 'workspace_cache_read' })
     })
 
     it('still answers when the refill cannot be written', async () => {
@@ -392,9 +391,7 @@ describe('WorkspaceAccessService', () => {
       )
 
       await expect(service.resolveMembership(REF)).resolves.toEqual({ ...REF, role: 'editor' })
-      expect(warn).toHaveBeenCalledWith(
-        'Workspace membership cache unavailable; the answer was not cached.'
-      )
+      expectEvent(warn, 'AUTH_STORE_DEGRADED', { operation: 'workspace_cache_write' })
     })
 
     // A reply of the wrong shape carries no versions, so there is nothing to write a refill under.

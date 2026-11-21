@@ -25,10 +25,9 @@ import type {
   IPlatformUserRepository,
   SafeAuthPlatformUser
 } from '../interfaces/platform-user-repository.interface'
-import { logEvent } from '../observability/log-event'
+import { logEvent, logHook } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeChannelStatus } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
@@ -168,8 +167,8 @@ export class PlatformAuthService {
     logEvent(this.logger, 'AUTH_LOGIN_SUCCEEDED', { ...PASSWORD_LOGIN, userId: admin.id })
 
     // Fire-and-forget: a slow or failing DB update must not block the auth response.
-    void this.platformUserRepo.updateLastLogin(admin.id).catch((err: unknown) => {
-      this.logger.error(`updateLastLogin failed: ${describeChannelStatus(err)}`)
+    void this.platformUserRepo.updateLastLogin(admin.id).catch(() => {
+      logHook(this.logger, 'updateLastLogin', 'rejected')
     })
 
     return result
@@ -305,15 +304,11 @@ export class PlatformAuthService {
     // caller would then be told a finished logout failed, and might retry it. Same shape and same
     // remedy as `TokenManagerService.emitReuseDetected`.
     try {
-      void Promise.resolve(this.hooks.afterPlatformLogout(userId, context)).catch(
-        (err: unknown) => {
-          this.logger.error(`afterPlatformLogout hook threw: ${describeChannelStatus(err)}`)
-        }
-      )
-    } catch (err: unknown) {
-      this.logger.error(
-        `afterPlatformLogout hook threw synchronously: ${describeChannelStatus(err)}`
-      )
+      void Promise.resolve(this.hooks.afterPlatformLogout(userId, context)).catch(() => {
+        logHook(this.logger, 'afterPlatformLogout', 'rejected')
+      })
+    } catch {
+      logHook(this.logger, 'afterPlatformLogout', 'threw')
     }
   }
 

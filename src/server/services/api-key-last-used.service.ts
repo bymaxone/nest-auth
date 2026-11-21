@@ -10,7 +10,7 @@ import type { OnApplicationShutdown } from '@nestjs/common'
 import { BYMAX_AUTH_API_KEY_REPOSITORY, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { IApiKeyRepository } from '../interfaces/api-key-repository.interface'
-import { describeChannelStatus } from '../utils/describe-error'
+import { logStore } from '../observability/log-event'
 
 /**
  * Remembers the latest use of each key in memory and writes them to the store in one batch per
@@ -65,7 +65,7 @@ export class ApiKeyLastUsedService implements OnApplicationShutdown {
     try {
       await this.repository.touchLastUsed([...batch].map(([id, at]) => ({ id, at })))
     } catch (err: unknown) {
-      this.logger.warn(`api-key: last-used flush failed cause=${describeChannelStatus(err)}`)
+      logStore(this.logger, 'AUTH_STORE_DEGRADED', 'api_key_last_used_flush', err)
       for (const [id, at] of batch) this.record(id, at)
     }
   }

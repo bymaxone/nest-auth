@@ -10,6 +10,7 @@ import { Logger } from '@nestjs/common'
 
 import { AccountStatusService } from './account-status.service'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { expectEvent } from '../__tests__/log-events'
 
 const REF = { userId: 'u1', tenantId: 't1' } as const
 
@@ -92,8 +93,8 @@ describe('AccountStatusService cache fill', () => {
     })
   })
 
-  // Scenario: a failed write. Expected: one warning that says the next request reads the repository
-  // again, and nothing from the store's text.
+  // Scenario: a failed write. Expected: one degraded-store event for the cache write, and nothing
+  // from the store's text.
   it('logs one warning per failed write and keeps the store text out of it', async () => {
     const { service } = build({ status: 'ACTIVE', emailVerified: true })
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation()
@@ -101,8 +102,12 @@ describe('AccountStatusService cache fill', () => {
     await service.assertDashboardAccountUsable(REF)
 
     expect(warn).toHaveBeenCalledTimes(1)
-    expect(String(warn.mock.calls[0]?.[0])).toMatch(/reads the repository again/)
-    expect(String(warn.mock.calls[0]?.[0])).not.toMatch(/connection lost/)
+    expectEvent(
+      warn,
+      'AUTH_STORE_DEGRADED',
+      { operation: 'account_status_cache_write', detail: '<error>' },
+      ['connection lost']
+    )
   })
 
   // Scenario: a cache read that fails (not a fill). Expected: the error propagates. Why: a store

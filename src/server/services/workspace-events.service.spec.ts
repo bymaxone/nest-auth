@@ -9,6 +9,7 @@ import { Logger } from '@nestjs/common'
 
 import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { WorkspaceAuditEvent } from '../interfaces/workspace-audit.interface'
+import { expectEvent } from '../__tests__/log-events'
 import { CONTEXT, NOW, WORKSPACE_REF } from './__tests__/workspace-service-harness'
 import { WorkspaceEventsService } from './workspace-events.service'
 
@@ -52,9 +53,7 @@ describe('WorkspaceEventsService', () => {
       new WorkspaceEventsService({ onWorkspaceEvent } as IAuthHooks).emit(EVENT, CONTEXT)
     ).not.toThrow()
 
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining('onWorkspaceEvent hook failed for workspace.renamed')
-    )
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'onWorkspaceEvent', how: 'threw' })
   })
 
   it('does not fail the operation when the hook rejects, and logs it', async () => {
@@ -63,24 +62,23 @@ describe('WorkspaceEventsService', () => {
     new WorkspaceEventsService({ onWorkspaceEvent } as IAuthHooks).emit(EVENT, CONTEXT)
     await new Promise((resolve) => setImmediate(resolve))
 
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining('onWorkspaceEvent hook failed for workspace.renamed')
-    )
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'onWorkspaceEvent', how: 'rejected' })
   })
 
-  // The event can carry an address; the log line names the hook and the event type and nothing
+  // The event can carry an address; the log event names the hook and how it failed and nothing
   // from the payload, whether the hook throws or rejects.
   it.each([
     [
       'throws',
       () => {
         throw new Error('boom')
-      }
+      },
+      'threw'
     ],
-    ['rejects', () => Promise.reject(new Error('boom'))]
+    ['rejects', () => Promise.reject(new Error('boom')), 'rejected']
   ])(
     'never writes the event payload to the log when the hook %s',
-    async (_how, onWorkspaceEvent) => {
+    async (_verb, onWorkspaceEvent, how) => {
       const invited: WorkspaceAuditEvent = {
         type: 'member.invited',
         ...WORKSPACE_REF,
@@ -93,12 +91,13 @@ describe('WorkspaceEventsService', () => {
       new WorkspaceEventsService({ onWorkspaceEvent } as IAuthHooks).emit(invited, CONTEXT)
       await new Promise((resolve) => setImmediate(resolve))
 
-      const logged = error.mock.calls.map((call) => String(call[0]))
-      expect(logged).toHaveLength(1)
-      expect(logged[0]).toContain('onWorkspaceEvent hook failed for member.invited')
-      for (const secret of ['jane.doe@example.com', 'inviter-7', 'editor', NOW.toISOString()]) {
-        expect(logged[0]).not.toContain(secret)
-      }
+      expect(error).toHaveBeenCalledTimes(1)
+      expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'onWorkspaceEvent', how }, [
+        'jane.doe@example.com',
+        'inviter-7',
+        'editor',
+        NOW.toISOString()
+      ])
     }
   )
 

@@ -10,7 +10,7 @@ import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES } from '../errors/auth-error-code
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenManagerService } from './token-manager.service'
-import { eventOf, expectEvent, serialized } from '../__tests__/log-events'
+import { eventOf, eventsReceived, expectEvent, serialized } from '../__tests__/log-events'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -924,10 +924,8 @@ describe('TokenManagerService', () => {
     // falls through to the generic "no valid session or grace window found" tail, which raises the
     // same REFRESH_TOKEN_INVALID. Asserting the code cannot tell the two apart.
     //
-    // The tail also LOGS, and that is the difference an operator sees. A replayed token is the
-    // strongest compromise signal this library produces; filing it under "no valid session" turns
-    // a takeover indicator into the same line an expired token writes. The reuse path must not
-    // reach that log.
+    // The tail also LOGS: a replayed token is the strongest compromise signal this library
+    // produces, and filing it under "no valid session" would make it look like an expired one.
     it.each([
       ['reissueTokens', (s: TokenManagerService) => s.reissueTokens('replayed', '1.2.3.4', 'UA')],
       [
@@ -940,8 +938,7 @@ describe('TokenManagerService', () => {
 
       await expect(call(service)).rejects.toThrow(AuthException)
 
-      const logged = warnSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).not.toContain('no valid session or grace window found')
+      expect(eventsReceived(warnSpy)).not.toContain('AUTH_REFRESH_REFUSED')
       warnSpy.mockRestore()
     })
 
@@ -971,15 +968,20 @@ describe('TokenManagerService', () => {
     // Both failure shapes of the hook itself: a rejection from an `async` body and a throw
     // from a synchronous one. Neither may change the refusal the caller receives.
     it.each([
-      ['rejects', () => mockHooks.onRefreshTokenReuseDetected.mockRejectedValue(new Error('x'))],
+      [
+        'rejects',
+        'rejected',
+        () => mockHooks.onRefreshTokenReuseDetected.mockRejectedValue(new Error('x'))
+      ],
       [
         'throws',
+        'threw',
         () =>
           mockHooks.onRefreshTokenReuseDetected.mockImplementation(() => {
             throw new Error('x')
           })
       ]
-    ])('still refuses when the reuse hook %s', async (_label, arrange) => {
+    ])('still refuses when the reuse hook %s', async (_label, how, arrange) => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
       arrange()
@@ -990,9 +992,7 @@ describe('TokenManagerService', () => {
       await Promise.resolve()
       await Promise.resolve()
 
-      expect(errorSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
-        'onRefreshTokenReuseDetected hook threw'
-      )
+      expectEvent(errorSpy, 'AUTH_HOOK_FAILED', { hook: 'onRefreshTokenReuseDetected', how })
       errorSpy.mockRestore()
     })
 
@@ -1439,7 +1439,7 @@ describe('TokenManagerService', () => {
       expect((thrown as AuthException).getResponse()).toMatchObject({
         error: expect.objectContaining({ code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID })
       })
-      expect(warnSpy).toHaveBeenCalledWith('parseSession: malformed session JSON in Redis')
+      expectEvent(warnSpy, 'AUTH_RECORD_INVALID', { record: 'session_json' }, ['not-valid-json'])
       warnSpy.mockRestore()
     })
 

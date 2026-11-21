@@ -129,7 +129,7 @@ export const AUTH_LOG_EVENTS = {
   AUTH_USER_REGISTERED: {
     level: 'log',
     message: 'register: user registered',
-    fields: ['userId', 'tenantId']
+    fields: ['userId', 'tenantId', 'via']
   },
   AUTH_TOKENS_ISSUED: {
     level: 'log',
@@ -286,6 +286,51 @@ export const AUTH_LOG_EVENTS = {
     level: 'warn',
     message: 'MFA: a stored payload is not valid JSON',
     fields: ['kind']
+  },
+  AUTH_HOOK_FAILED: {
+    level: 'error',
+    message: 'a hook or a fire-and-forget step failed',
+    fields: ['hook', 'how']
+  },
+  AUTH_STORE_FAILED: {
+    level: 'error',
+    message: 'a store or repository operation failed',
+    fields: ['operation', 'detail']
+  },
+  AUTH_STORE_DEGRADED: {
+    level: 'warn',
+    message: 'a store or repository operation failed and the flow went on',
+    fields: ['operation', 'detail']
+  },
+  AUTH_RECORD_INVALID: {
+    level: 'warn',
+    message: 'a stored record is not valid',
+    fields: ['record']
+  },
+  AUTH_PROVIDER_MISSING: {
+    level: 'warn',
+    message: 'no email provider is configured',
+    fields: ['flow']
+  },
+  AUTH_BREACH_CHECK_UNAVAILABLE: {
+    level: 'warn',
+    message: 'the breach check did not answer and the password was admitted',
+    fields: ['reason']
+  },
+  AUTH_API_KEY_REFUSED: {
+    level: 'error',
+    message: 'api key: refused',
+    fields: ['reason']
+  },
+  AUTH_TENANT_SCOPE_VIOLATED: {
+    level: 'warn',
+    message: 'login: the repository returned an account outside the requested tenant',
+    fields: []
+  },
+  AUTH_UNHANDLED_EXCEPTION: {
+    level: 'error',
+    message: 'unhandled exception',
+    fields: ['surface', 'detail']
   }
 } as const satisfies Record<string, LogEventSpec>
 

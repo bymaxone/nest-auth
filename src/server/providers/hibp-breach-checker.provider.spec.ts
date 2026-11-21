@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 
 import { Logger } from '@nestjs/common'
 
+import { expectEvent } from '../__tests__/log-events'
 import { AllowAllBreachChecker, HibpBreachChecker } from './hibp-breach-checker.provider'
 
 // ---------------------------------------------------------------------------
@@ -148,10 +149,10 @@ describe('HibpBreachChecker', () => {
     expect(warn).toHaveBeenCalled()
   })
 
-  // The warning is the operator's only signal that the check silently did not happen, so it
-  // must say so — and it must not carry password material.
+  // The event is the operator's only signal that the check silently did not happen, and it must
+  // not carry password material.
   it.each([
-    ['a refused status', () => stubFetch('', 503), 'breach check unavailable (status 503)'],
+    ['a refused status', () => stubFetch('', 503), 'unavailable'],
     [
       'an unreachable service',
       () => {
@@ -159,22 +160,17 @@ describe('HibpBreachChecker', () => {
           .fn()
           .mockRejectedValue(new Error('ECONNREFUSED')) as unknown as typeof fetch
       },
-      'breach check unreachable'
+      'unreachable'
     ]
   ])(
     'logs that the check did not happen on %s, without the password',
-    async (_l, arrange, expected) => {
+    async (_l, arrange, reason) => {
       arrange()
 
       await new HibpBreachChecker().isBreached(PASSWORD)
 
-      const logged = warn.mock.calls.map((call) => String(call[0])).join(' ')
-      // The two failures are distinguishable in the log: a refusal names the status, an
-      // unreachable service cannot, and an operator triages them differently.
-      expect(logged).toContain(expected)
-      expect(logged).toContain('password allowed')
-      expect(logged).not.toContain(PASSWORD)
-      expect(logged).not.toContain(SUFFIX)
+      // The two failures are distinguishable in the log, and an operator triages them differently.
+      expectEvent(warn, 'AUTH_BREACH_CHECK_UNAVAILABLE', { reason }, [PASSWORD, SUFFIX])
     }
   )
 

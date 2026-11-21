@@ -249,7 +249,16 @@ function parse(path: string): ts.SourceFile {
 // allowlisted account id or one of a few closed identifiers, and anything else is a failure until someone
 // decides what it is.
 const ID_FIELDS = new Set(['userId', 'tenantId', 'actorUserId', 'familyId'])
-const CLOSED_IDENTIFIERS = new Set(['context', 'flow', 'kind'])
+const CLOSED_IDENTIFIERS = new Set([
+  'context',
+  'flow',
+  'kind',
+  'label',
+  'hook',
+  'how',
+  'operation',
+  'surface'
+])
 // The expressions that may fill an id field: the id of an account the flow already resolved, the id the host
 // authenticated, or the lineage of a refresh token. A property chain on a request, a body or an error is not on
 // the list, so adding one is a decision this list makes visible, like LIBRARY_AUTHORED above.
@@ -261,6 +270,8 @@ const ID_EXPRESSIONS = new Set([
   'admin.id',
   'authUser.id',
   'authUser.tenantId',
+  'created.id',
+  'created.tenantId',
   'context.userId',
   'newUser.id',
   'payload.sub',
@@ -488,11 +499,11 @@ describe('log-injection guard (E2E)', () => {
     )
   })
 
-  // The detector has to be able to fail, or the assertions above are decoration. Asserting a lower bound
-  // keeps a later refactor of the walker from silently reducing it to nothing.
-  it('actually inspects the logger calls it claims to', () => {
-    expect(everything.length).toBeGreaterThan(30)
-    expect(everything.some((i) => i.guarded)).toBe(true)
+  // The library has no interpolation left in a direct logger call, so the detector reports none; the classification
+  // rows below are what show it can still see one.
+  it('finds no interpolation in a direct logger call, in the files it was given', () => {
+    expect(files.length).toBeGreaterThan(100)
+    expect(everything).toEqual([])
   })
 
   // The shapes that made earlier versions of this suite NOT fail-closed, which was the whole claim
@@ -652,13 +663,14 @@ describe('log-injection guard (E2E)', () => {
   // Scenario: every `logEvent` call in the library. Expected: no field outside the rule above. Why: an event
   // field is where a value this library did not author would enter an event.
   it('writes only fields the library composed or an account id into an event', () => {
-    const calls = files.filter((file) => !file.endsWith('log-event.ts'))
-    const problems = calls.flatMap((file) =>
+    const written = files.filter((file) => /logEvent\(/.test(readFileSync(file, 'utf8')))
+    const problems = written.flatMap((file) =>
       eventFieldProblems(readFileSync(file, 'utf8')).map(
         (field) => `${file.slice(SRC_ROOT.length + 1)}: ${field}`
       )
     )
 
+    expect(written.length).toBeGreaterThan(20)
     expect(problems).toEqual([])
   })
 

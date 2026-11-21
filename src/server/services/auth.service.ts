@@ -30,11 +30,11 @@ import type {
   IUserRepository,
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
-import { logEvent } from '../observability/log-event'
+import { logEvent, logHook, logStore, logDelivery } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { resolveClientAddress } from '../utils/client-address'
-import { describeChannelStatus, describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
@@ -100,7 +100,7 @@ export class AuthService {
    */
   private async dropCachedAccountFacts(userId: string, tenantId: string): Promise<void> {
     await this.accountStatus.invalidate({ userId, tenantId }).catch((err: unknown) => {
-      this.logger.error(`verifyEmail: cache invalidation failed: ${describeError(err, [userId])}`)
+      logStore(this.logger, 'AUTH_STORE_FAILED', 'cache_invalidation', err)
     })
   }
   /**
@@ -180,9 +180,7 @@ export class AuthService {
       }
       await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash: upgraded })
     } catch (err: unknown) {
-      this.logger.error(
-        `rehash on verify failed — the stored hash is unchanged: ${describeChannelStatus(err)}`
-      )
+      logStore(this.logger, 'AUTH_STORE_FAILED', 'rehash_on_verify', err)
     }
   }
 
@@ -301,12 +299,12 @@ export class AuthService {
       })
     }
 
-    logEvent(this.logger, 'AUTH_USER_REGISTERED', { userId: newUser.id, tenantId })
+    logEvent(this.logger, 'AUTH_USER_REGISTERED', { userId: newUser.id, tenantId, via: 'password' })
 
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
       const afterRegister = this.hooks.afterRegister.bind(this.hooks)
-      runDetached(this.logger, () => afterRegister(safeUser, context), 'afterRegister hook threw')
+      runDetached(this.logger, () => afterRegister(safeUser, context), 'afterRegister')
     }
 
     return result
@@ -392,10 +390,7 @@ export class AuthService {
     // indistinguishable, however far below the KDF's noise floor a log line sits.
     if (tenantMismatch && !this.warnedTenantMismatch) {
       this.warnedTenantMismatch = true
-      this.logger.warn(
-        `login: repository returned an account outside the requested tenant — check that ` +
-          `IUserRepository.findByEmail scopes by its tenantId argument`
-      )
+      logEvent(this.logger, 'AUTH_TENANT_SCOPE_VIOLATED')
     }
     if (!user || !user.passwordHash || tenantMismatch) {
       await this.passwordService.compareDummy(dto.password)
@@ -490,12 +485,12 @@ export class AuthService {
     this.logLogin('AUTH_LOGIN_SUCCEEDED', safeUser.id, tenantId)
 
     // Non-blocking side effects.
-    void this.userRepo.updateLastLogin({ id: user.id, tenantId }).catch((err: unknown) => {
-      this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
+    void this.userRepo.updateLastLogin({ id: user.id, tenantId }).catch(() => {
+      logHook(this.logger, 'updateLastLogin', 'rejected')
     })
     if (this.hooks?.afterLogin) {
       const afterLogin = this.hooks.afterLogin.bind(this.hooks)
-      runDetached(this.logger, () => afterLogin(safeUser, context), 'afterLogin hook threw')
+      runDetached(this.logger, () => afterLogin(safeUser, context), 'afterLogin')
     }
 
     return result
@@ -644,7 +639,7 @@ export class AuthService {
           // `describeChannelStatus`, not `String(err)`: the rejection comes from Redis, and
           // `String()` strips nothing — a value carrying CR/LF would close the log record and open
           // a forged one, and this one names the failing KEY, which embeds the consumer's user id.
-          this.logger.warn(`logout: session cleanup failed — ${describeChannelStatus(err)}`)
+          logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_cleanup', err)
         }
       })
   }
@@ -685,11 +680,11 @@ export class AuthService {
     // so `.catch` never sees it and the exception escapes into a `logout` whose Redis writes have
     // completed.
     try {
-      void Promise.resolve(this.hooks.afterLogout(userId, context)).catch((err: unknown) => {
-        this.logger.error(`afterLogout hook threw: ${describeError(err, [userId])}`)
+      void Promise.resolve(this.hooks.afterLogout(userId, context)).catch(() => {
+        logHook(this.logger, 'afterLogout', 'rejected')
       })
-    } catch (err: unknown) {
-      this.logger.error(`afterLogout hook threw synchronously: ${describeError(err, [userId])}`)
+    } catch {
+      logHook(this.logger, 'afterLogout', 'threw')
     }
   }
 
@@ -843,9 +838,7 @@ export class AuthService {
         .catch((err: unknown) => {
           // Same reasoning as the logout path above: bounded, control-character-free, and no
           // secret in flight to name.
-          this.logger.warn(
-            `refresh: session detail rotation failed — ${describeChannelStatus(err)}`
-          )
+          logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_detail_rotation', err)
         })
     }
 
@@ -1000,11 +993,9 @@ export class AuthService {
 
     logEvent(this.logger, 'AUTH_TOKENS_ISSUED', { userId: user.id, tenantId: user.tenantId })
 
-    void this.userRepo
-      .updateLastLogin({ id: user.id, tenantId: safeUser.tenantId })
-      .catch((err: unknown) => {
-        this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
-      })
+    void this.userRepo.updateLastLogin({ id: user.id, tenantId: safeUser.tenantId }).catch(() => {
+      logHook(this.logger, 'updateLastLogin', 'rejected')
+    })
     if (this.hooks?.afterLogin) {
       const afterLogin = this.hooks.afterLogin.bind(this.hooks)
       runDetached(
@@ -1017,7 +1008,7 @@ export class AuthService {
             userAgent,
             sanitizedHeaders: {}
           }),
-        'afterLogin hook threw'
+        'afterLogin'
       )
     }
 
@@ -1082,7 +1073,7 @@ export class AuthService {
         this.logger,
         () =>
           afterEmailVerified(toSafeUser(user), { ...createEmptyHookContext(), plane: 'dashboard' }),
-        'afterEmailVerified hook threw'
+        'afterEmailVerified'
       )
     }
   }
@@ -1371,13 +1362,13 @@ export class AuthService {
    * Every hook on this interface is advisory: a consumer's SIEM being down must not turn a
    * refused login into a different refusal, nor a successful one into a failure.
    */
-  private fireAndForget(run: () => Promise<void> | void, name: string): void {
+  private fireAndForget(run: () => Promise<void> | void, hook: keyof IAuthHooks): void {
     try {
-      void Promise.resolve(run()).catch((err: unknown) => {
-        this.logger.error(`${name} hook threw: ${describeChannelStatus(err)}`)
+      void Promise.resolve(run()).catch(() => {
+        logEvent(this.logger, 'AUTH_HOOK_FAILED', { hook, how: 'rejected' })
       })
-    } catch (err: unknown) {
-      this.logger.error(`${name} hook threw synchronously: ${describeChannelStatus(err)}`)
+    } catch {
+      logEvent(this.logger, 'AUTH_HOOK_FAILED', { hook, how: 'threw' })
     }
   }
 
@@ -1396,7 +1387,7 @@ export class AuthService {
 
   private async sendVerificationOtp(tenantId: string, email: string): Promise<void> {
     if (!this.emailProvider) {
-      this.logger.warn('sendVerificationOtp: no email provider configured — OTP not sent')
+      logEvent(this.logger, 'AUTH_PROVIDER_MISSING', { flow: 'email_verification_otp' })
       return
     }
 
@@ -1428,10 +1419,7 @@ export class AuthService {
         //
         // The event carries no user id and no address, so there is nothing for the code to be
         // rebuilt from beside the description.
-        logEvent(this.logger, 'AUTH_DELIVERY_FAILED', {
-          kind: 'email_verification_otp',
-          detail: describeChannelStatus(err)
-        })
+        logDelivery(this.logger, 'email_verification_otp', err)
       }
     })()
   }

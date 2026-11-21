@@ -81,7 +81,7 @@ export class WorkspaceDeniedEventsService {
       return decide()
     } catch (error) {
       if (error instanceof WorkspaceAccessRefusal) {
-        runDetached(this.logger, () => this.report(denied, error), 'access.denied was not reported')
+        runDetached(this.logger, () => this.report(denied, error), 'accessDenied')
       }
       throw error
     }

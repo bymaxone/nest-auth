@@ -7,7 +7,7 @@ import { Catch, Logger } from '@nestjs/common'
 import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common'
 
 import { AuthException } from '../errors/auth-exception'
-import { describeChannelStatus } from '../utils/describe-error'
+import { logUnhandled } from '../observability/log-event'
 
 /**
  * A Socket.IO client: dispatch is an event, and the adapter puts it on the wire.
@@ -155,8 +155,6 @@ export class WsAuthExceptionFilter implements ExceptionFilter {
     // whatever reached this filter was thrown by code this library does not own, so nothing it
     // authored is published — not its `message`, not its `name`, not its `stack`. Naming values
     // to redact would require knowing what the thrower held, which this filter cannot.
-    this.logger.error(
-      `refused a request on a client this filter cannot answer: ${describeChannelStatus(exception)}`
-    )
+    logUnhandled(this.logger, 'ws', exception)
   }
 }

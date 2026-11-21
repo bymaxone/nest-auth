@@ -23,10 +23,10 @@
 
 import type { Logger } from '@nestjs/common'
 
-import { describeChannelStatus } from './describe-error'
 import { sleep } from './sleep'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { logStore } from '../observability/log-event'
 import type { AuthRedisService } from '../redis/auth-redis.service'
 import { isServiceUnavailable } from '../redis/redis-outage'
 
@@ -38,8 +38,6 @@ export interface ResetRequestDeps {
 
 /** One reset request, described by the caller. */
 export interface ResetRequest {
-  /** Names the entry point in log lines. */
-  readonly label: 'initiateReset' | 'resendOtp'
   /** The key the resend cooldown lives under, shared by both entry points. */
   readonly cooldownKey: string
   readonly cooldownSeconds: number
@@ -65,14 +63,14 @@ export async function answerResetRequest(
   request: ResetRequest
 ): Promise<void> {
   const { redis, logger } = deps
-  const { label, cooldownKey, start } = request
+  const { cooldownKey, start } = request
   const holdFloor = (): Promise<void> => sleep(Math.max(0, request.floorMs - (Date.now() - start)))
   // A release that fails is logged and never raised: the failure that called for it is the answer.
   const releaseCooldown = async (): Promise<void> => {
     try {
       await redis.del(cooldownKey)
     } catch (err: unknown) {
-      logger.error(`${label}: cooldown release failed: ${describeChannelStatus(err)}`)
+      logStore(logger, 'AUTH_STORE_FAILED', 'reset_cooldown_release', err)
     }
   }
 
@@ -80,7 +78,7 @@ export async function answerResetRequest(
   try {
     claimed = await redis.setnx(cooldownKey, request.cooldownSeconds)
   } catch (err: unknown) {
-    logger.error(`${label}: cooldown store failed: ${describeChannelStatus(err)}`)
+    logStore(logger, 'AUTH_STORE_FAILED', 'reset_cooldown_store', err)
     await holdFloor()
     throw isServiceUnavailable(err) ? err : new AuthException(AUTH_ERROR_CODES.INTERNAL)
   }
@@ -95,7 +93,7 @@ export async function answerResetRequest(
   try {
     account = await request.findAccount()
   } catch (err: unknown) {
-    logger.error(`${label}: account lookup failed: ${describeChannelStatus(err)}`)
+    logStore(logger, 'AUTH_STORE_FAILED', 'reset_account_lookup', err)
     await releaseCooldown()
     await holdFloor()
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
@@ -104,7 +102,7 @@ export async function answerResetRequest(
   try {
     if (account && !request.isBlocked(account.status)) await request.issue(account.id)
   } catch (err: unknown) {
-    logger.error(`${label}: unexpected error: ${describeChannelStatus(err)}`)
+    logStore(logger, 'AUTH_STORE_FAILED', 'reset_issue', err)
     await releaseCooldown()
   }
   await holdFloor()

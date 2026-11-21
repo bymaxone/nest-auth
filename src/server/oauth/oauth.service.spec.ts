@@ -810,20 +810,17 @@ describe('OAuthService', () => {
       expect(result).toBe(AUTH_RESULT)
     })
 
-    // Pins the success event. On a successful OAuth login the service emits the login event carrying the plane,
-    // the user, the tenant and that the login came through OAuth; neither the provider nor the hook's action is
-    // part of it. These fields are the audit trail for OAuth sign-ins.
-    it('should log the success event with the user, the tenant and the oauth route on create', async () => {
+    // Pins the events of an OAuth login that creates an account: the login with the plane, the user, the tenant and the
+    // oauth route, and the registration. Neither carries the provider or the hook's action.
+    it('should log the success and registration events with the user, the tenant and the oauth route', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {})
+      const ids = { userId: 'user-1', tenantId: 'tenant-1' } as const
       setupHappyPathCreate()
 
       await callCallback()
 
-      expectEvent(logSpy, 'AUTH_LOGIN_SUCCEEDED', {
-        ...OAUTH_LOGIN,
-        userId: 'user-1',
-        tenantId: 'tenant-1'
-      })
+      expectEvent(logSpy, 'AUTH_LOGIN_SUCCEEDED', { ...OAUTH_LOGIN, ...ids })
+      expectEvent(logSpy, 'AUTH_USER_REGISTERED', { ...ids, via: 'oauth' })
       logSpy.mockRestore()
     })
 

@@ -11,6 +11,7 @@ import type { ArgumentsHost } from '@nestjs/common'
 import { WsAuthExceptionFilter } from './ws-auth-exception.filter'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { eventOf } from '../__tests__/log-events'
 
 /** An `ArgumentsHost` whose WS client is `client`. */
 function hostWithClient(client: unknown): ArgumentsHost {
@@ -137,13 +138,13 @@ describe('WsAuthExceptionFilter', () => {
     ['a client with neither emit nor send', {}],
     ['no client at all', null],
     ['a scalar client', 'socket']
-  ])('says so in the log and stops for %s', (_why, client) => {
+  ])('logs an unhandled exception and stops for %s', (_why, client) => {
     const exception = new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
 
     expect(() => filter.catch(exception, hostWithClient(client))).not.toThrow()
 
     expect(Logger.prototype.error).toHaveBeenCalledWith(
-      'refused a request on a client this filter cannot answer: <error>'
+      eventOf('AUTH_UNHANDLED_EXCEPTION', { surface: 'ws', detail: '<error>' })
     )
   })
 })

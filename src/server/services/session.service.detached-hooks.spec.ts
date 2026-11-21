@@ -16,6 +16,7 @@ import { Logger } from '@nestjs/common'
 
 import { SessionService } from './session.service'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { eventsReceived, expectEvent } from '../__tests__/log-events'
 
 const USER = {
   id: 'user-1',
@@ -85,8 +86,8 @@ describe('SessionService with a hook that throws synchronously', () => {
     await expect(service.createSession(PARAMS)).resolves.toEqual(expect.any(String))
     await flush()
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('onNewSession hook threw'))
-    expect(error).not.toHaveBeenCalledWith(expect.stringContaining('findById failed'))
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'onNewSession', how: 'threw' }, ['hook broke'])
+    expect(eventsReceived(error)).toEqual(['AUTH_HOOK_FAILED'])
   })
 
   it('still creates the session, and logs onSessionEvicted', async () => {
@@ -101,6 +102,8 @@ describe('SessionService with a hook that throws synchronously', () => {
     await expect(service.createSession(PARAMS)).resolves.toEqual(expect.any(String))
     await flush()
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('onSessionEvicted hook threw'))
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'onSessionEvicted', how: 'threw' }, [
+      'hook broke'
+    ])
   })
 })

@@ -14,6 +14,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IPasswordBreachChecker } from '../interfaces/password-breach-checker.interface'
+import { logEvent } from '../observability/log-event'
 import { isShorterThanCodePoints } from '../utils/code-points'
 
 // promisify picks the 3-arg overload (no options); cast to the 4-arg form we need.
@@ -412,7 +413,7 @@ export class PasswordService {
       // Stryker disable next-line StringLiteral: diagnostic-only log text; the behaviour under
       // test is that the password is ADMITTED and a line is emitted, neither of which the
       // wording changes
-      this.logger.error('breach check threw; admitting the password (the checker fails open)')
+      logEvent(this.logger, 'AUTH_BREACH_CHECK_UNAVAILABLE', { reason: 'threw' })
       return
     }
     if (breached) {

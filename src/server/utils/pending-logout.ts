@@ -13,9 +13,9 @@
 
 import type { Logger } from '@nestjs/common'
 
-import { describeChannelStatus } from './describe-error'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { logStore } from '../observability/log-event'
 import type { AuthRedisService } from '../redis/auth-redis.service'
 import { isServiceUnavailable } from '../redis/redis-outage'
 
@@ -54,7 +54,7 @@ export async function rememberPendingLogout(
       ttlSeconds
     )
   } catch (err: unknown) {
-    logger.warn(`logout: the owner could not be kept for a retry — ${describeChannelStatus(err)}`)
+    logStore(logger, 'AUTH_STORE_DEGRADED', 'logout_owner_keep', err)
   }
 }
 
@@ -97,7 +97,7 @@ export async function settlePendingLogout(
     const removed = await redis.del(key)
     return fromSession || removed
   } catch (err: unknown) {
-    logger.warn(`logout: the retry marker could not be cleared — ${describeChannelStatus(err)}`)
+    logStore(logger, 'AUTH_STORE_DEGRADED', 'logout_marker_clear', err)
     // A claim that cannot be made answers an error too: success would keep the client from
     // retrying, and the marker that is left is what lets the retry announce once.
     if (!fromSession)

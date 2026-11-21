@@ -19,6 +19,7 @@ import type { ArgumentsHost } from '@nestjs/common'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { expectEvent } from '../__tests__/log-events'
 import { AuthExceptionFilter } from './auth-exception.filter'
 
 // ---------------------------------------------------------------------------
@@ -166,11 +167,10 @@ describe('AuthExceptionFilter', () => {
     expect(envelope.message).toBe('Internal server error')
     // The one path where a stack detail or a connection string would otherwise reach a body.
     expect(JSON.stringify(envelope)).not.toContain('hunter2')
-    // …and the cause is still recorded where an operator can read it. The message is asserted,
-    // not just the call: the response deliberately says nothing about what failed, so this line
-    // is the only description of the failure that exists anywhere. An empty one leaves the
-    // operator with a bare stack and no statement of what the filter was doing.
-    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('unhandled exception: '))
+    // The response says nothing about what failed, so the event is the only record of the failure.
+    expectEvent(errorLog, 'AUTH_UNHANDLED_EXCEPTION', { surface: 'http', detail: '<error>' }, [
+      'hunter2'
+    ])
   })
 
   it('answers a non-Error throw the same way', () => {
