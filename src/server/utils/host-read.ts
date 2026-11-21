@@ -220,8 +220,8 @@ function readInforming(value: unknown): unknown {
 }
 
 /**
- * A date a field only informs with: a real date is copied, and an instance of another class (a date library's date, an
- * Invalid Date) is kept as the host's own object; anything else is refused.
+ * A date a field only informs with: a real date is copied, and any other instance (a date library's date, an Invalid
+ * Date) is kept as the host's own object; anything else is refused.
  */
 function readInformingDate(value: unknown): unknown {
   if (!isHostInstance(value)) throw new Error(WRONG_KIND)

@@ -56,12 +56,11 @@ A patch release.
 
 ### Changed
 
-- **A date that is not a time is refused.** A record a repository returns with a date that compares false with every
-  instant (an Invalid Date, or a Proxy whose `getTime` answers something that is not a time, a string and an empty
-  value among it) ends as `auth.internal`. Before, and in 1.5.11 and earlier, it was copied as it was, and a workspace
+- **A date that is not a time is refused.** A record a repository returns with a date in a field that decides an
+  admission that compares false with every instant (an Invalid Date, or a Proxy whose `getTime` answers something that
+  is not a time, a string and an empty value among it) ends as `auth.internal`. Before, and in 1.5.11 and earlier, it was copied as it was, and a workspace
   pending deletion whose deadline was such a date was finalized, because `due.getTime() > now` is false for it, and
-  could be restored past its grace period. A genuine Invalid Date in any field the contract names now refuses the whole
-  lookup.
+  could be restored past its grace period.
 - **The fields of the contract are visible to a spread of the copy.** An entity that serves its fields through its
   prototype (a Sequelize or Mongoose one) used to log in and then fail every later request with a 401, because the copy
   kept those fields out of the token payload. They are now enumerable, except the credentials (`passwordHash`,
