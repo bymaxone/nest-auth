@@ -161,7 +161,7 @@ export class MfaService {
     assertPlaneTenant(context, tenantId)
     if (context === 'platform' && !this.platformUserRepo) {
       // Misconfiguration: a platform setup was asked for but the host did not register
-      // GUARDED_PLATFORM_USER_REPOSITORY. Failing fast surfaces the bug at the first request
+      // BYMAX_AUTH_PLATFORM_USER_REPOSITORY. Failing fast surfaces the bug at the first request
       // rather than falling back to the dashboard repo (which would persist the platform admin's
       // MFA secret on a tenant user row).
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)

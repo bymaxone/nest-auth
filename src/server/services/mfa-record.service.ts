@@ -391,7 +391,7 @@ export class MfaRecordService {
 
     if (!this.platformUserRepo) {
       // Misconfiguration: consumer set controllers.mfa: true without supplying
-      // GUARDED_PLATFORM_USER_REPOSITORY in extraProviders. Throw AuthException so
+      // BYMAX_AUTH_PLATFORM_USER_REPOSITORY in extraProviders. Throw AuthException so
       // NestJS exception filters produce a clean response rather than leaking internal details.
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }

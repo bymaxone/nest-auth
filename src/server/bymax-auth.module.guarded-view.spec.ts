@@ -53,4 +53,35 @@ describe('BymaxAuthModule guarded repository view', () => {
     expect(answered.tags).not.toBe(record.tags)
     expect(module.get(RepoProbe).repo).toBe(repository)
   })
+
+  // Scenario: a host repository with lifecycle hooks, in a module that is initialised and closed. Expected: each hook
+  // runs once. Why: the guarded view is a second provider over the same repository, and Nest calls a hook on every
+  // provider instance it finds.
+  it('runs the lifecycle hooks of the host repository once', async () => {
+    const repository = {
+      onModuleInit: jest.fn(),
+      onModuleDestroy: jest.fn(),
+      findByEmail: jest.fn()
+    }
+    const module = await Test.createTestingModule({
+      imports: [
+        BymaxAuthModule.registerAsync({
+          useFactory: () => OPTIONS,
+          extraProviders: [
+            {
+              provide: BYMAX_AUTH_REDIS_CLIENT,
+              useValue: { ping: jest.fn().mockResolvedValue('PONG') }
+            },
+            { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: repository }
+          ]
+        })
+      ]
+    }).compile()
+
+    await module.init()
+    await module.close()
+
+    expect(repository.onModuleInit).toHaveBeenCalledTimes(1)
+    expect(repository.onModuleDestroy).toHaveBeenCalledTimes(1)
+  })
 })

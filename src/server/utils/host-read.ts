@@ -149,7 +149,16 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
   seen.set(value, copy)
   const source = value as Record<string, unknown>
   for (const key of new Set([...Object.keys(value), ...inheritedAccessors(value)])) {
-    copy[key] = copyValue(source[key], seen, depth + 1)
+    const copied = copyValue(source[key], seen, depth + 1)
+    // A key named `__proto__` (what `JSON.parse` of user input produces) is data; assigning it would swap the prototype.
+    if (key === '__proto__') {
+      Object.defineProperty(copy, key, {
+        value: copied,
+        enumerable: true,
+        writable: true,
+        configurable: true
+      })
+    } else copy[key] = copied
   }
   return copy
 }
@@ -169,6 +178,15 @@ export function copyHostRecord(record: unknown): unknown {
   }
 }
 
+/** The lifecycle hooks of Nest, which the guarded view does not expose: the host's own provider receives them. */
+const LIFECYCLE_HOOKS: ReadonlySet<PropertyKey> = new Set([
+  'onModuleInit',
+  'onApplicationBootstrap',
+  'onModuleDestroy',
+  'beforeApplicationShutdown',
+  'onApplicationShutdown'
+])
+
 /**
  * Wraps a repository of the host so that every record it returns is copied once.
  *
@@ -178,7 +196,17 @@ export function copyHostRecord(record: unknown): unknown {
 export function guardRepository<T extends object>(host: T): T {
   return new Proxy(host, {
     get(target, key): unknown {
-      const member: unknown = Reflect.get(target, key, target)
+      // Nest calls a lifecycle hook on every provider instance, and this view is a second one over the repository.
+      if (LIFECYCLE_HOOKS.has(key)) return undefined
+      let member: unknown
+      try {
+        member = Reflect.get(target, key, target)
+      } catch (error: unknown) {
+        // The read happens in the service, outside any try, so the failure becomes the rejection of the call.
+        return async (): Promise<never> => {
+          throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
+        }
+      }
       if (typeof member !== 'function') return member
       return async (...args: unknown[]): Promise<unknown> => {
         let answer: unknown

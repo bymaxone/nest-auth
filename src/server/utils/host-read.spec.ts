@@ -200,6 +200,18 @@ describe('copyHostRecord', () => {
     expect(record['fn']).toBe(copyHostRecord)
   })
 
+  // Scenario: a record with an own key named __proto__ (what JSON.parse of user input produces). Expected: it stays an
+  // own key of the copy and the copy's prototype is untouched. Why: assigning it would swap the copy's prototype for the
+  // copied value, and the copy would inherit names the original did not own.
+  it('keeps a __proto__ key an own property and does not change the prototype of the copy', () => {
+    const record = JSON.parse('{"meta":{"__proto__":{"role":"ADMIN"},"a":1}}') as object
+    const copy = copyHostRecord(record) as { meta: Record<string, unknown> }
+
+    expect(Object.getPrototypeOf(copy.meta)).toBe(Object.prototype)
+    expect(Object.keys(copy.meta)).toContain('__proto__')
+    expect(copy.meta['role']).toBeUndefined()
+  })
+
   // Scenario: a record that holds itself. Expected: one copy that holds itself, not a stack overflow.
   it('copies a cycle once', () => {
     const record: { self?: unknown } = {}
@@ -308,6 +320,46 @@ describe('guardRepository', () => {
       await expect(guarded[name]()).rejects.toBe(typedErrors[name])
     }
   )
+})
+
+describe('guardRepository against a hostile repository', () => {
+  // Scenario: the repository is itself a Proxy and reading a method throws. Expected: the read does not throw; calling
+  // the method rejects with the internal error and the fault as its cause. Why: the property read happens in the
+  // service, outside any try, so a throwing read must become a rejection the service already handles.
+  it('turns a throwing read of a method into an internal rejection with the cause', async () => {
+    const hostile = new Proxy(
+      {},
+      {
+        get: () => {
+          throw fault
+        }
+      }
+    )
+    const guarded = guardRepository(hostile as { find(): Promise<unknown> })
+
+    const read = (): Promise<unknown> => guarded.find()
+
+    expect(() => guarded.find).not.toThrow()
+    await expect(read()).rejects.toMatchObject({ cause: fault })
+    await expect(read()).rejects.toBeInstanceOf(AuthException)
+  })
+
+  // Scenario: a repository with Nest lifecycle hooks. Expected: the view exposes none of them. Why: Nest calls a hook
+  // on every provider instance it finds, and the guarded view is a second provider over the same repository, so
+  // the host's hook would run twice.
+  it.each([
+    'onModuleInit',
+    'onApplicationBootstrap',
+    'onModuleDestroy',
+    'beforeApplicationShutdown',
+    'onApplicationShutdown'
+  ])('does not expose the %s hook of the repository', (hook) => {
+    const hooks = { [hook]: jest.fn(), find: jest.fn() }
+    const guarded = guardRepository(hooks) as Record<string, unknown>
+
+    expect(guarded[hook]).toBeUndefined()
+    expect(typeof guarded['find']).toBe('function')
+  })
 })
 
 describe('withGuardedViews', () => {

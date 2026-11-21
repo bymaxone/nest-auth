@@ -152,6 +152,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     every way a verified MFA token's flow can end.
 //     175.50 KiB sits 0.03 KiB above the measured 175.47 KiB, which also holds the boundary that ends a failed
 //     read of what the host owns (the options, the records of a repository) in the library's own error.
+//     175.56 KiB sits 0.03 KiB above the measured 175.53 KiB, which also holds the view's refusal to expose
+//     lifecycle hooks, the rejection of a throwing method read and the own-key copy of `__proto__`.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
@@ -219,7 +221,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 175.5 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 175.56 * 1024 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
