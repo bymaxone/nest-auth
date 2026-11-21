@@ -18,6 +18,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A tenant is read as a string and as nothing else.** The `tenantId` of a user, a workspace and a membership was
+  accepted as a string or as any instance of a class of the host: a `Date`, a `Map`, an object that inherits from a
+  plain object, a class that only has `toString`. Comparisons with the tenant of a request already failed closed, but
+  the value is written into the claims of a token, where two tenants whose ids are objects both serialize to `{}`. Any
+  value that is not a string now ends as `auth.internal`. **Apply to a derived backend:** a repository that serves the
+  tenant as an object (an id type of a driver) has to serve it as a string; the ids of users and workspaces keep
+  accepting a string, a finite number or an instance of a class of the host.
+
 ## [1.5.12] - 2026-11-21
 
 A patch release.

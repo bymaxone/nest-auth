@@ -232,15 +232,13 @@ function readInformingDate(value: unknown): unknown {
 
 /**
  * How a value is read as each kind a contract can name. A strict kind is exact: a wrapper object is not a boolean, a
- * string is not a number, a date has a real time, and only an `id` may be an instance of a class of the host. A kind
+ * string is not a number, a date has a real time, and nothing that decides access (a tenant is a string) is an object of the host. A kind
  * marked `~` only informs: it is lenient about what it takes (see {@link readInforming}).
  */
 const READERS = {
   boolean: (value: unknown): unknown => accept(typeof value === 'boolean', value),
   string: (value: unknown): unknown => accept(typeof value === 'string', value),
   number: (value: unknown): unknown => accept(Number.isFinite(value), value),
-  id: (value: unknown): unknown =>
-    accept(typeof value === 'string' || isHostInstance(value), value),
   date: copyDate,
   strings: copyStrings,
   '~id': readInforming,

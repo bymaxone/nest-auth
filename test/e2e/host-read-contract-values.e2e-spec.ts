@@ -250,9 +250,10 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
   })
 
   // Scenario: the tenant of an account served as an instance of a class of the host (an id type of a driver) while the
-  // request names it as a string. Expected: the login is turned away and issues no token. Why: tenant ids are compared
-  // with `!==`, and an object is never equal to a string, so a tenant of another kind fails closed.
-  it('turns away a login whose tenantId is an object where the request names a string', async () => {
+  // request names it as a string. Expected: the login ends in the library's internal error and issues no token. Why: a
+  // tenant is read as a string and nothing else, because it is written into the claims of a token, where two objects
+  // that serialize to `{}` would be one tenant; the comparison that used to turn this away came after the copy.
+  it('refuses a login whose tenantId is an object where the request names a string', async () => {
     const http = request(app.getHttpServer())
     await http
       .post('/register')
@@ -273,7 +274,7 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
       .post('/login')
       .send({ email: EMAIL, password: PASSWORD, tenantId: 't1' })
 
-    expect(login.status).toBe(401)
+    expect(login.status).toBe(500)
     expect(login.body).not.toHaveProperty('accessToken')
   })
 })

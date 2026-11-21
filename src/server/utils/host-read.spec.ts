@@ -33,7 +33,7 @@ import {
 const fault = new Error('host-text-that-must-not-leak')
 
 /** What the test repositories promise to answer: a record with an `id`, and nothing else. */
-const RECORD: ErasedContract = { fields: { id: 'id' }, nested: {} }
+const RECORD: ErasedContract = { fields: { id: '~id' }, nested: {} }
 
 /** The same record, for a method that may find nothing. */
 const FOUND_OR_NOT: ErasedContract = { ...RECORD, nullable: true }
