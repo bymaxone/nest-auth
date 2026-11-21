@@ -20,6 +20,7 @@ import type {
 import { logEvent, logHook, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
+import { hostEntityOf } from '../utils/host-read'
 import { runDetached } from '../utils/run-detached'
 import { parseUserAgent } from '../utils/session-detail'
 import { raiseFirst } from '../utils/settle-writes'
@@ -1017,10 +1018,9 @@ export class SessionService {
   /**
    * Resolves the maximum number of concurrent sessions allowed for a user.
    *
-   * When `options.sessions.maxSessionsResolver` is configured, it is called with
-   * the full user record. Falls back to `options.sessions.defaultMaxSessions` if
-   * the resolver is absent, the user cannot be found, the resolver throws, or it answers
-   * with something that is not a usable limit.
+   * When `options.sessions.maxSessionsResolver` is configured, it is called with the entity the user
+   * repository returned. Falls back to `options.sessions.defaultMaxSessions` if the resolver is absent,
+   * the user cannot be found, the resolver throws, or it answers with an unusable limit.
    *
    * That last case is the one that mattered. The resolver is the host's code and its return
    * value went straight into the eviction arithmetic, where `NaN` — the result of, say,
@@ -1044,7 +1044,7 @@ export class SessionService {
     try {
       const user = await this.userRepo.findById({ id: userId, tenantId })
       if (!user) return defaultMaxSessions
-      const resolved = await maxSessionsResolver(user)
+      const resolved = await maxSessionsResolver(hostEntityOf(user))
       if (!Number.isInteger(resolved) || resolved < 1) {
         // Loud on purpose: a cap that silently stops applying is worse than one that is merely wrong.
         logEvent(this.logger, 'AUTH_SESSION_LIMIT_RESOLVER_INVALID')

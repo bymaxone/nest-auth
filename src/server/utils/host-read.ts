@@ -230,6 +230,33 @@ const LIFECYCLE_HOOKS: ReadonlySet<PropertyKey> = new Set([
   'onApplicationShutdown'
 ])
 
+/** The entity the host's repository returned behind each copy the guarded view made of it. */
+const ENTITIES = new WeakMap<object, object>()
+
+/** Remembers which entity each copy of an answer stands for: the answer itself, or each record of a list. */
+function rememberEntities(answer: unknown, copy: unknown): void {
+  if (typeof answer !== 'object' || answer === null || typeof copy !== 'object' || copy === null)
+    return
+  ENTITIES.set(copy, answer)
+  if (Array.isArray(answer) && Array.isArray(copy)) {
+    answer.forEach((entity: unknown, index: number) => rememberEntities(entity, copy[index]))
+  }
+}
+
+/**
+ * The entity the host's repository returned for a record the guarded view copied, or the value itself when it is
+ * not such a record. Code of the host (a callback the library invokes) is handed its own object, so its prototype
+ * getters, methods and private fields work, while the library keeps reading the copy.
+ *
+ * @param record - A record read through a guarded repository, or any other value.
+ * @returns The host's own entity, or `record` unchanged.
+ */
+export function hostEntityOf<T>(record: T): T {
+  return typeof record === 'object' && record !== null
+    ? ((ENTITIES.get(record) as T | undefined) ?? record)
+    : record
+}
+
 /**
  * Wraps a repository of the host so that every record it returns is copied once.
  *
@@ -263,7 +290,9 @@ export function guardRepository<T extends object>(host: T): T {
           if (error instanceof HttpException) throw error
           throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
         }
-        return copyHostRecord(answer)
+        const copy = copyHostRecord(answer)
+        rememberEntities(answer, copy)
+        return copy
       }
     }
   })

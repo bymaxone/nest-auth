@@ -7,8 +7,6 @@
  * @layer Test
  */
 
-import { runInNewContext } from 'node:vm'
-
 import { HttpException } from '@nestjs/common'
 
 import {
@@ -20,26 +18,14 @@ import {
 } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { ApiKeyPrincipal, AuthApiKey } from '../interfaces/api-key-repository.interface'
-import type {
-  MembershipPage,
-  MembershipWithWorkspace,
-  RemoveAllMembershipsResult
-} from '../interfaces/membership-repository.interface'
-import type { AuthPlatformUser } from '../interfaces/platform-user-repository.interface'
-import type { AuthUser } from '../interfaces/user-repository.interface'
-import type {
-  AuthWorkspace,
-  CreateWorkspaceResult
-} from '../interfaces/workspace-repository.interface'
 import {
   callFactory,
   copyHostRecord,
-  withGuardedViews,
   guardRepository,
+  hostEntityOf,
   hostHasKey,
   readHostOptions,
-  RECORD_FIELDS
+  withGuardedViews
 } from './host-read'
 
 /** The host's own failure, with text a library error must never repeat. */
@@ -295,6 +281,44 @@ describe('guardRepository against a hostile repository', () => {
 
     expect(guarded[hook]).toBeUndefined()
     expect(typeof guarded['find']).toBe('function')
+  })
+})
+
+describe('hostEntityOf', () => {
+  // Scenario: records the guarded view answered, and values it did not. Expected: the entity the host returned comes
+  // back for the answer and for each record of a list; anything else comes back as it is. Why: code of the host (a
+  // callback) is handed its own object, with its prototype getters and methods, while the library reads the copy.
+  it('returns the entity behind an answer of the guarded view, and anything else as it is', async () => {
+    class Entity {
+      id = 'u1'
+      get plan(): string {
+        return 'pro'
+      }
+      isPro(): boolean {
+        return true
+      }
+    }
+    const entity = new Entity()
+    const other = new Entity()
+    const guarded = guardRepository({
+      one: async (): Promise<unknown> => entity,
+      many: async (): Promise<unknown> => [entity, other],
+      none: async (): Promise<unknown> => null
+    })
+
+    const one = (await guarded.one()) as Entity
+    const many = (await guarded.many()) as Entity[]
+    const stranger = { id: 'x' }
+
+    expect(one).not.toBe(entity)
+    expect(hostEntityOf(one)).toBe(entity)
+    expect(hostEntityOf(one).plan).toBe('pro')
+    expect(hostEntityOf(one).isPro()).toBe(true)
+    expect(hostEntityOf(many[0])).toBe(entity)
+    expect(hostEntityOf(many[1])).toBe(other)
+    expect(hostEntityOf(stranger)).toBe(stranger)
+    expect(hostEntityOf(await guarded.none())).toBeNull()
+    expect(hostEntityOf('text')).toBe('text')
   })
 })
 
