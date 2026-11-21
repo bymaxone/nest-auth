@@ -15,7 +15,7 @@ import { OAuthService } from './oauth.service'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -103,7 +103,7 @@ async function build(
     providers: [
       OAuthService,
       { provide: OAUTH_PLUGINS, useValue: [plugin] },
-      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: users },
+      { provide: GUARDED_USER_REPOSITORY, useValue: users },
       { provide: BYMAX_AUTH_HOOKS, useValue: hooks },
       { provide: AuthRedisService, useValue: redis },
       { provide: TokenManagerService, useValue: tokens },

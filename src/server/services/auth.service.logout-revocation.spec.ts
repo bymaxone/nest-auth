@@ -18,7 +18,7 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -81,7 +81,7 @@ describe('AuthService.logout — refused revocation writes', () => {
       providers: [
         AuthService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: {} },
+        { provide: GUARDED_USER_REPOSITORY, useValue: {} },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: {} },
         { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
         { provide: PasswordService, useValue: {} },

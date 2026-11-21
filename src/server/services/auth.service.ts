@@ -5,7 +5,7 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { AccountStatusService } from './account-status.service'
 import { BruteForceService } from './brute-force.service'
@@ -116,7 +116,7 @@ export class AuthService {
 
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
+    @Inject(GUARDED_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER)
     @Optional()
     private readonly emailProvider: IEmailProvider | null,

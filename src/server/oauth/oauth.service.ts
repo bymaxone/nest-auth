@@ -28,7 +28,7 @@ import { pluginDeadlineMs, withDeadline } from './plugin-deadline'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import {
@@ -99,7 +99,7 @@ export class OAuthService {
 
   constructor(
     @Inject(OAUTH_PLUGINS) private readonly plugins: OAuthProviderPlugin[],
-    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
+    @Inject(GUARDED_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     // @Optional() tolerates the case where no IAuthHooks implementation is registered
     // (e.g. in standalone testing). The service treats a null hooks object the same as
     // a hooks object with no onOAuthLogin method — both result in OAUTH_FAILED.

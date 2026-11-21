@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_PLATFORM_USER_REPOSITORY
+  GUARDED_PLATFORM_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
@@ -59,7 +59,7 @@ export class PlatformAuthService {
   private readonly logger = new Logger(PlatformAuthService.name)
 
   constructor(
-    @Inject(BYMAX_AUTH_PLATFORM_USER_REPOSITORY)
+    @Inject(GUARDED_PLATFORM_USER_REPOSITORY)
     private readonly platformUserRepo: IPlatformUserRepository,
     @Inject(PasswordService) private readonly passwordService: PasswordService,
     @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,

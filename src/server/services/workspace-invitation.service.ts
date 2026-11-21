@@ -14,10 +14,10 @@ import { WorkspaceEventsService } from './workspace-events.service'
 import { WorkspaceInvitationStore } from './workspace-invitation.store'
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
-  BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
+  GUARDED_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY,
-  BYMAX_AUTH_WORKSPACE_REPOSITORY
+  GUARDED_USER_REPOSITORY,
+  GUARDED_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
@@ -80,9 +80,9 @@ export class WorkspaceInvitationService {
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(MembershipService) private readonly members: MembershipService,
     @Inject(WorkspaceEventsService) private readonly events: WorkspaceEventsService,
-    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly users: IUserRepository,
-    @Inject(BYMAX_AUTH_WORKSPACE_REPOSITORY) private readonly workspaces: IWorkspaceRepository,
-    @Inject(BYMAX_AUTH_MEMBERSHIP_REPOSITORY) private readonly memberships: IMembershipRepository,
+    @Inject(GUARDED_USER_REPOSITORY) private readonly users: IUserRepository,
+    @Inject(GUARDED_WORKSPACE_REPOSITORY) private readonly workspaces: IWorkspaceRepository,
+    @Inject(GUARDED_MEMBERSHIP_REPOSITORY) private readonly memberships: IMembershipRepository,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly email: IEmailProvider,
     @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions
   ) {

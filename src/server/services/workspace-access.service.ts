@@ -8,9 +8,9 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import {
-  BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
+  GUARDED_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_WORKSPACE_REPOSITORY
+  GUARDED_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
 import { AccountStatusService } from './account-status.service'
 import type { ResolvedOptions } from '../config/resolved-options'
@@ -96,9 +96,9 @@ export class WorkspaceAccessService {
 
   constructor(
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
-    @Inject(BYMAX_AUTH_WORKSPACE_REPOSITORY)
+    @Inject(GUARDED_WORKSPACE_REPOSITORY)
     private readonly workspaceRepo: IWorkspaceRepository,
-    @Inject(BYMAX_AUTH_MEMBERSHIP_REPOSITORY)
+    @Inject(GUARDED_MEMBERSHIP_REPOSITORY)
     private readonly membershipRepo: IMembershipRepository,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     @Inject(AccountStatusService)

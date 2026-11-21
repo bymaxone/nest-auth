@@ -7,7 +7,7 @@
 
 import { Inject, Injectable } from '@nestjs/common'
 
-import { BYMAX_AUTH_MEMBERSHIP_REPOSITORY, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { GUARDED_MEMBERSHIP_REPOSITORY, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { WorkspaceAccessService } from './workspace-access.service'
 import { WorkspaceEventsService } from './workspace-events.service'
 import type { ResolvedOptions } from '../config/resolved-options'
@@ -105,7 +105,7 @@ export class MembershipService {
   private readonly group: ResolvedWorkspaceOptions
 
   constructor(
-    @Inject(BYMAX_AUTH_MEMBERSHIP_REPOSITORY) private readonly memberships: IMembershipRepository,
+    @Inject(GUARDED_MEMBERSHIP_REPOSITORY) private readonly memberships: IMembershipRepository,
     @Inject(WorkspaceAccessService) private readonly access: WorkspaceAccessService,
     @Inject(WorkspaceEventsService) private readonly events: WorkspaceEventsService,
     @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions

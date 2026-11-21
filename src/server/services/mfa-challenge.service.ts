@@ -10,8 +10,8 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_PLATFORM_USER_REPOSITORY,
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { MfaFlowLockoutService } from './mfa-flow-lockout.service'
 import { MfaRecordService, type MfaRecordUpdate } from './mfa-record.service'
@@ -103,9 +103,9 @@ export class MfaChallengeService {
 
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
+    @Inject(GUARDED_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Optional()
-    @Inject(BYMAX_AUTH_PLATFORM_USER_REPOSITORY)
+    @Inject(GUARDED_PLATFORM_USER_REPOSITORY)
     private readonly platformUserRepo: IPlatformUserRepository | null,
     @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
     @Inject(MfaFlowLockoutService) private readonly flowLockout: MfaFlowLockoutService,

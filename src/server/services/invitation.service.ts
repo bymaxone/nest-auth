@@ -4,7 +4,7 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
@@ -104,7 +104,7 @@ export class InvitationService {
   private readonly logger = new Logger(InvitationService.name)
 
   constructor(
-    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
+    @Inject(GUARDED_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
     @Inject(BYMAX_AUTH_HOOKS) private readonly hooks: IAuthHooks,
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,

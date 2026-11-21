@@ -14,7 +14,7 @@ import { Test } from '@nestjs/testing'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { expectEvent } from '../__tests__/log-events'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
@@ -119,7 +119,7 @@ async function buildModule(hooksValue: unknown = mockHooks): Promise<SessionServ
       SessionService,
       { provide: AuthRedisService, useValue: mockRedis },
       { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
       { provide: BYMAX_AUTH_HOOKS, useValue: hooksValue }
     ]
   }).compile()

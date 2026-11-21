@@ -15,7 +15,7 @@ import { OAuthService } from './oauth.service'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { expectEvent } from '../__tests__/log-events'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -65,7 +65,7 @@ async function serviceWith(target: FakePlugin): Promise<OAuthService> {
     providers: [
       OAuthService,
       { provide: OAUTH_PLUGINS, useValue: [target] },
-      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: {} },
+      { provide: GUARDED_USER_REPOSITORY, useValue: {} },
       { provide: BYMAX_AUTH_HOOKS, useValue: {} },
       { provide: AuthRedisService, useValue: mockRedis },
       { provide: TokenManagerService, useValue: {} },

@@ -7,7 +7,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common'
 import type { OnApplicationShutdown } from '@nestjs/common'
 
-import { BYMAX_AUTH_API_KEY_REPOSITORY, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { GUARDED_API_KEY_REPOSITORY, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { IApiKeyRepository } from '../interfaces/api-key-repository.interface'
 import { logStore } from '../observability/log-event'
@@ -29,7 +29,7 @@ export class ApiKeyLastUsedService implements OnApplicationShutdown {
   private closed = false
 
   constructor(
-    @Inject(BYMAX_AUTH_API_KEY_REPOSITORY) private readonly repository: IApiKeyRepository,
+    @Inject(GUARDED_API_KEY_REPOSITORY) private readonly repository: IApiKeyRepository,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 

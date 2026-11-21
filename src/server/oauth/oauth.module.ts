@@ -28,12 +28,15 @@
 
 import { Module, type DynamicModule, type Provider } from '@nestjs/common'
 
+import { BYMAX_AUTH_USER_REPOSITORY, GUARDED_USER_REPOSITORY } from '../bymax-auth.constants'
 import { GoogleOAuthPlugin } from './google/google-oauth.plugin'
 import { OAUTH_PLUGINS } from './oauth.constants'
 import { OAuthController } from './oauth.controller'
 import { OAuthService } from './oauth.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { OAuthProviderPlugin } from '../interfaces/oauth-provider.interface'
+import { guardedViewProvider } from '../utils/host-read'
+import { USER_REPOSITORY_CONTRACT } from '../utils/repository-contracts'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -94,15 +97,24 @@ export class OAuthModule {
   /**
    * Returns the provider array for inline inclusion in `BymaxAuthModule`.
    *
-   * Includes `OAUTH_PLUGINS` (value provider) and `OAuthService`. All other
-   * dependencies (`AuthRedisService`, etc.) are expected to be present in
-   * `BymaxAuthModule`'s own providers array.
+   * Includes `OAUTH_PLUGINS` (value provider), `OAuthService` and the guarded view of the host's user repository
+   * that `OAuthService` reads, built from the repository the host provides under `BYMAX_AUTH_USER_REPOSITORY`.
+   * All other dependencies (`AuthRedisService`, etc.) are expected to be present in the parent module's own
+   * providers array.
    *
    * @param options - Fully resolved options from `resolveOptions()`.
    * @returns Provider array ready to be spread into a parent module's `providers`.
    */
   static getOAuthProviders(options: ResolvedOptions): Provider[] {
-    return [{ provide: OAUTH_PLUGINS, useValue: buildOAuthPlugins(options) }, OAuthService]
+    return [
+      { provide: OAUTH_PLUGINS, useValue: buildOAuthPlugins(options) },
+      OAuthService,
+      guardedViewProvider(
+        BYMAX_AUTH_USER_REPOSITORY,
+        GUARDED_USER_REPOSITORY,
+        USER_REPOSITORY_CONTRACT
+      )
+    ]
   }
 
   /**

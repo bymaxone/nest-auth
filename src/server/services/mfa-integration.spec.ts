@@ -31,8 +31,8 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_PLATFORM_USER_REPOSITORY,
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { userSubject } from '../constants/user-subject'
 import { encrypt } from '../crypto/aes-gcm'
@@ -201,8 +201,8 @@ async function compileMfaModule(): Promise<TestingModule> {
       MfaService,
       ...MFA_COLLABORATORS,
       { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-      { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+      { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: GUARDED_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
       { provide: AuthRedisService, useValue: mockRedis },
       { provide: TokenManagerService, useValue: mockTokenManager },
       { provide: BruteForceService, useValue: mockBruteForce },
@@ -371,8 +371,8 @@ describe('MFA — integration smoke tests', () => {
         MfaService,
         ...MFA_COLLABORATORS,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-        { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+        { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: GUARDED_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
         { provide: AuthRedisService, useValue: mockRedis },
         { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: BruteForceService, useValue: mockBruteForce },

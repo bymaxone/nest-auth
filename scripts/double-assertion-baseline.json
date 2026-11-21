@@ -10,7 +10,6 @@
     "src/nextjs/__tests__/routeHandlers.spec.ts": 4,
     "src/nextjs/__tests__/routeHandlerUtils.spec.ts": 2,
     "src/server/bymax-auth.module.spec.ts": 3,
-    "src/server/bymax-auth.module.ts": 1,
     "src/server/config/identifier-key.spec.ts": 2,
     "src/server/config/resolved-options.api-keys.spec.ts": 3,
     "src/server/config/resolved-options.spec.ts": 10,

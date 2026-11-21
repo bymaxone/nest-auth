@@ -19,7 +19,7 @@ import { Test } from '@nestjs/testing'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_PLATFORM_USER_REPOSITORY
+  GUARDED_PLATFORM_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -197,7 +197,7 @@ describe('PlatformAuthService', () => {
       providers: [
         PlatformAuthService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+        { provide: GUARDED_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
         { provide: PasswordService, useValue: mockPasswordService },
         { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: BruteForceService, useValue: mockBruteForce },
@@ -219,7 +219,7 @@ describe('PlatformAuthService', () => {
       providers: [
         PlatformAuthService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+        { provide: GUARDED_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
         { provide: PasswordService, useValue: mockPasswordService },
         { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: BruteForceService, useValue: mockBruteForce },

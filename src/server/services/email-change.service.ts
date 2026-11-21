@@ -4,7 +4,7 @@ import type { OnModuleInit } from '@nestjs/common'
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
@@ -98,7 +98,7 @@ export class EmailChangeService implements OnModuleInit {
 
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
+    @Inject(GUARDED_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
     @Inject(PasswordService) private readonly passwordService: PasswordService,
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
