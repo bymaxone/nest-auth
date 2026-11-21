@@ -97,7 +97,7 @@ describe('the kinds of the contract', () => {
 
   // Scenario: an id that only informs (a user's own id), served as an instance of a class of the host, as a finite
   // number, and as garbage; and the tenant, which decides, served as an instance. Expected: the informing id is the
-  // host's own object or number (`String(id)` is the real id, two users never share one), a function, a symbol, a bigint,
+  // string it prints as (the real id, two users never share one), a function, a symbol, a bigint,
   // a wrapper, a plain object and an array are refused. Why: an id type of a driver prints through its own `toString`,
   // and a plain copy of it would print as `[object Object]` for every user; a numeric id is how many databases key rows.
   it('keeps an id that is an instance of a class of the host or a number and refuses the rest', () => {
@@ -114,10 +114,10 @@ describe('the kinds of the contract', () => {
     const two = copyHostRecord(userRecord({ id: second as never }), USER) as Record<string, unknown>
     const numeric = copyHostRecord(userRecord({ id: 42 as never }), USER) as Record<string, unknown>
 
-    expect(one['id']).toBe(first)
+    expect(one['id']).toBe('64b0000000000000000000a1')
     expect(String(one['id'])).toBe('64b0000000000000000000a1')
     expect(String(one['id'])).not.toBe(String(two['id']))
-    expect(numeric['id']).toBe(42)
+    expect(numeric['id']).toBe('42')
     for (const [, garbage] of [
       ...GARBAGE,
       ['a boolean', true],

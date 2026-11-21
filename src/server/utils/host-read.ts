@@ -233,17 +233,18 @@ function copyStrings(value: unknown, read: Read): string[] {
 /**
  * An id: what names one row and cannot name two, because an id reaches claims, keys and the scope of a query. A
  * non-empty string, a safe integer, or an instance of a class of the host (an id type of a driver) that prints as a
- * non-empty text of its own, kept as the host's own object. A date and a regular expression print as text and are
- * refused by kind; a Map, a Set, a Promise and a plain object print as `[object ...]`, which every one of its kind
- * shares. The text is read once, here.
+ * non-empty text of its own. It is read as that text, once: a claim, a key and a comparison all take a string, and the
+ * interface declares one, so the id the library keeps is the string the host's id prints as. A date and a regular
+ * expression print as text and are refused by kind; a Map, a Set, a Promise and a plain object print as `[object ...]`,
+ * which every one of its kind shares.
  */
-function readId(value: unknown): unknown {
-  if (typeof value === 'string') return accept(value !== '', value)
-  if (typeof value === 'number') return accept(Number.isSafeInteger(value), value)
+function readId(value: unknown): string {
+  if (typeof value === 'string') return accept(value !== '', value) as string
+  if (typeof value === 'number') return accept(Number.isSafeInteger(value), String(value)) as string
   if (!isHostInstance(value) || types.isDate(value) || types.isRegExp(value))
     throw new Error(WRONG_KIND)
   const printed = String(value)
-  return accept(printed !== '' && !printed.startsWith('[object '), value)
+  return accept(printed !== '' && !printed.startsWith('[object '), printed) as string
 }
 
 /**

@@ -88,9 +88,9 @@ describe('an id that only informs', () => {
   })
 
   // Scenario: the ids a driver serves: a string, a safe integer, zero, a negative integer, and an object that prints as
-  // its hex. Expected: each is kept as the host's own value (the object by reference). Why: numeric and ObjectId-like ids
-  // are how the databases the library supports key their rows.
-  it('keeps a string, a safe integer and an object that prints as its id', () => {
+  // its hex. Expected: each is kept as the string it prints as. Why: numeric and ObjectId-like ids are how the databases
+  // the library supports key their rows, and a claim, a key and a comparison all take a string, as the interface says.
+  it('keeps a string, a safe integer and an object that prints as its id, as a string', () => {
     const objectId = new ObjectIdLike('64b0000000000000000000a1')
     const ids = ['w1', 42, 0, -7, objectId]
 
@@ -99,7 +99,7 @@ describe('an id that only informs', () => {
         id: unknown
       }
 
-      expect(copy.id).toBe(id)
+      expect(copy.id).toBe(String(id))
     }
   })
 
@@ -142,7 +142,7 @@ describe('an id that only informs', () => {
       WORKSPACE
     )
 
-    expect((copy as { id: unknown }).id).toBeInstanceOf(ObjectIdLike)
+    expect((copy as { id: unknown }).id).toBe('first')
     expect(prints).toBe(1)
     expect(
       causeOf(() => copyHostRecord(workspaceRecord({ id: new Throws() as never }), WORKSPACE))

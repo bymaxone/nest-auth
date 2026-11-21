@@ -281,6 +281,65 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
     expect(login.body.accessToken !== undefined).toBe(status === 200)
   })
 
+  // Scenario: an account whose id is a number, and one whose id is an object that prints as its hex, through login, me,
+  // refresh and a password change, with a repository that finds a row by the id the library gives it, as a driver does.
+  // Expected: every step works and the token's subject is the id as a string. Why: a claim, a key and a comparison all
+  // take a string; an id kept as the host served it was a number in the token, which the verifier refused on every
+  // later request, so a login that worked led to a 401 on the next call.
+  class HexId {
+    toString(): string {
+      return '64b0000000000000000000a1'
+    }
+  }
+
+  it.each([
+    ['a number', (): unknown => 42],
+    ['an object that prints as its hex', (): unknown => new HexId()]
+  ] as const)(
+    'serves an account whose id is %s through login, me, refresh and a password change',
+    async (_kind, make) => {
+      const http = request(app.getHttpServer())
+      await http
+        .post('/register')
+        .send({ email: EMAIL, password: PASSWORD, name: 'Hydrated User', tenantId: 't1' })
+        .expect(201)
+      const byEmail = booted.repo.findByEmail.bind(booted.repo)
+      const byId = booted.repo.findById.bind(booted.repo)
+      const stored = [...booted.repo.users.values()][0]
+      const asked: unknown[] = []
+      booted.repo.findByEmail = async (...args: Parameters<typeof byEmail>) => {
+        const user = await byEmail(...args)
+        return user === null ? user : { ...user, id: make() as never }
+      }
+      booted.repo.findById = async (ref: Parameters<typeof byId>[0]) => {
+        asked.push(ref.id)
+        const user = await byId({ ...ref, id: stored?.id ?? ref.id })
+        return user === null ? user : { ...user, id: make() as never }
+      }
+
+      const login = await http
+        .post('/login')
+        .send({ email: EMAIL, password: PASSWORD, tenantId: 't1' })
+      const tokens = login.body as { accessToken: string; refreshToken: string }
+      const me = await http.get('/me').set('Authorization', `Bearer ${tokens.accessToken}`)
+      const refreshed = await http.post('/refresh').send({ refreshToken: tokens.refreshToken })
+      const changed = await http
+        .post('/password/change')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .send({ currentPassword: PASSWORD, newPassword: NEXT_PASSWORD })
+      const claims = JSON.parse(
+        Buffer.from(tokens.accessToken.split('.')[1] ?? '', 'base64url').toString()
+      ) as { sub: unknown }
+
+      expect(login.status).toBe(200)
+      expect(typeof claims.sub).toBe('string')
+      expect(me.status).toBe(200)
+      expect(refreshed.status).toBe(200)
+      expect([200, 204]).toContain(changed.status)
+      expect(asked.every((id) => typeof id === 'string')).toBe(true)
+    }
+  )
+
   // Scenario: the tenant of an account served as an instance of a class of the host (an id type of a driver) while the
   // request names it as a string. Expected: the login ends in the library's internal error and issues no token. Why: a
   // tenant is read as a string and nothing else, because it is written into the claims of a token, where two objects
