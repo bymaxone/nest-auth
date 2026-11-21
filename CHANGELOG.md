@@ -18,6 +18,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.11] - 2026-11-20
+
+A patch release.
+
 ### Added
 
 - **An optional `@bymax-one/nest-auth/observability` subpath**, with a metrics contributor (`AuthMetrics`) and a readiness
@@ -37,7 +41,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   fields; no event carries an email address, a provider name, a token or text a host or a store wrote. The no-op email provider logs which method was called and no address. A host logger
   that is asynchronous and rejects is the host's own unhandled rejection and ends the process unless the application
   handles it.
-  Every other line the library wrote is an event too: a failed hook or fire-and-forget step (`AUTH_HOOK_FAILED`), a
+  Every other line the library wrote is an event too, bar the operator guidance sentences: a failed hook or fire-and-forget step (`AUTH_HOOK_FAILED`), a
   store or repository operation that failed (`AUTH_STORE_FAILED`, `AUTH_STORE_DEGRADED`), a stored record that does not
   parse, a missing email provider, an unavailable breach check, a refused API-key route, an unhandled exception. They
   carry the name of the hook or the operation from a closed set, and the library's description of the failure, never
@@ -52,8 +56,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 - A verification code the store refuses no longer fails the registration that created the account. `POST /register` and
   `POST /resend-verification` answer as they do when the code is stored, no email is sent for a code that was not stored,
-  and one error line, `[AUTH_OTP_STORE_FAILED] email_verification`, records the refusal without the address or the user
-  id. Before, the refusal reached the caller as an error for an account that existed.
+  and one event, `AUTH_OTP_STORE_FAILED`, records the refusal without the address or the user id. Before, the refusal reached the caller as an error for an account that existed.
 - **A text option, a list of text and a group of settings given a value of the wrong type are refused at startup, naming the
   option and the type received.** `jwt.accessExpiresIn` given a number, a boolean, an object, a symbol or a bigint failed
   with `value.trim is not a function`; it now gets the same refusal as an unreadable string. `jwt.issuer`, `jwt.audience`,
@@ -71,6 +74,24 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   the provider block carries its values; it resolved as an empty object, and the provider was never built.
 - The `controllers` flags are read once, by `registerAsync`, and that one reading is what the registration uses; a flag that
   is a getter was evaluated twice, once to check it and once to apply it.
+
+### Apply to a derived backend
+
+Nothing is removed from the public declarations. The `@bymax-one/nest-auth/observability` subpath is new and needs no
+change until you use it: its counters need `prom-client`, its spans need `@opentelemetry/api`, and `@bymax-one/nest-core`
+`>=1.6.15` is a new optional peer whose metrics-contributor and readiness contracts the subpath meets without importing it;
+all three are optional. `rxjs` is now declared as a peer of the server entry; `@nestjs/common` already requires it. The server entry adds
+`AuthMetricsTally`, `AuthHealthProbe`, `AUTH_PLANES`, `LOGIN_OUTCOMES`, `REFRESH_OUTCOMES`, `MFA_OUTCOMES` and the
+matching outcome types. `BruteForceService` takes an optional third constructor argument, the tally, and the methods of
+`NoOpEmailProvider` name their address parameter `_email` instead of `email` (the types are the same).
+
+What changes at run time is the log. Every line the library writes, bar the operator guidance sentences, is an object, `{ ...fields, event, message }`, with
+the code and the message of the README "Log events" table, and the text of the old lines is gone. A log filter, an
+alert or a test that matches the old text must match the event code instead, and a host logger now receives an object
+where it used to receive a string. A refusal or failure carries no user, tenant, address or provider; a success or
+audit event carries `userId` and `tenantId`. A configuration that booted before is refused at startup when a text
+option, a list of text or a group of settings has the wrong type. A registration whose verification code the store
+refuses now succeeds as it does when the code is stored.
 
 ## [1.5.10] - 2026-11-18
 
@@ -5431,7 +5452,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.10...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.11...HEAD
+[1.5.11]: https://github.com/bymaxone/nest-auth/compare/v1.5.10...v1.5.11
 [1.5.10]: https://github.com/bymaxone/nest-auth/compare/v1.5.9...v1.5.10
 [1.5.9]: https://github.com/bymaxone/nest-auth/compare/v1.5.8...v1.5.9
 [1.5.8]: https://github.com/bymaxone/nest-auth/compare/v1.5.7...v1.5.8
