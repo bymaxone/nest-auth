@@ -330,6 +330,134 @@ describe('copyHostRecord', () => {
     expect(copy['connection']).toBeUndefined()
   })
 
+  // Scenario: the limits and shapes of the copy, each one a bound a mutant could move. Expected: a record nested exactly
+  // at the limit is copied and one level deeper is refused with the library's text; arrays follow the same limit, are
+  // copied to their length, and a cyclic array is copied once; a record with no prototype is copied; the descriptor of
+  // a copied __proto__ key is a plain data property; a listed name that is a method is left behind; a getter of a
+  // listed name is read once; a listed field nested past the limit is refused.
+  describe('bounds of the copy', () => {
+    const nest = (levels: number): Record<string, unknown> => {
+      let value: Record<string, unknown> = { leaf: true }
+      for (let level = 0; level < levels; level += 1) value = { next: value }
+      return value
+    }
+    const causeOf = (thunk: () => unknown): unknown => {
+      try {
+        thunk()
+      } catch (error) {
+        return (error as { cause?: Error }).cause?.message
+      }
+      return undefined
+    }
+
+    it('copies a record nested exactly at the limit and refuses one level deeper, saying why', () => {
+      expect(() => copyHostRecord(nest(16))).not.toThrow()
+      expect(causeOf(() => copyHostRecord(nest(17)))).toBe(
+        'the record nests deeper than the library follows'
+      )
+    })
+
+    it('applies the limit to arrays, copies exactly their length and copies a cyclic array once', () => {
+      let deep: unknown[] = [1]
+      for (let level = 0; level < 20; level += 1) deep = [deep]
+      const cyclic: unknown[] = [1, 2]
+      cyclic.push(cyclic)
+
+      const copy = copyHostRecord({ list: [1, 2], cyclic }) as {
+        list: unknown[]
+        cyclic: unknown[]
+      }
+
+      expect(causeOf(() => copyHostRecord({ deep }))).toBeDefined()
+      expect(copy.list).toEqual([1, 2])
+      expect(copy.list).toHaveLength(2)
+      expect(copy.cyclic[2]).toBe(copy.cyclic)
+    })
+
+    it('copies a record that has no prototype', () => {
+      const bare = Object.create(null) as Record<string, unknown>
+      bare['id'] = 'u1'
+
+      expect((copyHostRecord(bare) as Record<string, unknown>)['id']).toBe('u1')
+    })
+
+    it('defines a copied __proto__ key as a plain data property', () => {
+      const copy = copyHostRecord(JSON.parse('{"meta":{"__proto__":1}}')) as { meta: object }
+
+      expect(Object.getOwnPropertyDescriptor(copy.meta, '__proto__')).toEqual({
+        value: 1,
+        writable: true,
+        enumerable: true,
+        configurable: true
+      })
+    })
+
+    it('leaves a method behind even when it carries the name of a listed field', () => {
+      class Doc {
+        status(): string {
+          return 'method'
+        }
+      }
+
+      expect((copyHostRecord(new Doc()) as Record<string, unknown>)['status']).toBeUndefined()
+    })
+
+    it('reads the getter of a listed field once', () => {
+      let reads = 0
+      const record = {}
+      Object.defineProperty(record, 'status', {
+        get: () => {
+          reads += 1
+          return 'ACTIVE'
+        },
+        enumerable: true
+      })
+
+      copyHostRecord(record)
+
+      expect(reads).toBe(1)
+    })
+
+    it('applies the limit to a listed field answered by name', () => {
+      const lazy = new Proxy(
+        {},
+        { get: (_target, key) => (key === 'workspace' ? nest(16) : undefined) }
+      )
+
+      expect(causeOf(() => copyHostRecord(lazy))).toBe(
+        'the record nests deeper than the library follows'
+      )
+    })
+
+    it('answers undefined to a symbol read of a repository whose reads throw', () => {
+      const hostile = new Proxy(
+        {},
+        {
+          get: () => {
+            throw fault
+          }
+        }
+      )
+      const view = guardRepository(hostile as { find(): Promise<unknown> })
+
+      expect(Reflect.get(view, Symbol.iterator)).toBeUndefined()
+    })
+
+    it('does not take a class with a static provide for a token provider', () => {
+      class Weird {
+        static provide = BYMAX_AUTH_USER_REPOSITORY
+      }
+
+      expect(withGuardedViews([Weird as never])).toEqual([Weird])
+    })
+
+    it('adds no view when only unrelated providers are present', () => {
+      const providers = [{ provide: BYMAX_AUTH_REDIS_CLIENT, useValue: {} }]
+
+      expect(withGuardedViews(providers)).toEqual(providers)
+    })
+  })
+
   // Scenario: a record with an own key named __proto__ (what JSON.parse of user input produces). Expected: it stays an
   // own key of the copy and the copy's prototype is untouched. Why: assigning it would swap the copy's prototype for the
   // copied value, and the copy would inherit names the original did not own.

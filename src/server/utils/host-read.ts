@@ -191,6 +191,7 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
   for (const key of new Set([...Object.getOwnPropertyNames(value), ...inheritedAccessors(value)])) {
     const copied = copyValue(source[key], seen, depth + 1)
     // A key named `__proto__` (what `JSON.parse` of user input produces) is data; assigning it would swap the prototype.
+    // Stryker disable next-line ConditionalExpression: equivalent when true, defining a key with all three attributes true is what an assignment does on a plain object for every name but `__proto__`
     if (key === '__proto__') {
       Object.defineProperty(copy, key, {
         value: copied,
