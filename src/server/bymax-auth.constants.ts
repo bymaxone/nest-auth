@@ -110,15 +110,24 @@ export const BYMAX_AUTH_WORKSPACE_REPOSITORY = Symbol('BYMAX_AUTH_WORKSPACE_REPO
  */
 export const BYMAX_AUTH_MEMBERSHIP_REPOSITORY = Symbol('BYMAX_AUTH_MEMBERSHIP_REPOSITORY')
 
-/**
- * Internal tokens: the guarded view of each repository the host provides.
- *
- * The library's own services inject these, never the host's tokens above, so every record they read has been copied
- * once behind {@link guardRepository}. The host's tokens still resolve to the host's own instances, which the module
- * exports as they are. These symbols are not exported from the package.
+/*
+ * Internal tokens: the guarded view of each repository the host provides. The library's own services inject these,
+ * never the host's tokens above, so every record they read has been copied once behind `guardRepository`. The host's
+ * tokens still resolve to the host's own instances, which the module exports as they are. These symbols are not
+ * exported from the package.
  */
+
+/** Guarded view of the host's {@link IUserRepository}, injected by the services that read dashboard users. */
 export const GUARDED_USER_REPOSITORY = Symbol('GUARDED_USER_REPOSITORY')
+
+/** Guarded view of the host's {@link IPlatformUserRepository}, injected by the platform-plane services. */
 export const GUARDED_PLATFORM_USER_REPOSITORY = Symbol('GUARDED_PLATFORM_USER_REPOSITORY')
+
+/** Guarded view of the host's {@link IApiKeyRepository}, injected by the API key services. */
 export const GUARDED_API_KEY_REPOSITORY = Symbol('GUARDED_API_KEY_REPOSITORY')
+
+/** Guarded view of the host's {@link IWorkspaceRepository}, injected by the workspace services. */
 export const GUARDED_WORKSPACE_REPOSITORY = Symbol('GUARDED_WORKSPACE_REPOSITORY')
+
+/** Guarded view of the host's {@link IMembershipRepository}, injected by the workspace and membership services. */
 export const GUARDED_MEMBERSHIP_REPOSITORY = Symbol('GUARDED_MEMBERSHIP_REPOSITORY')

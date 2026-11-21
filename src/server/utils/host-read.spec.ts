@@ -1,3 +1,12 @@
+/**
+ * @fileoverview The boundary where the library reads what the host owns: the options factory and the records of
+ * a repository. A failed read ends in the library's own error with the host's error as its `cause`, the copy of a
+ * record keeps what the library reads by name and shows what a spread would have shown, and a guarded repository
+ * keeps the host's own errors and lifecycle out of the way.
+ *
+ * @layer Test
+ */
+
 import { runInNewContext } from 'node:vm'
 
 import { HttpException } from '@nestjs/common'
@@ -165,8 +174,8 @@ describe('copyHostRecord', () => {
     expect(copy.at.getTime()).toBe(5)
   })
 
-  // Scenario: an entity class with a getter on its prototype. Expected: the getter's value is in the copy. Why: a
-  // spread would lose it, and the library reads the field by name.
+  // Scenario: an entity class with a getter on its prototype. Expected: the getter's value is readable by name on the
+  // copy and is not enumerable. Why: a spread would lose it, and the library reads the field by name.
   it('keeps the value of an accessor a class defines on its prototype', () => {
     class Entity {
       id = 'e1'
@@ -175,7 +184,10 @@ describe('copyHostRecord', () => {
       }
     }
 
-    expect(copyHostRecord(new Entity())).toEqual({ id: 'e1', label: 'computed' })
+    const copy = copyHostRecord(new Entity()) as Record<string, unknown>
+
+    expect(copy['label']).toBe('computed')
+    expect(copy).toEqual({ id: 'e1' })
   })
 
   // Scenario: an accessor inherited from a base class and an own property shadowing nothing. Expected: both read.
@@ -189,7 +201,10 @@ describe('copyHostRecord', () => {
       id = 'd1'
     }
 
-    expect(copyHostRecord(new Derived())).toEqual({ id: 'd1', kind: 'base' })
+    const copy = copyHostRecord(new Derived()) as Record<string, unknown>
+
+    expect(copy['kind']).toBe('base')
+    expect(copy['id']).toBe('d1')
   })
 
   // Scenario: values that are not data. Expected: passed on as they are, not copied into plain objects.
@@ -227,8 +242,8 @@ describe('copyHostRecord', () => {
 
   // Scenario: values made in another realm (a vm context, which is what a test runner or a driver bundle can hand
   // over). Expected: a date is still a date, a map stays a map by reference, and a plain object from there is copied
-  // without an own __proto__ key. Why: `instanceof` is false across realms, so such a date was copied as an object that
-  // holds the prototype of its realm, and the response that carried it failed to serialize.
+  // without an own __proto__ key. Why: `instanceof` is false across realms, so a date from another realm has to be told
+  // by its internal slot to keep its date semantics and its serialization.
   it('treats values from another realm as the kinds they are', () => {
     const foreign = <T>(source: string): T => runInNewContext(source) as T
     const date = foreign<Date>('new Date(5)')
@@ -293,7 +308,7 @@ describe('copyHostRecord', () => {
     expect(copy['mfaEnabled']).toBe(true)
     expect(copy['status']).toBe('ACTIVE')
     expect(copy['passwordHash']).toBe('h')
-    expect(Object.keys(copy).sort()).toEqual(['mfaEnabled', 'passwordHash', 'status'])
+    expect(Object.keys(copy)).toEqual([])
   })
 
   it('covers every field of every record interface in the by-name list', () => {
@@ -475,6 +490,35 @@ describe('copyHostRecord', () => {
     })
   })
 
+  // Scenario: a record whose hidden fields must stay hidden: a non-enumerable backing object, a non-enumerable auth
+  // field, an inherited accessor and a field found only by name. Expected: all of them are readable by name and none is
+  // enumerable, so a spread, Object.keys or JSON.stringify of the copy shows what the host's record showed. Why: the
+  // services strip a few credential fields from a spread of the record, and a hidden field made visible would reach
+  // the response.
+  it('keeps hidden fields hidden from a spread while still readable by name', () => {
+    class Doc {
+      id = 'u1'
+      get role(): string {
+        return 'user'
+      }
+    }
+    const record = new Doc()
+    Object.defineProperty(record, '_credentials', {
+      value: { passwordHash: 'hash', mfaSecret: 'enc' },
+      enumerable: false
+    })
+    Object.defineProperty(record, 'status', { value: 'ACTIVE', enumerable: false })
+
+    const copy = copyHostRecord(record) as Record<string, unknown>
+
+    expect(copy['status']).toBe('ACTIVE')
+    expect(copy['role']).toBe('user')
+    expect(copy['_credentials']).toEqual({ passwordHash: 'hash', mfaSecret: 'enc' })
+    expect(Object.keys(copy)).toEqual(['id'])
+    expect(Object.keys({ ...copy })).toEqual(['id'])
+    expect(JSON.stringify(copy)).toBe('{"id":"u1"}')
+  })
+
   // Scenario: a record with an own key named __proto__ (what JSON.parse of user input produces). Expected: it stays an
   // own key of the copy and the copy's prototype is untouched. Why: assigning it would swap the copy's prototype for the
   // copied value, and the copy would inherit names the original did not own.
@@ -617,6 +661,20 @@ describe('guardRepository against a hostile repository', () => {
     expect(() => guarded.find).not.toThrow()
     await expect(read()).rejects.toMatchObject({ cause: fault })
     await expect(read()).rejects.toBeInstanceOf(AuthException)
+  })
+
+  // Scenario: a repository whose methods are frozen own properties. Expected: the view still answers, with a copy. Why:
+  // a proxy over the frozen object itself must return the exact original member for a non-configurable read-only
+  // property, so the view is built over a separate target.
+  it('wraps a repository whose own methods are frozen', async () => {
+    const user = { id: 'u1' }
+    const frozen = Object.freeze({ findById: async (): Promise<unknown> => user })
+    const guarded = guardRepository(frozen)
+
+    const answer = await guarded.findById()
+
+    expect(answer).toEqual(user)
+    expect(answer).not.toBe(user)
   })
 
   // Scenario: a hostile repository that throws for every key, awaited the way Nest awaits a factory result. Expected: the

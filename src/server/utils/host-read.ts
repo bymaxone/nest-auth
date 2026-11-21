@@ -172,11 +172,12 @@ function isOpaque(value: object): boolean {
 
 /**
  * Sets a field on a copy by defining it, never by assigning it: a key named `__proto__` (what `JSON.parse` of user
- * input produces) would swap the prototype, and a name that is a setter or read-only on `Object.prototype` would be
- * silently dropped.
+ * input produces) would swap the prototype, and a name that is a setter on `Object.prototype` would be silently
+ * dropped. A field is enumerable only when it was enumerable on the record, so a spread of the copy shows what a
+ * spread of the record showed and a hidden field is still readable by name.
  */
-function define(copy: object, key: string, value: unknown): void {
-  Object.defineProperty(copy, key, { value, enumerable: true, writable: true, configurable: true })
+function define(copy: object, key: string, value: unknown, enumerable: boolean): void {
+  Object.defineProperty(copy, key, { value, enumerable, writable: true, configurable: true })
 }
 
 /** A plain copy of a record: its own fields and inherited accessors, arrays and dates copied, the rest by reference. */
@@ -199,13 +200,13 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
   const source = value as Record<string, unknown>
   for (const key of new Set([...Object.getOwnPropertyNames(value), ...inheritedAccessors(value)])) {
     const copied = copyValue(source[key], seen, depth + 1)
-    define(copy, key, copied)
+    define(copy, key, copied, Object.getOwnPropertyDescriptor(value, key)?.enumerable === true)
   }
   for (const key of RECORD_FIELDS) {
     if (Object.hasOwn(copy, key)) continue
     const read = source[key]
     if (read !== undefined && typeof read !== 'function')
-      define(copy, key, copyValue(read, seen, depth + 1))
+      define(copy, key, copyValue(read, seen, depth + 1), false)
   }
   return copy
 }
@@ -241,13 +242,14 @@ const LIFECYCLE_HOOKS: ReadonlySet<PropertyKey> = new Set([
  * @returns A repository with the same methods, answering with plain copies.
  */
 export function guardRepository<T extends object>(host: T): T {
-  return new Proxy(host, {
-    get(target, key): unknown {
+  // The target is a separate object: a proxy over a frozen host would have to return each own member untouched.
+  return new Proxy({} as T, {
+    get(_target, key): unknown {
       // Nest calls a lifecycle hook on every provider instance, and this view is a second one over the repository.
       if (LIFECYCLE_HOOKS.has(key)) return undefined
       let member: unknown
       try {
-        member = Reflect.get(target, key, target)
+        member = Reflect.get(host, key, host)
       } catch (error: unknown) {
         // Awaiting the view reads `then`, and a symbol is no method name: neither may become a function that never settles.
         if (key === 'then' || typeof key === 'symbol') return undefined
@@ -260,7 +262,7 @@ export function guardRepository<T extends object>(host: T): T {
       return async (...args: unknown[]): Promise<unknown> => {
         let answer: unknown
         try {
-          answer = await (member as (...parameters: unknown[]) => unknown).apply(target, args)
+          answer = await (member as (...parameters: unknown[]) => unknown).apply(host, args)
         } catch (error: unknown) {
           // A typed error the host chose to throw (a unique-key conflict it maps to `AuthException`) goes out as it is.
           if (error instanceof HttpException) throw error
