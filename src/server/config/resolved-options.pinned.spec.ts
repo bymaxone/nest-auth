@@ -206,4 +206,18 @@ describe('the role hierarchy of the resolved options', () => {
     expect(resolved.workspaces?.roles.ownerRole).toBe('owner')
     expect(resolved.workspaces?.roles.hierarchy).toEqual({ owner: ['editor'], editor: [] })
   })
+
+  // Scenario: the roles written as a function that carries a hierarchy, which is not a group the options accept. Expected:
+  // the function is left as the host wrote it, its hierarchy is neither copied nor replaced, and what is not a group is
+  // refused by the checks that follow as before. Why: the pin replaces a hierarchy in a group `dropUnset` made, and must
+  // never write into an object the host owns.
+  it('leaves a function that carries a hierarchy as the host wrote it', () => {
+    const hierarchy = { MEMBER: [] }
+    const roles = Object.assign(() => undefined, { hierarchy })
+
+    const resolved = resolveOptions(optionsWith(roles))
+
+    expect(resolved.roles).toBe(roles)
+    expect(roles.hierarchy).toBe(hierarchy)
+  })
 })
