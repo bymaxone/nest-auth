@@ -61,7 +61,7 @@ describe('the role hierarchy of the resolved options', () => {
   })
 
   // Scenario: a hierarchy that is not an object, an array, and a role whose children are not a list. Expected: each is
-  // refused as before, naming what is wrong. Why: pinning the hierarchy is not a new way to accept one.
+  // refused, naming what is wrong. Why: pinning the hierarchy is not a way to accept one the checks refuse.
   it.each([
     ['is missing, with roles undefined', undefined, 'roles.hierarchy is required'],
     ['is missing, with roles null', null, 'roles.hierarchy is required'],
