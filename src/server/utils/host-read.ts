@@ -143,21 +143,6 @@ export const RECORD_FIELDS = [
   'workspaceIds'
 ] as const
 
-/** The accessors a record inherits below the root prototype, which a spread would lose. Inherited data is not walked. */
-function inheritedAccessors(value: object): string[] {
-  const names: string[] = []
-  for (
-    let proto: object | null = Object.getPrototypeOf(value) as object | null;
-    proto !== null && Object.getPrototypeOf(proto) !== null;
-    proto = Object.getPrototypeOf(proto) as object | null
-  ) {
-    for (const name of Object.getOwnPropertyNames(proto)) {
-      if (Object.getOwnPropertyDescriptor(proto, name)?.get !== undefined) names.push(name)
-    }
-  }
-  return names
-}
-
 /** The checks for the values a record may hold that are not data to copy: a copy of them would not be them. */
 const OPAQUE: readonly ((value: unknown) => boolean)[] = [
   types.isMap,
@@ -187,7 +172,10 @@ function define(copy: object, key: string, value: unknown, enumerable: boolean):
   Object.defineProperty(copy, key, { value, enumerable, writable: true, configurable: true })
 }
 
-/** A plain copy of a record: its own fields and inherited accessors, arrays and dates copied, the rest by reference. */
+/**
+ * A plain copy of a record: the fields a spread would show, then the fields the library reads by name, arrays and dates
+ * copied, the rest by reference. A getter nobody asked for is never evaluated.
+ */
 function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value
   if (depth > MAX_RECORD_DEPTH) throw new Error('the record nests deeper than the library follows')
@@ -205,9 +193,9 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
   const copy: Record<string, unknown> = {}
   seen.set(value, copy)
   const source = value as Record<string, unknown>
-  for (const key of new Set([...Object.getOwnPropertyNames(value), ...inheritedAccessors(value)])) {
+  for (const key of Object.keys(value)) {
     const copied = copyValue(source[key], seen, depth + 1)
-    define(copy, key, copied, Object.getOwnPropertyDescriptor(value, key)?.enumerable === true)
+    define(copy, key, copied, true)
   }
   for (const key of RECORD_FIELDS) {
     if (Object.hasOwn(copy, key)) continue
