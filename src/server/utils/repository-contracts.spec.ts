@@ -178,24 +178,27 @@ describe('an answer is read for what its method promises and for nothing else', 
 })
 
 describe('the tables of contracts are checked by the compiler', () => {
-  // Scenario: a table that leaves a method of the repository out, a field entry that is not a key of the record, and
-  // an entry that leaves a key of the record out. Expected: each line fails to compile, which the directives below
-  // assert (an unused directive is itself a compile error). Why: a method or a field added to an interface must not be
-  // forgotten in the table, and a misspelt one must not be silently ignored.
-  it('refuses a missing method, an unknown field and a forgotten field', () => {
-    // @ts-expect-error findByEmail and the other methods have no entry
-    const incomplete: RepositoryContract<IUserRepository> = {
-      findById: USER_REPOSITORY_CONTRACT.findById
-    }
-    const complete = USER_REPOSITORY_CONTRACT.findById as {
-      fields: Record<string, true>
-      nested: object
-    }
-    // @ts-expect-error `nope` is not a key of the user
-    const unknown: Contract<AuthUser> = { fields: { ...complete.fields, nope: true }, nested: {} }
-    // @ts-expect-error the other keys of the user are left out
-    const forgotten: Contract<AuthUser> = { fields: { id: true }, nested: {} }
+  type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+  type NotAssignable<A, B> = [A] extends [B] ? false : true
+  type RecordContract<R> = Extract<Contract<R>, { fields: unknown }>
 
-    expect([incomplete, unknown, forgotten]).toHaveLength(3)
+  // Scenario: the shape a table has to take, stated as types. Expected: the methods a table must hold are exactly the
+  // methods of the repository interface, the fields of an entry are exactly the keys of the record, and a table that
+  // leaves a method out or an entry that leaves a key out is not assignable. Why: a method or a field added to an
+  // interface must not be forgotten in the table, and a misspelt one must not be silently ignored. Each constant
+  // below fails to compile if its claim stops holding, so `typecheck` is the assertion.
+  it('holds exactly the methods of the interface and exactly the keys of the record', () => {
+    const methods: Same<keyof RepositoryContract<IUserRepository>, keyof IUserRepository> = true
+    const fields: Same<keyof RecordContract<AuthUser>['fields'], keyof AuthUser> = true
+    const missingMethod: NotAssignable<
+      Pick<RepositoryContract<IUserRepository>, 'findById'>,
+      RepositoryContract<IUserRepository>
+    > = true
+    const forgottenField: NotAssignable<
+      { fields: { id: true }; nested: object },
+      Contract<AuthUser>
+    > = true
+
+    expect([methods, fields, missingMethod, forgottenField]).toEqual([true, true, true, true])
   })
 })
