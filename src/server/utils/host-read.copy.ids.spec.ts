@@ -34,6 +34,14 @@ class PrintsEmpty {
   }
 }
 
+/** An object that prints as the text it was given. */
+class PrintsText {
+  constructor(private readonly text: string) {}
+  toString(): string {
+    return this.text
+  }
+}
+
 class PrintsAsAnObject {
   toString(): string {
     return '[object Anything]'
@@ -57,6 +65,16 @@ const NOT_AN_ID: readonly (readonly [string, unknown])[] = [
   ['a plain object', {}],
   ['an object that prints as nothing', new PrintsEmpty()],
   ['an object that prints as an object', new PrintsAsAnObject()],
+  ['a blank string', '   '],
+  ['a string of line breaks and tabs', '\t\n'],
+  ['the text undefined', 'undefined'],
+  ['the text null', 'null'],
+  ['an object that prints as blank', new PrintsText(' ')],
+  ['an object that prints as undefined', new PrintsText('undefined')],
+  ['an object that prints as null', new PrintsText('null')],
+  ['an Error', new Error('id')],
+  ['a Buffer', Buffer.from('id')],
+  ['a typed array', new Uint8Array([1, 2])],
   ['a symbol', Symbol('id')],
   ['a bigint', 1n]
 ]
