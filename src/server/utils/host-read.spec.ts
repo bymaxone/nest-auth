@@ -242,6 +242,35 @@ describe('copyHostRecord', () => {
     expect(JSON.stringify(copy)).toContain('"a":1')
   })
 
+  // Scenario: a record whose auth state lives on its prototype, as a class default or an Object.create base does.
+  // Expected: the inherited data fields survive the copy, an own field shadows an inherited one, and the inherited
+  // methods are not copied. Why: dropping `mfaEnabled` would let a login skip the challenge.
+  it('keeps inherited data fields, lets an own field shadow them, and leaves methods behind', () => {
+    class Base {
+      mfaEnabled = true
+      status = 'ACTIVE'
+      describe(): string {
+        return 'method'
+      }
+    }
+    const proto = { role: 'admin', mfaEnabled: true, helper: (): string => 'fn' }
+    const record = Object.assign(Object.create(proto) as Record<string, unknown>, {
+      id: 'u1',
+      role: 'user'
+    })
+    Object.defineProperty(Base.prototype, 'tenantId', { value: 't1', enumerable: false })
+
+    const fromClass = copyHostRecord(new Base()) as Record<string, unknown>
+    const copy = copyHostRecord(record) as Record<string, unknown>
+
+    expect(copy['mfaEnabled']).toBe(true)
+    expect(copy['role']).toBe('user')
+    expect(copy['id']).toBe('u1')
+    expect(copy['helper']).toBeUndefined()
+    expect(fromClass['tenantId']).toBe('t1')
+    expect(fromClass['describe']).toBeUndefined()
+  })
+
   // Scenario: a record with an own key named __proto__ (what JSON.parse of user input produces). Expected: it stays an
   // own key of the copy and the copy's prototype is untouched. Why: assigning it would swap the copy's prototype for the
   // copied value, and the copy would inherit names the original did not own.
