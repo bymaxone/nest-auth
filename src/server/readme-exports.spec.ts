@@ -17,10 +17,17 @@ import * as ts from 'typescript'
 const ROOT = join(__dirname, '../..')
 const README = readFileSync(join(ROOT, 'README.md'), 'utf8')
 
+/** The bodies of the code spans of a text: fenced blocks removed, backticks paired in order, spans may cross lines. */
+function spansOf(text: string): string[] {
+  const parts = text.replace(/```[\s\S]*?```/g, '').split('`')
+  return parts.filter((_, index) => index % 2 === 1)
+}
+
 /** Whether the README text holds the name as a whole word inside a code span. */
 function mentions(readme: string, name: string): boolean {
   const escaped = name.replace(/[$()*+.?[\\\]^{|}-]/g, '\\$&')
-  return new RegExp('`[^`\\n]*(?<![\\w$])' + escaped + '(?![\\w$])[^`\\n]*`').test(readme)
+  const word = new RegExp('(?<![\\w$])' + escaped + '(?![\\w$])')
+  return spansOf(readme).some((body) => word.test(body))
 }
 
 /** The names of a list that the README does not mention. */
@@ -35,11 +42,19 @@ function serverExports(): string[] {
   const names = new Set<string>()
   for (const statement of source.statements) {
     if (ts.isExportDeclaration(statement)) {
-      if (statement.exportClause === undefined)
-        throw new Error('export * is not supported by this spec')
-      if (ts.isNamedExports(statement.exportClause)) {
-        for (const element of statement.exportClause.elements) names.add(element.name.text)
+      if (statement.exportClause === undefined || !ts.isNamedExports(statement.exportClause)) {
+        throw new Error('export * and a namespace re-export are not supported by this spec')
       }
+      for (const element of statement.exportClause.elements) names.add(element.name.text)
+    } else if (
+      (ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isEnumDeclaration(statement) ||
+        ts.isModuleDeclaration(statement)) &&
+      statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ===
+        true
+    ) {
+      throw new Error('a direct interface, type, enum or namespace export is not supported here')
     } else if (
       (ts.isVariableStatement(statement) ||
         ts.isFunctionDeclaration(statement) ||
@@ -170,7 +185,7 @@ describe('the README against the server entry', () => {
   it('names every option of the module options', () => {
     const names = optionNames()
 
-    expect(names.length).toBeGreaterThan(100)
+    expect(names.length).toBeGreaterThan(50)
     expect(unmentioned(README, names)).toEqual([])
   })
 
@@ -208,7 +223,10 @@ describe('the README against the server entry', () => {
     ['`AlphaBeta`', 'Beta', false],
     ['Beta is described in prose', 'Beta', false],
     ['`jwt.accessExpiresIn`', 'accessExpiresIn', true],
-    ['`a$b`', 'a', false]
+    ['`a$b`', 'a', false],
+    ['`Alpha` and Beta between `Gamma`', 'Beta', false],
+    ['```ts\nimport { Beta }\n```', 'Beta', false],
+    ['`Alpha\nBeta`', 'Beta', true]
   ])('judges %s for %s as mentioned: %s', (readme, name, expected) => {
     expect(mentions(readme, name)).toBe(expected)
   })

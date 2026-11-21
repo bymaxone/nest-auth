@@ -427,12 +427,13 @@ export interface BymaxAuthModuleOptions {
     /**
      * `Path` attribute for the short-lived `mfa_temp_token` cookie planted
      * by the OAuth callback (lib v1.0.7+) and cleared by the MFA challenge
-     * controller. Defaults to `/${routePrefix}/mfa` — correct when the
-     * lib's routes are mounted at the root path (no Nest global prefix).
+     * controller. Defaults to `/auth/mfa`, which does not follow `routePrefix`
+     * — correct only for the default prefix and routes mounted at the root path
+     * (no Nest global prefix).
      *
-     * Set this explicitly when the consumer calls `app.setGlobalPrefix(...)`
-     * because the library cannot observe the global prefix at module
-     * construction time. For example, with `setGlobalPrefix('api')` and
+     * Set this explicitly when the consumer changes `routePrefix` or calls
+     * `app.setGlobalPrefix(...)`, because the library cannot observe the
+     * global prefix at module construction time. For example, with `setGlobalPrefix('api')` and
      * default `routePrefix: 'auth'`, the real challenge URL is
      * `/api/auth/mfa/challenge` — but `Path=/auth/mfa` will NOT be sent
      * by the browser (RFC 6265 prefix-match). Set this to `'/api/auth/mfa'`
