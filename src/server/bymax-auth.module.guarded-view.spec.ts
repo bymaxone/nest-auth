@@ -44,7 +44,7 @@ describe('BymaxAuthModule guarded repository view', () => {
       providers: [RepoProbe]
     }).compile()
 
-    const seen = (module.get(AuthService) as unknown as { userRepo: typeof repository }).userRepo
+    const seen = Reflect.get(module.get(AuthService), 'userRepo') as typeof repository
     const answered = (await seen.findByEmail()) as typeof record
 
     expect(seen).not.toBe(repository)

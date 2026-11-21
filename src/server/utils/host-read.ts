@@ -112,6 +112,24 @@ function inheritedAccessors(value: object): string[] {
   return names
 }
 
+/** The values a record may hold that are not data to copy: a copy of them would not be them. */
+const OPAQUE: readonly (abstract new (...args: never[]) => object)[] = [
+  Map,
+  Set,
+  WeakMap,
+  WeakSet,
+  Promise,
+  RegExp,
+  Error,
+  ArrayBuffer,
+  URL
+]
+
+/** Whether a value is one of the {@link OPAQUE} kinds, or a view over bytes, and is passed on as it is. */
+function isOpaque(value: object): boolean {
+  return ArrayBuffer.isView(value) || OPAQUE.some((kind) => value instanceof kind)
+}
+
 /** A plain copy of a record: its own and inherited accessor values, arrays and dates copied, the rest by reference. */
 function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value
@@ -126,13 +144,7 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
       copy.push(copyValue(value[index], seen, depth + 1))
     return copy
   }
-  const proto = Object.getPrototypeOf(value) as object | null
-  if (
-    proto !== Object.prototype &&
-    proto !== null &&
-    !(proto.constructor?.name ?? '').match(/^[A-Z]/)
-  )
-    return value
+  if (isOpaque(value)) return value
   const copy: Record<string, unknown> = {}
   seen.set(value, copy)
   const source = value as Record<string, unknown>
@@ -193,16 +205,17 @@ const GUARDED_BY_HOST: ReadonlyMap<symbol, symbol> = new Map([
 ])
 
 /**
- * The guarded view of each repository the host provides, under the internal tokens the library's services inject.
+ * The host's providers plus the guarded view of each repository among them, under the internal tokens the library's
+ * services inject.
  *
  * The host's own providers are left exactly as they are, so the token the module exports still resolves to the
  * host's instance.
  *
  * @param providers - The host's `extraProviders`.
- * @returns One provider per repository the host supplied.
+ * @returns The host's providers, then one guarded provider per repository the host supplied.
  */
-export function guardedProviders(providers: Provider[]): Provider[] {
-  return [...GUARDED_BY_HOST]
+export function withGuardedViews(providers: Provider[]): Provider[] {
+  const views = [...GUARDED_BY_HOST]
     .filter(([host]) =>
       providers.some(
         (provider) =>
@@ -214,4 +227,5 @@ export function guardedProviders(providers: Provider[]): Provider[] {
       useFactory: (repository: object): object => guardRepository(repository),
       inject: [host]
     }))
+  return [...providers, ...views]
 }

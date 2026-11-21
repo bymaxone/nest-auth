@@ -99,7 +99,7 @@ import { WorkspaceInvitationService } from './services/workspace-invitation.serv
 import { WorkspaceInvitationStore } from './services/workspace-invitation.store'
 import { WorkspaceService } from './services/workspace.service'
 import { WsTicketService } from './services/ws-ticket.service'
-import { guardedProviders, hostHasKey, readHostOptions, callFactory } from './utils/host-read'
+import { hostHasKey, readHostOptions, callFactory, withGuardedViews } from './utils/host-read'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -345,7 +345,6 @@ export class BymaxAuthModule {
         // here is read by nothing: the flags are silently dropped and the endpoints they were
         // meant to enable are simply absent — a 404 whose cause is in a different object from
         // the one the developer edited. It was documented; documentation is not a control.
-        // Every read of what the host returned is inside the boundary of `host-read`.
         if (hostHasKey(userOptions, 'controllers')) {
           throw new Error(
             '[BymaxAuthModule] `controllers` must be passed to registerAsync() itself, not ' +
@@ -596,8 +595,7 @@ export class BymaxAuthModule {
       ],
       providers: [
         // Consumer-supplied providers first so they can override internal ones.
-        ...extraProviders,
-        ...guardedProviders(extraProviders),
+        ...withGuardedViews(extraProviders),
         // Resolved options (depends on consumer's inject tokens).
         resolvedOptionsProvider,
         // Which controllers this registration mounted, and the contributor that reads it.
