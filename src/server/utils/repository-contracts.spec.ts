@@ -5,6 +5,12 @@
  * @layer Test
  */
 
+import {
+  apiKeyRecord,
+  membershipRecord,
+  userRecord,
+  workspaceRecord
+} from './__tests__/host-records'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { AuthApiKey, IApiKeyRepository } from '../interfaces/api-key-repository.interface'
@@ -31,6 +37,7 @@ import {
   MEMBERSHIP_REPOSITORY_CONTRACT,
   USER_REPOSITORY_CONTRACT,
   type Contract,
+  type FieldSpec,
   type RepositoryContract
 } from './repository-contracts'
 
@@ -53,8 +60,9 @@ describe('an answer is read for what its method promises and for nothing else', 
   it('copies a user whose relations are unloaded getters named like fields of other contracts', async () => {
     const counter = { reads: 0 }
     class UserEntity {
-      id = 'u1'
-      email = 'a@b.c'
+      constructor() {
+        Object.assign(this, userRecord())
+      }
     }
     const entity = new UserEntity()
     for (const relation of ['workspace', 'items', 'result', 'removed', 'label'])
@@ -77,11 +85,9 @@ describe('an answer is read for what its method promises and for nothing else', 
   it('copies a plain membership whose workspace relation is unloaded', async () => {
     const counter = { reads: 0 }
     class Membership {
-      tenantId = 't1'
-      workspaceId = 'w1'
-      userId = 'u1'
-      role = 'MEMBER'
-      status = 'ACTIVE'
+      constructor() {
+        Object.assign(this, membershipRecord())
+      }
     }
     Object.defineProperty(Membership.prototype, 'workspace', unloaded(counter))
     const membership = new Membership()
@@ -107,10 +113,9 @@ describe('an answer is read for what its method promises and for nothing else', 
   it('copies an API key whose relations are unloaded', async () => {
     const counter = { reads: 0 }
     class ApiKey {
-      id = 'k1'
-      label = 'ci'
-      digest = 'd'
-      scopes = ['read']
+      constructor() {
+        Object.assign(this, apiKeyRecord({ label: 'ci' }))
+      }
     }
     for (const relation of ['status', 'workspace', 'owner'])
       Object.defineProperty(ApiKey.prototype, relation, unloaded(counter))
@@ -138,25 +143,12 @@ describe('an answer is read for what its method promises and for nothing else', 
   it('applies the contract of the nested workspace inside a page', async () => {
     const counter = { reads: 0 }
     class Workspace {
-      id = 'w1'
-      tenantId = 't1'
-      name = 'W'
-      status = 'ACTIVE'
-      createdAt = new Date(5)
-      deletionScheduledAt = null
+      constructor() {
+        Object.assign(this, workspaceRecord({ createdAt: new Date(5) }))
+      }
     }
     Object.defineProperty(Workspace.prototype, 'members', unloaded(counter))
-    const item = {
-      tenantId: 't1',
-      workspaceId: 'w1',
-      userId: 'u1',
-      role: 'ADMIN',
-      status: 'ACTIVE',
-      invitedByUserId: null,
-      createdAt: new Date(1),
-      updatedAt: new Date(2),
-      workspace: new Workspace()
-    }
+    const item = { ...membershipRecord({ role: 'ADMIN' }), workspace: new Workspace() }
     const guarded = guardRepository(
       { listForUser: async (): Promise<unknown> => ({ items: [item], nextCursor: null }) },
       MEMBERSHIP_REPOSITORY_CONTRACT
@@ -172,12 +164,12 @@ describe('an answer is read for what its method promises and for nothing else', 
   // the fault as its cause. Why: the host owes what the contract promises, so a failure there is a refusal and never a
   // value that is quietly missing, which would fail open on a field like `mfaEnabled` or `status`.
   it('still refuses when a field of the contract throws', async () => {
-    const entity = {
-      id: 'u1',
-      get mfaEnabled(): boolean {
+    const entity = Object.defineProperty(userRecord(), 'mfaEnabled', {
+      get(): boolean {
         throw fault
-      }
-    }
+      },
+      enumerable: true
+    })
     const guarded = guardRepository(
       { findById: async (): Promise<unknown> => entity },
       USER_REPOSITORY_CONTRACT
@@ -234,5 +226,32 @@ describe('the tables of contracts are checked by the compiler', () => {
     > = true
 
     expect([methods, fields, missingMethod, forgottenField].flat()).not.toContain(false)
+  })
+
+  // Scenario: the kind a field is read as, stated as types. Expected: a required field has no `?`, an optional one has
+  // it, `null` is spelled `|null` only where the interface promises it, and a kind of the wrong type is not assignable.
+  // Why: the kind is what refuses a wrapper, a missing field or garbage, so it has to follow the interface exactly.
+  it('gives each field the kind of its type, with its absence and its null', () => {
+    const kinds: [
+      Same<FieldSpec<boolean>, 'boolean'>,
+      Same<FieldSpec<AuthUser['mfaEnabled']>, 'boolean'>,
+      Same<FieldSpec<AuthUser['mfaSecret']>, 'string?' | 'id?'>,
+      Same<FieldSpec<AuthUser['passwordHash']>, 'string|null' | 'id|null'>,
+      Same<FieldSpec<AuthUser['lastLoginAt']>, 'date|null'>,
+      Same<FieldSpec<AuthUser['mfaRecoveryCodes']>, 'strings?'>,
+      Same<FieldSpec<AuthApiKey['scopes']>, 'strings'>,
+      Same<FieldSpec<MembershipWithWorkspace['workspace']>, 'nested'>,
+      Same<FieldSpec<AuthUser['createdAt']>, 'date'>
+    ] = [true, true, true, true, true, true, true, true, true]
+    const wrongKinds: [
+      NotAssignable<'string', FieldSpec<boolean>>,
+      NotAssignable<'boolean', FieldSpec<string>>,
+      NotAssignable<'string', FieldSpec<AuthUser['mfaSecret']>>,
+      NotAssignable<'boolean?', FieldSpec<AuthUser['mfaEnabled']>>,
+      NotAssignable<'date', FieldSpec<AuthUser['lastLoginAt']>>,
+      NotAssignable<'string', FieldSpec<AuthUser['passwordHash']>>
+    ] = [true, true, true, true, true, true]
+
+    expect([kinds, wrongKinds].flat()).not.toContain(false)
   })
 })

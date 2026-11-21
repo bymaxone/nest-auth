@@ -5,6 +5,7 @@
  * @layer Test
  */
 
+import { userRecord } from '../utils/__tests__/host-records'
 import { guardRepository } from '../utils/host-read'
 import { encryptMfaSecret } from '../utils/mfa-secret-cipher'
 import { USER_REPOSITORY_CONTRACT } from '../utils/repository-contracts'
@@ -19,7 +20,7 @@ const OPTIONS = { hmacKey: 'k'.repeat(48), blockedStatuses: [] } as never
 class HydratedAccount {
   constructor(readonly dataValues: Record<string, unknown>) {}
 }
-for (const field of ['id', 'tenantId', 'status', 'mfaEnabled', 'mfaSecret', 'mfaRecoveryCodes'])
+for (const field of Object.keys(userRecord()).concat('mfaSecret', 'mfaRecoveryCodes'))
   Object.defineProperty(HydratedAccount.prototype, field, {
     get(this: HydratedAccount): unknown {
       return this.dataValues[field]
@@ -33,10 +34,7 @@ describe('MfaRecordService over an entity that keeps its fields on the prototype
   // silently wipe the account's recovery codes.
   it('writes the real recovery codes back when the secret is re-encrypted', async () => {
     const entity = new HydratedAccount({
-      id: 'u1',
-      tenantId: 't1',
-      status: 'active',
-      mfaEnabled: true,
+      ...userRecord({ mfaEnabled: true }),
       mfaSecret: encryptMfaSecret(SECRET, KEYS),
       mfaRecoveryCodes: DIGESTS
     })

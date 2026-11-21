@@ -40,31 +40,22 @@ import {
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 
-/** The most levels of nesting a record copy follows; a record deeper than this is not a record. */
-const MAX_RECORD_DEPTH = 16
-
 /** The most elements of an array and the most keys of an object a copy follows; a host that answers more is refused. */
 const MAX_BREADTH = 100_000
 
-/**
- * What a copy remembers so that a value reached twice is copied once: data by value, and what was copied under a
- * contract by value and contract together, because the same object copied under another contract is another copy.
- */
-interface Seen {
-  readonly data: WeakMap<object, unknown>
-  readonly contracts: WeakMap<object, Map<ErasedContract, unknown>>
-}
+/** What a copy remembers so that a value reached twice under a contract is copied once, by value and contract together. */
+type Seen = WeakMap<object, Map<ErasedContract, unknown>>
 
 /** What was already copied from a value under a contract. */
 function copiedUnder(seen: Seen, value: object, contract: ErasedContract): unknown {
-  return seen.contracts.get(value)?.get(contract)
+  return seen.get(value)?.get(contract)
 }
 
 /** Remembers a copy of a value under a contract. */
 function rememberUnder(seen: Seen, value: object, contract: ErasedContract, copy: unknown): void {
-  const copies = seen.contracts.get(value) ?? new Map<ErasedContract, unknown>()
+  const copies = seen.get(value) ?? new Map<ErasedContract, unknown>()
   copies.set(contract, copy)
-  seen.contracts.set(value, copies)
+  seen.set(value, copies)
 }
 
 /**
@@ -166,98 +157,137 @@ function isPlainObject(value: object): boolean {
   return prototype === null || Object.getPrototypeOf(prototype as object) === null
 }
 
+/** A contract that reads a record or a list, as opposed to a plain answer, and one that reads a record. */
+type Structured = Exclude<ErasedContract, string>
+type RecordContract = Extract<ErasedContract, { fields: unknown }>
+
+/** The reasons a copy refuses an answer. None repeats anything the host answered. */
+const WRONG_KIND = 'the answer holds a value that is not the kind its method promises'
+const ABSENT = 'the answer lacks a field its method promises'
+const NOT_A_TIME = 'the answer holds a date that is not a time'
+
+/** The value itself when it is of the kind, and a refusal when it is not. */
+function accept(ok: boolean, value: unknown): unknown {
+  if (!ok) throw new Error(WRONG_KIND)
+  return value
+}
+
 /**
- * A plain copy of a value the contract names no fields of: dates and arrays copied, objects copied field by field,
- * the other kinds of object by reference.
+ * Whether a value is an instance of a class of the host (an id type of a database driver): an object that is not plain,
+ * not an array and not a wrapper of a primitive, since `new Boolean(false)` is truthy and is no boolean.
  */
-function copyData(value: unknown, seen: Seen, depth: number): unknown {
-  if (value === null || typeof value !== 'object') return value
-  if (depth > MAX_RECORD_DEPTH) throw new Error('the record nests deeper than the library follows')
-  const known = seen.data.get(value)
-  if (known !== undefined) return known
-  if (isDateLike(value)) {
-    const copy = new Date(Number(value.getTime()))
-    // A date that is not a time compares false with every instant, so a deadline read from it is never due.
-    if (Number.isNaN(copy.getTime())) throw new Error('the answer holds a date that is not a time')
-    return copy
-  }
-  if (Array.isArray(value)) {
-    refuseBreadth(value.length)
-    const copy: unknown[] = []
-    seen.data.set(value, copy)
-    for (let index = 0; index < value.length; index += 1)
-      copy.push(copyData(value[index], seen, depth + 1))
-    return copy
-  }
-  // An instance of a class (an id type, a date library's date, a Map, a Promise, a buffer) is what the host's code
-  // compares and prints, and its state is not in its fields: a plain copy of it would be another object with none of
-  // the behavior.
-  if (!isPlainObject(value)) return value
-  const copy: Record<string, unknown> = {}
-  seen.data.set(value, copy)
-  const source = value as Record<string, unknown>
-  const keys = Object.keys(value)
-  refuseBreadth(keys.length)
-  for (const key of keys) define(copy, key, copyData(source[key], seen, depth + 1), true)
+function isHostInstance(value: unknown): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    !types.isBoxedPrimitive(value) &&
+    !isPlainObject(value)
+  )
+}
+
+/** A copy of a date, read through the object that answers as one; its time has to be a number that is a time. */
+function copyDate(value: unknown): Date {
+  if (typeof value !== 'object' || value === null || !isDateLike(value)) throw new Error(WRONG_KIND)
+  const time: unknown = value.getTime()
+  const copy = new Date(typeof time === 'number' ? time : Number.NaN)
+  if (Number.isNaN(copy.getTime())) throw new Error(NOT_A_TIME)
+  return copy
+}
+
+/** A copy of a list of strings. */
+function copyStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new Error(WRONG_KIND)
+  refuseBreadth(value.length)
+  const copy: string[] = []
+  for (let index = 0; index < value.length; index += 1)
+    copy.push(accept(typeof value[index] === 'string', value[index]) as string)
   return copy
 }
 
 /**
- * Copies the fields of a record that its contract names, and hands the rest of the record on without reading it.
- * A field the contract names is read by name once, so it is found wherever the host keeps it (an own field, a
- * prototype getter, a lazy entity that lists nothing), and it shows in a spread of the copy, except a credential, which
- * shows only if the host's own record showed it. Any other own field that holds data is handed on by reference through its descriptor, which evaluates
- * nothing; one that is an accessor is left out, because reading it is what the contract forbids.
+ * How a value is read as each kind a contract can name. A kind is exact: a wrapper object is not a boolean, a string
+ * is not a number, a date has a real time, and only an `id` may be an instance of a class of the host.
  */
-function copyRecord(
-  value: object,
-  contract: Extract<ErasedContract, { fields: unknown }>,
-  seen: Seen,
-  depth: number
-): unknown {
+const READERS = {
+  boolean: (value: unknown): unknown => accept(typeof value === 'boolean', value),
+  string: (value: unknown): unknown => accept(typeof value === 'string', value),
+  number: (value: unknown): unknown =>
+    accept(typeof value === 'number' && Number.isFinite(value), value),
+  id: (value: unknown): unknown =>
+    accept(typeof value === 'string' || isHostInstance(value), value),
+  date: copyDate,
+  strings: copyStrings
+} as const
+
+/** The kinds that are read by a reader of their own. */
+type ReaderName = keyof typeof READERS
+
+/** The kind a field is read as, whether `null` is promised and whether it may be absent, from its spec. */
+function parseSpec(spec: string): { base: string; nullable: boolean; optional: boolean } {
+  const optional = spec.endsWith('?')
+  const rest = optional ? spec.slice(0, -1) : spec
+  const nullable = rest.endsWith('|null')
+  return { base: nullable ? rest.slice(0, -'|null'.length) : rest, nullable, optional }
+}
+
+/** `null`, when the contract promises it. */
+function readNull(nullable: boolean): null {
+  if (!nullable) throw new Error(WRONG_KIND)
+  return null
+}
+
+/** What a method answers that is no record: its kind, or nothing for a method that answers nothing. */
+function readScalar(value: unknown, spec: string): unknown {
+  const { base, nullable } = parseSpec(spec)
+  if (base === 'void') return undefined
+  return value === null ? readNull(nullable) : READERS[base as ReaderName](value)
+}
+
+/**
+ * Copies the fields of a record that its contract names, each as the kind the contract gives it, and hands the rest
+ * of the record on without reading it. A field the contract names is read by name once, so it is found wherever the
+ * host keeps it (an own field, a prototype getter, a lazy entity that lists nothing), and it shows in a spread of the
+ * copy, except a credential, which shows only if the host's own record showed it. A field the interface requires is
+ * refused when it is absent: absent would read as the default of its type, and `mfaEnabled` as absent is off. A field
+ * the interface allows to be absent may also be `null`, which is how a column that holds nothing arrives from an ORM. Any
+ * other own field that holds data is handed on by reference through its descriptor, which evaluates nothing; one that
+ * is an accessor is left out, because reading it is what the contract forbids.
+ */
+function copyRecord(value: object, contract: RecordContract, seen: Seen): unknown {
   const copy: Record<string, unknown> = {}
   rememberUnder(seen, value, contract, copy)
   ENTITIES.set(copy, value)
   const source = value as Record<string, unknown>
-  const done = new Set<string>()
-  const take = (field: string, own: boolean): void => {
-    done.add(field)
-    const read = source[field]
-    if (read === undefined) return
-    // A field that is absent reads as the default of its type (`mfaEnabled` as off), so a value the contract promises as
-    // data is never dropped: the host owes data there, and a function is not.
-    if (typeof read === 'function')
-      throw new Error('the answer holds a function where its method promises data')
-    const nested = Object.hasOwn(contract.nested, field) ? contract.nested[field] : undefined
-    const copied =
-      nested === undefined
-        ? copyData(read, seen, depth + 1)
-        : applyContract(read, nested, seen, depth + 1)
-    define(copy, field, copied, own || !CREDENTIAL_FIELDS.has(field))
-  }
   const keys = Object.keys(value)
   refuseBreadth(keys.length)
   for (const key of keys) {
-    if (Object.hasOwn(contract.fields, key)) {
-      take(key, true)
-      continue
-    }
+    if (Object.hasOwn(contract.fields, key)) continue
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
     if (descriptor !== undefined && 'value' in descriptor) define(copy, key, descriptor.value, true)
   }
-  for (const field of Object.keys(contract.fields)) if (!done.has(field)) take(field, false)
+  const own = new Set(keys)
+  for (const [field, spec] of Object.entries(contract.fields)) {
+    const { base, nullable, optional } = parseSpec(spec)
+    const read = source[field]
+    if (read === undefined) {
+      if (optional) continue
+      throw new Error(ABSENT)
+    }
+    const copied =
+      read === null
+        ? readNull(nullable || optional)
+        : base === 'nested'
+          ? applyContract(read, contract.nested[field] as Structured, seen)
+          : READERS[base as ReaderName](read)
+    define(copy, field, copied, own.has(field) || !CREDENTIAL_FIELDS.has(field))
+  }
   return copy
 }
 
-/** What the guarded view answers for a value, given what its method promises. */
-function applyContract(
-  value: unknown,
-  contract: ErasedContract,
-  seen: Seen,
-  depth: number
-): unknown {
-  if (contract === 'value') return copyData(value, seen, depth)
-  if (value === null || typeof value !== 'object') return value
+/** What the guarded view answers for an object, given the record or list its method promises. */
+function applyContract(value: unknown, contract: Structured, seen: Seen): unknown {
+  if (typeof value !== 'object' || value === null) throw new Error(WRONG_KIND)
   const known = copiedUnder(seen, value, contract)
   if (known !== undefined) return known
   if ('list' in contract) {
@@ -266,11 +296,11 @@ function applyContract(
     const copy: unknown[] = []
     rememberUnder(seen, value, contract, copy)
     for (let index = 0; index < value.length; index += 1)
-      copy.push(applyContract(value[index], contract.list, seen, depth + 1))
+      copy.push(applyContract(value[index], contract.list as Structured, seen))
     return copy
   }
   if (Array.isArray(value)) throw new Error('the answer is not the record its method promises')
-  return copyRecord(value, contract, seen, depth)
+  return copyRecord(value, contract, seen)
 }
 
 /**
@@ -278,12 +308,16 @@ function applyContract(
  *
  * @param record - What the repository returned.
  * @param contract - What the method promises to return, and so what is read from it.
- * @returns A plain copy, or `record` itself when it is not an object.
+ * @returns A copy of a record or a list, the plain answer when the method answers one, or `null` or `undefined` for a
+ *   record that was not found.
  * @throws {@link AuthException} `INTERNAL` whose `cause` is the host's error.
  */
 export function copyHostRecord(record: unknown, contract: ErasedContract): unknown {
   try {
-    return applyContract(record, contract, { data: new WeakMap(), contracts: new WeakMap() }, 0)
+    if (typeof contract === 'string') return readScalar(record, contract)
+    return record === null || record === undefined
+      ? record
+      : applyContract(record, contract, new WeakMap())
   } catch (error: unknown) {
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
   }

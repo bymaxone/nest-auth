@@ -174,4 +174,48 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
     expect(login.status).toBe(500)
     expect(login.body).not.toHaveProperty('accessToken')
   })
+
+  // Scenario: an account whose e-mail is not verified, served with a Boolean wrapper where `emailVerified` is promised,
+  // and an account that serves no `mfaEnabled` at all. Expected: the login of both ends in the internal error and issues
+  // no token, while the unwrapped unverified account is turned away as unverified. Why: `new Boolean(false)` is truthy,
+  // so `!user.emailVerified` would be false and the account would pass; an absent `mfaEnabled` reads as a second factor
+  // that is off.
+  it.each(['a Boolean wrapper in emailVerified', 'no mfaEnabled'] as const)(
+    'refuses a login of an account served with %s, and issues no token',
+    async (shape) => {
+      await app.close()
+      booted = await bootstrapTestApp({
+        tokenDelivery: 'bearer',
+        emailVerification: { required: true }
+      })
+      app = booted.app
+      const http = request(app.getHttpServer())
+      await http
+        .post('/register')
+        .send({ email: EMAIL, password: PASSWORD, name: 'Hydrated User', tenantId: 't1' })
+        .expect(201)
+      const control = await http
+        .post('/login')
+        .send({ email: EMAIL, password: PASSWORD, tenantId: 't1' })
+      const byEmail = booted.repo.findByEmail.bind(booted.repo)
+      booted.repo.findByEmail = async (...args: Parameters<typeof byEmail>) => {
+        const user = await byEmail(...args)
+        if (user === null) return user
+        if (shape === 'no mfaEnabled') {
+          const { mfaEnabled: _omitted, ...rest } = user
+          return rest as AuthUser
+        }
+        return { ...user, emailVerified: new Boolean(false) as never }
+      }
+
+      const login = await http
+        .post('/login')
+        .send({ email: EMAIL, password: PASSWORD, tenantId: 't1' })
+
+      expect(control.status).toBe(403)
+      expect(login.status).toBe(500)
+      expect(login.body).not.toHaveProperty('accessToken')
+      expect(JSON.stringify(login.body)).toContain(AUTH_ERROR_CODES.INTERNAL)
+    }
+  )
 })

@@ -33,16 +33,16 @@ import {
 const fault = new Error('host-text-that-must-not-leak')
 
 /** What the test repositories promise to answer: a record with an `id`, and nothing else. */
-const RECORD: ErasedContract = { fields: { id: true }, nested: {} }
+const RECORD: ErasedContract = { fields: { id: 'id' }, nested: {} }
 
 /** The promise of each method of the host fixture below. */
 const ANSWERS: ErasedRepositoryContract = {
   find: RECORD,
   missing: RECORD,
-  fail: 'value',
-  typed: 'value',
-  http: 'value',
-  sync: 'value'
+  fail: 'void',
+  typed: 'void',
+  http: 'void',
+  sync: 'void'
 }
 
 /** The code of an `AuthException`. */
@@ -219,7 +219,7 @@ describe('guardRepository', () => {
         extra: async (): Promise<unknown> => extra,
         rows: async (): Promise<unknown> => ({ not: 'a list' })
       },
-      { count: 'value', rows: { list: RECORD } }
+      { count: 'date', rows: { list: RECORD } }
     )
 
     const counted = (await guarded.count()) as Date

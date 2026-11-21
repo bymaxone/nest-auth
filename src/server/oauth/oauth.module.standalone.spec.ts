@@ -15,6 +15,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY,
   GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { userRecord } from '../utils/__tests__/host-records'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -26,7 +27,10 @@ import { OAuthService } from './oauth.service'
 
 /** What the host's repository holds: a record whose prototype getter a copy must keep readable by name. */
 class HostUser {
-  id = 'u1'
+  constructor() {
+    const { email: _served, ...rest } = userRecord()
+    Object.assign(this, rest)
+  }
   get email(): string {
     return 'a@b.c'
   }
