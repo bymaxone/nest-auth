@@ -250,6 +250,24 @@ describe('guardRepository against a hostile repository', () => {
     expect(answer).not.toBe(user)
   })
 
+  // Scenario: a list answer that is a Proxy whose read of `forEach` throws, while its length and elements read fine.
+  // Expected: the call rejects with the internal error and the fault as its cause. Why: linking each copy to its
+  // entity reads the host's list again after the copy, and that read is inside the same boundary.
+  it('turns a throwing read made while remembering the entities into an internal rejection', async () => {
+    const rows = new Proxy([{ id: 'u1' }], {
+      get(target, key, receiver): unknown {
+        if (key === 'forEach') throw fault
+        return Reflect.get(target, key, receiver)
+      }
+    })
+    const guarded = guardRepository({ find: async (): Promise<unknown> => rows })
+
+    const read = guarded.find()
+
+    await expect(read).rejects.toBeInstanceOf(AuthException)
+    await expect(read).rejects.toMatchObject({ cause: fault })
+  })
+
   // Scenario: a hostile repository that throws for every key, awaited the way Nest awaits a factory result. Expected: the
   // await settles with the view. Why: `then` read as a function that never settles would hang startup.
   it('settles when the view of a repository that throws on every read is awaited', async () => {

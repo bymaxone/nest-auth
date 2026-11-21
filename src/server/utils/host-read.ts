@@ -291,7 +291,12 @@ export function guardRepository<T extends object>(host: T): T {
           throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
         }
         const copy = copyHostRecord(answer)
-        rememberEntities(answer, copy)
+        try {
+          rememberEntities(answer, copy)
+        } catch (error: unknown) {
+          // Linking a list's copies to their entities reads the host's list once more, inside the same boundary.
+          throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
+        }
         return copy
       }
     }
