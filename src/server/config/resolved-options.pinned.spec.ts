@@ -76,4 +76,103 @@ describe('the role hierarchy of the resolved options', () => {
   ])('still refuses a hierarchy that %s', (_name, roles, named) => {
     expect(() => resolveOptions(optionsWith(roles))).toThrow(named)
   })
+
+  // Scenario: the other two hierarchies of the same kind, the platform one and the one of the workspaces, whose roles
+  // are getters that count their reads and answer another list after the first, read through the resolved options
+  // after they resolved. Expected: the host was read once for each role, and the resolved options hold what was
+  // validated and a copy of it. Why: they are read per request by the platform guard and by the workspace checks, and a
+  // getter that answers differently later would grant, at a check, what the validation never saw.
+  it.each([
+    ['the platform hierarchy', ['SUPER_ADMIN', 'SUPPORT'], 'SUPPORT'],
+    ['the hierarchy of the workspaces', ['owner', 'editor'], 'editor']
+  ] as const)(
+    'holds what was validated of %s and never reads the host again',
+    (name, roleNames, child) => {
+      const reads: Record<string, number> = {}
+      const hierarchy: Record<string, string[]> = {}
+      for (const role of roleNames)
+        Object.defineProperty(hierarchy, role, {
+          enumerable: true,
+          get(): string[] {
+            reads[role] = (reads[role] ?? 0) + 1
+            return reads[role] === 1 ? (role === roleNames[0] ? [child] : []) : [roleNames[0]]
+          }
+        })
+      const roles =
+        name === 'the platform hierarchy'
+          ? { hierarchy: { MEMBER: [] }, platformHierarchy: hierarchy }
+          : { hierarchy: { MEMBER: [] } }
+      const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
+        jwt: { secret: SECRET },
+        roles,
+        rateLimit: { clientIpSource: 'peer' },
+        ...(name === 'the platform hierarchy'
+          ? { platform: { enabled: true } }
+          : { workspaces: { enabled: true, roles: { hierarchy, ownerRole: 'owner' } } })
+      }
+
+      const resolved = resolveOptions(given as BymaxAuthModuleOptions)
+      const held =
+        name === 'the platform hierarchy'
+          ? resolved.roles.platformHierarchy
+          : resolved.workspaces?.roles.hierarchy
+      void held?.[roleNames[0]]
+      void held?.[roleNames[0]]
+
+      expect(reads).toEqual({ [roleNames[0]]: 1, [roleNames[1]]: 1 })
+      expect(held?.[roleNames[0]]).toEqual([child])
+      expect(held).not.toBe(hierarchy)
+    }
+  )
+
+  // Scenario: a group whose hierarchy is an own getter, and a group of the workspaces that is an instance of a class
+  // with the hierarchy as a getter on its prototype, each counting its reads; and options with no platform hierarchy.
+  // Expected: each getter is read once, the options resolve as they would with plain data, and a hierarchy that was
+  // never given is not added as a key. Why: the host's own object is read once whatever way it keeps the hierarchy, and
+  // pinning must not invent an option the host left out.
+  it('reads a getter of the hierarchy once, own or on a prototype, and adds no key that was absent', () => {
+    let own = 0
+    let inherited = 0
+    class WorkspaceRoles {
+      ownerRole = 'owner'
+      get hierarchy(): Record<string, string[]> {
+        inherited += 1
+        return { owner: ['editor'], editor: [] }
+      }
+    }
+    const roles = {
+      get hierarchy(): Record<string, string[]> {
+        own += 1
+        return { MEMBER: [] }
+      }
+    }
+    const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
+      jwt: { secret: SECRET },
+      roles,
+      rateLimit: { clientIpSource: 'peer' },
+      workspaces: { enabled: true, roles: new WorkspaceRoles() }
+    }
+
+    const resolved = resolveOptions(given as BymaxAuthModuleOptions)
+
+    expect([own, inherited]).toEqual([1, 1])
+    expect(resolved.roles.hierarchy).toEqual({ MEMBER: [] })
+    expect(resolved.workspaces?.roles.hierarchy).toEqual({ owner: ['editor'], editor: [] })
+    expect(Object.hasOwn(resolved.roles, 'platformHierarchy')).toBe(false)
+
+    let ownOfWorkspaces = 0
+    const workspaceRoles = { ownerRole: 'owner' }
+    Object.defineProperty(workspaceRoles, 'hierarchy', {
+      enumerable: true,
+      get(): Record<string, string[]> {
+        ownOfWorkspaces += 1
+        return { owner: ['editor'], editor: [] }
+      }
+    })
+    resolveOptions({
+      ...(given as BymaxAuthModuleOptions),
+      workspaces: { enabled: true, roles: workspaceRoles }
+    } as BymaxAuthModuleOptions)
+    expect(ownOfWorkspaces).toBe(1)
+  })
 })

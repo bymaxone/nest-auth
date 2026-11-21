@@ -16,28 +16,57 @@ import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.i
  * other check reads one.
  *
  * @param given - The options as the host wrote them.
- * @returns The options as a plain object in which unset means absent, and in which the role hierarchy is a copy.
+ * @returns The options as a plain object in which unset means absent, and in which the role hierarchies are copies.
  * @throws {Error} naming the first text option, list or group that has the wrong type.
  */
 export function readOptions(given: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
   const options = dropUnset(given)
   validateTextOptions(options)
-  return pinHierarchy(options)
+  return pinHierarchies(options)
 }
 
-/** The role hierarchy as a copy, read from the host once, so a later read cannot grant a role that was never validated. */
-function pinHierarchy(options: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
-  const { hierarchy, ...rest } = options.roles ?? {}
-  if (typeof hierarchy !== 'object' || hierarchy === null || Array.isArray(hierarchy))
-    return options
-  const pinned = Object.fromEntries(
-    Object.entries(hierarchy).map(([role, children]) => [
+/** A hierarchy as a copy of what the host answered, children included; anything else is left for the checks to refuse. */
+function copyHierarchy(held: unknown): unknown {
+  if (typeof held !== 'object' || held === null || Array.isArray(held)) return held
+  return Object.fromEntries(
+    Object.entries(held).map(([role, children]) => [
       role,
       Array.isArray(children) ? [...children] : children
     ])
   )
-  return { ...options, roles: { ...rest, hierarchy: pinned } }
 }
+
+/** A group with the hierarchies named in it copied, each read from the host once; a value that is no group is kept. */
+function pinIn<G>(group: G, keys: readonly string[]): G {
+  if (typeof group !== 'object' || group === null || Array.isArray(group)) return group
+  const copy = { ...group } as Record<string, unknown>
+  for (const key of keys) {
+    const held = Object.hasOwn(copy, key) ? copy[key] : (group as Record<string, unknown>)[key]
+    if (held !== undefined) copy[key] = copyHierarchy(held)
+  }
+  return copy as G
+}
+
+/**
+ * The role hierarchies (of the account, of the platform and of the workspaces) as copies, read from the host once, so a
+ * later read cannot grant a role that was never validated.
+ */
+function pinHierarchies(options: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
+  const { roles, workspaces } = options
+  const { roles: workspaceRoles, ...workspaceRest } = (
+    typeof workspaces === 'object' && workspaces !== null ? workspaces : {}
+  ) as { roles?: unknown }
+  return {
+    ...options,
+    roles: pinIn(roles, ['hierarchy', 'platformHierarchy']),
+    ...(workspaceRoles === undefined
+      ? {}
+      : {
+          workspaces: { ...workspaceRest, roles: pinIn(workspaceRoles, ['hierarchy']) }
+        })
+  } as BymaxAuthModuleOptions
+}
+
 /**
  * Runs the value checks of the numeric options, the flags and the documented-set options.
  *
