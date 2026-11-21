@@ -18,9 +18,9 @@ import { AuthRevocationService } from './auth-revocation.service'
 import { AuthTokenVerifierService } from './auth-token-verifier.service'
 import { WorkspaceAccessService } from './workspace-access.service'
 import {
-  BYMAX_AUTH_MEMBERSHIP_REPOSITORY,
+  GUARDED_MEMBERSHIP_REPOSITORY,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_WORKSPACE_REPOSITORY
+  GUARDED_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
 import { ANY_WORKSPACE_MEMBER } from '../constants/workspace-roles'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -97,8 +97,8 @@ async function build(
         ? [
             WorkspaceAccessService,
             { provide: AuthRedisService, useValue: {} },
-            { provide: BYMAX_AUTH_WORKSPACE_REPOSITORY, useValue: repos.workspaces },
-            { provide: BYMAX_AUTH_MEMBERSHIP_REPOSITORY, useValue: repos.memberships }
+            { provide: GUARDED_WORKSPACE_REPOSITORY, useValue: repos.workspaces },
+            { provide: GUARDED_MEMBERSHIP_REPOSITORY, useValue: repos.memberships }
           ]
         : [])
     ]

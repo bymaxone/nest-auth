@@ -14,7 +14,7 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -211,7 +211,7 @@ describe('AuthService', () => {
       providers: [
         AuthService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: options },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
         { provide: BYMAX_AUTH_HOOKS, useValue: hooks },
         { provide: PasswordService, useValue: mockPasswordService },
@@ -235,7 +235,7 @@ describe('AuthService', () => {
       providers: [
         AuthService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
         { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
         { provide: PasswordService, useValue: mockPasswordService },
@@ -462,7 +462,7 @@ describe('AuthService', () => {
             provide: BYMAX_AUTH_OPTIONS,
             useValue: { ...mockOptions, emailVerification: { required: true, otpTtlSeconds: 600 } }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -511,7 +511,7 @@ describe('AuthService', () => {
             provide: BYMAX_AUTH_OPTIONS,
             useValue: { ...mockOptions, emailVerification: { required: true, otpTtlSeconds: 600 } }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: null },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -568,7 +568,7 @@ describe('AuthService', () => {
               tenantIdResolver: () => 'resolved-tenant'
             }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -609,7 +609,7 @@ describe('AuthService', () => {
             provide: BYMAX_AUTH_OPTIONS,
             useValue: { ...mockOptions, tenantIdResolver: () => 'resolved-tenant' }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -856,7 +856,7 @@ describe('AuthService', () => {
             provide: BYMAX_AUTH_OPTIONS,
             useValue: { ...mockOptions, emailVerification: { required: true, otpTtlSeconds: 600 } }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -1341,7 +1341,7 @@ describe('AuthService', () => {
             provide: BYMAX_AUTH_OPTIONS,
             useValue: { ...mockOptions, emailVerification: { required: true, otpTtlSeconds: 600 } }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -1441,7 +1441,7 @@ describe('AuthService', () => {
             provide: BYMAX_AUTH_OPTIONS,
             useValue: { ...mockOptions, blockedStatuses: ['LOCKED'] }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -2173,7 +2173,7 @@ describe('AuthService', () => {
             provide: BYMAX_AUTH_OPTIONS,
             useValue: { ...mockOptions, emailVerification: { required: true, otpTtlSeconds: 600 } }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -2244,7 +2244,7 @@ describe('AuthService', () => {
               sessions: { enabled: true, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
             }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -2369,7 +2369,7 @@ describe('AuthService', () => {
         providers: [
           AuthService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: null },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -2408,7 +2408,7 @@ describe('AuthService', () => {
             provide: BYMAX_AUTH_OPTIONS,
             useValue: { ...mockOptions, tenantIdResolver: () => 'resolved-tenant' }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -2913,7 +2913,7 @@ describe('AuthService', () => {
         providers: [
           AuthService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: sessionOptions },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -3161,7 +3161,7 @@ describe('AuthService', () => {
         providers: [
           AuthService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: null },
           { provide: PasswordService, useValue: mockPasswordService },

@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { sessionIndexKey } from '../constants/user-keys'
@@ -277,7 +277,7 @@ export class SessionService {
 
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
+    @Inject(GUARDED_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null,
     @Inject(AuthRedisService) private readonly redis: AuthRedisService
   ) {}

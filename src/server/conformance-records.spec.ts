@@ -29,7 +29,7 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from './bymax-auth.constants'
 import { sha256 } from './crypto/secure-token'
 import { AuthRedisService } from './redis/auth-redis.service'
@@ -207,7 +207,7 @@ async function build<T>(service: new (...args: never[]) => T): Promise<T> {
     providers: [
       service,
       { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
       { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
       { provide: BYMAX_AUTH_HOOKS, useValue: null },
       { provide: AuthRedisService, useValue: mockRedis },

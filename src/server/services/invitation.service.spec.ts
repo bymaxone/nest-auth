@@ -23,7 +23,7 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { expectEvent } from '../__tests__/log-events'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
@@ -202,7 +202,7 @@ describe('InvitationService', () => {
       providers: [
         InvitationService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
         { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
         { provide: PasswordService, useValue: mockPasswordService },
@@ -740,7 +740,7 @@ describe('InvitationService', () => {
         providers: [
           InvitationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: null },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -855,7 +855,7 @@ describe('InvitationService', () => {
         providers: [
           InvitationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: sessionsEnabledOptions },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -886,7 +886,7 @@ describe('InvitationService', () => {
         providers: [
           InvitationService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: {} },
           { provide: PasswordService, useValue: mockPasswordService },

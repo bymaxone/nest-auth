@@ -8,7 +8,7 @@
 import { Inject, Injectable } from '@nestjs/common'
 
 import { ReauthenticationService } from './reauthentication.service'
-import { BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
+import { GUARDED_USER_REPOSITORY } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
@@ -23,7 +23,7 @@ import { toSafeUser } from '../utils/mfa-safe-user'
 @Injectable()
 export class WorkspaceCallerService {
   constructor(
-    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly users: IUserRepository,
+    @Inject(GUARDED_USER_REPOSITORY) private readonly users: IUserRepository,
     @Inject(ReauthenticationService) private readonly reauthentication: ReauthenticationService
   ) {}
 

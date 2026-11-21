@@ -12,7 +12,7 @@ import { Test } from '@nestjs/testing'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
+import { BYMAX_AUTH_OPTIONS, GUARDED_USER_REPOSITORY } from '../bymax-auth.constants'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { AuthRevocationService } from './auth-revocation.service'
 
@@ -73,7 +73,7 @@ describe('WsTicketService', () => {
         WsTicketService,
         { provide: AuthRedisService, useValue: mockRedis },
         { provide: BYMAX_AUTH_OPTIONS, useValue: { blockedStatuses: ['BANNED', 'SUSPENDED'] } },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: AuthRevocationService, useValue: mockRevocation }
       ]
     }).compile()

@@ -15,7 +15,7 @@ import { Test } from '@nestjs/testing'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_PLATFORM_USER_REPOSITORY
+  GUARDED_PLATFORM_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -80,7 +80,7 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
       providers: [
         PlatformAuthService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: {} },
+        { provide: GUARDED_PLATFORM_USER_REPOSITORY, useValue: {} },
         { provide: PasswordService, useValue: {} },
         { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: BruteForceService, useValue: {} },

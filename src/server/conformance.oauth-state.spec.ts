@@ -17,7 +17,7 @@ import { OAuthService } from './oauth/oauth.service'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from './bymax-auth.constants'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { SessionService } from './services/session.service'
@@ -45,7 +45,7 @@ async function written(withInvitation: boolean): Promise<{ key: string; record: 
         provide: OAUTH_PLUGINS,
         useValue: [{ name: 'google', authorizeUrl: () => 'https://idp.example/a' }]
       },
-      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: {} },
+      { provide: GUARDED_USER_REPOSITORY, useValue: {} },
       { provide: BYMAX_AUTH_HOOKS, useValue: {} },
       { provide: AuthRedisService, useValue: { set } },
       { provide: TokenManagerService, useValue: {} },

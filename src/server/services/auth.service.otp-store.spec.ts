@@ -18,7 +18,7 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { hmacSha256 } from '../crypto/secure-token'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -90,7 +90,7 @@ describe('AuthService — a refused write of the verification code', () => {
       providers: [
         AuthService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
         { provide: BYMAX_AUTH_HOOKS, useValue: {} },
         { provide: PasswordService, useValue: mockPasswordService },

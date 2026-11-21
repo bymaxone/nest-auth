@@ -26,7 +26,7 @@ import { OAuthService } from './oauth.service'
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -182,7 +182,7 @@ async function buildServiceWithPluginName(pluginName: string): Promise<OAuthServ
     providers: [
       OAuthService,
       { provide: OAUTH_PLUGINS, useValue: [plugin] },
-      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
       { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
       { provide: AuthRedisService, useValue: mockRedis },
       { provide: TokenManagerService, useValue: mockTokenManager },
@@ -202,7 +202,7 @@ async function buildServiceWithOptions(options: object): Promise<OAuthService> {
     providers: [
       OAuthService,
       { provide: OAUTH_PLUGINS, useValue: [mockPlugin] },
-      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
       { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
       { provide: AuthRedisService, useValue: mockRedis },
       { provide: TokenManagerService, useValue: mockTokenManager },
@@ -235,7 +235,7 @@ describe('OAuthService', () => {
       providers: [
         OAuthService,
         { provide: OAUTH_PLUGINS, useValue: [mockPlugin] },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
         { provide: AuthRedisService, useValue: mockRedis },
         { provide: TokenManagerService, useValue: mockTokenManager },
@@ -714,7 +714,7 @@ describe('OAuthService', () => {
         providers: [
           OAuthService,
           { provide: OAUTH_PLUGINS, useValue: [mockPlugin] },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: TokenManagerService, useValue: mockTokenManager },
@@ -962,7 +962,7 @@ describe('OAuthService', () => {
         providers: [
           OAuthService,
           { provide: OAUTH_PLUGINS, useValue: [mockPlugin] },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: TokenManagerService, useValue: mockTokenManager },
@@ -1001,7 +1001,7 @@ describe('OAuthService', () => {
         providers: [
           OAuthService,
           { provide: OAUTH_PLUGINS, useValue: [mockPlugin] },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: TokenManagerService, useValue: mockTokenManager },
@@ -1178,7 +1178,7 @@ describe('OAuthService', () => {
         providers: [
           OAuthService,
           { provide: OAUTH_PLUGINS, useValue: [mockPlugin] },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_HOOKS, useValue: null },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: TokenManagerService, useValue: mockTokenManager },

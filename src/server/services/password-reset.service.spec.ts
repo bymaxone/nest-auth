@@ -21,7 +21,7 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { userSubject } from '../constants/user-subject'
 import { hmacSha256 } from '../crypto/secure-token'
@@ -143,7 +143,7 @@ async function buildModule(
     providers: [
       PasswordResetService,
       { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
       { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: emailProviderValue },
       { provide: BYMAX_AUTH_HOOKS, useValue: hooksValue },
       { provide: OtpService, useValue: mockOtpService },
@@ -1061,7 +1061,7 @@ describe('PasswordResetService', () => {
           providers: [
             PasswordResetService,
             { provide: BYMAX_AUTH_OPTIONS, useValue: optionsWithOtp },
-            { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+            { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
             { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
             { provide: BYMAX_AUTH_HOOKS, useValue: null },
             { provide: OtpService, useValue: mockOtpService },
@@ -1647,7 +1647,7 @@ describe('PasswordResetService', () => {
         providers: [
           PasswordResetService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: optionsWithOtp },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: OtpService, useValue: mockOtpService },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -1988,7 +1988,7 @@ describe('PasswordResetService', () => {
             provide: BYMAX_AUTH_OPTIONS,
             useValue: { ...mockOptions, passwordReset: { ...mockOptions.passwordReset, method } }
           },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: OtpService, useValue: mockOtpService },
           { provide: PasswordService, useValue: mockPasswordService },
@@ -2073,7 +2073,7 @@ describe('PasswordResetService', () => {
         providers: [
           PasswordResetService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: optionsWithOtp },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: null },
           { provide: OtpService, useValue: mockOtpService },
@@ -2285,7 +2285,7 @@ describe('PasswordResetService', () => {
         providers: [
           PasswordResetService,
           { provide: BYMAX_AUTH_OPTIONS, useValue: optionsWithOtp },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: null },
           { provide: BYMAX_AUTH_HOOKS, useValue: null },
           { provide: OtpService, useValue: mockOtpService },

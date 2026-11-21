@@ -11,8 +11,8 @@ import { Test } from '@nestjs/testing'
 
 import {
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_PLATFORM_USER_REPOSITORY,
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -83,10 +83,10 @@ async function buildService(
     providers: [
       AccountStatusService,
       { provide: AuthRedisService, useValue: mockRedis },
-      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
       { provide: BYMAX_AUTH_OPTIONS, useValue: { ...mockOptions, ...overrides } },
       ...(withPlatformRepo
-        ? [{ provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformRepo }]
+        ? [{ provide: GUARDED_PLATFORM_USER_REPOSITORY, useValue: mockPlatformRepo }]
         : [])
     ]
   }).compile()

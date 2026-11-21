@@ -17,7 +17,7 @@
 
 import { Inject, Injectable, Logger } from '@nestjs/common'
 
-import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
+import { BYMAX_AUTH_OPTIONS, GUARDED_USER_REPOSITORY } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -44,7 +44,7 @@ export class WsTicketService {
   constructor(
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
+    @Inject(GUARDED_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(AuthRevocationService) private readonly revocation: AuthRevocationService
   ) {}
 

@@ -10,7 +10,7 @@ import { Inject, Injectable } from '@nestjs/common'
 
 import {
   BYMAX_AUTH_API_KEY_CLOCK,
-  BYMAX_AUTH_API_KEY_REPOSITORY,
+  GUARDED_API_KEY_REPOSITORY,
   BYMAX_AUTH_OPTIONS
 } from '../bymax-auth.constants'
 import type { ApiKeyClock } from './api-key-clock'
@@ -81,7 +81,7 @@ export interface RotateApiKeyInput {
 @Injectable()
 export class ApiKeyService {
   constructor(
-    @Inject(BYMAX_AUTH_API_KEY_REPOSITORY) private readonly repository: IApiKeyRepository,
+    @Inject(GUARDED_API_KEY_REPOSITORY) private readonly repository: IApiKeyRepository,
     @Inject(BYMAX_AUTH_API_KEY_CLOCK) private readonly clock: ApiKeyClock,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}

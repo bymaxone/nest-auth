@@ -15,7 +15,7 @@ import { Test } from '@nestjs/testing'
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY
+  GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import { userSubject } from '../constants/user-subject'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
@@ -108,7 +108,7 @@ describe('EmailChangeService', () => {
       providers: [
         EmailChangeService,
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
         { provide: PasswordService, useValue: mockPasswordService },
         { provide: AuthRedisService, useValue: mockRedis },
