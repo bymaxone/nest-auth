@@ -24,7 +24,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   refused, and a workspace whose `deletionScheduledAt` was one could be neither restored nor finalized, because the copy
   of the record turned the Proxy into a plain object with no `getTime`. A Proxy whose prototype chain holds
   `Date.prototype` is now copied as the date it answers as, and an object that only has methods named like a date's is
-  not taken for one. An answer with more than 100000 elements or keys, or an array where a record is promised, is
+  not taken for one. An answer with more elements or keys than a copy follows, or an array where a record is promised, is
   refused as `auth.internal`.
 
 ## [1.5.12] - 2026-11-21
