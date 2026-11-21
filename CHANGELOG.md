@@ -18,6 +18,33 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A tenant is read as a string and as nothing else.** The `tenantId` of a user, a workspace and a membership was
+  accepted as a string or as any instance of a class of the host: a `Date`, a `Map`, an object that inherits from a
+  plain object, a class that only has `toString`. Comparisons with the tenant of a request already failed closed, but
+  the value is written into the claims of a token, where two tenants whose ids are objects both serialize to `{}`. Any
+  value that is not a string now ends as `auth.internal`. **Apply to a derived backend:** a repository that serves the
+  tenant as an object (an id type of a driver) has to serve it as a string.
+- **The time of a real date is the time it holds.** A subclass of `Date` that overrides `getTime` was asked for its
+  time, so a host could name a deadline other than the one the date carries. A real date is read through
+  `Date.prototype.getTime`; a Proxy of a date, which has no slot, is still read through its own `getTime`.
+- **A read follows a bounded number of nodes in all.** The cap of 100 000 elements or keys applied to each array and
+  each object, so a list of records that each stayed under it could still make a copy walk as many nodes as the host
+  served. A read now follows at most 1 000 000 nodes (the elements of lists, the own keys of records and the strings of
+  lists of strings); an answer that holds more ends as `auth.internal`.
+- **Access to a workspace is refused when the repository answers with a row of another tenant.** The workspace and the
+  membership read for a tenant, a workspace and a user are now checked to carry the tenant that was asked about; the
+  key given to a repository is not a proof of the row it returned.
+- **An id names one row.** The ids of users and workspaces, and the ids a membership holds, were accepted as a string, a finite number or
+  any instance of a class of the host, so a `Map` or a `Date` was an id, and two of them printed the same in a claim,
+  a key or the scope of a query. An id is now a non-empty string, a safe integer, or an object of the host that prints
+  as a non-empty text of its own (the id type of a document database, kept as the host's own object, printed once when
+  it is read). A `Date`, a `RegExp`, a `Map`, a `Set`, a `Promise`, an array, a plain object, a function, a boolean, a
+  fraction, an integer past the safe range and an object that prints as nothing or as `[object ...]` end as
+  `auth.internal`. **Apply to a derived backend:** a repository that serves a numeric id as a fraction or past
+  2^53 has to serve it as a string.
+
 ## [1.5.12] - 2026-11-21
 
 A patch release.

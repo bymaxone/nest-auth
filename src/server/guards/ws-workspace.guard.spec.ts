@@ -307,7 +307,9 @@ describe('WsWorkspaceGuard', () => {
   // route hides: through the real access resolution, a non-owner member of a workspace pending
   // deletion gets the not-found a stranger gets, and only the owner is told.
   it('discloses a workspace pending deletion to its owner only, through the real resolution', async () => {
-    const workspaces = { findById: jest.fn().mockResolvedValue({ status: 'pending_deletion' }) }
+    const workspaces = {
+      findById: jest.fn().mockResolvedValue({ tenantId: 't1', status: 'pending_deletion' })
+    }
     const memberships = { find: jest.fn() }
     const resolved = resolveOptions(options({ membershipCacheTtlSeconds: 0 }))
     const service = new WorkspaceAccessService(
@@ -320,11 +322,11 @@ describe('WsWorkspaceGuard', () => {
     const client = { data: { user: IDENTITY } }
     const message = { workspaceId: 'w1' }
 
-    memberships.find.mockResolvedValue({ role: 'editor', status: 'active' })
+    memberships.find.mockResolvedValue({ tenantId: 't1', role: 'editor', status: 'active' })
     const nonOwner = await code(guard.canActivate(contextFor('members', client, message)))
     memberships.find.mockResolvedValue(null)
     const stranger = await code(guard.canActivate(contextFor('members', client, message)))
-    memberships.find.mockResolvedValue({ role: 'owner', status: 'active' })
+    memberships.find.mockResolvedValue({ tenantId: 't1', role: 'owner', status: 'active' })
     const owner = await code(guard.canActivate(contextFor('members', client, message)))
 
     expect(nonOwner).toBe(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)

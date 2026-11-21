@@ -293,6 +293,10 @@ export class WorkspaceAccessService {
       this.membershipRepo.find(ref)
     ])
     if (membership?.status !== 'active' || workspace === null) return { kind: 'denied' }
+    // What the repository answered must belong to the tenant that was asked about: the key it was given is not a proof
+    // of the row it returned, and a row of another tenant is never access.
+    if (workspace.tenantId !== ref.tenantId || membership.tenantId !== ref.tenantId)
+      return { kind: 'denied' }
     const member = { ...ref, role: membership.role }
     if (workspace.status === 'active') return { kind: 'member', member }
     if (workspace.status !== 'pending_deletion') return { kind: 'denied' }

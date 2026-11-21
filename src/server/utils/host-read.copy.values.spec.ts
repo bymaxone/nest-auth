@@ -110,15 +110,11 @@ describe('the kinds of the contract', () => {
     const first = new ObjectIdLike('64b0000000000000000000a1')
     const second = new ObjectIdLike('64b0000000000000000000a2')
 
-    const one = copyHostRecord(
-      userRecord({ id: first as never, tenantId: second as never }),
-      USER
-    ) as Record<string, unknown>
+    const one = copyHostRecord(userRecord({ id: first as never }), USER) as Record<string, unknown>
     const two = copyHostRecord(userRecord({ id: second as never }), USER) as Record<string, unknown>
     const numeric = copyHostRecord(userRecord({ id: 42 as never }), USER) as Record<string, unknown>
 
     expect(one['id']).toBe(first)
-    expect(one['tenantId']).toBe(second)
     expect(String(one['id'])).toBe('64b0000000000000000000a1')
     expect(String(one['id'])).not.toBe(String(two['id']))
     expect(numeric['id']).toBe(42)

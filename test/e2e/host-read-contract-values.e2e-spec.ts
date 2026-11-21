@@ -249,10 +249,43 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
     expect(login.body).toHaveProperty('accessToken')
   })
 
+  // Scenario: an account whose id is an object that prints as its hex (the id type of a document database), and one
+  // whose id is a Map. Expected: the first logs in and the second is refused with no token. Why: the first names one
+  // row, and the second prints as `{}` in a claim for every account that has one, so it could stand for any of them.
+  it.each([
+    ['an object that prints as its id', 200],
+    ['a Map', 500]
+  ] as const)('answers a login whose id is %s with %i', async (kind, status) => {
+    const http = request(app.getHttpServer())
+    await http
+      .post('/register')
+      .send({ email: EMAIL, password: PASSWORD, name: 'Hydrated User', tenantId: 't1' })
+      .expect(201)
+    class HexId {
+      toString(): string {
+        return '64b0000000000000000000a1'
+      }
+    }
+    const id = kind === 'a Map' ? new Map() : new HexId()
+    const byEmail = booted.repo.findByEmail.bind(booted.repo)
+    booted.repo.findByEmail = async (...args: Parameters<typeof byEmail>) => {
+      const user = await byEmail(...args)
+      return user === null ? user : { ...user, id: id as never }
+    }
+
+    const login = await http
+      .post('/login')
+      .send({ email: EMAIL, password: PASSWORD, tenantId: 't1' })
+
+    expect(login.status).toBe(status)
+    expect(login.body.accessToken !== undefined).toBe(status === 200)
+  })
+
   // Scenario: the tenant of an account served as an instance of a class of the host (an id type of a driver) while the
-  // request names it as a string. Expected: the login is turned away and issues no token. Why: tenant ids are compared
-  // with `!==`, and an object is never equal to a string, so a tenant of another kind fails closed.
-  it('turns away a login whose tenantId is an object where the request names a string', async () => {
+  // request names it as a string. Expected: the login ends in the library's internal error and issues no token. Why: a
+  // tenant is read as a string and nothing else, because it is written into the claims of a token, where two objects
+  // that serialize to `{}` would be one tenant; the comparison that used to turn this away came after the copy.
+  it('refuses a login whose tenantId is an object where the request names a string', async () => {
     const http = request(app.getHttpServer())
     await http
       .post('/register')
@@ -273,7 +306,7 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
       .post('/login')
       .send({ email: EMAIL, password: PASSWORD, tenantId: 't1' })
 
-    expect(login.status).toBe(401)
+    expect(login.status).toBe(500)
     expect(login.body).not.toHaveProperty('accessToken')
   })
 })

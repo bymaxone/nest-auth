@@ -108,8 +108,12 @@ async function build(
 
 /** The state of the workspace and of the caller's membership in it. */
 function world(workspace: string | null, membership: { role: string; status: string } | null) {
-  repos.workspaces.findById.mockResolvedValue(workspace === null ? null : { status: workspace })
-  repos.memberships.find.mockResolvedValue(membership)
+  repos.workspaces.findById.mockResolvedValue(
+    workspace === null ? null : { tenantId: 'tenant-1', status: workspace }
+  )
+  repos.memberships.find.mockResolvedValue(
+    membership === null ? null : { tenantId: 'tenant-1', ...membership }
+  )
 }
 
 const CHECK = { workspaceId: 'w1', roles: ['viewer'] }
