@@ -150,16 +150,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     its helper, the closed-set tally, the span seam, the interceptor that counts and traces the eight observed routes, the readiness probe, bounded and
 //     recovering from a PING that never settles, the refusal and plane markers, and the call that marks
 //     every way a verified MFA token's flow can end.
-//     175.50 KiB sits 0.03 KiB above the measured 175.47 KiB, which also holds the boundary that ends a failed
-//     read of what the host owns (the options, the records of a repository) in the library's own error.
-//     175.56 KiB sits 0.03 KiB above the measured 175.53 KiB, which also holds the view's refusal to expose
-//     lifecycle hooks, the rejection of a throwing method read and the own-key copy of `__proto__`.
-//     175.71 KiB sits 0.03 KiB above the measured 175.68 KiB, which also holds the list of the record fields the
-//     copy reads by name.
-//     175.79 KiB sits 0.03 KiB above the measured 175.76 KiB, which also holds the single definition of every
-//     copied field.
-//     175.83 KiB sits 0.03 KiB above the measured 175.80 KiB, which also holds the record of the entity behind
-//     each copy of a guarded repository answer.
+//     175.83 KiB sits 0.03 KiB above the measured 175.80 KiB, which holds the boundary that ends a failed read of
+//     what the host owns (the options, the records of a repository) in the library's own error, the guarded view of
+//     each repository, the copy that reads the record fields by name, and the record of the entity behind each copy.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
