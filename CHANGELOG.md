@@ -68,7 +68,7 @@ A patch release.
   kept those fields out of the token payload. They are now enumerable, except the credentials (`passwordHash`,
   `mfaSecret`, `mfaRecoveryCodes`, `digest`), which are as visible as the host's record made them, so no spread of the
   copy can carry them out.
-- **Apply to a derived backend:** a repository has to serve every field its interface requires, as the type the
+- **Apply to a derived backend:** a repository has to serve every field a service decides on, as the type the
   interface declares. A record that does not now ends as `auth.internal` (HTTP 500, no token) where 1.5.11 and earlier
   accepted it: a field a service decides on that is absent (`mfaEnabled`, `emailVerified`, `status`, `role` or
   `tenantId` missing from the row, which used to read as the default of its type, so an absent `mfaEnabled` was a user
