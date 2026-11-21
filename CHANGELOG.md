@@ -34,15 +34,19 @@ A patch release.
   other own data field of the host's record is passed on by reference without being read, host callbacks
   (`maxSessionsResolver`) still receive the host's own entity, the token the module exports is still the host's own
   instance, and `OAuthModule.register` used on its own provides its own guarded view.
-- **A field is read as the kind its contract gives it.** The contract of each repository method names, for every
-  field, the kind of the type the interface declares, and the compiler checks it: a boolean is a boolean and not a
-  wrapper of one (`new Boolean(false)` is truthy), a string is a string, a number is a finite number, a date is a date
-  with a real time, a list of strings holds strings, and an id is a string or an instance of a class of the host (the
-  id type of a driver, kept as the host's own object). Anything else, a function, a symbol, a bigint or a wrapper
-  among it, ends as `auth.internal` instead of being dropped as absent or coerced: read as absent, `mfaEnabled` served
-  as a function would have issued tokens where a second factor is due, and a wrapper in `emailVerified` would have
-  passed an unverified account. A field the interface requires and a record lacks is refused for the same reason,
-  while a field it allows to be absent may be absent or `null`.
+- **A field that decides an admission is read as the kind its contract gives it.** The contract of each repository
+  method names, for every field, the kind of the type the interface declares, and the compiler checks it. The fields
+  a service reads to allow or to deny (`mfaEnabled`, `emailVerified`, `status`, `role`, `tenantId`, the credentials, an
+  API key's `digest`, `scopes`, `expiresAt` and `revokedAt`, a workspace's `deletionScheduledAt`) are strict: a boolean
+  is a boolean and not a wrapper of one (`new Boolean(false)` is truthy), a string is a string, a date is a date with a
+  real time, a list of strings holds strings, and a field the interface requires is refused when a record lacks it. A
+  function, a symbol, a bigint or a wrapper there ends as `auth.internal` instead of being dropped as absent or
+  coerced: read as absent, `mfaEnabled` served as a function would have issued tokens where a second factor is due, and
+  a wrapper in `emailVerified` would have passed an unverified account. A field the interface allows to be absent may
+  be absent or `null`. The fields that only inform (an id, a name, the dates the library returns or displays) are
+  lenient: an id may be a string, a finite number or an instance of a class of the host (the id type of a driver, kept
+  as the host's own object), a date may be a date or an instance of another class (a date library's), and absence is
+  accepted; a function, a symbol and a bigint are still refused there.
 - **A date a host wraps in a Proxy is read as a date.** A valid API key whose `expiresAt` was a Proxy of a `Date` was
   refused, and a workspace whose `deletionScheduledAt` was one could be neither restored nor finalized, because the copy
   of the record turned the Proxy into a plain object with no `getTime`. A Proxy whose prototype chain holds
@@ -63,9 +67,6 @@ A patch release.
   kept those fields out of the token payload. They are now enumerable, except the credentials (`passwordHash`,
   `mfaSecret`, `mfaRecoveryCodes`, `digest`), which are as visible as the host's record made them, so no spread of the
   copy can carry them out.
-- **Only an id may be an instance of a class of the host.** A field the interface declares as a date, a boolean, a
-  string or a number is refused when it holds an object of another class (a date library's date in `createdAt`), where
-  1.5.11 passed it on.
 
 ## [1.5.11] - 2026-11-20
 

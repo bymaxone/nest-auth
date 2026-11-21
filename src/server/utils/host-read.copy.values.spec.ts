@@ -85,9 +85,8 @@ describe('the kinds of the contract', () => {
   it.each([
     ['status', USER, userRecord],
     ['role', USER, userRecord],
-    ['email', USER, userRecord],
     ['status', PLATFORM, platformRecord],
-    ['label', KEY, apiKeyRecord]
+    ['digest', KEY, apiKeyRecord]
   ] as const)('refuses a %s that is no string', (field, contract, make) => {
     for (const [, garbage] of [...GARBAGE, ['a number', 1]] as const)
       expect(causeOf(() => copyHostRecord({ ...make(), [field]: garbage }, contract))).toBe(
@@ -96,11 +95,12 @@ describe('the kinds of the contract', () => {
     expect(() => copyHostRecord({ ...make(), [field]: 'ok' }, contract)).not.toThrow()
   })
 
-  // Scenario: the ids of the contracts, served as an instance of a class of the host, as a wrapper and as garbage.
-  // Expected: the instance is the host's own object (`String(id)` is the real id, two users never share one), the rest
-  // is refused. Why: an id type of a driver prints through its own `toString`, and a plain copy of it would print as
-  // `[object Object]` for every user.
-  it('keeps an id that is an instance of a class of the host and refuses the other objects', () => {
+  // Scenario: an id that only informs (a user's own id), served as an instance of a class of the host, as a finite
+  // number, and as garbage; and the tenant, which decides, served as an instance. Expected: the informing id is the
+  // host's own object or number (`String(id)` is the real id, two users never share one), a function, a symbol, a bigint,
+  // a wrapper, a plain object and an array are refused. Why: an id type of a driver prints through its own `toString`,
+  // and a plain copy of it would print as `[object Object]` for every user; a numeric id is how many databases key rows.
+  it('keeps an id that is an instance of a class of the host or a number and refuses the rest', () => {
     class ObjectIdLike {
       constructor(private readonly hex: string) {}
       toString(): string {
@@ -115,20 +115,74 @@ describe('the kinds of the contract', () => {
       USER
     ) as Record<string, unknown>
     const two = copyHostRecord(userRecord({ id: second as never }), USER) as Record<string, unknown>
+    const numeric = copyHostRecord(userRecord({ id: 42 as never }), USER) as Record<string, unknown>
 
     expect(one['id']).toBe(first)
     expect(one['tenantId']).toBe(second)
     expect(String(one['id'])).toBe('64b0000000000000000000a1')
     expect(String(one['id'])).not.toBe(String(two['id']))
+    expect(numeric['id']).toBe(42)
     for (const [, garbage] of [
-      ...GARBAGE.filter(([name]) => name !== 'a function'),
-      ['a function', (): void => undefined],
-      ['a number', 5],
+      ...GARBAGE,
+      ['a boolean', true],
+      ['not a finite number', Number.NaN],
       ['a plain object', { hex: 'x' }]
     ] as const)
       expect(causeOf(() => copyHostRecord(userRecord({ id: garbage as never }), USER))).toBe(
         WRONG_KIND
       )
+  })
+
+  // Scenario: the fields that only inform (a name, a label, the dates the library returns or displays) served as the
+  // objects a date library or an ORM uses, as an Invalid Date, as absent and as null; and the same fields served as a
+  // function, a symbol, a bigint or a string where a date is. Expected: the first are accepted (an instance is kept as
+  // the host's own object), the garbage is refused. Why: a record whose `createdAt` is a Dayjs value, or that has no
+  // `lastLoginAt` yet, logs in as it did before the contracts; a function or a symbol there is the host's failure.
+  it('is lenient about the fields that only inform, and still refuses a function, a symbol and a bigint', () => {
+    class DayjsLike {
+      format(): string {
+        return 'formatted'
+      }
+    }
+    const moment = new DayjsLike()
+    const { lastLoginAt: _a, createdAt: _b, name: _c, ...rest } = userRecord()
+
+    const lenient = copyHostRecord(
+      { ...rest, createdAt: moment, lastLoginAt: new Date(Number.NaN) },
+      USER
+    ) as {
+      createdAt: DayjsLike
+      lastLoginAt: Date
+      name?: string
+    }
+    const real = copyHostRecord(
+      { ...rest, createdAt: new Date(7), lastLoginAt: timeAs(9) },
+      USER
+    ) as {
+      createdAt: Date
+      lastLoginAt: Date
+    }
+
+    expect(lenient.createdAt).toBe(moment)
+    expect(lenient.createdAt.format()).toBe('formatted')
+    expect(Number.isNaN(lenient.lastLoginAt.getTime())).toBe(true)
+    expect(Object.hasOwn(lenient, 'name')).toBe(false)
+    expect(real.createdAt.getTime()).toBe(7)
+    expect(real.lastLoginAt.getTime()).toBe(9)
+    for (const field of ['createdAt', 'lastLoginAt', 'name', 'email', 'oauthProvider'])
+      for (const [, garbage] of [
+        ['a function', (): void => undefined],
+        ['a symbol', Symbol('s')],
+        ['a bigint', 0n],
+        ['a plain object', {}]
+      ] as const)
+        expect(causeOf(() => copyHostRecord({ ...userRecord(), [field]: garbage }, USER))).toBe(
+          WRONG_KIND
+        )
+    expect(causeOf(() => copyHostRecord({ ...userRecord(), createdAt: 'x' }, USER))).toBe(
+      WRONG_KIND
+    )
+    expect(copyHostRecord({ ...userRecord(), lastLoginAt: null, name: null }, USER)).toBeDefined()
   })
 
   // Scenario: a number promised by a method, served as NaN, an infinity, a string and a wrapper. Expected: refused.
@@ -157,7 +211,7 @@ describe('the kinds of the contract', () => {
       (value: unknown) => ({ ...workspaceRecord(), deletionScheduledAt: value }),
       WORKSPACE
     ],
-    ['a user createdAt', (value: unknown) => ({ ...userRecord(), createdAt: value }), USER]
+    ['an API key revokedAt', (value: unknown) => ({ ...apiKeyRecord(), revokedAt: value }), KEY]
   ] as const)('refuses %s that is not a time', (_name, make, contract) => {
     const spellings = [
       Number.NaN,
@@ -222,17 +276,12 @@ describe('the kinds of the contract', () => {
   // Expected: the required one is refused, the optional one is simply not there. Why: absent reads as the default of its
   // type, so `mfaEnabled` absent is a user without a second factor.
   it.each([
-    ['id', USER, userRecord],
-    ['email', USER, userRecord],
-    ['name', USER, userRecord],
     ['passwordHash', USER, userRecord],
     ['role', USER, userRecord],
     ['status', USER, userRecord],
     ['tenantId', USER, userRecord],
     ['emailVerified', USER, userRecord],
     ['mfaEnabled', USER, userRecord],
-    ['lastLoginAt', USER, userRecord],
-    ['createdAt', USER, userRecord],
     ['mfaEnabled', PLATFORM, platformRecord],
     ['passwordHash', PLATFORM, platformRecord],
     ['expiresAt', KEY, apiKeyRecord],

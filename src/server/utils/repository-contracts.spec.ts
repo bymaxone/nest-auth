@@ -34,6 +34,8 @@ import type {
 import { guardRepository } from './host-read'
 import {
   API_KEY_REPOSITORY_CONTRACT,
+  RECORD_CONTRACTS,
+  SECURITY_FIELDS,
   MEMBERSHIP_REPOSITORY_CONTRACT,
   USER_REPOSITORY_CONTRACT,
   type Contract,
@@ -235,13 +237,13 @@ describe('the tables of contracts are checked by the compiler', () => {
     const kinds: [
       Same<FieldSpec<boolean>, 'boolean'>,
       Same<FieldSpec<AuthUser['mfaEnabled']>, 'boolean'>,
-      Same<FieldSpec<AuthUser['mfaSecret']>, 'string?' | 'id?'>,
-      Same<FieldSpec<AuthUser['passwordHash']>, 'string|null' | 'id|null'>,
-      Same<FieldSpec<AuthUser['lastLoginAt']>, 'date|null'>,
+      Same<FieldSpec<AuthUser['mfaSecret']>, 'string?' | 'id?' | '~id' | '~string'>,
+      Same<FieldSpec<AuthUser['passwordHash']>, 'string|null' | 'id|null' | '~id' | '~string'>,
+      Same<FieldSpec<AuthUser['lastLoginAt']>, 'date|null' | '~date'>,
       Same<FieldSpec<AuthUser['mfaRecoveryCodes']>, 'strings?'>,
       Same<FieldSpec<AuthApiKey['scopes']>, 'strings'>,
       Same<FieldSpec<MembershipWithWorkspace['workspace']>, 'nested'>,
-      Same<FieldSpec<AuthUser['createdAt']>, 'date'>
+      Same<FieldSpec<AuthUser['createdAt']>, 'date' | '~date'>
     ] = [true, true, true, true, true, true, true, true, true]
     const wrongKinds: [
       NotAssignable<'string', FieldSpec<boolean>>,
@@ -253,5 +255,30 @@ describe('the tables of contracts are checked by the compiler', () => {
     ] = [true, true, true, true, true, true]
 
     expect([kinds, wrongKinds].flat()).not.toContain(false)
+  })
+
+  // Scenario: the fields that decide an admission, listed with the contracts. Expected: each is a key of its record and
+  // none is lenient, at the type level (the literal of the table is not `~`) and in the data. Why: a lenient field lets a
+  // wrapper, an absence or an object of the host through, which is right for a name and wrong for `mfaEnabled`.
+  it('keeps every field that decides an admission strict', () => {
+    type Strict<T> = T extends `~${string}` ? false : true
+    const contracts = RECORD_CONTRACTS
+    const types: [
+      Strict<(typeof contracts)['user']['fields']['mfaEnabled']>,
+      Strict<(typeof contracts)['user']['fields']['emailVerified']>,
+      Strict<(typeof contracts)['user']['fields']['status']>,
+      Strict<(typeof contracts)['platformUser']['fields']['mfaEnabled']>,
+      Strict<(typeof contracts)['apiKey']['fields']['expiresAt']>,
+      Strict<(typeof contracts)['apiKey']['fields']['revokedAt']>,
+      Strict<(typeof contracts)['workspace']['fields']['deletionScheduledAt']>,
+      Strict<(typeof contracts)['membership']['fields']['role']>
+    ] = [true, true, true, true, true, true, true, true]
+
+    for (const [record, names] of Object.entries(SECURITY_FIELDS)) {
+      const fields = (contracts as Record<string, { fields: Record<string, string> }>)[record]
+        ?.fields
+      for (const name of names) expect(fields?.[name]).not.toMatch(/^~/u)
+    }
+    expect(types).not.toContain(false)
   })
 })

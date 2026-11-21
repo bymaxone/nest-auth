@@ -218,4 +218,34 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
       expect(JSON.stringify(login.body)).toContain(AUTH_ERROR_CODES.INTERNAL)
     }
   )
+
+  // Scenario: an account whose id is a number and whose `createdAt` is the date of a date library, fields that only
+  // inform. Expected: the login still issues tokens. Why: a numeric id is how many databases key rows and a date library's
+  // date is common in a host's record; refusing them would turn a working app into a 500 on every login.
+  it('still logs in an account whose id is a number and whose createdAt is a date library value', async () => {
+    const http = request(app.getHttpServer())
+    await http
+      .post('/register')
+      .send({ email: EMAIL, password: PASSWORD, name: 'Hydrated User', tenantId: 't1' })
+      .expect(201)
+    class DayjsLike {
+      format(): string {
+        return 'formatted'
+      }
+    }
+    const byEmail = booted.repo.findByEmail.bind(booted.repo)
+    booted.repo.findByEmail = async (...args: Parameters<typeof byEmail>) => {
+      const user = await byEmail(...args)
+      return user === null
+        ? user
+        : { ...user, id: 42 as never, createdAt: new DayjsLike() as never }
+    }
+
+    const login = await http
+      .post('/login')
+      .send({ email: EMAIL, password: PASSWORD, tenantId: 't1' })
+
+    expect(login.status).toBe(200)
+    expect(login.body).toHaveProperty('accessToken')
+  })
 })

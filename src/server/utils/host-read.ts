@@ -206,8 +206,34 @@ function copyStrings(value: unknown): string[] {
 }
 
 /**
- * How a value is read as each kind a contract can name. A kind is exact: a wrapper object is not a boolean, a string
- * is not a number, a date has a real time, and only an `id` may be an instance of a class of the host.
+ * An id, a name or any other string a field only informs with: a string, a finite number, or an instance of a class of
+ * the host (an id type of a driver) kept as the host's own object. A function, a symbol, a bigint and the rest are
+ * refused.
+ */
+function readInforming(value: unknown): unknown {
+  return accept(
+    typeof value === 'string' ||
+      (typeof value === 'number' && Number.isFinite(value)) ||
+      isHostInstance(value),
+    value
+  )
+}
+
+/**
+ * A date a field only informs with: a real date is copied, and an instance of another class (a date library's date, an
+ * Invalid Date) is kept as the host's own object; anything else is refused.
+ */
+function readInformingDate(value: unknown): unknown {
+  if (!isHostInstance(value)) throw new Error(WRONG_KIND)
+  return isDateLike(value as object) && Number.isFinite((value as Date).getTime())
+    ? copyDate(value)
+    : value
+}
+
+/**
+ * How a value is read as each kind a contract can name. A strict kind is exact: a wrapper object is not a boolean, a
+ * string is not a number, a date has a real time, and only an `id` may be an instance of a class of the host. A kind
+ * marked `~` only informs: it is lenient about what it takes (see {@link readInforming}).
  */
 const READERS = {
   boolean: (value: unknown): unknown => accept(typeof value === 'boolean', value),
@@ -217,18 +243,29 @@ const READERS = {
   id: (value: unknown): unknown =>
     accept(typeof value === 'string' || isHostInstance(value), value),
   date: copyDate,
-  strings: copyStrings
+  strings: copyStrings,
+  '~id': readInforming,
+  '~string': readInforming,
+  '~date': readInformingDate
 } as const
 
 /** The kinds that are read by a reader of their own. */
 type ReaderName = keyof typeof READERS
 
-/** The kind a field is read as, whether `null` is promised and whether it may be absent, from its spec. */
+/**
+ * The kind a field is read as, whether `null` is promised and whether it may be absent, from its spec. A lenient kind
+ * (`~`) accepts both: a field that only informs is never worth refusing an answer for.
+ */
 function parseSpec(spec: string): { base: string; nullable: boolean; optional: boolean } {
-  const optional = spec.endsWith('?')
-  const rest = optional ? spec.slice(0, -1) : spec
-  const nullable = rest.endsWith('|null')
-  return { base: nullable ? rest.slice(0, -'|null'.length) : rest, nullable, optional }
+  const lenient = spec.startsWith('~')
+  const optional = lenient || spec.endsWith('?')
+  const rest = spec.endsWith('?') ? spec.slice(0, -1) : spec
+  const nullable = lenient || rest.endsWith('|null')
+  return {
+    base: rest.endsWith('|null') ? rest.slice(0, -'|null'.length) : rest,
+    nullable,
+    optional
+  }
 }
 
 /** `null`, when the contract promises it. */

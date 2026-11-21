@@ -52,12 +52,23 @@ type BaseKind<V> = [V] extends [boolean]
           ? 'strings'
           : 'nested'
 
+/** The kinds a field that only informs can be read as: lenient, so absence, `null` and an object of the host pass. */
+type LenientKind<V> = [V] extends [string]
+  ? '~id' | '~string'
+  : [V] extends [Date]
+    ? '~date'
+    : never
+
 /**
- * How a field of type `V` is read: its kind, then `|null` when `null` is promised and `?` when it may be absent. A
- * field of the interface that is required has no `?`, and one that holds a record or a list of them is `nested`.
+ * How a field of type `V` is read. A field that decides an admission is strict: its kind, then `|null` when `null` is
+ * promised and `?` when it may be absent, so a required field has no `?` and one that holds a record or a list of them
+ * is `nested`. A field that only informs (an id, a name, a date the library returns or displays) may be lenient: `~id`,
+ * `~string` or `~date`, which accept absence and `null`, and an object of the host's own classes, and refuse a function,
+ * a symbol and a bigint.
  */
 export type FieldSpec<V> =
-  `${BaseKind<NonNullable<V>>}${null extends V ? '|null' : ''}${undefined extends V ? '?' : ''}`
+  | `${BaseKind<NonNullable<V>>}${null extends V ? '|null' : ''}${undefined extends V ? '?' : ''}`
+  | LenientKind<NonNullable<V>>
 
 /** The entries for the fields that hold a record or a list of records, which are the only ones that need one. */
 type NestedOf<R> = {
@@ -107,110 +118,152 @@ export type ErasedContract =
 /** The contract of each method of a repository, by method name, with the types erased. */
 export type ErasedRepositoryContract = Readonly<Record<string, ErasedContract>>
 
-const WORKSPACE: Contract<AuthWorkspace> = {
-  fields: {
-    id: 'id',
-    tenantId: 'id',
-    name: 'string',
-    status: 'string',
-    createdAt: 'date',
-    deletionScheduledAt: 'date|null'
+/**
+ * The contract of each record, for the fields that decide (strict, unmarked) and the fields that only inform (lenient,
+ * marked `~`). The strict ones are the fields a service reads to allow or deny; {@link SECURITY_FIELDS} lists them and a
+ * spec asserts that none is lenient.
+ */
+export const RECORD_CONTRACTS = {
+  workspace: {
+    fields: {
+      id: '~id',
+      tenantId: 'id',
+      name: '~string',
+      status: 'string',
+      createdAt: '~date',
+      deletionScheduledAt: 'date|null'
+    },
+    nested: {}
   },
-  nested: {}
+  membership: {
+    fields: {
+      tenantId: 'id',
+      workspaceId: '~id',
+      userId: '~id',
+      role: 'string',
+      status: 'string',
+      invitedByUserId: '~id',
+      createdAt: '~date',
+      updatedAt: '~date'
+    },
+    nested: {}
+  },
+  user: {
+    fields: {
+      id: '~id',
+      email: '~string',
+      name: '~string',
+      passwordHash: 'string|null',
+      role: 'string',
+      status: 'string',
+      tenantId: 'id',
+      emailVerified: 'boolean',
+      mfaEnabled: 'boolean',
+      mfaSecret: 'string?',
+      mfaRecoveryCodes: 'strings?',
+      oauthProvider: '~string',
+      oauthProviderId: '~string',
+      lastLoginAt: '~date',
+      createdAt: '~date'
+    },
+    nested: {}
+  },
+  platformUser: {
+    fields: {
+      id: '~id',
+      email: '~string',
+      name: '~string',
+      passwordHash: 'string',
+      role: 'string',
+      status: 'string',
+      mfaEnabled: 'boolean',
+      mfaSecret: 'string?',
+      mfaRecoveryCodes: 'strings?',
+      platformId: '~id',
+      lastLoginAt: '~date',
+      updatedAt: '~date',
+      createdAt: '~date'
+    },
+    nested: {}
+  },
+  apiKey: {
+    fields: {
+      id: '~id',
+      label: '~string',
+      digest: 'string',
+      scopes: 'strings',
+      createdAt: '~date',
+      expiresAt: 'date|null',
+      revokedAt: 'date|null',
+      lastUsedAt: '~date'
+    },
+    nested: {}
+  },
+  removedMembership: { fields: { workspaceId: '~id', role: 'string' }, nested: {} }
+} as const satisfies {
+  readonly workspace: Contract<AuthWorkspace>
+  readonly membership: Contract<AuthMembership>
+  readonly user: Contract<AuthUser>
+  readonly platformUser: Contract<AuthPlatformUser>
+  readonly apiKey: Contract<AuthApiKey>
+  readonly removedMembership: Contract<RemovedMembership>
 }
 
-const MEMBERSHIP: Contract<AuthMembership> = {
-  fields: {
-    tenantId: 'id',
-    workspaceId: 'id',
-    userId: 'id',
-    role: 'string',
-    status: 'string',
-    invitedByUserId: 'id|null',
-    createdAt: 'date',
-    updatedAt: 'date'
-  },
-  nested: {}
+/**
+ * The fields of each record that decide an admission: a service reads them to allow or to deny, so each is read strictly,
+ * by kind, as required where the interface requires it, and never coerced.
+ */
+export const SECURITY_FIELDS = {
+  workspace: ['tenantId', 'status', 'deletionScheduledAt'],
+  membership: ['tenantId', 'role', 'status'],
+  user: [
+    'passwordHash',
+    'role',
+    'status',
+    'tenantId',
+    'emailVerified',
+    'mfaEnabled',
+    'mfaSecret',
+    'mfaRecoveryCodes'
+  ],
+  platformUser: ['passwordHash', 'role', 'status', 'mfaEnabled', 'mfaSecret', 'mfaRecoveryCodes'],
+  apiKey: ['digest', 'scopes', 'expiresAt', 'revokedAt'],
+  removedMembership: ['role']
+} as const satisfies {
+  readonly workspace: readonly (keyof AuthWorkspace)[]
+  readonly membership: readonly (keyof AuthMembership)[]
+  readonly user: readonly (keyof AuthUser)[]
+  readonly platformUser: readonly (keyof AuthPlatformUser)[]
+  readonly apiKey: readonly (keyof AuthApiKey)[]
+  readonly removedMembership: readonly (keyof RemovedMembership)[]
 }
 
-const MEMBERSHIP_WITH_WORKSPACE: Contract<MembershipWithWorkspace> = {
+const WORKSPACE = RECORD_CONTRACTS.workspace
+const MEMBERSHIP = RECORD_CONTRACTS.membership
+const USER = RECORD_CONTRACTS.user
+const PLATFORM_USER = RECORD_CONTRACTS.platformUser
+const API_KEY = RECORD_CONTRACTS.apiKey
+const REMOVED_MEMBERSHIP = RECORD_CONTRACTS.removedMembership
+
+const MEMBERSHIP_WITH_WORKSPACE = {
   fields: { ...MEMBERSHIP.fields, workspace: 'nested' },
   nested: { workspace: WORKSPACE }
-}
+} as const satisfies Contract<MembershipWithWorkspace>
 
-const REMOVED_MEMBERSHIP: Contract<RemovedMembership> = {
-  fields: { workspaceId: 'id', role: 'string' },
-  nested: {}
-}
-
-const USER: Contract<AuthUser> = {
-  fields: {
-    id: 'id',
-    email: 'string',
-    name: 'string',
-    passwordHash: 'string|null',
-    role: 'string',
-    status: 'string',
-    tenantId: 'id',
-    emailVerified: 'boolean',
-    mfaEnabled: 'boolean',
-    mfaSecret: 'string?',
-    mfaRecoveryCodes: 'strings?',
-    oauthProvider: 'string?',
-    oauthProviderId: 'string?',
-    lastLoginAt: 'date|null',
-    createdAt: 'date'
-  },
-  nested: {}
-}
-
-const PLATFORM_USER: Contract<AuthPlatformUser> = {
-  fields: {
-    id: 'id',
-    email: 'string',
-    name: 'string',
-    passwordHash: 'string',
-    role: 'string',
-    status: 'string',
-    mfaEnabled: 'boolean',
-    mfaSecret: 'string?',
-    mfaRecoveryCodes: 'strings?',
-    platformId: 'id?',
-    lastLoginAt: 'date|null',
-    updatedAt: 'date',
-    createdAt: 'date'
-  },
-  nested: {}
-}
-
-const API_KEY: Contract<AuthApiKey> = {
-  fields: {
-    id: 'id',
-    label: 'string',
-    digest: 'string',
-    scopes: 'strings',
-    createdAt: 'date',
-    expiresAt: 'date|null',
-    revokedAt: 'date|null',
-    lastUsedAt: 'date|null'
-  },
-  nested: {}
-}
-
-const PAGE_OF_MEMBERSHIPS_WITH_WORKSPACE: Contract<MembershipPage<MembershipWithWorkspace>> = {
-  fields: { items: 'nested', nextCursor: 'string|null' },
+const PAGE_OF_MEMBERSHIPS_WITH_WORKSPACE = {
+  fields: { items: 'nested', nextCursor: '~string' },
   nested: { items: { list: MEMBERSHIP_WITH_WORKSPACE } }
-}
+} as const satisfies Contract<MembershipPage<MembershipWithWorkspace>>
 
-const PAGE_OF_MEMBERSHIPS: Contract<MembershipPage<AuthMembership>> = {
-  fields: { items: 'nested', nextCursor: 'string|null' },
+const PAGE_OF_MEMBERSHIPS = {
+  fields: { items: 'nested', nextCursor: '~string' },
   nested: { items: { list: MEMBERSHIP } }
-}
+} as const satisfies Contract<MembershipPage<AuthMembership>>
 
-const PAGE_OF_WORKSPACES: Contract<MembershipPage<AuthWorkspace>> = {
-  fields: { items: 'nested', nextCursor: 'string|null' },
+const PAGE_OF_WORKSPACES = {
+  fields: { items: 'nested', nextCursor: '~string' },
   nested: { items: { list: WORKSPACE } }
-}
+} as const satisfies Contract<MembershipPage<AuthWorkspace>>
 
 /** What is read from each answer of the user repository. */
 export const USER_REPOSITORY_CONTRACT: RepositoryContract<IUserRepository> = {
