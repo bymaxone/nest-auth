@@ -16,13 +16,13 @@ import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.i
  * other check reads one.
  *
  * @param given - The options as the host wrote them.
- * @returns The options as a plain object in which unset means absent, and in which the role hierarchies are copies.
+ * @returns The options as a plain object in which unset means absent, and in which the lists and hierarchies the host keeps are copies.
  * @throws {Error} naming the first text option, list or group that has the wrong type.
  */
 export function readOptions(given: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
   const options = dropUnset(given)
   validateTextOptions(options)
-  return pinHierarchies(options)
+  return pinCopied(options)
 }
 
 /** A hierarchy as a plain copy of the entries of what the host answered; a value that is no object is left for the checks. */
@@ -36,30 +36,44 @@ function copyHierarchy(held: unknown): unknown {
   )
 }
 
-/** Replaces the hierarchies named in a group by copies. The group is the fresh plain object `dropUnset` made. */
-function pinIn<G>(group: G, keys: readonly string[]): G {
-  if (Object(group) !== group) return group
-  const plain = group as Record<string, unknown>
-  for (const key of keys) if (plain[key] !== undefined) plain[key] = copyHierarchy(plain[key])
-  return group
+/** A list as a copy; a value that is no list is left for the checks. */
+function copyList(held: unknown): unknown {
+  return Array.isArray(held) ? [...held] : held
 }
 
+/** What the host keeps by reference and the library checks once: the group, the keys in it and how each is copied. */
+const COPIED: readonly {
+  readonly path: readonly string[]
+  readonly keys: readonly string[]
+  readonly copy: (held: unknown) => unknown
+}[] = [
+  { path: ['roles'], keys: ['hierarchy', 'platformHierarchy'], copy: copyHierarchy },
+  { path: ['workspaces', 'roles'], keys: ['hierarchy'], copy: copyHierarchy },
+  {
+    path: ['workspaces', 'permissions'],
+    keys: ['manageWorkspace', 'deleteWorkspace', 'manageMembers', 'viewMembers'],
+    copy: copyList
+  },
+  { path: ['jwt'], keys: ['previousSecrets'], copy: copyList },
+  { path: ['mfa'], keys: ['previousEncryptionKeys'], copy: copyList },
+  { path: ['apiKeys'], keys: ['scopes'], copy: copyList }
+]
+
 /**
- * The role hierarchies (of the account, of the platform and of the workspaces) as copies, read from the host once, so a
- * later read cannot grant a role that was never validated.
+ * Replaces what the host keeps by reference (the role hierarchies, the permissions of the workspaces, the retired secrets
+ * and keys, the scopes of the API keys) by copies, read from the host once, so a later read or change cannot grant what
+ * was never validated. The options and each group on the paths are the fresh plain objects `dropUnset` made.
  */
-function pinHierarchies(options: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
-  const { roles, workspaces } = options
-  const { roles: workspaceRoles, ...workspaceRest } = (workspaces ?? {}) as { roles?: unknown }
-  return {
-    ...options,
-    roles: pinIn(roles, ['hierarchy', 'platformHierarchy']),
-    ...(workspaceRoles === undefined
-      ? {}
-      : {
-          workspaces: { ...workspaceRest, roles: pinIn(workspaceRoles, ['hierarchy']) }
-        })
-  } as BymaxAuthModuleOptions
+function pinCopied(options: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
+  for (const { path, keys, copy } of COPIED) {
+    let group: unknown = options
+    for (const step of path)
+      group = Object(group) === group ? (group as Record<string, unknown>)[step] : undefined
+    if (Object(group) !== group) continue
+    const plain = group as Record<string, unknown>
+    for (const key of keys) if (plain[key] !== undefined) plain[key] = copy(plain[key])
+  }
+  return options
 }
 
 /**

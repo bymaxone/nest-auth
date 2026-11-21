@@ -50,7 +50,11 @@ export const OBJECT_GROUPS: readonly string[] = [
   'oauth',
   'roles',
   'workspaces',
-  'workspaces.roles'
+  'workspaces.roles',
+  'workspaces.permissions',
+  'jwt',
+  'mfa',
+  'apiKeys'
 ]
 
 /** The value at a dotted path, or `undefined` when a step is missing or is not an object. */
