@@ -28,6 +28,44 @@ class Plan {
   }
 }
 
+/** A session service over a Redis double, the given user repository and a cap resolver. */
+async function buildService(
+  repository: object,
+  resolver: (user: unknown) => Promise<number>
+): Promise<SessionService> {
+  const redis = {
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(undefined),
+    del: jest.fn().mockResolvedValue(undefined),
+    srem: jest.fn().mockResolvedValue(0),
+    smembers: jest.fn().mockResolvedValue([]),
+    eval: jest.fn().mockResolvedValue(undefined),
+    pruneExpiredGraceMembers: jest.fn().mockResolvedValue(0),
+    pruneDeadMembers: jest.fn().mockResolvedValue(0),
+    bumpUserTokenEpoch: jest.fn()
+  }
+  const options = {
+    hmacKey: 'test-hmac-key',
+    jwt: { secret: 'test-secret', refreshExpiresInDays: 7 },
+    sessions: {
+      enabled: true,
+      defaultMaxSessions: 5,
+      evictionStrategy: 'fifo',
+      maxSessionsResolver: resolver
+    }
+  }
+  const module = await Test.createTestingModule({
+    providers: [
+      SessionService,
+      { provide: AuthRedisService, useValue: redis },
+      { provide: BYMAX_AUTH_OPTIONS, useValue: options },
+      { provide: GUARDED_USER_REPOSITORY, useValue: repository },
+      { provide: BYMAX_AUTH_HOOKS, useValue: null }
+    ]
+  }).compile()
+  return module.get(SessionService)
+}
+
 describe('SessionService with a guarded user repository', () => {
   // Scenario: the user repository is behind the guarded view and the host configured a maxSessionsResolver that
   // uses a getter and a method of its entity. Expected: the resolver receives the very entity the repository
@@ -40,43 +78,9 @@ describe('SessionService with a guarded user repository', () => {
       const plan = user as Plan
       return plan.allows() ? plan.limit : 1
     })
-    const redis = {
-      get: jest.fn().mockResolvedValue(null),
-      set: jest.fn().mockResolvedValue(undefined),
-      del: jest.fn().mockResolvedValue(undefined),
-      srem: jest.fn().mockResolvedValue(0),
-      smembers: jest.fn().mockResolvedValue([]),
-      eval: jest.fn().mockResolvedValue(undefined),
-      pruneExpiredGraceMembers: jest.fn().mockResolvedValue(0),
-      pruneDeadMembers: jest.fn().mockResolvedValue(0),
-      bumpUserTokenEpoch: jest.fn()
-    }
-    const module = await Test.createTestingModule({
-      providers: [
-        SessionService,
-        { provide: AuthRedisService, useValue: redis },
-        {
-          provide: BYMAX_AUTH_OPTIONS,
-          useValue: {
-            hmacKey: 'test-hmac-key',
-            jwt: { secret: 'test-secret', refreshExpiresInDays: 7 },
-            sessions: {
-              enabled: true,
-              defaultMaxSessions: 5,
-              evictionStrategy: 'fifo',
-              maxSessionsResolver: resolver
-            }
-          }
-        },
-        {
-          provide: GUARDED_USER_REPOSITORY,
-          useValue: { findById: async (): Promise<unknown> => guarded.findById() }
-        },
-        { provide: BYMAX_AUTH_HOOKS, useValue: null }
-      ]
-    }).compile()
+    const service = await buildService(guarded, resolver)
 
-    await module.get(SessionService).createSession({
+    await service.createSession({
       userId: 'u1',
       tenantId: 'tenant-1',
       rawRefreshToken: 'raw-token',
