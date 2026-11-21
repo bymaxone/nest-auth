@@ -150,7 +150,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     its helper, the closed-set tally, the span seam, the interceptor that counts and traces the eight observed routes, the readiness probe, bounded and
 //     recovering from a PING that never settles, the refusal and plane markers, and the call that marks
 //     every way a verified MFA token's flow can end.
-//     176.90 KiB holds the boundary that ends a failed read of what the host owns (the options, the records of a
+//     177.31 KiB holds the boundary that ends a failed read of what the host owns (the options, the records of a
 //     repository) in the library's own error, the guarded view of each repository, the contract of every repository
 //     method that says which fields of an answer are read, the bounds of that copy, and the record of the entity
 //     behind each copy.
