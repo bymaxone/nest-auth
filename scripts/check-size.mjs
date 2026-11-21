@@ -156,6 +156,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     lifecycle hooks, the rejection of a throwing method read and the own-key copy of `__proto__`.
 //     175.71 KiB sits 0.03 KiB above the measured 175.68 KiB, which also holds the list of the record fields the
 //     copy reads by name.
+//     175.79 KiB sits 0.03 KiB above the measured 175.76 KiB, which also holds the single definition of every
+//     copied field.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
@@ -223,7 +225,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 175.71 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 175.79 * 1024 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
