@@ -392,6 +392,23 @@ describe('copyHostRecord', () => {
       })
     })
 
+    it('keeps a field whose name is a setter on Object.prototype, own and listed alike', () => {
+      Object.defineProperty(Object.prototype, 'zz', { set(): void {}, configurable: true })
+      Object.defineProperty(Object.prototype, 'status', { set(): void {}, configurable: true })
+      try {
+        const copy = copyHostRecord({ zz: 1, id: 'u1', name: 'n' }) as Record<string, unknown>
+        const lazy = copyHostRecord(
+          new Proxy({}, { get: (_t, key) => (key === 'status' ? 'ACTIVE' : undefined) })
+        ) as Record<string, unknown>
+
+        expect(Object.hasOwn(copy, 'zz')).toBe(true)
+        expect(Object.hasOwn(lazy, 'status')).toBe(true)
+      } finally {
+        Reflect.deleteProperty(Object.prototype, 'zz')
+        Reflect.deleteProperty(Object.prototype, 'status')
+      }
+    })
+
     it('leaves a method behind even when it carries the name of a listed field', () => {
       class Doc {
         status(): string {

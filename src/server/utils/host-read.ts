@@ -170,6 +170,15 @@ function isOpaque(value: object): boolean {
   return OPAQUE.some((check) => check(value))
 }
 
+/**
+ * Sets a field on a copy by defining it, never by assigning it: a key named `__proto__` (what `JSON.parse` of user
+ * input produces) would swap the prototype, and a name that is a setter or read-only on `Object.prototype` would be
+ * silently dropped.
+ */
+function define(copy: object, key: string, value: unknown): void {
+  Object.defineProperty(copy, key, { value, enumerable: true, writable: true, configurable: true })
+}
+
 /** A plain copy of a record: its own fields and inherited accessors, arrays and dates copied, the rest by reference. */
 function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value
@@ -190,22 +199,13 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
   const source = value as Record<string, unknown>
   for (const key of new Set([...Object.getOwnPropertyNames(value), ...inheritedAccessors(value)])) {
     const copied = copyValue(source[key], seen, depth + 1)
-    // A key named `__proto__` (what `JSON.parse` of user input produces) is data; assigning it would swap the prototype.
-    // Stryker disable next-line ConditionalExpression: equivalent when true, defining a key with all three attributes true is what an assignment does on a plain object for every name but `__proto__`
-    if (key === '__proto__') {
-      Object.defineProperty(copy, key, {
-        value: copied,
-        enumerable: true,
-        writable: true,
-        configurable: true
-      })
-    } else copy[key] = copied
+    define(copy, key, copied)
   }
   for (const key of RECORD_FIELDS) {
     if (Object.hasOwn(copy, key)) continue
     const read = source[key]
     if (read !== undefined && typeof read !== 'function')
-      copy[key] = copyValue(read, seen, depth + 1)
+      define(copy, key, copyValue(read, seen, depth + 1))
   }
   return copy
 }
