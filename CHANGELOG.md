@@ -28,10 +28,10 @@ A patch release.
   host returns are read inside one boundary: a failure ends as `[BymaxAuthModule] the options could not be read…` with
   the host's error as its `cause` and none of its text. Each repository the host provides is read through a guarded
   view that the library's own services use: an answer is read for the fields its method promises and for nothing
-  else (a contract for each method of the five repository interfaces, checked by the compiler), so an entity whose
+  else (a contract for each repository method, checked by the compiler), so an entity whose
   relation throws until it is loaded still answers, a field the contract names that throws ends as `auth.internal`
   with the cause, and a failure of the repository itself is the same error. A typed `HttpException` the repository
-  throws goes out as it is. Any other field of the host's record is passed on by reference without being read, host
+  throws goes out as it is. Any other own data field of the host's record is passed on by reference without being read, host
   callbacks (`maxSessionsResolver`) still receive the host's own entity, the token the module exports is still the
   host's own instance, and `OAuthModule.register` used on its own provides its own guarded view. The public
   declarations are unchanged: `check:api` against 1.5.11 reports no difference.
