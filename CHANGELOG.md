@@ -18,6 +18,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.13] - 2026-11-21
+
+A patch release.
+
 ### Fixed
 
 - **A tenant is read as a string and as nothing else.** The `tenantId` of a user, a workspace and a membership was
@@ -5556,7 +5560,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.12...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.13...HEAD
+[1.5.13]: https://github.com/bymaxone/nest-auth/compare/v1.5.12...v1.5.13
 [1.5.12]: https://github.com/bymaxone/nest-auth/compare/v1.5.11...v1.5.12
 [1.5.11]: https://github.com/bymaxone/nest-auth/compare/v1.5.10...v1.5.11
 [1.5.10]: https://github.com/bymaxone/nest-auth/compare/v1.5.9...v1.5.10
