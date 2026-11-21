@@ -200,6 +200,23 @@ describe('copyHostRecord', () => {
     expect(record['fn']).toBe(copyHostRecord)
   })
 
+  // Scenario: the fields an auth decision reads, held as non-enumerable own properties, one as a getter. Expected: each
+  // survives the copy with its value. Why: a copy that lists only enumerable keys would drop `status` or
+  // `mfaEnabled`, and the decision would read undefined.
+  it('keeps non-enumerable own fields, data and getter alike', () => {
+    const record = { id: 'u1' }
+    Object.defineProperty(record, 'passwordHash', { value: 'hash', enumerable: false })
+    Object.defineProperty(record, 'status', { get: () => 'ACTIVE', enumerable: false })
+    Object.defineProperty(record, 'mfaEnabled', { value: true, enumerable: false })
+
+    const copy = copyHostRecord(record) as Record<string, unknown>
+
+    expect(copy['passwordHash']).toBe('hash')
+    expect(copy['status']).toBe('ACTIVE')
+    expect(copy['mfaEnabled']).toBe(true)
+    expect(copy['id']).toBe('u1')
+  })
+
   // Scenario: a record with an own key named __proto__ (what JSON.parse of user input produces). Expected: it stays an
   // own key of the copy and the copy's prototype is untouched. Why: assigning it would swap the copy's prototype for the
   // copied value, and the copy would inherit names the original did not own.
@@ -342,6 +359,22 @@ describe('guardRepository against a hostile repository', () => {
     expect(() => guarded.find).not.toThrow()
     await expect(read()).rejects.toMatchObject({ cause: fault })
     await expect(read()).rejects.toBeInstanceOf(AuthException)
+  })
+
+  // Scenario: a hostile repository that throws for every key, awaited the way Nest awaits a factory result. Expected: the
+  // await settles with the view. Why: `then` read as a function that never settles would hang startup.
+  it('settles when the view of a repository that throws on every read is awaited', async () => {
+    const hostile = new Proxy(
+      {},
+      {
+        get: () => {
+          throw fault
+        }
+      }
+    )
+    const view = guardRepository(hostile as { find(): Promise<unknown> })
+
+    await expect(Promise.resolve(view)).resolves.toBe(view)
   })
 
   // Scenario: a repository with Nest lifecycle hooks. Expected: the view exposes none of them. Why: Nest calls a hook
