@@ -155,16 +155,13 @@ function refuseBreadth(size: number): void {
 }
 
 /**
- * Whether a value is a date: one by its internal slot, which holds across realms, or a Proxy of the host that answers
- * as one (a Proxy has no slot, and `getTime` on it works only through its own trap).
+ * Whether a value is a date: one by its internal slot, which holds across realms, or a Proxy of the host whose
+ * prototype chain holds `Date.prototype`. A Proxy has no slot, so `Date.prototype.getTime.call(proxy)` throws even for
+ * a Proxy of a date and cannot tell the two apart; the chain, read through the Proxy, can, and an object that only
+ * has methods named like a date's is not taken for one.
  */
 function isDateLike(value: object): value is Date {
-  return (
-    types.isDate(value) ||
-    (types.isProxy(value) &&
-      typeof (value as Partial<Date>).getTime === 'function' &&
-      typeof (value as Partial<Date>).toISOString === 'function')
-  )
+  return types.isDate(value) || (types.isProxy(value) && value instanceof Date)
 }
 
 /**

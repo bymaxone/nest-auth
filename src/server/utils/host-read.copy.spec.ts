@@ -402,6 +402,18 @@ describe('copyHostRecord', () => {
       expect(copy.name).not.toBeInstanceOf(Date)
     })
 
+    it('does not take an object that only has the methods of a date for one, even behind a Proxy', () => {
+      const lookalike = { getTime: (): number => 5, toISOString: (): string => 'x', own: true }
+      const wrapped = new Proxy(lookalike, {})
+      const forged = new Proxy(Object.create(Date.prototype) as object, {})
+
+      const copy = copyHostRecord({ createdAt: wrapped }, USER) as { createdAt: unknown }
+
+      expect(copy.createdAt).not.toBeInstanceOf(Date)
+      expect((copy.createdAt as typeof lookalike).own).toBe(true)
+      expect(causeOf(() => copyHostRecord({ createdAt: forged }, USER))).toBeDefined()
+    })
+
     it('finds the fields of the contract on an ancestor that has no prototype of its own', () => {
       const root = Object.assign(Object.create(null) as object, {
         passwordHash: 'x',
