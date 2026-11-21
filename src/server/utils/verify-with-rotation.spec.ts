@@ -16,10 +16,14 @@ const CURRENT = 'c'.repeat(48)
 const RETIRED = 'r'.repeat(48)
 const OLDER = 'o'.repeat(48)
 
-/** Options carrying the given retired secrets, if any. */
-function optionsWith(previousSecrets?: string[]): ResolvedOptions {
+/** Options carrying the given retired secrets, if any, and the given current secret, if any. */
+function optionsWith(previousSecrets?: string[], secret?: string): ResolvedOptions {
   return {
-    jwt: { algorithm: 'HS256', ...(previousSecrets === undefined ? {} : { previousSecrets }) }
+    jwt: {
+      algorithm: 'HS256',
+      ...(previousSecrets === undefined ? {} : { previousSecrets }),
+      ...(secret === undefined ? {} : { secret })
+    }
   } as unknown as ResolvedOptions
 }
 
@@ -220,5 +224,19 @@ describe('verifyWithRotation', () => {
       const right = retired.sign({ sub: 'u1' }, { issuer: 'bymax' })
       expect(verifyWithRotation<{ sub: string }>(current, options, right).sub).toBe('u1')
     })
+  })
+
+  // Scenario: a service whose own default secret is another than the one the options resolved to, a token signed under
+  // the resolved one and a token signed under the service's own. Expected: the first verifies, the second is refused.
+  // Why: the service is configured by a second call of the host's factory; the secret that was checked at start is the
+  // one a token has to verify under.
+  it('should verify under the secret the options resolved to, not the one the service was given', () => {
+    const resolved = optionsWith(undefined, CURRENT)
+    const service = serviceFor(RETIRED)
+    const underResolved = serviceFor(CURRENT).sign({ sub: 'u1' })
+    const underService = service.sign({ sub: 'u2' })
+
+    expect(verifyWithRotation<{ sub: string }>(service, resolved, underResolved).sub).toBe('u1')
+    expect(() => verifyWithRotation(service, resolved, underService)).toThrow()
   })
 })

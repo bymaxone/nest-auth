@@ -18,6 +18,50 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A tenant is read as a string and as nothing else.** The `tenantId` of a user, a workspace and a membership was
+  accepted as a string or as any instance of a class of the host: a `Date`, a `Map`, an object that inherits from a
+  plain object, a class that only has `toString`. Comparisons with the tenant of a request already failed closed, but
+  the value is written into the claims of a token, where two tenants whose ids are objects both serialize to `{}`. Any
+  value that is not a string now ends as `auth.internal`. **Apply to a derived backend:** a repository that serves the
+  tenant as an object (an id type of a driver) has to serve it as a string.
+- **The time of a real date is the time it holds.** A subclass of `Date` that overrides `getTime` was asked for its
+  time, so a host could name a deadline other than the one the date carries. A real date is read through
+  `Date.prototype.getTime`; a Proxy of a date, which has no slot, is still read through its own `getTime`.
+- **A read follows a bounded number of nodes in all.** The cap of 100 000 elements or keys applied to each array and
+  each object, so a list of records that each stayed under it could still make a copy walk as many nodes as the host
+  served. A read now follows at most 1 000 000 nodes (the elements of lists, the own keys of records and the strings of
+  lists of strings); an answer that holds more ends as `auth.internal`.
+- **Access to a workspace is refused when the repository answers with a row of another tenant.** The workspace and the
+  membership read for a tenant, a workspace and a user are now checked to carry the tenant that was asked about; the
+  key given to a repository is not a proof of the row it returned.
+- **An id names one row, and the library keeps it as a string.** The ids of users, workspaces and memberships were
+  accepted as a string, a finite number or any instance of a class of the host, so a `Map` or a `Date` was an id, and
+  two of them printed the same in a claim, a key or the scope of a query. An id is now a non-empty string, a safe
+  integer, or an object of the host that prints as a non-empty text of its own, and what the library keeps is the text
+  it prints as, read once. A `Date`, a `RegExp`, a `Map`, a `Set`, a `Promise`, an array, a plain object, a function, a
+  boolean, a fraction, an integer past the safe range and an object that prints as nothing or as `[object ...]` end as
+  `auth.internal`. An account whose id is a number now works after the login: the token's subject was the number, which
+  the verifier refuses, so `/me`, a refresh and a password change answered 401 for an account that had just logged in.
+  **Apply to a derived backend:** the library hands the repository the id as a string (it always did, from the token),
+  so a repository keyed by a number has to accept the string; a repository that serves a numeric id as a fraction or
+  past 2^53 has to serve it as a string. A hook that receives a user now sees the id as its string form (a host
+  callback that receives the host's own entity, such as `maxSessionsResolver`, still gets the object as it was).
+- **The secret that signs is the secret that was checked, and the role hierarchies are read once.** The signer is
+  configured by a second call of the host's options factory, and what that call answered was the secret that signed
+  and verified: a factory that answered a weak secret the second time passed the strength check on the first answer and
+  signed with the weak one. Every sign and every verify now names the secret the options resolved to. The role
+  hierarchies (`roles.hierarchy`, `roles.platformHierarchy` and `workspaces.roles.hierarchy`) were kept as the host's
+  own objects and read through its getters at every check; each is read once, as plain data, so a getter that answers
+  differently later cannot grant a role that was never validated. `roles`, `workspaces` and `workspaces.roles` must be objects: a
+  function, an array or a primitive given for one is refused with `[BymaxAuthModule] <option> must be an object
+(received …)`, as the other option groups already were.
+- **A resend of the verification code that fails gives the cooldown back.** The request took the one-minute cooldown
+  before it looked the account up, so a request that failed there (a repository that throws, or answers with a record the
+  copy refuses) left the retry it invites refused for the rest of the minute. A request that took the cooldown and failed
+  releases it, as the password reset request already did; a request that sent, or found the cooldown taken, keeps it.
+
 ## [1.5.12] - 2026-11-21
 
 A patch release.

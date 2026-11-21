@@ -9,7 +9,7 @@ import {
 } from '../bymax-auth.constants'
 import { AccountStatusService } from './account-status.service'
 import { BruteForceService } from './brute-force.service'
-import { OtpService, storeVerificationCode } from './otp.service'
+import { OtpService, releasingCooldownOnFailure, storeVerificationCode } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { CREDENTIAL_PROVED, TokenManagerService } from './token-manager.service'
@@ -1108,10 +1108,10 @@ export class AuthService {
       return // Already sent recently — silently succeed.
     }
 
-    const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
-    if (user && !user.emailVerified) {
-      await this.sendVerificationOtp(tenantId, email)
-    }
+    await releasingCooldownOnFailure(this.redis, this.logger, cooldownKey, async () => {
+      const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
+      if (user && !user.emailVerified) await this.sendVerificationOtp(tenantId, email)
+    })
 
     await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
   }

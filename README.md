@@ -1408,9 +1408,9 @@ With `@opentelemetry/api` installed and an SDK registered, each of these routes 
 
 | Span                  | Routes                                                            |
 | --------------------- | ----------------------------------------------------------------- |
-| `auth.login`          | `POST /login`, `POST /platform/auth/login`                        |
-| `auth.refresh`        | `POST /refresh`, `POST /platform/auth/refresh`                    |
-| `auth.mfa.verify`     | `POST /mfa/challenge`, `POST /platform/auth/mfa/challenge`        |
+| `auth.login`          | `POST /login`, `POST /platform/login`                             |
+| `auth.refresh`        | `POST /refresh`, `POST /platform/refresh`                         |
+| `auth.mfa.verify`     | `POST /mfa/challenge`, `POST /platform/mfa/challenge`             |
 | `auth.password_reset` | `POST /password/forgot-password`, `POST /password/reset-password` |
 
 ### Readiness
@@ -1494,7 +1494,7 @@ A Nest `Logger` calls the host logger and discards what it returns, so a host lo
 The fields that name a step come from sets the library owns, typed in the code and listed here; none is ever text a host or a store wrote.
 
 - **`hook`** of `AUTH_HOOK_FAILED`: `beforeRegister`, `afterRegister`, `beforeLogin`, `afterLogin`, `afterLogout`, `afterPlatformLogout`, `onLoginFailed`, `onLockout`, `onRefreshTokenReuseDetected`, `afterMfaEnabled`, `afterMfaDisabled`, `afterMfaRecoveryCodesRegenerated`, `onNewSession`, `afterEmailVerified`, `afterPasswordReset`, `onOAuthLogin`, `afterInvitationAccepted`, `onSessionEvicted`, `onApiKeyRequest`, `beforeWorkspaceCreate`, `onWorkspaceEvent`, `updateLastLogin`, `accessDenied`, `maxSessionsResolver`.
-- **`operation`** of `AUTH_STORE_FAILED` and `AUTH_STORE_DEGRADED`: `account_status_cache_write`, `api_key_last_used_flush`, `api_key_lookup`, `cache_invalidation`, `dead_member_prune`, `grace_pointer_prune`, `invitation_withdraw`, `logout_marker_clear`, `logout_owner_keep`, `mfa_lock_release`, `mfa_reencryption`, `new_session_user_lookup`, `rehash_on_verify`, `reset_account_lookup`, `reset_cooldown_release`, `reset_cooldown_store`, `reset_issue`, `session_cleanup`, `session_detail_read`, `session_detail_rotation`, `workspace_cache_read`, `workspace_cache_write`.
+- **`operation`** of `AUTH_STORE_FAILED` and `AUTH_STORE_DEGRADED`: `account_status_cache_write`, `api_key_last_used_flush`, `api_key_lookup`, `cache_invalidation`, `dead_member_prune`, `grace_pointer_prune`, `invitation_withdraw`, `logout_marker_clear`, `logout_owner_keep`, `mfa_lock_release`, `mfa_reencryption`, `new_session_user_lookup`, `rehash_on_verify`, `resend_cooldown_release`, `reset_account_lookup`, `reset_cooldown_release`, `reset_cooldown_store`, `reset_issue`, `session_cleanup`, `session_detail_read`, `session_detail_rotation`, `workspace_cache_read`, `workspace_cache_write`.
 - **`kind`** of `AUTH_DELIVERY_FAILED`: `passwordResetToken`, `passwordResetOtp`, `emailVerificationOtp`, `passwordChanged`, `emailChangeVerification`, `emailChanged`, `mfaEnabled`, `mfaDisabled`, `newSessionAlert`, `invitation`, `workspaceInvitation`, `email_verification_otp`, `password_changed_notice`, `password_reset_token`, `password_reset_otp`, `mfa_enabled_notice`, `mfa_disabled_notice`, `mfa_reset_notice`, `email_change_notice`.
 
 ---

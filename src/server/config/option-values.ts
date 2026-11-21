@@ -16,13 +16,50 @@ import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.i
  * other check reads one.
  *
  * @param given - The options as the host wrote them.
- * @returns The options as a plain object in which unset means absent.
+ * @returns The options as a plain object in which unset means absent, and in which the role hierarchies are copies.
  * @throws {Error} naming the first text option, list or group that has the wrong type.
  */
 export function readOptions(given: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
   const options = dropUnset(given)
   validateTextOptions(options)
-  return options
+  return pinHierarchies(options)
+}
+
+/** A hierarchy as a plain copy of the entries of what the host answered; a value that is no object is left for the checks. */
+function copyHierarchy(held: unknown): unknown {
+  if (Object(held) !== held) return held
+  return Object.fromEntries(
+    Object.entries(held as object).map(([role, children]) => [
+      role,
+      Array.isArray(children) ? [...children] : children
+    ])
+  )
+}
+
+/** Replaces the hierarchies named in a group by copies. The group is the fresh plain object `dropUnset` made. */
+function pinIn<G>(group: G, keys: readonly string[]): G {
+  if (Object(group) !== group) return group
+  const plain = group as Record<string, unknown>
+  for (const key of keys) if (plain[key] !== undefined) plain[key] = copyHierarchy(plain[key])
+  return group
+}
+
+/**
+ * The role hierarchies (of the account, of the platform and of the workspaces) as copies, read from the host once, so a
+ * later read cannot grant a role that was never validated.
+ */
+function pinHierarchies(options: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
+  const { roles, workspaces } = options
+  const { roles: workspaceRoles, ...workspaceRest } = (workspaces ?? {}) as { roles?: unknown }
+  return {
+    ...options,
+    roles: pinIn(roles, ['hierarchy', 'platformHierarchy']),
+    ...(workspaceRoles === undefined
+      ? {}
+      : {
+          workspaces: { ...workspaceRest, roles: pinIn(workspaceRoles, ['hierarchy']) }
+        })
+  } as BymaxAuthModuleOptions
 }
 
 /**

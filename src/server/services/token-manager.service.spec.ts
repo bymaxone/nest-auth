@@ -1851,7 +1851,7 @@ describe('TokenManagerService', () => {
     })
 
     // Scenario: the JWT must be verified with the configured algorithm allowlist.
-    // Expected: jwtService.verify called with { algorithms: ['HS256'] }. Why: kills the ObjectLiteral
+    // Expected: jwtService.verify called with the algorithm allowlist, the resolved secret and expiry checked. Why: kills the ObjectLiteral
     // mutant on line 730 (options → {}) and the ArrayDeclaration mutant on line 731 (algorithms → [])
     // which would disable algorithm pinning and allow algorithm-confusion attacks.
     it('verifies the MFA temp token with the configured algorithm allowlist', async () => {
@@ -1870,7 +1870,7 @@ describe('TokenManagerService', () => {
 
       expect(mockJwtService.verify).toHaveBeenCalledWith(FIXED_JWT, {
         algorithms: ['HS256'],
-        // Expiry IS checked here — only logout waives it, and only for the access token.
+        secret: JWT_SECRET,
         ignoreExpiration: false
       })
     })

@@ -8,6 +8,11 @@ import type { JwtService } from '@nestjs/jwt'
 
 import type { ResolvedOptions } from '../config/resolved-options'
 
+/** The resolved secret and the algorithm, named in every sign call: the signer service's own secret came from a second call of the host's factory. */
+export function signerOf(options: ResolvedOptions): { secret: string; algorithm: string } {
+  return { secret: options.jwt.secret, algorithm: options.jwt.algorithm }
+}
+
 /**
  * Verify a token against the current signing secret, then against any retired by a rotation.
  *
@@ -55,8 +60,8 @@ export function verifyWithRotation<T extends object>(
   // undefined issuer/audience as "do not check" — which is the same answer omitting the key
   // gives. A guard here would be a second opinion on a question already settled, and one no
   // test could observe.
-  const { issuer, audience } = options.jwt
-  const base = { algorithms, ignoreExpiration, issuer, audience }
+  const { issuer, audience, secret } = options.jwt
+  const base = { algorithms, ignoreExpiration, issuer, audience, secret }
 
   try {
     return jwtService.verify<T>(token, base)

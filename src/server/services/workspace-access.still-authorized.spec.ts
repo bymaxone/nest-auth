@@ -75,8 +75,12 @@ function world(
     emailVerified: true
   }
 ): void {
-  repos.workspaces.findById.mockResolvedValue(workspace === null ? null : { status: workspace })
-  repos.memberships.find.mockResolvedValue(membership)
+  repos.workspaces.findById.mockResolvedValue(
+    workspace === null ? null : { tenantId: JOB.tenantId, status: workspace }
+  )
+  repos.memberships.find.mockResolvedValue(
+    membership === null ? null : { tenantId: JOB.tenantId, ...membership }
+  )
   repos.users.findById.mockResolvedValue(account)
 }
 
@@ -231,6 +235,12 @@ describe('assertStillAuthorized', () => {
   it('accepts a tenant and an actor of exactly 128 characters and refuses 129', async () => {
     world('active', { role: 'viewer', status: 'active' })
     const edge = { tenantId: 't'.repeat(128), workspaceId: 'w1', actorUserId: 'u'.repeat(128) }
+    repos.workspaces.findById.mockResolvedValue({ tenantId: edge.tenantId, status: 'active' })
+    repos.memberships.find.mockResolvedValue({
+      tenantId: edge.tenantId,
+      role: 'viewer',
+      status: 'active'
+    })
 
     await expect(build().assertStillAuthorized(edge, ['viewer'])).resolves.toBeDefined()
     expect(

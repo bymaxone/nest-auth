@@ -47,7 +47,10 @@ export const OBJECT_GROUPS: readonly string[] = [
   'platform',
   'invitations',
   'emailChange',
-  'oauth'
+  'oauth',
+  'roles',
+  'workspaces',
+  'workspaces.roles'
 ]
 
 /** The value at a dotted path, or `undefined` when a step is missing or is not an object. */

@@ -60,6 +60,7 @@ export type StoreOperation =
   | 'mfa_reencryption'
   | 'new_session_user_lookup'
   | 'rehash_on_verify'
+  | 'resend_cooldown_release'
   | 'reset_account_lookup'
   | 'reset_cooldown_release'
   | 'reset_cooldown_store'

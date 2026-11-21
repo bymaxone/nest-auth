@@ -365,6 +365,22 @@ describe('WorkspaceAccessService', () => {
       expect(fills(redis)).toEqual([])
     })
 
+    // Scenario: a repository that answers, for the tenant and the workspace asked, a workspace or a membership that
+    // belongs to another tenant. Expected: no access and nothing cached. Why: the key the repository was asked for is
+    // not a proof of the row it answered with, and access to a workspace of another tenant is the isolation failing;
+    // the tenant of a record is a string, so it is compared exactly.
+    it.each([
+      ['a workspace of another tenant', { workspace: { ...WORKSPACE, tenantId: 't2' } }],
+      ['a membership of another tenant', { membership: { ...MEMBERSHIP, tenantId: 't2' } }]
+    ])('answers null, and caches nothing, for %s', async (_name, answer) => {
+      const { service, redis, workspaces, memberships } = build()
+      if ('workspace' in answer) workspaces.findById.mockResolvedValue(answer.workspace)
+      if ('membership' in answer) memberships.find.mockResolvedValue(answer.membership)
+
+      await expect(service.resolveMembership(REF)).resolves.toBeNull()
+      expect(fills(redis)).toEqual([])
+    })
+
     it('skips the cache entirely when its lifetime is zero', async () => {
       const { service, redis } = build(0)
 
