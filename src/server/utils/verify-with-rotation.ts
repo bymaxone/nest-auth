@@ -55,8 +55,10 @@ export function verifyWithRotation<T extends object>(
   // undefined issuer/audience as "do not check" — which is the same answer omitting the key
   // gives. A guard here would be a second opinion on a question already settled, and one no
   // test could observe.
-  const { issuer, audience } = options.jwt
-  const base = { algorithms, ignoreExpiration, issuer, audience }
+  const { issuer, audience, secret } = options.jwt
+  // The secret is named here too: the service's own was configured by a second call of the host's factory, and
+  // the one that was checked at start is the one a token has to verify under.
+  const base = { algorithms, ignoreExpiration, issuer, audience, secret }
 
   try {
     return jwtService.verify<T>(token, base)

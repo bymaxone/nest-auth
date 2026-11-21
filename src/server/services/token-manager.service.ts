@@ -168,6 +168,9 @@ export class TokenManagerService {
    */
   private accessSignOptions(): JwtSignOptions {
     return {
+      // The secret the options resolved to, named in the call: the signer was configured by a second call of the
+      // host's factory, and the secret that was checked at start is the one that signs.
+      secret: this.options.jwt.secret,
       expiresIn: this.options.jwt.accessExpiresIn,
       algorithm: this.options.jwt.algorithm,
       ...this.issuerAudience()
@@ -1228,6 +1231,7 @@ export class TokenManagerService {
     }
 
     const token = this.jwtService.sign(payload, {
+      secret: this.options.jwt.secret,
       expiresIn: `${MFA_TEMP_TOKEN_TTL_SECONDS}s`,
       algorithm: this.options.jwt.algorithm,
       // The challenge token is stamped and checked like every other: it grants no resource

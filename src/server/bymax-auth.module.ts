@@ -576,7 +576,9 @@ export class BymaxAuthModule {
         ...(includeApiKeys ? [DiscoveryModule] : []),
         // JwtModule reads the secret directly from the consumer factory (without re-running
         // resolveOptions) to avoid double-validation on startup. Full validation happens once
-        // in the BYMAX_AUTH_OPTIONS provider above.
+        // in the BYMAX_AUTH_OPTIONS provider above. This is a second call of the factory, so what
+        // it answers is not what was validated: every sign and verify of the library names the
+        // secret the options resolved to, and this one only configures the service.
         // expiresIn is omitted — TokenManagerService sets it per-call via accessSignOptions().
         JwtModule.registerAsync({
           // The factory runs here too, so it needs the modules the consumer's `inject` tokens come from.

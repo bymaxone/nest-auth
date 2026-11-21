@@ -46,7 +46,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   the verifier refuses, so `/me`, a refresh and a password change answered 401 for an account that had just logged in.
   **Apply to a derived backend:** the library hands the repository the id as a string (it always did, from the token),
   so a repository keyed by a number has to accept the string; a repository that serves a numeric id as a fraction or
-  past 2^53 has to serve it as a string.
+  past 2^53 has to serve it as a string. A hook that receives a user now sees the id as its string form (a host
+  callback that receives the host's own entity, such as `maxSessionsResolver`, still gets the object as it was).
+- **The secret that signs is the secret that was checked, and the role hierarchy is read once.** The signer is
+  configured by a second call of the host's options factory, and what that call answered was the secret that signed
+  and verified: a factory that answered a weak secret the second time passed the strength check on the first answer and
+  signed with the weak one. Every sign and every verify now names the secret the options resolved to. The role
+  hierarchy was kept as the host's own object and read through its getters at every check; it is read once, as plain
+  data, so a getter that answers differently later cannot grant a role that was never validated.
 - **A resend of the verification code that fails gives the cooldown back.** The request took the one-minute cooldown
   before it looked the account up, so a request that failed there (a repository that throws, or answers with a record the
   copy refuses) left the retry it invites refused for the rest of the minute. A request that took the cooldown and failed

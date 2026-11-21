@@ -221,4 +221,18 @@ describe('verifyWithRotation', () => {
       expect(verifyWithRotation<{ sub: string }>(current, options, right).sub).toBe('u1')
     })
   })
+
+  // Scenario: a service whose own default secret is another than the one the options resolved to, a token signed under
+  // the resolved one and a token signed under the service's own. Expected: the first verifies, the second is refused.
+  // Why: the service is configured by a second call of the host's factory; the secret that was checked at start is the
+  // one a token has to verify under.
+  it('should verify under the secret the options resolved to, not the one the service was given', () => {
+    const resolved = { jwt: { algorithm: 'HS256', secret: CURRENT } } as unknown as ResolvedOptions
+    const service = serviceFor(RETIRED)
+    const underResolved = serviceFor(CURRENT).sign({ sub: 'u1' })
+    const underService = service.sign({ sub: 'u2' })
+
+    expect(verifyWithRotation<{ sub: string }>(service, resolved, underResolved).sub).toBe('u1')
+    expect(() => verifyWithRotation(service, resolved, underService)).toThrow()
+  })
 })
