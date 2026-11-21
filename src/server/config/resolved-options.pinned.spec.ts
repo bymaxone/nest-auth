@@ -336,4 +336,35 @@ describe('the role hierarchy of the resolved options', () => {
         : `${which} is required`
     )
   })
+
+  // Scenario: each hierarchy given as a truthy value that is no object (a string, a number, true), as it was refused or
+  // accepted before the pin existed: the account hierarchy and the workspaces one name what is wrong with it, and the
+  // platform hierarchy, which the checks only test for being there, is kept as the host wrote it. Expected: the same
+  // messages as without the pin, and the platform value untouched. Why: a copy must not change what a value that is no
+  // object means to the checks that judge it.
+  it.each([
+    ['a string', 'abc', "roles.hierarchy['0'] must be an array"],
+    ['a number', 5, 'roles.hierarchy must not be an empty object'],
+    ['true', true, 'roles.hierarchy must not be an empty object']
+  ] as const)(
+    'refuses roles.hierarchy given as %s with the message it had without the pin',
+    (_name, value, message) => {
+      expect(() => resolveOptions(optionsWith({ hierarchy: value }))).toThrow(message)
+    }
+  )
+
+  it.each([
+    ['a string', 'abc'],
+    ['a number', 5],
+    ['true', true]
+  ] as const)('keeps roles.platformHierarchy given as %s as the host wrote it', (_name, value) => {
+    const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
+      jwt: { secret: SECRET },
+      rateLimit: { clientIpSource: 'peer' },
+      roles: { hierarchy: { MEMBER: [] }, platformHierarchy: value },
+      platform: { enabled: true }
+    }
+
+    expect(resolveOptions(given as BymaxAuthModuleOptions).roles.platformHierarchy).toBe(value)
+  })
 })
