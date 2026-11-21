@@ -200,8 +200,10 @@ function copyStrings(value: unknown): string[] {
   if (!Array.isArray(value)) throw new Error(WRONG_KIND)
   refuseBreadth(value.length)
   const copy: string[] = []
-  for (let index = 0; index < value.length; index += 1)
-    copy.push(accept(typeof value[index] === 'string', value[index]) as string)
+  for (let index = 0; index < value.length; index += 1) {
+    const element: unknown = value[index]
+    copy.push(accept(typeof element === 'string', element) as string)
+  }
   return copy
 }
 
@@ -220,14 +222,18 @@ function readInforming(value: unknown): unknown {
 }
 
 /**
- * A date a field only informs with: a real date is copied, and any other instance (a date library's date, an Invalid
- * Date) is kept as the host's own object; anything else is refused.
+ * A date a field only informs with: a real date (or a Proxy of one) with a real time is copied; a string or a finite
+ * number is kept as it is, which is how a driver without a date transform answers; an instance of another class (a date
+ * library's date, an Invalid Date) is kept as the host's own object; anything else is refused. The time is read once.
  */
 function readInformingDate(value: unknown): unknown {
+  if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value)))
+    return value
   if (!isHostInstance(value)) throw new Error(WRONG_KIND)
-  return isDateLike(value as object) && Number.isFinite((value as Date).getTime())
-    ? copyDate(value)
-    : value
+  if (!isDateLike(value as object)) return value
+  const time: unknown = (value as Date).getTime()
+  const copy = new Date(typeof time === 'number' ? time : Number.NaN)
+  return Number.isNaN(copy.getTime()) ? value : copy
 }
 
 /**
@@ -254,7 +260,7 @@ type ReaderName = keyof typeof READERS
 
 /**
  * The kind a field is read as, whether `null` is promised and whether it may be absent, from its spec. A lenient kind
- * (`~`) accepts both: a field that only informs is never worth refusing an answer for.
+ * (`~`) accepts absence and `null` whatever the interface says, and then only the values its reader lists.
  */
 function parseSpec(spec: string): { base: string; nullable: boolean; optional: boolean } {
   const lenient = spec.startsWith('~')
@@ -285,7 +291,7 @@ function readScalar(value: unknown, spec: string): unknown {
  * Copies the fields of a record that its contract names, each as the kind the contract gives it, and hands the rest
  * of the record on without reading it. A field the contract names is read by name once, so it is found wherever the
  * host keeps it (an own field, a prototype getter, a lazy entity that lists nothing), and it shows in a spread of the
- * copy, except a credential, which shows only if the host's own record showed it. A field the interface requires is
+ * copy, except a credential, which shows only if the host's own record showed it. A strict field the interface requires is
  * refused when it is absent: absent would read as the default of its type, and `mfaEnabled` as absent is off. A field
  * the interface allows to be absent may also be `null`, which is how a column that holds nothing arrives from an ORM. Any
  * other own field that holds data is handed on by reference through its descriptor, which evaluates nothing; one that
@@ -352,9 +358,12 @@ function applyContract(value: unknown, contract: Structured, seen: Seen): unknow
 export function copyHostRecord(record: unknown, contract: ErasedContract): unknown {
   try {
     if (typeof contract === 'string') return readScalar(record, contract)
-    return record === null || record === undefined
-      ? record
-      : applyContract(record, contract, new WeakMap())
+    if (record === null || record === undefined) {
+      // A method that may find nothing answers nothing; any other method owes a record or a list.
+      if (contract.nullable === true) return record
+      throw new Error(WRONG_KIND)
+    }
+    return applyContract(record, contract, new WeakMap())
   } catch (error: unknown) {
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
   }

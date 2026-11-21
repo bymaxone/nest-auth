@@ -45,8 +45,10 @@ A patch release.
   a wrapper in `emailVerified` would have passed an unverified account. A field the interface allows to be absent may
   be absent or `null`. The fields that only inform (an id, a name, the dates the library returns or displays) are
   lenient: an id may be a string, a finite number or an instance of a class of the host (the id type of a driver, kept
-  as the host's own object), a date may be a date or an instance of another class (a date library's), and absence is
-  accepted; a function, a symbol and a bigint are still refused there.
+  as the host's own object), a date may be a date, a string, a number or an instance of another class (a date
+  library's), and absence is accepted; a function, a symbol, a bigint and the other values no reader lists are still
+  refused there. A method that owes a record, a page or a list and answers nothing ends as `auth.internal`; only a
+  lookup that may find nothing passes the nothing on.
 - **A date a host wraps in a Proxy is read as a date.** A valid API key whose `expiresAt` was a Proxy of a `Date` was
   refused, and a workspace whose `deletionScheduledAt` was one could be neither restored nor finalized, because the copy
   of the record turned the Proxy into a plain object with no `getTime`. A Proxy whose prototype chain holds

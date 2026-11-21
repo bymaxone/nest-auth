@@ -35,10 +35,13 @@ const fault = new Error('host-text-that-must-not-leak')
 /** What the test repositories promise to answer: a record with an `id`, and nothing else. */
 const RECORD: ErasedContract = { fields: { id: 'id' }, nested: {} }
 
+/** The same record, for a method that may find nothing. */
+const FOUND_OR_NOT: ErasedContract = { ...RECORD, nullable: true }
+
 /** The promise of each method of the host fixture below. */
 const ANSWERS: ErasedRepositoryContract = {
   find: RECORD,
-  missing: RECORD,
+  missing: FOUND_OR_NOT,
   fail: 'void',
   typed: 'void',
   http: 'void',
@@ -400,7 +403,7 @@ describe('hostEntityOf', () => {
         many: async (): Promise<unknown> => [entity, other],
         none: async (): Promise<unknown> => null
       },
-      { one: RECORD, many: { list: RECORD }, none: RECORD }
+      { one: RECORD, many: { list: RECORD }, none: FOUND_OR_NOT }
     )
 
     const one = (await guarded.one()) as Entity

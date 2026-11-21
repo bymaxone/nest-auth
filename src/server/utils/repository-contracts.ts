@@ -81,6 +81,11 @@ type NestedOf<R> = {
 type ScalarSpec<R> =
   `${[NonNullable<R>] extends [boolean] ? 'boolean' : [NonNullable<R>] extends [number] ? 'number' : [NonNullable<R>] extends [string] ? 'string' : 'date'}${null extends R ? '|null' : ''}`
 
+/** A record or a list that a method may answer nothing for says so (`nullable`), and one that may not does not. */
+type Nothing<R> = [R] extends [NonNullable<R>]
+  ? { readonly nullable?: undefined }
+  : { readonly nullable: true }
+
 /**
  * What is read from a value of type `R`, and as which kind: a plain answer by its kind (`'boolean'`, `'string|null'`,
  * `'void'`...), each element of a list (`list`), or the fields of a record (`fields`, every key of `R` and no other,
@@ -89,7 +94,7 @@ type ScalarSpec<R> =
 export type Contract<R> = [R] extends [void]
   ? 'void'
   : [NonNullable<R>] extends [readonly (infer E)[]]
-    ? { readonly list: Contract<E> }
+    ? { readonly list: Contract<E> } & Nothing<R>
     : [NonNullable<R>] extends [boolean | number | string | Date]
       ? ScalarSpec<R>
       : {
@@ -97,7 +102,7 @@ export type Contract<R> = [R] extends [void]
             readonly [K in KeysOfUnion<NonNullable<R>>]: FieldSpec<ValueOf<NonNullable<R>, K>>
           }
           readonly nested: NestedOf<NonNullable<R>>
-        }
+        } & Nothing<R>
 
 /** The contract of every method of a repository interface, for the value its promise resolves to. */
 export type RepositoryContract<I> = {
@@ -109,10 +114,11 @@ export type RepositoryContract<I> = {
 /** A contract with the types erased, which is what the guarded view reads. */
 export type ErasedContract =
   | string
-  | { readonly list: ErasedContract }
+  | { readonly list: ErasedContract; readonly nullable?: true | undefined }
   | {
       readonly fields: Readonly<Record<string, string>>
       readonly nested: Readonly<Record<string, ErasedContract>>
+      readonly nullable?: true | undefined
     }
 
 /** The contract of each method of a repository, by method name, with the types erased. */
@@ -265,10 +271,16 @@ const PAGE_OF_WORKSPACES = {
   nested: { items: { list: WORKSPACE } }
 } as const satisfies Contract<MembershipPage<AuthWorkspace>>
 
+/** The contract of a record, for a method that may find nothing and then answers `null` or `undefined`. */
+const orNothing = <C extends object>(contract: C): C & { readonly nullable: true } => ({
+  ...contract,
+  nullable: true
+})
+
 /** What is read from each answer of the user repository. */
 export const USER_REPOSITORY_CONTRACT: RepositoryContract<IUserRepository> = {
-  findById: USER,
-  findByEmail: USER,
+  findById: orNothing(USER),
+  findByEmail: orNothing(USER),
   create: USER,
   updatePassword: 'void',
   updateMfa: 'void',
@@ -276,15 +288,15 @@ export const USER_REPOSITORY_CONTRACT: RepositoryContract<IUserRepository> = {
   updateStatus: 'void',
   updateEmailVerified: 'void',
   updateEmail: 'void',
-  findByOAuthId: USER,
+  findByOAuthId: orNothing(USER),
   linkOAuth: 'void',
   createWithOAuth: USER
 }
 
 /** What is read from each answer of the platform user repository. */
 export const PLATFORM_USER_REPOSITORY_CONTRACT: RepositoryContract<IPlatformUserRepository> = {
-  findById: PLATFORM_USER,
-  findByEmail: PLATFORM_USER,
+  findById: orNothing(PLATFORM_USER),
+  findByEmail: orNothing(PLATFORM_USER),
   updateLastLogin: 'void',
   updateMfa: 'void',
   updatePassword: 'void',
@@ -293,7 +305,7 @@ export const PLATFORM_USER_REPOSITORY_CONTRACT: RepositoryContract<IPlatformUser
 
 /** What is read from each answer of the API key repository. */
 export const API_KEY_REPOSITORY_CONTRACT: RepositoryContract<IApiKeyRepository> = {
-  findById: API_KEY,
+  findById: orNothing(API_KEY),
   create: API_KEY,
   markRevoked: 'boolean',
   setExpiry: 'boolean',
@@ -308,14 +320,14 @@ export const WORKSPACE_REPOSITORY_CONTRACT: RepositoryContract<IWorkspaceReposit
     fields: { status: 'string', workspace: 'nested?' },
     nested: { workspace: WORKSPACE }
   },
-  findById: WORKSPACE,
+  findById: orNothing(WORKSPACE),
   rename: 'string',
   updateStatus: 'string'
 }
 
 /** What is read from each answer of the membership repository. */
 export const MEMBERSHIP_REPOSITORY_CONTRACT: RepositoryContract<IMembershipRepository> = {
-  find: MEMBERSHIP,
+  find: orNothing(MEMBERSHIP),
   listForUser: PAGE_OF_MEMBERSHIPS_WITH_WORKSPACE,
   listForWorkspace: PAGE_OF_MEMBERSHIPS,
   create: 'string',

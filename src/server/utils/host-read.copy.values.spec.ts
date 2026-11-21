@@ -179,9 +179,16 @@ describe('the kinds of the contract', () => {
         expect(causeOf(() => copyHostRecord({ ...userRecord(), [field]: garbage }, USER))).toBe(
           WRONG_KIND
         )
-    expect(causeOf(() => copyHostRecord({ ...userRecord(), createdAt: 'x' }, USER))).toBe(
-      WRONG_KIND
-    )
+    const strings = copyHostRecord(
+      { ...userRecord(), createdAt: '2026-01-01T00:00:00Z', lastLoginAt: 1767225600000 },
+      USER
+    ) as Record<string, unknown>
+    expect(strings['createdAt']).toBe('2026-01-01T00:00:00Z')
+    expect(strings['lastLoginAt']).toBe(1767225600000)
+    for (const garbage of [true, Number.NaN, {}, []])
+      expect(causeOf(() => copyHostRecord({ ...userRecord(), createdAt: garbage }, USER))).toBe(
+        WRONG_KIND
+      )
     expect(copyHostRecord({ ...userRecord(), lastLoginAt: null, name: null }, USER)).toBeDefined()
   })
 
@@ -380,5 +387,74 @@ describe('the kinds of the contract', () => {
     const served = onPrototype({ ...userRecord(), emailVerified: new Boolean(false) })
 
     expect(causeOf(() => copyHostRecord(served, USER))).toBe(WRONG_KIND)
+  })
+
+  // Scenario: a method that must answer a record, a page or a list answers nothing, as null and as undefined; and a
+  // lookup that may find nothing answers nothing. Expected: the first is refused, the lookup passes the nothing on. Why:
+  // a caller dereferences `items` or `workspace` of what a method owes, and a null there would fail outside the guard.
+  it('refuses nothing where a record, a page or a list is owed, and passes it on for a lookup', () => {
+    const owed = [
+      USER_REPOSITORY_CONTRACT.create,
+      WORKSPACE_REPOSITORY_CONTRACT.createWithOwner,
+      MEMBERSHIP_REPOSITORY_CONTRACT.listForWorkspace,
+      MEMBERSHIP_REPOSITORY_CONTRACT.listForUser,
+      MEMBERSHIP_REPOSITORY_CONTRACT.removeAllForUser,
+      API_KEY_REPOSITORY_CONTRACT.listByLabel
+    ]
+    const lookups = [
+      USER_REPOSITORY_CONTRACT.findById,
+      USER_REPOSITORY_CONTRACT.findByEmail,
+      USER_REPOSITORY_CONTRACT.findByOAuthId,
+      PLATFORM_USER_REPOSITORY_CONTRACT.findById,
+      API_KEY_REPOSITORY_CONTRACT.findById,
+      WORKSPACE_REPOSITORY_CONTRACT.findById,
+      MEMBERSHIP_REPOSITORY_CONTRACT.find
+    ]
+
+    for (const contract of owed)
+      for (const nothing of [null, undefined])
+        expect(causeOf(() => copyHostRecord(nothing, contract))).toBe(WRONG_KIND)
+    for (const contract of lookups)
+      for (const nothing of [null, undefined])
+        expect(copyHostRecord(nothing, contract)).toBe(nothing)
+  })
+
+  // Scenario: a list of strings and a date whose reads are not stable: the list serves a string the first time an
+  // element is read and a symbol the second, the date a time and then a different one. Expected: what is checked is what
+  // is kept. Why: a check of one read and a copy of another would let a value through that the check never saw.
+  it('reads an element of a list and the time of a date once', () => {
+    let element = 0
+    const unstable = new Proxy(['a'], {
+      get: (target, key) => {
+        if (key === '0') {
+          element += 1
+          return element === 1 ? 'first' : Symbol('second')
+        }
+        return Reflect.get(target, key, target)
+      }
+    })
+    let reads = 0
+    const wobbling = new Proxy(new Date(0), {
+      get: (target, key) => {
+        if (key === 'getTime') {
+          return () => {
+            reads += 1
+            return reads === 1 ? 5 : Number.NaN
+          }
+        }
+        const member: unknown = Reflect.get(target, key, target)
+        return typeof member === 'function' ? member.bind(target) : member
+      }
+    })
+
+    const strings = copyHostRecord({ ...apiKeyRecord(), scopes: unstable }, KEY) as {
+      scopes: string[]
+    }
+    const date = copyHostRecord({ ...userRecord(), createdAt: wobbling }, USER) as {
+      createdAt: Date
+    }
+
+    expect(strings.scopes).toEqual(['first'])
+    expect(date.createdAt.getTime()).toBe(5)
   })
 })
