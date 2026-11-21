@@ -243,6 +243,12 @@ describe('copyHostRecord', () => {
   })
 })
 
+/** The typed errors a host repository throws on purpose, kept so a test can ask for those very instances. */
+const typedErrors = {
+  typed: new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS),
+  http: new HttpException('conflict', 409)
+}
+
 describe('guardRepository', () => {
   const record = { id: 'u1' }
   const host = {
@@ -259,10 +265,10 @@ describe('guardRepository', () => {
       throw fault
     },
     async typed(): Promise<never> {
-      throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
+      throw typedErrors.typed
     },
     http(): never {
-      throw new HttpException('x', 409)
+      throw typedErrors.http
     },
     sync(): never {
       throw fault
@@ -294,12 +300,14 @@ describe('guardRepository', () => {
   )
 
   // Scenario: the host throws a typed error on purpose (a conflict it maps). Expected: that very error.
-  it.each([['typed'], ['http']] as const)('lets the typed error of %s through', async (name) => {
-    const guarded = guardRepository(host)
+  it.each([['typed'], ['http']] as const)(
+    'lets the typed error of %s through, as the same instance',
+    async (name) => {
+      const guarded = guardRepository(host)
 
-    await expect(guarded[name]()).rejects.toBeInstanceOf(HttpException)
-    await expect(guarded[name]()).rejects.not.toHaveProperty('cause', fault)
-  })
+      await expect(guarded[name]()).rejects.toBe(typedErrors[name])
+    }
+  )
 })
 
 describe('withGuardedViews', () => {
