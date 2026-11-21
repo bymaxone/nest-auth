@@ -183,7 +183,7 @@ describe('the role hierarchy of the resolved options', () => {
   // getters on its prototype (and the hierarchy of the account a getter too), each counting its reads. Expected: the
   // options resolve as they do with an object literal, each getter read once, and the owner role is the one served.
   // Why: a class is a supported way to write the options, and a copy that carried only own keys would drop the owner
-  // role and refuse a deployment that started before.
+  // role and refuse a valid deployment.
   it('resolves workspace roles that a class serves on its prototype, each getter read once', () => {
     const reads = { ownerRole: 0, hierarchy: 0 }
     class WorkspaceRoles {

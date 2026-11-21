@@ -284,8 +284,8 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
   // Scenario: an account whose id is a number, and one whose id is an object that prints as its hex, through login, me,
   // refresh and a password change, with a repository that finds a row by the id the library gives it, as a driver does.
   // Expected: every step works and the token's subject is the id as a string. Why: a claim, a key and a comparison all
-  // take a string; an id kept as the host served it was a number in the token, which the verifier refused on every
-  // later request, so a login that worked led to a 401 on the next call.
+  // take a string, so the library keeps the id as the text it prints as, and the verifier of every later request
+  // finds the same string in the token that the repository is asked for.
   class HexId {
     toString(): string {
       return '64b0000000000000000000a1'
@@ -343,7 +343,7 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
   // Scenario: the tenant of an account served as an instance of a class of the host (an id type of a driver) while the
   // request names it as a string. Expected: the login ends in the library's internal error and issues no token. Why: a
   // tenant is read as a string and nothing else, because it is written into the claims of a token, where two objects
-  // that serialize to `{}` would be one tenant; the comparison that used to turn this away came after the copy.
+  // that serialize to `{}` would be one tenant, so the copy refuses it before any comparison can.
   it('refuses a login whose tenantId is an object where the request names a string', async () => {
     const http = request(app.getHttpServer())
     await http
