@@ -326,4 +326,28 @@ describe('the role hierarchy of the resolved options', () => {
 
     expect(resolveOptions(given as BymaxAuthModuleOptions).roles.platformHierarchy).toBe(value)
   })
+
+  // Scenario: the children of a role of the workspaces given as a string, a number, an object and null, with an owner that
+  // would otherwise be valid. Expected: each is refused, naming the role whose children they are. Why: the hierarchy of
+  // the workspaces is judged on the copy that is kept, and a child that is no list is no list of roles.
+  it.each([
+    ['a string', 'editor'],
+    ['a number', 7],
+    ['an object', { editor: true }],
+    ['null', null]
+  ] as const)('refuses the children of a workspace role given as %s', (_name, children) => {
+    const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
+      jwt: { secret: SECRET },
+      rateLimit: { clientIpSource: 'peer' },
+      roles: { hierarchy: { MEMBER: [] } },
+      workspaces: {
+        enabled: true,
+        roles: { hierarchy: { owner: children, editor: [] }, ownerRole: 'owner' }
+      }
+    }
+
+    expect(() => resolveOptions(given as BymaxAuthModuleOptions)).toThrow(
+      'workspaces.roles.hierarchy.owner must list only roles that are keys of the hierarchy'
+    )
+  })
 })
