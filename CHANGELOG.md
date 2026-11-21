@@ -26,6 +26,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   the value is written into the claims of a token, where two tenants whose ids are objects both serialize to `{}`. Any
   value that is not a string now ends as `auth.internal`. **Apply to a derived backend:** a repository that serves the
   tenant as an object (an id type of a driver) has to serve it as a string.
+- **The time of a real date is the time it holds.** A subclass of `Date` that overrides `getTime` was asked for its
+  time, so a host could name a deadline other than the one the date carries. A real date is read through
+  `Date.prototype.getTime`; a Proxy of a date, which has no slot, is still read through its own `getTime`.
 - **An id names one row.** The ids of users, workspaces and memberships were accepted as a string, a finite number or
   any instance of a class of the host, so a `Map` or a `Date` was an id, and two of them printed the same in a claim,
   a key or the scope of a query. An id is now a non-empty string, a safe integer, or an object of the host that prints

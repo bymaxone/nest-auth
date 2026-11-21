@@ -186,10 +186,19 @@ function isHostInstance(value: unknown): boolean {
   )
 }
 
+/**
+ * The time of a date. A real date holds it in a slot that only the date's own method reads, so a subclass that
+ * overrides `getTime` is not asked; a Proxy of a date has no slot and is asked through its `getTime`.
+ */
+function timeOf(date: Date): unknown {
+  const real: boolean = types.isDate(date)
+  return real ? Date.prototype.getTime.call(date) : date.getTime()
+}
+
 /** A copy of a date, read through the object that answers as one; its time has to be a number that is a time. */
 function copyDate(value: unknown): Date {
   if (typeof value !== 'object' || value === null || !isDateLike(value)) throw new Error(WRONG_KIND)
-  const time: unknown = value.getTime()
+  const time: unknown = timeOf(value)
   const copy = new Date(typeof time === 'number' ? time : Number.NaN)
   if (Number.isNaN(copy.getTime())) throw new Error(NOT_A_TIME)
   return copy
@@ -241,7 +250,7 @@ function readInformingDate(value: unknown): unknown {
   if (typeof value === 'string' || Number.isFinite(value)) return value
   if (!isHostInstance(value)) throw new Error(WRONG_KIND)
   if (!isDateLike(value as object)) return value
-  const time: unknown = (value as Date).getTime()
+  const time: unknown = timeOf(value as Date)
   const copy = new Date(typeof time === 'number' ? time : Number.NaN)
   return Number.isNaN(copy.getTime()) ? value : copy
 }
