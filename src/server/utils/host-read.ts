@@ -305,6 +305,22 @@ const GUARDED_BY_HOST: ReadonlyMap<symbol, symbol> = new Map([
 ])
 
 /**
+ * The provider of the guarded view of one repository: the host's repository, read through the guard, under the
+ * internal token the library's services inject.
+ *
+ * @param host - The token the host provides its repository under.
+ * @param guarded - The internal token of the view.
+ * @returns A provider resolving `guarded` to the guarded view of what `host` resolves to.
+ */
+export function guardedViewProvider(host: symbol, guarded: symbol): Provider {
+  return {
+    provide: guarded,
+    useFactory: (repository: object): object => guardRepository(repository),
+    inject: [host]
+  }
+}
+
+/**
  * The host's providers plus the guarded view of each repository among them, under the internal tokens the library's
  * services inject.
  *
@@ -322,10 +338,6 @@ export function withGuardedViews(providers: Provider[]): Provider[] {
           typeof provider !== 'function' && 'provide' in provider && provider.provide === host
       )
     )
-    .map(([host, guarded]) => ({
-      provide: guarded,
-      useFactory: (repository: object): object => guardRepository(repository),
-      inject: [host]
-    }))
+    .map(([host, guarded]) => guardedViewProvider(host, guarded))
   return [...providers, ...views]
 }

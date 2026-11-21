@@ -9,6 +9,7 @@
  * Its authorizeUrl() is used to inspect internal scope state through the public API.
  */
 
+import { BYMAX_AUTH_USER_REPOSITORY, GUARDED_USER_REPOSITORY } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { GoogleOAuthPlugin } from './google/google-oauth.plugin'
 import { OAUTH_PLUGINS } from './oauth.constants'
@@ -96,12 +97,13 @@ describe('buildOAuthPlugins', () => {
 // ---------------------------------------------------------------------------
 
 describe('OAuthModule.getOAuthProviders', () => {
-  // Verifies that exactly two providers are returned: the OAUTH_PLUGINS value provider and
-  // OAuthService. Any deviation would cause injection errors when BymaxAuthModule spreads them.
-  it('should return an OAUTH_PLUGINS value provider and OAuthService as the two providers', () => {
+  // Verifies the providers returned: the OAUTH_PLUGINS value provider, OAuthService and the guarded view of the
+  // host's user repository that OAuthService injects. Any deviation would cause injection errors when a parent
+  // module spreads them or when the module is registered on its own.
+  it('should return the OAUTH_PLUGINS value provider, OAuthService and the guarded user repository', () => {
     const providers = OAuthModule.getOAuthProviders(makeOptions())
 
-    expect(providers).toHaveLength(2)
+    expect(providers).toHaveLength(3)
 
     // First element must be the OAUTH_PLUGINS value provider.
     const first = providers[0] as { provide: symbol; useValue: unknown }
@@ -110,6 +112,11 @@ describe('OAuthModule.getOAuthProviders', () => {
 
     // Second element must be the OAuthService class (constructor shorthand).
     expect(providers[1]).toBe(OAuthService)
+
+    // Third element must build the guarded view from the host's own repository token.
+    const third = providers[2] as { provide: symbol; inject: symbol[] }
+    expect(third.provide).toBe(GUARDED_USER_REPOSITORY)
+    expect(third.inject).toEqual([BYMAX_AUTH_USER_REPOSITORY])
   })
 
   // Verifies that the OAUTH_PLUGINS.useValue contains a GoogleOAuthPlugin when google is configured,

@@ -27,16 +27,6 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `HttpException` (such as `AuthException`) the repository throws goes out as it is. The library's own services read the repositories through this
   guarded view, and the token the module exports is still the host's own instance.
 
-### Changed
-
-- **`OAuthModule.register` used on its own no longer resolves `OAuthService`.** `OAuthService` now reads the user
-  repository through the guarded view `BymaxAuthModule` builds under an internal token that the package does not export, so a
-  module that provides `OAuthModule.register(...)` without `BymaxAuthModule` leaves that dependency unresolved. The
-  documented path, `BymaxAuthModule`, registers the controller, the service and the view together and is unchanged.
-  **Apply to a derived backend:** a backend that imports `OAuthModule.register(...)` directly (the module is documented
-  as standalone and for testing) moves its OAuth wiring behind `BymaxAuthModule`, or provides its own
-  `OAuthService` with the repository it wants.
-
 ## [1.5.11] - 2026-11-20
 
 A patch release.
