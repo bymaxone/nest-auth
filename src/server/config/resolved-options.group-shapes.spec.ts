@@ -17,6 +17,8 @@ const SHAPES = {
   'an object literal': (values: Values): Values => ({ ...values }),
   'an object with no prototype': (values: Values): Values =>
     Object.assign(Object.create(null) as Values, values),
+  'a function that carries the keys': (values: Values): Values =>
+    Object.assign(() => undefined, values),
   'a class with the keys as fields': (values: Values): Values => {
     class Fields {
       constructor() {
