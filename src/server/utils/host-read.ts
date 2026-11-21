@@ -188,7 +188,12 @@ function copyData(value: unknown, seen: Seen, depth: number): unknown {
   if (depth > MAX_RECORD_DEPTH) throw new Error('the record nests deeper than the library follows')
   const known = seen.data.get(value)
   if (known !== undefined) return known
-  if (isDateLike(value)) return new Date(Number(value.getTime()))
+  if (isDateLike(value)) {
+    const copy = new Date(Number(value.getTime()))
+    // A date that is not a time compares false with every instant, so a deadline read from it is never due.
+    if (Number.isNaN(copy.getTime())) throw new Error('the answer holds a date that is not a time')
+    return copy
+  }
   if (Array.isArray(value)) {
     refuseBreadth(value.length)
     const copy: unknown[] = []

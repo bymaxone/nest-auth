@@ -15,7 +15,8 @@ import { copyHostRecord, guardRepository, withGuardedViews } from './host-read'
 import {
   API_KEY_REPOSITORY_CONTRACT,
   MEMBERSHIP_REPOSITORY_CONTRACT,
-  USER_REPOSITORY_CONTRACT
+  USER_REPOSITORY_CONTRACT,
+  WORKSPACE_REPOSITORY_CONTRACT
 } from './repository-contracts'
 
 /** The host's own failure, with text a library error must never repeat. */
@@ -259,6 +260,14 @@ describe('copyHostRecord', () => {
   // a copied __proto__ key is a plain data property; a name of the contract that is a method is left behind; a getter
   // of a field of the contract is read once; a field of the contract nested past the limit is refused.
   describe('bounds of the copy', () => {
+    const timeAs = (answer: unknown): Date =>
+      new Proxy(new Date(0), {
+        get: (target, key) => {
+          if (key === 'getTime') return () => answer
+          const member: unknown = Reflect.get(target, key, target)
+          return typeof member === 'function' ? member.bind(target) : member
+        }
+      })
     const nest = (levels: number): Record<string, unknown> => {
       let value: Record<string, unknown> = { leaf: true }
       for (let level = 0; level < levels; level += 1) value = { next: value }
@@ -413,6 +422,27 @@ describe('copyHostRecord', () => {
       expect(copy.createdAt.getTime()).toBe(5)
       expect(copy.name).toEqual({ a: 1 })
       expect(copy.name).not.toBeInstanceOf(Date)
+    })
+
+    // Scenario: a date that is not a time, as a real Invalid Date and as a Proxy whose `getTime` answers a NaN, a string
+    // or an infinity, in a deadline of an API key and of a workspace. Expected: each is refused with the library's
+    // reason. Why: such a date compares false with every instant, so a deadline read from it would never be due.
+    it.each([
+      ['a real Invalid Date', (): Date => new Date(Number.NaN)],
+      ['a Proxy answering NaN', (): Date => timeAs(Number.NaN)],
+      ['a Proxy answering a string', (): Date => timeAs('x')],
+      ['a Proxy answering an infinity', (): Date => timeAs(Number.POSITIVE_INFINITY)]
+    ])('refuses %s as a deadline', (_name, make) => {
+      const reason = 'the answer holds a date that is not a time'
+
+      expect(
+        causeOf(() => copyHostRecord({ expiresAt: make() }, API_KEY_REPOSITORY_CONTRACT.findById))
+      ).toBe(reason)
+      expect(
+        causeOf(() =>
+          copyHostRecord({ deletionScheduledAt: make() }, WORKSPACE_REPOSITORY_CONTRACT.findById)
+        )
+      ).toBe(reason)
     })
 
     it('does not take an object that only has the methods of a date for one, even behind a Proxy', () => {

@@ -27,6 +27,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   not taken for one. An answer with more elements or keys than a copy follows, or an array where a record is promised, is
   refused as `auth.internal`.
 
+### Changed
+
+- **A date that is not a time is refused.** A record a repository returns with a date that compares false with every
+  instant (an Invalid Date, or a Proxy whose `getTime` answers something that is not a time) ends as `auth.internal`.
+  Before, and in 1.5.12 and earlier, it was copied as it was, and a workspace pending deletion whose deadline was such
+  a date was finalized, because `due.getTime() > now` is false for it, and could be restored past its grace period. A
+  genuine Invalid Date in any field the contract names now refuses the whole lookup.
+
 ## [1.5.12] - 2026-11-21
 
 A patch release.
