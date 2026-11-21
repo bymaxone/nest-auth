@@ -43,8 +43,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   carry the name of the hook or the operation from a closed set, and the library's description of the failure, never
   the text of the error. An account an
   OAuth login creates now writes `AUTH_USER_REGISTERED` with `via: oauth`.
-- **README names everything the server exports.** Every export of the server entry, every module option (the ten that
-  were missing include `secureCookies`, `enforceTenantBinding`, `isTrustedProxy` and the OAuth redirect URLs) and every
+- **README names everything the server exports.** Every export of the server entry, every module option (among them `secureCookies`, `enforceTenantBinding`, `isTrustedProxy` and the OAuth redirect URLs) and every
   closed value of the log discriminators is in the README, and a spec keeps the README and the code in step both ways.
 - `rxjs` is declared as a peer dependency of the server entry. It is already required by `@nestjs/common`, and the
   interceptor that counts the observed routes imports it.

@@ -174,7 +174,7 @@ describe('the README against the server entry', () => {
     expect(unmentioned(README, names)).toEqual([])
   })
 
-  // Scenario: the closed values of the log discriminators. Expected: the Log events section names each, and names
+  // Scenario: the closed values of the log discriminators. Expected: the Discriminators section names each, and names
   // nothing the types no longer hold. Why: an operator filtering on `operation` or `hook` learns the set there.
   it('lists the discriminators of the log events both ways', () => {
     const text = section(README, '#### Discriminators')
