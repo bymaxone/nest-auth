@@ -36,12 +36,12 @@ function copyHierarchy(held: unknown): unknown {
   )
 }
 
-/** A group with the hierarchies named in it copied; the group is plain data already, so each is read once. */
+/** Replaces the hierarchies named in a group by copies. The group is the fresh plain object `dropUnset` made. */
 function pinIn<G>(group: G, keys: readonly string[]): G {
-  if (typeof group !== 'object' || group === null || Array.isArray(group)) return group
-  const copy = { ...group } as Record<string, unknown>
-  for (const key of keys) if (copy[key] !== undefined) copy[key] = copyHierarchy(copy[key])
-  return copy as G
+  if (typeof group !== 'object' || group === null) return group
+  const plain = group as Record<string, unknown>
+  for (const key of keys) if (plain[key] !== undefined) plain[key] = copyHierarchy(plain[key])
+  return group
 }
 
 /**
