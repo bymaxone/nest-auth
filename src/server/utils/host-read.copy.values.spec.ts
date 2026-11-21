@@ -493,4 +493,18 @@ describe('the kinds of the contract', () => {
     for (const field of ['mfaSecret', 'mfaRecoveryCodes', 'name'])
       expect(Object.hasOwn(copy, field)).toBe(false)
   })
+
+  // Scenario: a date that only informs, behind a Proxy whose `getTime` answers a string that would parse as a date, and one whose `getTime` answers
+  // a NaN. Expected: each is kept as the host's own object, neither is copied nor refused. Why: a lenient field never
+  // fails a login for a date the library only displays, and a time that is not a number is no time to copy.
+  it('keeps a date that only informs and has no real time as the host own object', () => {
+    const { lastLoginAt: _a, ...rest } = userRecord()
+
+    for (const answer of ['2020-01-01', Number.NaN]) {
+      const odd = timeAs(answer)
+      const copy = copyHostRecord({ ...rest, lastLoginAt: odd }, USER) as { lastLoginAt: Date }
+
+      expect(copy.lastLoginAt).toBe(odd)
+    }
+  })
 })
