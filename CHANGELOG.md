@@ -54,7 +54,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   signed with the weak one. Every sign and every verify now names the secret the options resolved to. The role
   hierarchies (`roles.hierarchy`, `roles.platformHierarchy` and `workspaces.roles.hierarchy`) were kept as the host's
   own objects and read through its getters at every check; each is read once, as plain data, so a getter that answers
-  differently later cannot grant a role that was never validated.
+  differently later cannot grant a role that was never validated. `roles`, `workspaces` and `workspaces.roles` must be objects: a
+  function, an array or a primitive given for one is refused with `[BymaxAuthModule] <option> must be an object
+(received …)`, as the other option groups already were.
 - **A resend of the verification code that fails gives the cooldown back.** The request took the one-minute cooldown
   before it looked the account up, so a request that failed there (a repository that throws, or answers with a record the
   copy refuses) left the retry it invites refused for the rest of the minute. A request that took the cooldown and failed

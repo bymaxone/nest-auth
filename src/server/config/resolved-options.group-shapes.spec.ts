@@ -17,8 +17,6 @@ const SHAPES = {
   'an object literal': (values: Values): Values => ({ ...values }),
   'an object with no prototype': (values: Values): Values =>
     Object.assign(Object.create(null) as Values, values),
-  'a function that carries the keys': (values: Values): Values =>
-    Object.assign(() => undefined, values),
   'a class with the keys as fields': (values: Values): Values => {
     class Fields {
       constructor() {
@@ -109,5 +107,33 @@ describe('the group that holds a role hierarchy, in every way a host can write i
     if (shape.includes('getters'))
       expect(Object.keys(reads).sort()).toEqual(Object.keys(expected).sort())
     expect(held['hierarchy']).not.toBe(expected.hierarchy)
+  })
+
+  // Scenario: each group that holds a hierarchy written as a function that carries the keys, as an array, as a string and
+  // as a number. Expected: each is refused by shape, naming the group and what it was. Why: a function or an array is no
+  // group of settings, so it is not read by property and not copied; it is refused before anything reads it.
+  it.each(
+    (['roles', 'workspaces', 'workspaces.roles'] as const).flatMap((group) =>
+      (
+        [
+          ['a function', Object.assign(() => undefined, ACCOUNT)],
+          ['an array', [ACCOUNT]],
+          ['a string', 'roles'],
+          ['7', 7]
+        ] as const
+      ).map(([what, value]) => [group, what, value] as const)
+    )
+  )('refuses %s written as %s', (group, what, value) => {
+    const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
+      jwt: { secret: SECRET },
+      rateLimit: { clientIpSource: 'peer' },
+      roles: group === 'roles' ? value : { hierarchy: { MEMBER: [] } },
+      ...(group === 'workspaces' ? { workspaces: value } : {}),
+      ...(group === 'workspaces.roles' ? { workspaces: { enabled: true, roles: value } } : {})
+    }
+
+    expect(() => resolveOptions(given as BymaxAuthModuleOptions)).toThrow(
+      `${group} must be an object (received ${what})`
+    )
   })
 })

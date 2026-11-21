@@ -66,9 +66,9 @@ describe('the role hierarchy of the resolved options', () => {
     ['is missing, with roles undefined', undefined, 'roles.hierarchy is required'],
     ['is missing, with roles null', null, 'roles.hierarchy is required'],
     ['is null', { hierarchy: null }, 'roles.hierarchy is required'],
-    ['is missing, with roles an array', [], 'roles.hierarchy is required'],
-    ['is missing, with roles a string', 'ADMIN', 'roles.hierarchy is required'],
-    ['is missing, with roles a number', 7, 'roles.hierarchy is required'],
+    ['is missing, with roles an array', [], 'roles must be an object (received an array)'],
+    ['is missing, with roles a string', 'ADMIN', 'roles must be an object (received a string)'],
+    ['is missing, with roles a number', 7, 'roles must be an object (received 7)'],
     ['is not an object', { hierarchy: 'ADMIN' }, 'roles.hierarchy'],
     ['is an array', { hierarchy: ['ADMIN'] }, 'roles.hierarchy'],
     [
@@ -210,23 +210,6 @@ describe('the role hierarchy of the resolved options', () => {
     expect(resolved.workspaces?.roles.hierarchy).toEqual({ owner: ['editor'], editor: [] })
   })
 
-  // Scenario: the roles written as a function that carries a hierarchy, which the checks accept as a group, and the host
-  // changing that hierarchy after the options resolved. Expected: the resolved roles are a copy, the host's function and
-  // its hierarchy are untouched, and the change does not reach the resolved options. Why: a hierarchy the host can still
-  // change after validation is the defect the pin exists to close, whatever the host wrote the group as.
-  it('copies the hierarchy of a function that carries one and never writes to the function', () => {
-    const hierarchy: Record<string, string[]> = { MEMBER: [] }
-    const roles = Object.assign(() => undefined, { hierarchy })
-
-    const resolved = resolveOptions(optionsWith(roles))
-    hierarchy['MEMBER']?.push('ADMIN')
-    hierarchy['ADMIN'] = []
-
-    expect(resolved.roles).not.toBe(roles)
-    expect(roles.hierarchy).toBe(hierarchy)
-    expect(resolved.roles.hierarchy).toEqual({ MEMBER: [] })
-  })
-
   // Scenario: each of the three hierarchies written as an object, as a function that carries the roles and as an array
   // of lists (a role named by its index), which the checks accept, and the host changing the roles and a list after the
   // options resolved. Expected: the resolved hierarchy is a plain copy that the change does not reach. Why: the pin
@@ -283,29 +266,6 @@ describe('the role hierarchy of the resolved options', () => {
     expect(typeof held).toBe('object')
   })
 
-  // Scenario: the workspaces written as a function that carries the settings and the roles, and the host changing the
-  // roles of the hierarchy after the options resolved. Expected: the options resolve as they do with an object, and the
-  // change does not reach them. Why: the options are a group like any other and a function is accepted as one.
-  it('copies the workspaces written as a function, and a later change by the host does not reach it', () => {
-    const hierarchy: Record<string, string[]> = { owner: ['editor'], editor: [] }
-    const workspaces = Object.assign(() => undefined, {
-      enabled: true,
-      roles: { hierarchy, ownerRole: 'owner' }
-    })
-    const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
-      jwt: { secret: SECRET },
-      roles: { hierarchy: { MEMBER: [] } },
-      rateLimit: { clientIpSource: 'peer' },
-      workspaces
-    }
-
-    const resolved = resolveOptions(given as BymaxAuthModuleOptions)
-    hierarchy['ADDED'] = []
-    hierarchy['editor']?.push('owner')
-
-    expect(resolved.workspaces?.roles.hierarchy).toEqual({ owner: ['editor'], editor: [] })
-  })
-
   // Scenario: each of the three hierarchies given as a falsy value that is not null (false, 0, an empty string and NaN),
   // with the platform enabled where the platform hierarchy is the one under test. Expected: each is refused as a hierarchy
   // that was not given, naming it. Why: a falsy value is no hierarchy, and a copy that turned it into an empty object
@@ -337,17 +297,16 @@ describe('the role hierarchy of the resolved options', () => {
     )
   })
 
-  // Scenario: each hierarchy given as a truthy value that is no object (a string, a number, true), as it was refused or
-  // accepted before the pin existed: the account hierarchy and the workspaces one name what is wrong with it, and the
-  // platform hierarchy, which the checks only test for being there, is kept as the host wrote it. Expected: the same
-  // messages as without the pin, and the platform value untouched. Why: a copy must not change what a value that is no
-  // object means to the checks that judge it.
+  // Scenario: each hierarchy given as a truthy value that is no object (a string, a number, true). Expected: the account
+  // hierarchy is refused with a message that names what is wrong with it, and the platform hierarchy, which the checks
+  // only test for being there, is kept as the host wrote it. Why: only an object is copied, so a value that is no object
+  // means to the checks exactly what the host wrote.
   it.each([
     ['a string', 'abc', "roles.hierarchy['0'] must be an array"],
     ['a number', 5, 'roles.hierarchy must not be an empty object'],
     ['true', true, 'roles.hierarchy must not be an empty object']
   ] as const)(
-    'refuses roles.hierarchy given as %s with the message it had without the pin',
+    'refuses roles.hierarchy given as %s, naming what is wrong with it',
     (_name, value, message) => {
       expect(() => resolveOptions(optionsWith({ hierarchy: value }))).toThrow(message)
     }

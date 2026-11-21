@@ -25,7 +25,7 @@ export function readOptions(given: BymaxAuthModuleOptions): BymaxAuthModuleOptio
   return pinHierarchies(options)
 }
 
-/** A hierarchy as a plain copy of what the host answered, whatever object it is; a value that is no object is left for the checks. */
+/** A hierarchy as a plain copy of the entries of what the host answered; a value that is no object is left for the checks. */
 function copyHierarchy(held: unknown): unknown {
   if (Object(held) !== held) return held
   return Object.fromEntries(
@@ -36,14 +36,12 @@ function copyHierarchy(held: unknown): unknown {
   )
 }
 
-/**
- * A copy of a group with the hierarchies named in it copied too. The group is copied, never written to: it is usually the
- * plain object `dropUnset` made, but a function that carries the hierarchy is the host's own and is accepted as a group.
- */
+/** Replaces the hierarchies named in a group by copies. The group is the fresh plain object `dropUnset` made. */
 function pinIn<G>(group: G, keys: readonly string[]): G {
-  const copy = { ...group } as Record<string, unknown>
-  for (const key of keys) if (copy[key] !== undefined) copy[key] = copyHierarchy(copy[key])
-  return copy as G
+  if (Object(group) !== group) return group
+  const plain = group as Record<string, unknown>
+  for (const key of keys) if (plain[key] !== undefined) plain[key] = copyHierarchy(plain[key])
+  return group
 }
 
 /**
