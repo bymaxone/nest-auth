@@ -18,6 +18,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A host getter, Proxy or factory that throws no longer leaves the library as the host's own error.** The options a
+  host returns are read inside one boundary: a failure ends as `[BymaxAuthModule] the options could not be read…` with the
+  host's error as its `cause` and none of its text. Each record a repository returns is copied once, so a getter that
+  throws ends as `auth.internal` with the cause, and a failure of the repository itself is the same error; a typed
+  `AuthException` the repository throws goes out as it is. The library's own services read the repositories through this
+  guarded view, and the token the module exports is still the host's own instance. A spec raises the Nth read of the
+  options and of a returned user record to a thrown fault, for every N, and fails on any end that is not the library's
+  error carrying that fault.
+
 ## [1.5.11] - 2026-11-20
 
 A patch release.
