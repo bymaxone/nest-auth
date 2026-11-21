@@ -25,11 +25,12 @@ function countingHierarchy(reads: Record<string, number>): Record<string, string
 }
 
 function optionsWith(roles: unknown): BymaxAuthModuleOptions {
-  return {
+  const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
     jwt: { secret: SECRET },
     roles,
     rateLimit: { clientIpSource: 'peer' }
-  } as unknown as BymaxAuthModuleOptions
+  }
+  return given as BymaxAuthModuleOptions
 }
 
 describe('the role hierarchy of the resolved options', () => {

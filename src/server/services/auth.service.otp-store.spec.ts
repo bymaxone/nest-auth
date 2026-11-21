@@ -46,7 +46,7 @@ const mockUserRepo = { findByEmail: jest.fn(), create: jest.fn() }
 const mockEmailProvider = { sendEmailVerificationOtp: jest.fn() }
 const mockPasswordService = { assertAcceptable: jest.fn(), hash: jest.fn() }
 const mockTokenManager = { issueTokens: jest.fn() }
-const mockRedis = { setnx: jest.fn() }
+const mockRedis = { setnx: jest.fn(), del: jest.fn() }
 const mockOtpService = { generate: jest.fn(), store: jest.fn() }
 
 const mockOptions = {
@@ -216,5 +216,45 @@ describe('AuthService — a refused write of the verification code', () => {
 
     expect(mockEmailProvider.sendEmailVerificationOtp).toHaveBeenCalledWith('tenant-1', EMAIL, CODE)
     expect(errorLog).not.toHaveBeenCalled()
+  })
+
+  // Scenario: the cooldown is claimed and the request then fails before it can send (the account lookup throws, as it
+  // does when the repository answers with a record the copy refuses; the code generator throws), and a release of the
+  // cooldown that itself fails. Expected: the request ends in its own failure, and the cooldown it took is released (a
+  // failed release is not raised). Why: a retry invited by a 500 must not be refused for the rest of the minute by a
+  // send that never happened.
+  it.each([
+    ['the account lookup throws', 'lookup'],
+    ['the code generator throws', 'generate'],
+    ['the release fails too', 'release']
+  ] as const)('releases the cooldown it took when %s', async (_name, fault) => {
+    const failure = new Error('lookup failed')
+    mockRedis.del.mockResolvedValue(1)
+    if (fault === 'generate') {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+      mockOtpService.generate.mockImplementation(() => {
+        throw failure
+      })
+    } else mockUserRepo.findByEmail.mockRejectedValue(failure)
+    if (fault === 'release') mockRedis.del.mockRejectedValue(new Error('store down'))
+
+    await expect(service.resendVerificationEmail('tenant-1', EMAIL, REQUEST)).rejects.toBe(failure)
+
+    const key = `resend:email_verification:${hmacSha256(`tenant-1:${EMAIL}`, HMAC_KEY)}`
+    expect(mockRedis.del).toHaveBeenCalledWith(key)
+    if (fault === 'release') expect(errorLog).toHaveBeenCalledTimes(1)
+  })
+
+  // Scenario: a send that succeeds, and a request that finds the cooldown already taken. Expected: the cooldown is not
+  // released in either. Why: it is the throttle; only a request that took it and failed gives it back.
+  it('keeps the cooldown after a send and after a hit', async () => {
+    mockRedis.setnx.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+    mockOtpService.store.mockResolvedValue(undefined)
+
+    await service.resendVerificationEmail('tenant-1', EMAIL, REQUEST)
+    await service.resendVerificationEmail('tenant-1', EMAIL, REQUEST)
+
+    expect(mockRedis.del).not.toHaveBeenCalled()
   })
 })

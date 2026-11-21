@@ -16,10 +16,14 @@ const CURRENT = 'c'.repeat(48)
 const RETIRED = 'r'.repeat(48)
 const OLDER = 'o'.repeat(48)
 
-/** Options carrying the given retired secrets, if any. */
-function optionsWith(previousSecrets?: string[]): ResolvedOptions {
+/** Options carrying the given retired secrets, if any, and the given current secret, if any. */
+function optionsWith(previousSecrets?: string[], secret?: string): ResolvedOptions {
   return {
-    jwt: { algorithm: 'HS256', ...(previousSecrets === undefined ? {} : { previousSecrets }) }
+    jwt: {
+      algorithm: 'HS256',
+      ...(previousSecrets === undefined ? {} : { previousSecrets }),
+      ...(secret === undefined ? {} : { secret })
+    }
   } as unknown as ResolvedOptions
 }
 
@@ -227,7 +231,7 @@ describe('verifyWithRotation', () => {
   // Why: the service is configured by a second call of the host's factory; the secret that was checked at start is the
   // one a token has to verify under.
   it('should verify under the secret the options resolved to, not the one the service was given', () => {
-    const resolved = { jwt: { algorithm: 'HS256', secret: CURRENT } } as unknown as ResolvedOptions
+    const resolved = optionsWith(undefined, CURRENT)
     const service = serviceFor(RETIRED)
     const underResolved = serviceFor(CURRENT).sign({ sub: 'u1' })
     const underService = service.sign({ sub: 'u2' })

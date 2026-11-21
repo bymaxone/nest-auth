@@ -574,11 +574,8 @@ export class BymaxAuthModule {
         ...(options.imports ?? []),
         // The bootstrap scope audit walks controllers through the discovery service.
         ...(includeApiKeys ? [DiscoveryModule] : []),
-        // JwtModule reads the secret directly from the consumer factory (without re-running
-        // resolveOptions) to avoid double-validation on startup. Full validation happens once
-        // in the BYMAX_AUTH_OPTIONS provider above. This is a second call of the factory, so what
-        // it answers is not what was validated: every sign and verify of the library names the
-        // secret the options resolved to, and this one only configures the service.
+        // A second call of the consumer factory, not resolveOptions: what it answers is not what the
+        // BYMAX_AUTH_OPTIONS provider validated, so every sign and verify names the resolved secret.
         // expiresIn is omitted — TokenManagerService sets it per-call via accessSignOptions().
         JwtModule.registerAsync({
           // The factory runs here too, so it needs the modules the consumer's `inject` tokens come from.

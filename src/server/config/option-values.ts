@@ -16,15 +16,28 @@ import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.i
  * other check reads one.
  *
  * @param given - The options as the host wrote them.
- * @returns The options as a plain object in which unset means absent.
+ * @returns The options as a plain object in which unset means absent, and in which the role hierarchy is a copy.
  * @throws {Error} naming the first text option, list or group that has the wrong type.
  */
 export function readOptions(given: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
   const options = dropUnset(given)
   validateTextOptions(options)
-  return options
+  return pinHierarchy(options)
 }
 
+/** The role hierarchy as a copy, read from the host once, so a later read cannot grant a role that was never validated. */
+function pinHierarchy(options: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
+  const { hierarchy, ...rest } = options.roles ?? {}
+  if (typeof hierarchy !== 'object' || hierarchy === null || Array.isArray(hierarchy))
+    return options
+  const pinned = Object.fromEntries(
+    Object.entries(hierarchy).map(([role, children]) => [
+      role,
+      Array.isArray(children) ? [...children] : children
+    ])
+  )
+  return { ...options, roles: { ...rest, hierarchy: pinned } }
+}
 /**
  * Runs the value checks of the numeric options, the flags and the documented-set options.
  *

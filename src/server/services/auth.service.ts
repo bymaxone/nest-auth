@@ -9,7 +9,7 @@ import {
 } from '../bymax-auth.constants'
 import { AccountStatusService } from './account-status.service'
 import { BruteForceService } from './brute-force.service'
-import { OtpService, storeVerificationCode } from './otp.service'
+import { OtpService, releasingCooldownOnFailure, storeVerificationCode } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { CREDENTIAL_PROVED, TokenManagerService } from './token-manager.service'
@@ -1108,19 +1108,10 @@ export class AuthService {
       return // Already sent recently — silently succeed.
     }
 
-    try {
+    await releasingCooldownOnFailure(this.redis, this.logger, cooldownKey, async () => {
       const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
-      if (user && !user.emailVerified) {
-        await this.sendVerificationOtp(tenantId, email)
-      }
-    } catch (error: unknown) {
-      // The cooldown was taken for a send that did not happen: the retry a failure invites must not be refused for
-      // the rest of the minute. Same rule as the reset request, which gives it back when its own request fails.
-      await this.redis.del(cooldownKey).catch((err: unknown) => {
-        logStore(this.logger, 'AUTH_STORE_FAILED', 'resend_cooldown_release', err)
-      })
-      throw error
-    }
+      if (user && !user.emailVerified) await this.sendVerificationOtp(tenantId, email)
+    })
 
     await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
   }

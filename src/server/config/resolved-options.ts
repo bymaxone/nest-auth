@@ -186,24 +186,6 @@ function isProductionDeployment(userOptions: BymaxAuthModuleOptions): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * The role hierarchy as plain data, read from the host once. The checks that follow and every later read of the
- * resolved options see this copy, so a getter or a Proxy that answers differently the second time cannot make the
- * library grant a role that was never validated. What is not a hierarchy is left as it is, for the checks to refuse.
- */
-function pinHierarchy(options: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
-  const { hierarchy, ...rest } = options.roles ?? {}
-  if (typeof hierarchy !== 'object' || hierarchy === null || Array.isArray(hierarchy))
-    return options
-  const pinned = Object.fromEntries(
-    Object.entries(hierarchy).map(([role, children]) => [
-      role,
-      Array.isArray(children) ? [...children] : children
-    ])
-  )
-  return { ...options, roles: { ...rest, hierarchy: pinned } }
-}
-
-/**
  * Merges consumer-supplied options with secure defaults and validates all
  * security-critical invariants.
  *
@@ -217,7 +199,7 @@ function pinHierarchy(options: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
  * application from starting, ensuring misconfigured deployments fail fast.
  */
 export function resolveOptions(given: BymaxAuthModuleOptions): ResolvedOptions {
-  const userOptions = pinHierarchy(readOptions(given))
+  const userOptions = readOptions(given)
   validateJwt(userOptions.jwt)
   validateIdentifierKey(userOptions.identifierKey)
   validateMfaEncryptionKey(userOptions.mfa)

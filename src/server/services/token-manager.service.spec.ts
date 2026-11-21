@@ -1556,33 +1556,6 @@ describe('TokenManagerService', () => {
       expect(token).toBe(FIXED_JWT)
     })
 
-    // Scenario: the three tokens the library signs (the dashboard access token, the platform access token and the MFA
-    // challenge token), by a signer whose own default secret is another one. Expected: each is signed with the secret
-    // the options resolved to, named in the call. Why: the signer is configured by a second call of the host's
-    // factory, and a secret that call answers (a weak one, after a strong one was validated) must never be the one
-    // that signs; the secret that was checked is the one that signs.
-    it('signs every token with the secret the options resolved to', async () => {
-      mockRedis.set.mockResolvedValue(undefined)
-      mockRedis.del.mockResolvedValue(undefined)
-      const signed = (): unknown[] => mockJwtService.sign.mock.calls.map((call) => call[1])
-
-      service.issueAccess({
-        sub: 'user-1',
-        tenantId: 'tenant-1',
-        role: 'member',
-        type: 'dashboard',
-        status: 'active',
-        mfaEnabled: false,
-        mfaVerified: false
-      })
-      await service.issueMfaTempToken('user-1', 'dashboard', 'tenant-1')
-      await service.issueMfaTempToken('admin-1', 'platform')
-
-      expect(signed()).toHaveLength(3)
-      for (const options of signed())
-        expect(options).toEqual(expect.objectContaining({ secret: JWT_SECRET }))
-    })
-
     // Verifies that platform MFA challenges use context 'platform' in the token payload.
     it('should use context:platform for platform MFA challenges', async () => {
       mockRedis.set.mockResolvedValue(undefined)
@@ -1878,7 +1851,7 @@ describe('TokenManagerService', () => {
     })
 
     // Scenario: the JWT must be verified with the configured algorithm allowlist.
-    // Expected: jwtService.verify called with { algorithms: ['HS256'] }. Why: kills the ObjectLiteral
+    // Expected: jwtService.verify called with the algorithm allowlist, the resolved secret and expiry checked. Why: kills the ObjectLiteral
     // mutant on line 730 (options → {}) and the ArrayDeclaration mutant on line 731 (algorithms → [])
     // which would disable algorithm pinning and allow algorithm-confusion attacks.
     it('verifies the MFA temp token with the configured algorithm allowlist', async () => {
@@ -1897,9 +1870,7 @@ describe('TokenManagerService', () => {
 
       expect(mockJwtService.verify).toHaveBeenCalledWith(FIXED_JWT, {
         algorithms: ['HS256'],
-        // The secret the options resolved to is named in the call, not left to the service's own.
         secret: JWT_SECRET,
-        // Expiry IS checked here — only logout waives it, and only for the access token.
         ignoreExpiration: false
       })
     })

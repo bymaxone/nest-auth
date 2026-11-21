@@ -7,10 +7,27 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import { logEvent } from '../observability/log-event'
+import { logEvent, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { sleep } from '../utils/sleep'
+
+/** Gives the cooldown back when the work of a resend request fails; a failed release is logged, never raised. */
+export async function releasingCooldownOnFailure<T>(
+  redis: Pick<AuthRedisService, 'del'>,
+  logger: LoggerService,
+  cooldownKey: string,
+  work: () => Promise<T>
+): Promise<T> {
+  try {
+    return await work()
+  } catch (error: unknown) {
+    await redis.del(cooldownKey).catch((err: unknown) => {
+      logStore(logger, 'AUTH_STORE_FAILED', 'resend_cooldown_release', err)
+    })
+    throw error
+  }
+}
 
 /** Maximum allowed OTP verification attempts before the code is locked. */
 const MAX_ATTEMPTS = 5

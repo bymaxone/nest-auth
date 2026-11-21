@@ -43,13 +43,10 @@ import { AuthException } from '../errors/auth-exception'
 /** The most elements of an array and the most keys of an object a copy follows; a host that answers more is refused. */
 const MAX_BREADTH = 100_000
 
-/** The most nodes a read follows in all: the elements of lists, the own keys of records and the strings of lists. */
+/** The most nodes one read follows in all (list elements, record keys, strings of lists). */
 const MAX_NODES = 1_000_000
 
-/**
- * What one read keeps: what was copied, so that a value reached twice under a contract is copied once, by value and
- * contract together, and how many nodes it may still follow.
- */
+/** What one read keeps: the copies made, by value and contract, and the nodes it may still follow. */
 interface Read {
   readonly copies: WeakMap<object, Map<ErasedContract, unknown>>
   nodes: number
@@ -145,10 +142,7 @@ function define(copy: object, key: string, value: unknown, enumerable: boolean):
 /** The object the host's repository returned behind each copy of it. Filled by the copy itself, which is the only read. */
 const ENTITIES = new WeakMap<object, object>()
 
-/**
- * Follows `size` elements or keys of an array or an object, or refuses when the container holds more than a copy
- * follows or the read has followed more than it may in all.
- */
+/** Refuses a container past the cap of one, or a read past the cap of all. */
 function follow(read: Read, size: number): void {
   read.nodes -= size
   if (size > MAX_BREADTH || read.nodes < 0)
@@ -200,10 +194,7 @@ function isHostInstance(value: unknown): boolean {
   )
 }
 
-/**
- * The time of a date. A real date holds it in a slot that only the date's own method reads, so a subclass that
- * overrides `getTime` is not asked; a Proxy of a date has no slot and is asked through its `getTime`.
- */
+/** A real date's time comes from its slot, not from a subclass's `getTime`; a Proxy has no slot. */
 function timeOf(date: Date): unknown {
   const real: boolean = types.isDate(date)
   return real ? Date.prototype.getTime.call(date) : date.getTime()
@@ -231,12 +222,8 @@ function copyStrings(value: unknown, read: Read): string[] {
 }
 
 /**
- * An id: what names one row and cannot name two, because an id reaches claims, keys and the scope of a query. A
- * non-empty string, a safe integer, or an instance of a class of the host (an id type of a driver) that prints as a
- * non-empty text of its own. It is read as that text, once: a claim, a key and a comparison all take a string, and the
- * interface declares one, so the id the library keeps is the string the host's id prints as. A date and a regular
- * expression print as text and are refused by kind; a Map, a Set, a Promise and a plain object print as `[object ...]`,
- * which every one of its kind shares.
+ * An id names one row: a non-empty string, a safe integer, or a host object that prints as a non-empty text of its own
+ * (not `[object ...]`, which every plain object, Map, Set and Promise shares). Kept as that text, read once.
  */
 function readId(value: unknown): string {
   if (typeof value === 'string') return accept(value !== '', value) as string
@@ -272,8 +259,8 @@ function readInformingDate(value: unknown): unknown {
 
 /**
  * How a value is read as each kind a contract can name. A strict kind is exact: a wrapper object is not a boolean, a
- * string is not a number, a date has a real time, and nothing that decides access (a tenant is a string) is an object of the host. A kind
- * marked `~` only informs: it is lenient about what it takes (see {@link readInforming}).
+ * string is not a number, and a date has a real time. A kind marked `~` only informs: it is lenient about what it
+ * takes (see {@link readInforming}).
  */
 const READERS = {
   boolean: (value: unknown): unknown => accept(typeof value === 'boolean', value),

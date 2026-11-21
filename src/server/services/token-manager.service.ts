@@ -33,7 +33,7 @@ import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { serializeSession } from '../utils/serialize-session'
 import { dashboardSessionDetail, platformSessionExtra } from '../utils/session-detail'
 import { readStampedEpoch } from '../utils/stamped-epoch'
-import { verifyWithRotation } from '../utils/verify-with-rotation'
+import { signerOf, verifyWithRotation } from '../utils/verify-with-rotation'
 
 /** TTL in seconds for MFA temp tokens (5 minutes). */
 const MFA_TEMP_TOKEN_TTL_SECONDS = 300
@@ -168,11 +168,8 @@ export class TokenManagerService {
    */
   private accessSignOptions(): JwtSignOptions {
     return {
-      // The secret the options resolved to, named in the call: the signer was configured by a second call of the
-      // host's factory, and the secret that was checked at start is the one that signs.
-      secret: this.options.jwt.secret,
       expiresIn: this.options.jwt.accessExpiresIn,
-      algorithm: this.options.jwt.algorithm,
+      ...signerOf(this.options),
       ...this.issuerAudience()
     } as unknown as JwtSignOptions
   }
@@ -1231,9 +1228,8 @@ export class TokenManagerService {
     }
 
     const token = this.jwtService.sign(payload, {
-      secret: this.options.jwt.secret,
       expiresIn: `${MFA_TEMP_TOKEN_TTL_SECONDS}s`,
-      algorithm: this.options.jwt.algorithm,
+      ...signerOf(this.options),
       // The challenge token is stamped and checked like every other: it grants no resource
       // access on its own, but it is still a token this backend minted, and a verifier that
       // exempted one shape would be a verifier an attacker aims at.
