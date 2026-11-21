@@ -49,11 +49,11 @@ function hydrate(booted: BootstrappedTestApp): void {
   const byId = booted.repo.findById.bind(booted.repo)
   booted.repo.findByEmail = async (...args: Parameters<typeof byEmail>) => {
     const user = await byEmail(...args)
-    return user === null ? user : (new HydratedUser(user) as unknown as AuthUser)
+    return user === null ? user : (new HydratedUser(user) as Partial<AuthUser> as AuthUser)
   }
   booted.repo.findById = async (...args: Parameters<typeof byId>) => {
     const user = await byId(...args)
-    return user === null ? user : (new HydratedUser(user) as unknown as AuthUser)
+    return user === null ? user : (new HydratedUser(user) as Partial<AuthUser> as AuthUser)
   }
 }
 
