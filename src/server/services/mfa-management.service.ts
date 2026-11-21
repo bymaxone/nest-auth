@@ -100,6 +100,7 @@ export class MfaManagementService {
     const user = await this.records.loadAccount(context, userId, tenantId)
     if (!user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
+    // Stryker disable next-line StringLiteral: spendTotpAttempt compares its origin only to 'regenerateRecoveryCodes', so any other string (the empty one included) takes the same path and no test can tell them apart
     await this.spendTotpAttempt('disable', scope, user, code, mfa)
     await this.clearFactor(scope)
 
