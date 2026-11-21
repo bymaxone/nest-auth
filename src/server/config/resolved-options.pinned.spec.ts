@@ -226,4 +226,83 @@ describe('the role hierarchy of the resolved options', () => {
     expect(roles.hierarchy).toBe(hierarchy)
     expect(resolved.roles.hierarchy).toEqual({ MEMBER: [] })
   })
+
+  // Scenario: each of the three hierarchies written as an object, as a function that carries the roles and as an array
+  // of lists (a role named by its index), which the checks accept, and the host changing the roles and a list after the
+  // options resolved. Expected: the resolved hierarchy is a plain copy that the change does not reach. Why: the pin
+  // closes a hierarchy the host can still change after validation, whatever the host wrote the hierarchy as.
+  it.each(
+    (['roles.hierarchy', 'roles.platformHierarchy', 'workspaces.roles.hierarchy'] as const).flatMap(
+      (which) =>
+        (['an object', 'a function that carries the roles', 'an array of lists'] as const).map(
+          (form) => [which, form] as const
+        )
+    )
+  )('copies %s written as %s, and a later change by the host does not reach it', (which, form) => {
+    const roles = which === 'workspaces.roles.hierarchy' ? ['owner', 'editor'] : ['MEMBER', 'OTHER']
+    const keys = form === 'an array of lists' ? ['0', '1'] : roles
+    const children = (role: string): string[] => (role === keys[0] ? [keys[1] as string] : [])
+    const written: Record<string, string[]> = Object.fromEntries(
+      keys.map((role) => [role, children(role)])
+    )
+    const hierarchy: unknown =
+      form === 'an object'
+        ? written
+        : form === 'an array of lists'
+          ? keys.map((role) => children(role))
+          : Object.assign(() => undefined, written)
+    const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
+      jwt: { secret: SECRET },
+      rateLimit: { clientIpSource: 'peer' },
+      roles:
+        which === 'workspaces.roles.hierarchy'
+          ? { hierarchy: { MEMBER: [] } }
+          : which === 'roles.hierarchy'
+            ? { hierarchy }
+            : { hierarchy: { MEMBER: [] }, platformHierarchy: hierarchy },
+      ...(which === 'roles.platformHierarchy' ? { platform: { enabled: true } } : {}),
+      ...(which === 'workspaces.roles.hierarchy'
+        ? { workspaces: { enabled: true, roles: { hierarchy, ownerRole: keys[0] } } }
+        : {})
+    }
+
+    const resolved = resolveOptions(given as BymaxAuthModuleOptions)
+    const held =
+      which === 'roles.hierarchy'
+        ? resolved.roles.hierarchy
+        : which === 'roles.platformHierarchy'
+          ? resolved.roles.platformHierarchy
+          : resolved.workspaces?.roles.hierarchy
+    const before = JSON.stringify(held)
+    const host = hierarchy as Record<string, string[]>
+    host['ADDED'] = []
+    host[keys[0] as string]?.push('ADDED')
+
+    expect(JSON.stringify(held)).toBe(before)
+    expect(Array.isArray(held)).toBe(false)
+    expect(typeof held).toBe('object')
+  })
+
+  // Scenario: the workspaces written as a function that carries the settings and the roles, and the host changing the
+  // roles of the hierarchy after the options resolved. Expected: the options resolve as they do with an object, and the
+  // change does not reach them. Why: the options are a group like any other and a function is accepted as one.
+  it('copies the workspaces written as a function, and a later change by the host does not reach it', () => {
+    const hierarchy: Record<string, string[]> = { owner: ['editor'], editor: [] }
+    const workspaces = Object.assign(() => undefined, {
+      enabled: true,
+      roles: { hierarchy, ownerRole: 'owner' }
+    })
+    const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
+      jwt: { secret: SECRET },
+      roles: { hierarchy: { MEMBER: [] } },
+      rateLimit: { clientIpSource: 'peer' },
+      workspaces
+    }
+
+    const resolved = resolveOptions(given as BymaxAuthModuleOptions)
+    hierarchy['ADDED'] = []
+    hierarchy['editor']?.push('owner')
+
+    expect(resolved.workspaces?.roles.hierarchy).toEqual({ owner: ['editor'], editor: [] })
+  })
 })

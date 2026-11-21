@@ -25,11 +25,10 @@ export function readOptions(given: BymaxAuthModuleOptions): BymaxAuthModuleOptio
   return pinHierarchies(options)
 }
 
-/** A hierarchy as a copy of what the host answered, children included; anything else is left for the checks to refuse. */
+/** A hierarchy as a plain copy of what the host answered, whatever it is, children included; the checks judge the copy. */
 function copyHierarchy(held: unknown): unknown {
-  if (typeof held !== 'object' || held === null || Array.isArray(held)) return held
   return Object.fromEntries(
-    Object.entries(held).map(([role, children]) => [
+    Object.entries(held as object).map(([role, children]) => [
       role,
       Array.isArray(children) ? [...children] : children
     ])
@@ -42,7 +41,7 @@ function copyHierarchy(held: unknown): unknown {
  */
 function pinIn<G>(group: G, keys: readonly string[]): G {
   const copy = { ...group } as Record<string, unknown>
-  for (const key of keys) if (copy[key] !== undefined) copy[key] = copyHierarchy(copy[key])
+  for (const key of keys) if (copy[key] != null) copy[key] = copyHierarchy(copy[key])
   return copy as G
 }
 
@@ -52,9 +51,7 @@ function pinIn<G>(group: G, keys: readonly string[]): G {
  */
 function pinHierarchies(options: BymaxAuthModuleOptions): BymaxAuthModuleOptions {
   const { roles, workspaces } = options
-  const { roles: workspaceRoles, ...workspaceRest } = (
-    typeof workspaces === 'object' && workspaces !== null ? workspaces : {}
-  ) as { roles?: unknown }
+  const { roles: workspaceRoles, ...workspaceRest } = (workspaces ?? {}) as { roles?: unknown }
   return {
     ...options,
     roles: pinIn(roles, ['hierarchy', 'platformHierarchy']),
