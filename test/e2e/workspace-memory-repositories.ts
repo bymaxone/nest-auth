@@ -41,10 +41,15 @@ export function membershipKey(workspaceId: string, userId: string): string {
   return JSON.stringify([workspaceId, userId])
 }
 
-/** An active membership in the single tenant these suites use. */
-function member(workspaceId: string, userId: string, role: string): AuthMembership {
+/** An active membership of a workspace, in the tenant that workspace was created under. */
+function member(
+  workspaceId: string,
+  userId: string,
+  role: string,
+  tenantId = 't1'
+): AuthMembership {
   return {
-    tenantId: 't1',
+    tenantId,
     workspaceId,
     userId,
     role,
@@ -89,7 +94,7 @@ function workspaceRepository(store: Store): IWorkspaceRepository {
       store.rows.set(p.workspaceId, workspace)
       store.members.set(
         membershipKey(p.workspaceId, p.ownerUserId),
-        member(p.workspaceId, p.ownerUserId, p.ownerRole)
+        member(p.workspaceId, p.ownerUserId, p.ownerRole, p.tenantId)
       )
       return { status: 'created', workspace }
     },
@@ -264,7 +269,7 @@ export function memoryRepositories(): MemoryRepositories {
     } as IMembershipRepository,
     seedMember: (workspaceId, userId, role, status = 'active') => {
       store.members.set(membershipKey(workspaceId, userId), {
-        ...member(workspaceId, userId, role),
+        ...member(workspaceId, userId, role, store.rows.get(workspaceId)?.tenantId),
         status
       })
     },
