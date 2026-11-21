@@ -18,8 +18,25 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.12] - 2026-11-21
+
+A patch release.
+
 ### Fixed
 
+- **A host getter, Proxy or factory that throws no longer leaves the library as the host's own error.** The options a
+  host returns are read inside one boundary: a failure ends as `[BymaxAuthModule] the options could not be read…` with
+  the host's error as its `cause` and none of its text. Each repository the host provides is read through a guarded
+  view that the library's own services use: an answer is read for the fields its method promises and for nothing
+  else (a contract for each repository method, checked by the compiler), so an entity whose relation throws until it
+  is loaded still answers, a field the contract names that throws ends as `auth.internal` with the cause, and a failure
+  of the repository itself is the same error. A typed `HttpException` the repository throws goes out as it is. Any
+  other own data field of the host's record is passed on by reference without being read, host callbacks
+  (`maxSessionsResolver`) still receive the host's own entity, the token the module exports is still the host's own
+  instance, and `OAuthModule.register` used on its own provides its own guarded view.
+- **A field the contract promises as data is never dropped.** A function in such a field, or a getter that answers one,
+  ends as `auth.internal`. Read as absent, `mfaEnabled` served as a function would have issued tokens where a second
+  factor is due.
 - **A date a host wraps in a Proxy is read as a date.** A valid API key whose `expiresAt` was a Proxy of a `Date` was
   refused, and a workspace whose `deletionScheduledAt` was one could be neither restored nor finalized, because the copy
   of the record turned the Proxy into a plain object with no `getTime`. A Proxy whose prototype chain holds
@@ -31,27 +48,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 - **A date that is not a time is refused.** A record a repository returns with a date that compares false with every
   instant (an Invalid Date, or a Proxy whose `getTime` answers something that is not a time) ends as `auth.internal`.
-  Before, and in 1.5.12 and earlier, it was copied as it was, and a workspace pending deletion whose deadline was such
-  a date was finalized, because `due.getTime() > now` is false for it, and could be restored past its grace period. A
+  Before, and in 1.5.11 and earlier, it was copied as it was, and a workspace pending deletion whose deadline was such a
+  date was finalized, because `due.getTime() > now` is false for it, and could be restored past its grace period. A
   genuine Invalid Date in any field the contract names now refuses the whole lookup.
-
-## [1.5.12] - 2026-11-21
-
-A patch release.
-
-### Fixed
-
-- **A host getter, Proxy or factory that throws no longer leaves the library as the host's own error.** The options a
-  host returns are read inside one boundary: a failure ends as `[BymaxAuthModule] the options could not be read…` with
-  the host's error as its `cause` and none of its text. Each repository the host provides is read through a guarded
-  view that the library's own services use: an answer is read for the fields its method promises and for nothing
-  else (a contract for each repository method, checked by the compiler), so an entity whose
-  relation throws until it is loaded still answers, a field the contract names that throws ends as `auth.internal`
-  with the cause, and a failure of the repository itself is the same error. A typed `HttpException` the repository
-  throws goes out as it is. Any other own data field of the host's record is passed on by reference without being read, host
-  callbacks (`maxSessionsResolver`) still receive the host's own entity, the token the module exports is still the
-  host's own instance, and `OAuthModule.register` used on its own provides its own guarded view. The public
-  declarations are unchanged: `check:api` against 1.5.11 reports no difference.
+- **The fields of the contract are visible to a spread of the copy.** An entity that serves its fields through its
+  prototype (a Sequelize or Mongoose one) used to log in and then fail every later request with a 401, because the copy
+  kept those fields out of the token payload. They are now enumerable, except the credentials (`passwordHash`,
+  `mfaSecret`, `mfaRecoveryCodes`, `digest`), which are as visible as the host's record made them.
+- **An instance of a class of the host in a field of the contract is kept as it is.** An id type of a database driver
+  or the date of a date library used to be copied into a plain object, so an id printed as `[object Object]`; plain
+  objects and arrays are still copied.
 
 ## [1.5.11] - 2026-11-20
 

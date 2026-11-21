@@ -260,3 +260,14 @@ export const MEMBERSHIP_REPOSITORY_CONTRACT: RepositoryContract<IMembershipRepos
   getLastActiveWorkspaceId: 'value',
   setLastActiveWorkspaceId: 'value'
 }
+
+/**
+ * The fields that are credentials: a copy hands them on only as visible as the host's own record made them, because
+ * a spread of a record is how a record leaves the library and these are the fields that must not leave with it.
+ */
+export const CREDENTIAL_FIELDS: ReadonlySet<string> = new Set([
+  'passwordHash',
+  'mfaSecret',
+  'mfaRecoveryCodes',
+  'digest'
+] as const satisfies readonly (keyof AuthUser | keyof AuthPlatformUser | keyof AuthApiKey)[])

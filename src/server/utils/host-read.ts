@@ -29,6 +29,7 @@ import {
 } from '../bymax-auth.constants'
 import {
   API_KEY_REPOSITORY_CONTRACT,
+  CREDENTIAL_FIELDS,
   MEMBERSHIP_REPOSITORY_CONTRACT,
   PLATFORM_USER_REPOSITORY_CONTRACT,
   USER_REPOSITORY_CONTRACT,
@@ -179,6 +180,12 @@ function isDateLike(value: object): value is Date {
   return types.isDate(value) || (types.isProxy(value) && value instanceof Date)
 }
 
+/** Whether an object is plain: made by an object literal or `Object.create(null)`, in this realm or in another. */
+function isPlainObject(value: object): boolean {
+  const prototype: unknown = Object.getPrototypeOf(value)
+  return prototype === null || Object.getPrototypeOf(prototype as object) === null
+}
+
 /**
  * A plain copy of a value the contract names no fields of: dates and arrays copied, objects copied field by field,
  * the other kinds of object by reference.
@@ -203,6 +210,9 @@ function copyData(value: unknown, seen: Seen, depth: number): unknown {
     return copy
   }
   if (isOpaque(value)) return value
+  // An instance of a class of the host (an id type, a date library's date) is what the host's code compares and prints:
+  // a plain copy of it would be another object with the fields and none of the behavior.
+  if (!isPlainObject(value)) return value
   const copy: Record<string, unknown> = {}
   seen.data.set(value, copy)
   const source = value as Record<string, unknown>
@@ -230,16 +240,20 @@ function copyRecord(
   ENTITIES.set(copy, value)
   const source = value as Record<string, unknown>
   const done = new Set<string>()
-  const take = (field: string, enumerable: boolean): void => {
+  const take = (field: string, own: boolean): void => {
     done.add(field)
     const read = source[field]
-    if (read === undefined || typeof read === 'function') return
+    if (read === undefined) return
+    // A field that is absent reads as the default of its type (`mfaEnabled` as off), so a value the contract promises as
+    // data is never dropped: the host owes data there, and a function is not.
+    if (typeof read === 'function')
+      throw new Error('the answer holds a function where its method promises data')
     const nested = Object.hasOwn(contract.nested, field) ? contract.nested[field] : undefined
     const copied =
       nested === undefined
         ? copyData(read, seen, depth + 1)
         : applyContract(read, nested, seen, depth + 1)
-    define(copy, field, copied, enumerable)
+    define(copy, field, copied, own || !CREDENTIAL_FIELDS.has(field))
   }
   const keys = Object.keys(value)
   refuseBreadth(keys.length)

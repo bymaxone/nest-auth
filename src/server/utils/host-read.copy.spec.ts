@@ -85,7 +85,7 @@ describe('copyHostRecord', () => {
     const copy = copyHostRecord(new Entity(), USER) as Record<string, unknown>
 
     expect(copy['email']).toBe('computed')
-    expect(copy).toEqual({ id: 'e1' })
+    expect(copy).toEqual({ id: 'e1', email: 'computed' })
   })
 
   // Scenario: an accessor inherited from a base class and an own property shadowing nothing. Expected: both read.
@@ -207,7 +207,7 @@ describe('copyHostRecord', () => {
     expect(copy['mfaEnabled']).toBe(true)
     expect(copy['status']).toBe('ACTIVE')
     expect(copy['passwordHash']).toBe('h')
-    expect(Object.keys(copy)).toEqual([])
+    expect(Object.keys(copy)).toEqual(['status', 'mfaEnabled'])
   })
 
   // Scenario: the result envelopes of the repositories (a page, the outcome of removing a user's memberships) held on
@@ -401,7 +401,6 @@ describe('copyHostRecord', () => {
       }
 
       expect(copy.items[0]?.workspace['status']).toBe('ACTIVE')
-      expect(Object.keys(copy.items[0]?.workspace ?? {})).not.toContain('status')
     })
 
     it('copies a date a Proxy of the host answers as, and nothing else a Proxy wraps', () => {
@@ -468,7 +467,71 @@ describe('copyHostRecord', () => {
 
       expect(copy['passwordHash']).toBe('x')
       expect(copy['email']).toBe('a@b.c')
-      expect(Object.keys(copy)).toEqual(['id'])
+      expect(Object.keys(copy)).toEqual(['id', 'email'])
+    })
+
+    // Scenario: a field the contract promises as data, served as a function or as a getter that answers one, for the
+    // fields that decide an admission. Expected: refused with the library's reason. Why: a field that is dropped reads as
+    // the default of its type, so `mfaEnabled` as a function would skip the second factor.
+    it.each([
+      ['mfaEnabled', USER],
+      ['status', USER],
+      ['emailVerified', USER],
+      ['revokedAt', API_KEY_REPOSITORY_CONTRACT.findById],
+      ['expiresAt', API_KEY_REPOSITORY_CONTRACT.findById]
+    ] as const)(
+      'refuses %s served as a function, or as a getter answering one',
+      (field, contract) => {
+        const reason = 'the answer holds a function where its method promises data'
+        const own = { [field]: (): boolean => true }
+        const getter = Object.defineProperty({}, field, { get: () => (): boolean => true })
+        const inherited = Object.create({
+          get [field](): () => boolean {
+            return (): boolean => true
+          }
+        }) as object
+
+        expect(causeOf(() => copyHostRecord(own, contract))).toBe(reason)
+        expect(causeOf(() => copyHostRecord(getter, contract))).toBe(reason)
+        expect(causeOf(() => copyHostRecord(inherited, contract))).toBe(reason)
+      }
+    )
+
+    // Scenario: an id type of a database driver and the date of a date library in fields of the contract. Expected: each
+    // is the host's own object, so `String(id)` is the real id, two users never share an id and the date keeps its
+    // methods; a plain object in the same place is still copied. Why: a plain copy of such an instance has the fields
+    // and none of the behavior, and every id would print as "[object Object]".
+    it('keeps the instance of a class of the host in a field of the contract by reference', () => {
+      class ObjectIdLike {
+        constructor(private readonly hex: string) {}
+        toString(): string {
+          return this.hex
+        }
+      }
+      class MomentLike {
+        format(): string {
+          return 'formatted'
+        }
+      }
+      const first = new ObjectIdLike('64b0000000000000000000a1')
+      const second = new ObjectIdLike('64b0000000000000000000a2')
+      const moment = new MomentLike()
+      const plain = { kept: 'copied' }
+
+      const one = copyHostRecord({ id: first, tenantId: second, name: plain }, USER) as Record<
+        string,
+        unknown
+      >
+      const two = copyHostRecord({ id: second, createdAt: moment }, USER) as Record<string, unknown>
+
+      expect(one['id']).toBe(first)
+      expect(String(one['id'])).toBe('64b0000000000000000000a1')
+      expect(String(two['id'])).toBe('64b0000000000000000000a2')
+      expect(String(one['id'])).not.toBe(String(two['id']))
+      expect(one['tenantId']).toBe(second)
+      expect((two['createdAt'] as MomentLike).format()).toBe('formatted')
+      expect(one['name']).toEqual(plain)
+      expect(one['name']).not.toBe(plain)
     })
 
     it('copies a record that has no prototype', () => {
@@ -514,7 +577,9 @@ describe('copyHostRecord', () => {
         }
       }
 
-      expect((copyHostRecord(new Doc(), USER) as Record<string, unknown>)['status']).toBeUndefined()
+      expect(causeOf(() => copyHostRecord(new Doc(), USER))).toBe(
+        'the answer holds a function where its method promises data'
+      )
     })
 
     it('reads the getter of a listed field once', () => {
@@ -660,16 +725,23 @@ describe('copyHostRecord', () => {
     expect(evaluated).toBe(0)
   })
 
-  // Scenario: a record whose hidden fields must stay hidden: a non-enumerable backing object, a non-enumerable auth
-  // field and an inherited accessor of a contract field. Expected: the contract fields are readable by name, the backing
-  // object is not copied at all, and none is enumerable, so a spread, Object.keys or JSON.stringify of the copy shows
-  // what the host's record showed. Why: the services strip a few credential fields from a spread of the record, and a
-  // hidden field made visible would reach the response.
+  // Scenario: a record that serves fields of the contract through its prototype or as non-enumerable properties, with
+  // the credentials among them. Expected: every field the contract names is readable by name and visible to a spread,
+  // Object.keys and JSON.stringify of the copy, except the credentials (`passwordHash`, `mfaSecret`), which stay as
+  // hidden as the host's record made them; a non-enumerable backing object is not copied at all. Why: the copy is what
+  // the services spread into a token payload, so `role`, `tenantId` and `status` have to be visible, while a credential
+  // made visible would reach a response.
   it('keeps hidden fields hidden from a spread while still readable by name', () => {
     class Doc {
       id = 'u1'
       get role(): string {
         return 'user'
+      }
+      get passwordHash(): string {
+        return 'hash'
+      }
+      get mfaSecret(): string {
+        return 'enc'
       }
     }
     const record = new Doc()
@@ -683,10 +755,12 @@ describe('copyHostRecord', () => {
 
     expect(copy['status']).toBe('ACTIVE')
     expect(copy['role']).toBe('user')
+    expect(copy['passwordHash']).toBe('hash')
+    expect(copy['mfaSecret']).toBe('enc')
     expect(copy['_credentials']).toBeUndefined()
-    expect(Object.keys(copy)).toEqual(['id'])
-    expect(Object.keys({ ...copy })).toEqual(['id'])
-    expect(JSON.stringify(copy)).toBe('{"id":"u1"}')
+    expect(Object.keys(copy)).toEqual(['id', 'role', 'status'])
+    expect(Object.keys({ ...copy })).toEqual(['id', 'role', 'status'])
+    expect(JSON.stringify(copy)).toBe('{"id":"u1","role":"user","status":"ACTIVE"}')
   })
 
   // Scenario: a record with an own key named __proto__ (what JSON.parse of user input produces). Expected: it stays an
