@@ -33,7 +33,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   with `auth.internal`.
 - **The ids of the rows the workspace access reads are compared with the ones asked about.** The id of the workspace, the
   workspace of the membership and the user of the membership are compared exactly, as the tenant already was; a
-  repository that answers another row is denied access and nothing is cached.
+  repository that answers another row is denied access and nothing is cached. **Apply to a derived backend:** the ids
+  are compared as the exact strings the library keeps, so a store that normalises an id when it reads it (a column that
+  lowercases a uuid) has to be asked for the id in the form it returns, or it answers a row that is denied.
 
 ## [1.5.13] - 2026-11-21
 

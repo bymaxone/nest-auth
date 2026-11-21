@@ -226,8 +226,9 @@ const NOT_AN_ID_TEXT: ReadonlySet<string> = new Set(['undefined', 'null'])
 
 /**
  * An id names one row: a non-empty text that is not blank, `undefined` or `null`, a safe integer, or a host object that
- * prints as such a text of its own (not `[object ...]`, which every plain object, Map, Set and Promise shares; not a date,
- * a regular expression, an error or a buffer, which print as what they are). Kept as that text, read once.
+ * prints as such a text of its own. What an object prints is not `[object ...]`, which every plain object, Map, Set and
+ * Promise shares, and an object that is a date, a regular expression, an error or a buffer prints as what it is, so it is
+ * refused; a string the host gave is kept as it is. Kept as that text, read once.
  */
 function readId(value: unknown): string {
   if (typeof value === 'number') return accept(Number.isSafeInteger(value), String(value)) as string
@@ -241,8 +242,9 @@ function readId(value: unknown): string {
   )
     throw new Error(WRONG_KIND)
   const text = String(value)
+  const printed = typeof value !== 'string'
   return accept(
-    text.trim() !== '' && !NOT_AN_ID_TEXT.has(text) && !text.startsWith('[object '),
+    text.trim() !== '' && !NOT_AN_ID_TEXT.has(text) && !(printed && text.startsWith('[object ')),
     text
   ) as string
 }

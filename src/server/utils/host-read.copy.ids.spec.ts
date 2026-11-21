@@ -110,7 +110,17 @@ describe('an id that only informs', () => {
   // the library supports key their rows, and a claim, a key and a comparison all take a string, as the interface says.
   it('keeps a string, a safe integer and an object that prints as its id, as a string', () => {
     const objectId = new ObjectIdLike('64b0000000000000000000a1')
-    const ids = ['w1', 42, 0, -7, objectId]
+    const ids = [
+      'w1',
+      42,
+      0,
+      -7,
+      objectId,
+      '[object custom]',
+      ' padded ',
+      'nullable',
+      'undefined-1'
+    ]
 
     for (const id of ids) {
       const copy = copyHostRecord(workspaceRecord({ id: id as never }), WORKSPACE) as {
