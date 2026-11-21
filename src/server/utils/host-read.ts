@@ -172,6 +172,9 @@ function define(copy: object, key: string, value: unknown, enumerable: boolean):
   Object.defineProperty(copy, key, { value, enumerable, writable: true, configurable: true })
 }
 
+/** The object the host's repository returned behind each copy of it. Filled by the copy itself, which is the only read. */
+const ENTITIES = new WeakMap<object, object>()
+
 /**
  * A plain copy of a record: the fields a spread would show, then the fields the library reads by name, arrays and dates
  * copied, the rest by reference. A getter nobody asked for is never evaluated.
@@ -192,6 +195,7 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
   if (isOpaque(value)) return value
   const copy: Record<string, unknown> = {}
   seen.set(value, copy)
+  ENTITIES.set(copy, value)
   const source = value as Record<string, unknown>
   for (const key of Object.keys(value)) {
     const copied = copyValue(source[key], seen, depth + 1)
@@ -229,19 +233,6 @@ const LIFECYCLE_HOOKS: ReadonlySet<PropertyKey> = new Set([
   'beforeApplicationShutdown',
   'onApplicationShutdown'
 ])
-
-/** The entity the host's repository returned behind each copy the guarded view made of it. */
-const ENTITIES = new WeakMap<object, object>()
-
-/** Remembers which entity each copy of an answer stands for: the answer itself, or each record of a list. */
-function rememberEntities(answer: unknown, copy: unknown): void {
-  if (typeof answer !== 'object' || answer === null || typeof copy !== 'object' || copy === null)
-    return
-  ENTITIES.set(copy, answer)
-  if (Array.isArray(answer) && Array.isArray(copy)) {
-    answer.forEach((entity: unknown, index: number) => rememberEntities(entity, copy[index]))
-  }
-}
 
 /**
  * The entity the host's repository returned for a record the guarded view copied, or the value itself when it is
@@ -290,14 +281,7 @@ export function guardRepository<T extends object>(host: T): T {
           if (error instanceof HttpException) throw error
           throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
         }
-        const copy = copyHostRecord(answer)
-        try {
-          rememberEntities(answer, copy)
-        } catch (error: unknown) {
-          // Linking a list's copies to their entities reads the host's list once more, inside the same boundary.
-          throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
-        }
-        return copy
+        return copyHostRecord(answer)
       }
     }
   })

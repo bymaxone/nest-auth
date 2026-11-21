@@ -250,22 +250,33 @@ describe('guardRepository against a hostile repository', () => {
     expect(answer).not.toBe(user)
   })
 
-  // Scenario: a list answer that is a Proxy whose read of `forEach` throws, while its length and elements read fine.
-  // Expected: the call rejects with the internal error and the fault as its cause. Why: linking each copy to its
-  // entity reads the host's list again after the copy, and that read is inside the same boundary.
-  it('turns a throwing read made while remembering the entities into an internal rejection', async () => {
-    const rows = new Proxy([{ id: 'u1' }], {
-      get(target, key, receiver): unknown {
-        if (key === 'forEach') throw fault
-        return Reflect.get(target, key, receiver)
-      }
-    })
-    const guarded = guardRepository({ find: async (): Promise<unknown> => rows })
+  // Scenario: a list answer that is a Proxy counting every trap, read through the guarded view and through the copy
+  // alone. Expected: the same number of traps, and none after the copy finished. Why: a read of the host's list made
+  // after the copy, such as one that links each copy to its entity, would sit outside the boundary that turns a host
+  // failure into the internal error.
+  it('reads the host list no more than the copy does', async () => {
+    const counted = (): { rows: unknown[]; reads: () => number } => {
+      let reads = 0
+      const rows = new Proxy([{ id: 'u1' }, { id: 'u2' }], {
+        get(target, key, receiver): unknown {
+          reads += 1
+          return Reflect.get(target, key, receiver)
+        },
+        has(target, key): boolean {
+          reads += 1
+          return Reflect.has(target, key)
+        }
+      })
+      return { rows, reads: () => reads }
+    }
+    const alone = counted()
+    copyHostRecord(await (async (): Promise<unknown> => alone.rows)())
+    const through = counted()
+    const guarded = guardRepository({ find: async (): Promise<unknown> => through.rows })
 
-    const read = guarded.find()
+    await guarded.find()
 
-    await expect(read).rejects.toBeInstanceOf(AuthException)
-    await expect(read).rejects.toMatchObject({ cause: fault })
+    expect(through.reads()).toBe(alone.reads())
   })
 
   // Scenario: a hostile repository that throws for every key, awaited the way Nest awaits a factory result. Expected: the
