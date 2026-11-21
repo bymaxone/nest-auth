@@ -248,4 +248,32 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
     expect(login.status).toBe(200)
     expect(login.body).toHaveProperty('accessToken')
   })
+
+  // Scenario: the tenant of an account served as an instance of a class of the host (an id type of a driver) while the
+  // request names it as a string. Expected: the login is turned away and issues no token. Why: tenant ids are compared
+  // with `!==`, and an object is never equal to a string, so a tenant of another kind fails closed.
+  it('turns away a login whose tenantId is an object where the request names a string', async () => {
+    const http = request(app.getHttpServer())
+    await http
+      .post('/register')
+      .send({ email: EMAIL, password: PASSWORD, name: 'Hydrated User', tenantId: 't1' })
+      .expect(201)
+    class TenantIdLike {
+      toString(): string {
+        return 't1'
+      }
+    }
+    const byEmail = booted.repo.findByEmail.bind(booted.repo)
+    booted.repo.findByEmail = async (...args: Parameters<typeof byEmail>) => {
+      const user = await byEmail(...args)
+      return user === null ? user : { ...user, tenantId: new TenantIdLike() as never }
+    }
+
+    const login = await http
+      .post('/login')
+      .send({ email: EMAIL, password: PASSWORD, tenantId: 't1' })
+
+    expect(login.status).toBe(401)
+    expect(login.body).not.toHaveProperty('accessToken')
+  })
 })
