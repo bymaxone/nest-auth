@@ -173,13 +173,9 @@ const OAUTH_GOOGLE_KEYS = {
   scope: true
 } satisfies Keys<NonNullable<Group<'oauth'>['google']>>
 
-/** The `workspaces` sub-groups that hold plain settings, each with its keys. */
+/** The `workspaces` sub-groups read by property, each with its keys; `roles` keeps an unset key as the host wrote it. */
 const WORKSPACE_SUBGROUP_KEYS: Readonly<Record<string, readonly string[]>> = {
-  accessDeniedEvents: ['max', 'windowSeconds']
-}
-
-/** The `workspaces` sub-group read by property that keeps an unset key as the host wrote it, with its keys. */
-const WORKSPACE_KEPT_SUBGROUP_KEYS: Readonly<Record<string, readonly string[]>> = {
+  accessDeniedEvents: ['max', 'windowSeconds'],
   roles: ['hierarchy', 'ownerRole']
 }
 
@@ -256,11 +252,8 @@ export function dropUnset(options: BymaxAuthModuleOptions): BymaxAuthModuleOptio
     if (name === 'workspaces') {
       for (const [sub, subKeys] of Object.entries(WORKSPACE_SUBGROUP_KEYS)) {
         const inner = group[sub]
-        if (isObjectGroup(inner)) group[sub] = readSetKeys(inner, subKeys)
-      }
-      for (const [sub, subKeys] of Object.entries(WORKSPACE_KEPT_SUBGROUP_KEYS)) {
-        const inner = group[sub]
-        if (isObjectGroup(inner)) group[sub] = readKeptKeys(inner, subKeys)
+        if (isObjectGroup(inner))
+          group[sub] = (sub === 'roles' ? readKeptKeys : readSetKeys)(inner, subKeys)
       }
     }
     copy[name] = group
