@@ -136,8 +136,8 @@ export const RECORD_FIELDS = [
   'workspaceId'
 ] as const
 
-/** The fields a record inherits below the root prototype: accessors and data, which a spread would lose, but no methods. */
-function inheritedFields(value: object): string[] {
+/** The accessors a record inherits below the root prototype, which a spread would lose. Inherited data is not walked. */
+function inheritedAccessors(value: object): string[] {
   const names: string[] = []
   for (
     let proto: object | null = Object.getPrototypeOf(value) as object | null;
@@ -145,8 +145,7 @@ function inheritedFields(value: object): string[] {
     proto = Object.getPrototypeOf(proto) as object | null
   ) {
     for (const name of Object.getOwnPropertyNames(proto)) {
-      const descriptor = Object.getOwnPropertyDescriptor(proto, name)
-      if (descriptor?.get !== undefined || typeof descriptor?.value !== 'function') names.push(name)
+      if (Object.getOwnPropertyDescriptor(proto, name)?.get !== undefined) names.push(name)
     }
   }
   return names
@@ -171,7 +170,7 @@ function isOpaque(value: object): boolean {
   return OPAQUE.some((check) => check(value))
 }
 
-/** A plain copy of a record: its own and inherited fields, arrays and dates copied, the rest by reference. */
+/** A plain copy of a record: its own fields and inherited accessors, arrays and dates copied, the rest by reference. */
 function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value
   if (depth > MAX_RECORD_DEPTH) throw new Error('the record nests deeper than the library follows')
@@ -189,7 +188,7 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
   const copy: Record<string, unknown> = {}
   seen.set(value, copy)
   const source = value as Record<string, unknown>
-  for (const key of new Set([...Object.getOwnPropertyNames(value), ...inheritedFields(value)])) {
+  for (const key of new Set([...Object.getOwnPropertyNames(value), ...inheritedAccessors(value)])) {
     const copied = copyValue(source[key], seen, depth + 1)
     // A key named `__proto__` (what `JSON.parse` of user input produces) is data; assigning it would swap the prototype.
     if (key === '__proto__') {

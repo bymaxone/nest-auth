@@ -311,6 +311,25 @@ describe('copyHostRecord', () => {
     expect(new Set(RECORD_FIELDS).size).toBe(RECORD_FIELDS.length)
   })
 
+  // Scenario: a class whose prototype holds a shared handle (a model's connection, a class-level client) nested deeper
+  // than the copy follows. Expected: the record is copied, the handle is left behind, and the listed fields that live
+  // on the prototype still arrive. Why: copying the prototype's data would walk a connection graph per record and could
+  // turn a valid lookup into an internal error.
+  it('does not walk shared data held on a prototype, and still finds its listed fields', () => {
+    let deep: Record<string, unknown> = { leaf: true }
+    for (let level = 0; level < 20; level += 1) deep = { next: deep }
+    class Doc {
+      id = 'u1'
+    }
+    Object.assign(Doc.prototype, { connection: deep, mfaEnabled: true })
+
+    const copy = copyHostRecord(new Doc()) as Record<string, unknown>
+
+    expect(copy['id']).toBe('u1')
+    expect(copy['mfaEnabled']).toBe(true)
+    expect(copy['connection']).toBeUndefined()
+  })
+
   // Scenario: a record with an own key named __proto__ (what JSON.parse of user input produces). Expected: it stays an
   // own key of the copy and the copy's prototype is untouched. Why: assigning it would swap the copy's prototype for the
   // copied value, and the copy would inherit names the original did not own.
