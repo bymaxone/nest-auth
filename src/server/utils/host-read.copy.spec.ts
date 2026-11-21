@@ -38,18 +38,23 @@ describe('copyHostRecord', () => {
     expect(copyHostRecord(value)).toBe(value)
   })
 
-  // Scenario: a record with nested data. Expected: an equal copy sharing nothing mutable with the original.
+  // Scenario: a record with nested data under the fields the library reads. Expected: an equal copy sharing nothing
+  // mutable with the original. Why: the library reads these fields, so what it reads must not change under it.
   it('copies a record, its nested objects and its arrays', () => {
-    const record = { id: 'u', nested: { list: ['a', { b: 1 }] }, at: new Date(5) }
+    const record = {
+      id: 'u',
+      workspace: { items: ['a', { b: 1 }] },
+      createdAt: new Date(5)
+    }
     const copy = copyHostRecord(record) as typeof record
 
     expect(copy).toEqual(record)
     expect(copy).not.toBe(record)
-    expect(copy.nested).not.toBe(record.nested)
-    expect(copy.nested.list).not.toBe(record.nested.list)
-    expect(copy.nested.list[1]).not.toBe(record.nested.list[1])
-    expect(copy.at).not.toBe(record.at)
-    expect(copy.at.getTime()).toBe(5)
+    expect(copy.workspace).not.toBe(record.workspace)
+    expect(copy.workspace.items).not.toBe(record.workspace.items)
+    expect(copy.workspace.items[1]).not.toBe(record.workspace.items[1])
+    expect(copy.createdAt).not.toBe(record.createdAt)
+    expect(copy.createdAt.getTime()).toBe(5)
   })
 
   // Scenario: an entity class with a getter on its prototype. Expected: the getter's value is readable by name on the
@@ -260,7 +265,7 @@ describe('copyHostRecord', () => {
   describe('bounds of the copy', () => {
     const nest = (levels: number): Record<string, unknown> => {
       let value: Record<string, unknown> = { leaf: true }
-      for (let level = 0; level < levels; level += 1) value = { next: value }
+      for (let level = 0; level < levels; level += 1) value = { workspace: value }
       return value
     }
     const causeOf = (thunk: () => unknown): unknown => {
@@ -285,15 +290,15 @@ describe('copyHostRecord', () => {
       const cyclic: unknown[] = [1, 2]
       cyclic.push(cyclic)
 
-      const copy = copyHostRecord({ list: [1, 2], cyclic }) as {
-        list: unknown[]
-        cyclic: unknown[]
+      const copy = copyHostRecord({ scopes: [1, 2], items: cyclic }) as {
+        scopes: unknown[]
+        items: unknown[]
       }
 
-      expect(causeOf(() => copyHostRecord({ deep }))).toBeDefined()
-      expect(copy.list).toEqual([1, 2])
-      expect(copy.list).toHaveLength(2)
-      expect(copy.cyclic[2]).toBe(copy.cyclic)
+      expect(causeOf(() => copyHostRecord({ scopes: deep }))).toBeDefined()
+      expect(copy.scopes).toEqual([1, 2])
+      expect(copy.scopes).toHaveLength(2)
+      expect(copy.items[2]).toBe(copy.items)
     })
 
     it('copies a record that has no prototype', () => {
@@ -397,6 +402,52 @@ describe('copyHostRecord', () => {
     })
   })
 
+  // Scenario: a field the library does not read that nests far past the limit of the copy. Expected: the copy is made
+  // and hands that field on by reference. Why: a host record carries state of its own that the library never reads,
+  // and following it would fail every lookup of a record whose state is deep.
+  it('hands a field the library does not read on by reference, however deep it nests', () => {
+    let state: Record<string, unknown> = { leaf: true }
+    for (let level = 0; level < 60; level += 1) state = { next: state }
+
+    const copy = copyHostRecord({ id: 'u1', state }) as { id: string; state: unknown }
+
+    expect(copy.id).toBe('u1')
+    expect(copy.state).toBe(state)
+  })
+
+  // Scenario: an entity shaped like a hydrated ORM instance (the own fields of a Sequelize model with two levels of
+  // included relations measured 16 levels deep, a third level goes past the limit): its state, its options and its
+  // relations hang off enumerable own fields, the values the library reads sit behind prototype getters. Expected:
+  // the copy is made, the getters answer by name, the state stays the host's own object. Why: this is the shape that
+  // would otherwise turn every lookup into the internal error once a relation is loaded.
+  it('copies a hydrated entity whose own state is deeper than the limit and holds itself', () => {
+    const chain = (levels: number): Record<string, unknown> => {
+      let node: Record<string, unknown> = { model: 'Tag' }
+      for (let level = 0; level < levels; level += 1) node = { include: [node], model: 'Post' }
+      return node
+    }
+    class Hydrated {
+      dataValues: Record<string, unknown> = { email: 'a@b.c', passwordHash: 'h' }
+      _previousDataValues: Record<string, unknown> = { email: 'a@b.c' }
+      _options: Record<string, unknown> = { include: [chain(40)] }
+      _self: unknown = this
+      get email(): unknown {
+        return this.dataValues['email']
+      }
+      get passwordHash(): unknown {
+        return this.dataValues['passwordHash']
+      }
+    }
+    const entity = new Hydrated()
+
+    const copy = copyHostRecord(entity) as Record<string, unknown>
+
+    expect(copy['email']).toBe('a@b.c')
+    expect(copy['passwordHash']).toBe('h')
+    expect(copy['dataValues']).toBe(entity.dataValues)
+    expect(copy['_options']).toBe(entity._options)
+  })
+
   // Scenario: an entity with getters the library never reads (an unloaded relation, a computed view), one on the
   // prototype and one hidden on the instance, beside the fields it does read. Expected: the copy is made, the getters
   // are never evaluated, and the contract fields arrive. Why: evaluating a getter nobody asked for would fail every
@@ -472,18 +523,18 @@ describe('copyHostRecord', () => {
 
   // Scenario: a record that holds itself. Expected: one copy that holds itself, not a stack overflow.
   it('copies a cycle once', () => {
-    const record: { self?: unknown } = {}
-    record.self = record
-    const copy = copyHostRecord(record) as { self?: unknown }
+    const record: { workspace?: unknown } = {}
+    record.workspace = record
+    const copy = copyHostRecord(record) as { workspace?: unknown }
 
-    expect(copy.self).toBe(copy)
+    expect(copy.workspace).toBe(copy)
     expect(copy).not.toBe(record)
   })
 
   // Scenario: a record nested deeper than the library follows. Expected: the internal error, not a crash.
   it('refuses a record nested past the limit as an internal error', () => {
     let deep: Record<string, unknown> = {}
-    for (let level = 0; level < 20; level += 1) deep = { next: deep }
+    for (let level = 0; level < 20; level += 1) deep = { workspace: deep }
 
     expect.assertions(2)
     try {

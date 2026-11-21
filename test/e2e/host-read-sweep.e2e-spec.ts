@@ -100,7 +100,10 @@ async function sweep<C>(
     }
     trap.on = false
     if (trap.n < at) return { ops: trap.n, failures }
-    if (error === undefined) continue
+    if (error === undefined) {
+      failures.push(`${at}: swallowed`)
+      continue
+    }
     if (!ends(error, fault))
       failures.push(`${at}: ${error instanceof Error ? error.constructor.name : typeof error}`)
   }

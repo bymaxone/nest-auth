@@ -143,6 +143,9 @@ export const RECORD_FIELDS = [
   'workspaceIds'
 ] as const
 
+/** The names of {@link RECORD_FIELDS}, for the question whether a field is one the library reads. */
+const FIELD_NAMES: ReadonlySet<string> = new Set(RECORD_FIELDS)
+
 /** The checks for the values a record may hold that are not data to copy: a copy of them would not be them. */
 const OPAQUE: readonly ((value: unknown) => boolean)[] = [
   types.isMap,
@@ -176,8 +179,10 @@ function define(copy: object, key: string, value: unknown, enumerable: boolean):
 const ENTITIES = new WeakMap<object, object>()
 
 /**
- * A plain copy of a record: the fields a spread would show, then the fields the library reads by name, arrays and dates
- * copied, the rest by reference. A getter nobody asked for is never evaluated.
+ * A plain copy of a record: each field a spread would show is defined on the copy with its value read once, and the
+ * fields the library reads by name are copied deep (arrays and dates copied, the other kinds by reference). A field
+ * that is not one of those is handed on by reference. A getter on the prototype that the library does not name is
+ * never evaluated.
  */
 function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value
@@ -198,8 +203,11 @@ function copyValue(value: unknown, seen: WeakMap<object, unknown>, depth: number
   ENTITIES.set(copy, value)
   const source = value as Record<string, unknown>
   for (const key of Object.keys(value)) {
-    const copied = copyValue(source[key], seen, depth + 1)
-    define(copy, key, copied, true)
+    // Only what the library reads is copied deep. Any other field of the host's own (an ORM instance carries its
+    // state, its options and its relations in such fields) is handed on by reference, so no shape the host gives a
+    // record can exceed what the copy follows.
+    const field = source[key]
+    define(copy, key, FIELD_NAMES.has(key) ? copyValue(field, seen, depth + 1) : field, true)
   }
   for (const key of RECORD_FIELDS) {
     if (Object.hasOwn(copy, key)) continue

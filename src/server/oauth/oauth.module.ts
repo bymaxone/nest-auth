@@ -7,8 +7,9 @@
  *
  * @remarks
  * **Dependency sharing:** `OAuthService` depends on `AuthRedisService`,
- * `TokenManagerService`, `SessionService`, and the injection tokens
- * `BYMAX_AUTH_OPTIONS`, `BYMAX_AUTH_USER_REPOSITORY`, and `BYMAX_AUTH_HOOKS`.
+ * `TokenManagerService`, `SessionService`, the guarded view of the user repository (an internal
+ * token `BymaxAuthModule` provides), and the injection tokens `BYMAX_AUTH_OPTIONS` and
+ * `BYMAX_AUTH_HOOKS`.
  * These are resolved from the importing module's (`BymaxAuthModule`) scope — they
  * must be exported by `BymaxAuthModule` and available in the DI container when
  * `OAuthModule` providers are resolved.
