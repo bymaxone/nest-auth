@@ -175,4 +175,35 @@ describe('the role hierarchy of the resolved options', () => {
     } as BymaxAuthModuleOptions)
     expect(ownOfWorkspaces).toBe(1)
   })
+
+  // Scenario: the roles of the workspaces served by a typed configuration class whose owner role AND hierarchy are
+  // getters on its prototype (and the hierarchy of the account a getter too), each counting its reads. Expected: the
+  // options resolve as they do with an object literal, each getter read once, and the owner role is the one served.
+  // Why: a class is a supported way to write the options, and a copy that carried only own keys would drop the owner
+  // role and refuse a deployment that started before.
+  it('resolves workspace roles that a class serves on its prototype, each getter read once', () => {
+    const reads = { ownerRole: 0, hierarchy: 0 }
+    class WorkspaceRoles {
+      get ownerRole(): string {
+        reads.ownerRole += 1
+        return 'owner'
+      }
+      get hierarchy(): Record<string, string[]> {
+        reads.hierarchy += 1
+        return { owner: ['editor'], editor: [] }
+      }
+    }
+    const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
+      jwt: { secret: SECRET },
+      roles: { hierarchy: { MEMBER: [] } },
+      rateLimit: { clientIpSource: 'peer' },
+      workspaces: { enabled: true, roles: new WorkspaceRoles() }
+    }
+
+    const resolved = resolveOptions(given as BymaxAuthModuleOptions)
+
+    expect(reads).toEqual({ ownerRole: 1, hierarchy: 1 })
+    expect(resolved.workspaces?.roles.ownerRole).toBe('owner')
+    expect(resolved.workspaces?.roles.hierarchy).toEqual({ owner: ['editor'], editor: [] })
+  })
 })

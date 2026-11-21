@@ -178,6 +178,11 @@ const WORKSPACE_SUBGROUP_KEYS: Readonly<Record<string, readonly string[]>> = {
   accessDeniedEvents: ['max', 'windowSeconds']
 }
 
+/** The `workspaces` sub-group read by property that keeps an unset key as the host wrote it, with its keys. */
+const WORKSPACE_KEPT_SUBGROUP_KEYS: Readonly<Record<string, readonly string[]>> = {
+  roles: ['hierarchy', 'ownerRole']
+}
+
 /** Whether a value can be a group: an object, a class instance included, and not an array. */
 function isObjectGroup(value: unknown): value is object {
   return Object(value) === value && typeof value !== 'function' && !Array.isArray(value)
@@ -252,6 +257,10 @@ export function dropUnset(options: BymaxAuthModuleOptions): BymaxAuthModuleOptio
       for (const [sub, subKeys] of Object.entries(WORKSPACE_SUBGROUP_KEYS)) {
         const inner = group[sub]
         if (isObjectGroup(inner)) group[sub] = readSetKeys(inner, subKeys)
+      }
+      for (const [sub, subKeys] of Object.entries(WORKSPACE_KEPT_SUBGROUP_KEYS)) {
+        const inner = group[sub]
+        if (isObjectGroup(inner)) group[sub] = readKeptKeys(inner, subKeys)
       }
     }
     copy[name] = group

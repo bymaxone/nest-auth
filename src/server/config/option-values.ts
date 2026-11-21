@@ -36,14 +36,11 @@ function copyHierarchy(held: unknown): unknown {
   )
 }
 
-/** A group with the hierarchies named in it copied, each read from the host once; a value that is no group is kept. */
+/** A group with the hierarchies named in it copied; the group is plain data already, so each is read once. */
 function pinIn<G>(group: G, keys: readonly string[]): G {
   if (typeof group !== 'object' || group === null || Array.isArray(group)) return group
   const copy = { ...group } as Record<string, unknown>
-  for (const key of keys) {
-    const held = Object.hasOwn(copy, key) ? copy[key] : (group as Record<string, unknown>)[key]
-    if (held !== undefined) copy[key] = copyHierarchy(held)
-  }
+  for (const key of keys) if (copy[key] !== undefined) copy[key] = copyHierarchy(copy[key])
   return copy as G
 }
 
