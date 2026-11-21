@@ -36,7 +36,7 @@ A patch release.
   instance, and `OAuthModule.register` used on its own provides its own guarded view.
 - **A field that decides an admission is read as the kind its contract gives it.** The contract of each repository
   method names, for every field, the kind of the type the interface declares, and the compiler checks it. The fields
-  a service reads to allow or to deny (`mfaEnabled`, `emailVerified`, `status`, `role`, `tenantId`, the credentials, an
+  a service reads to allow or to deny (`mfaEnabled`, `emailVerified`, `status`, `role`, the credentials, an
   API key's `digest`, `scopes`, `expiresAt` and `revokedAt`, a workspace's `deletionScheduledAt`) are strict: a boolean
   is a boolean and not a wrapper of one (`new Boolean(false)` is truthy), a string is a string, a date is a date with a
   real time, a list of strings holds strings, and a field the interface requires is refused when a record lacks it. A
