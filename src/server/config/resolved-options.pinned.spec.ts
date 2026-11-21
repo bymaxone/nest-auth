@@ -305,4 +305,35 @@ describe('the role hierarchy of the resolved options', () => {
 
     expect(resolved.workspaces?.roles.hierarchy).toEqual({ owner: ['editor'], editor: [] })
   })
+
+  // Scenario: each of the three hierarchies given as a falsy value that is not null (false, 0, an empty string and NaN),
+  // with the platform enabled where the platform hierarchy is the one under test. Expected: each is refused as a hierarchy
+  // that was not given, naming it. Why: a falsy value is no hierarchy, and a copy that turned it into an empty object
+  // would make it a truthy one that the checks for a hierarchy that is required let through.
+  it.each(
+    (['roles.hierarchy', 'roles.platformHierarchy', 'workspaces.roles.hierarchy'] as const).flatMap(
+      (which) => ([false, 0, '', Number.NaN] as const).map((value) => [which, value] as const)
+    )
+  )('refuses %s given as the falsy value %p', (which, value) => {
+    const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
+      jwt: { secret: SECRET },
+      rateLimit: { clientIpSource: 'peer' },
+      roles:
+        which === 'roles.hierarchy'
+          ? { hierarchy: value }
+          : which === 'roles.platformHierarchy'
+            ? { hierarchy: { MEMBER: [] }, platformHierarchy: value }
+            : { hierarchy: { MEMBER: [] } },
+      ...(which === 'roles.platformHierarchy' ? { platform: { enabled: true } } : {}),
+      ...(which === 'workspaces.roles.hierarchy'
+        ? { workspaces: { enabled: true, roles: { hierarchy: value, ownerRole: 'owner' } } }
+        : {})
+    }
+
+    expect(() => resolveOptions(given as BymaxAuthModuleOptions)).toThrow(
+      which === 'roles.platformHierarchy'
+        ? 'roles.platformHierarchy is required when platform.enabled is true'
+        : `${which} is required`
+    )
+  })
 })

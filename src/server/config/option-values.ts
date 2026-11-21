@@ -25,8 +25,9 @@ export function readOptions(given: BymaxAuthModuleOptions): BymaxAuthModuleOptio
   return pinHierarchies(options)
 }
 
-/** A hierarchy as a plain copy of what the host answered, whatever it is, children included; the checks judge the copy. */
+/** A hierarchy as a plain copy of what the host answered, whatever object it is; a value that is no object is left for the checks. */
 function copyHierarchy(held: unknown): unknown {
+  if (Object(held) !== held) return held
   return Object.fromEntries(
     Object.entries(held as object).map(([role, children]) => [
       role,
@@ -41,7 +42,7 @@ function copyHierarchy(held: unknown): unknown {
  */
 function pinIn<G>(group: G, keys: readonly string[]): G {
   const copy = { ...group } as Record<string, unknown>
-  for (const key of keys) if (copy[key] != null) copy[key] = copyHierarchy(copy[key])
+  for (const key of keys) if (copy[key] !== undefined) copy[key] = copyHierarchy(copy[key])
   return copy as G
 }
 
