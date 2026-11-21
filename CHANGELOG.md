@@ -16,6 +16,8 @@ Strict SemVer starts when the API is declared stable, and that transition will b
 upgrading. Every breaking change carries an **Apply to a derived backend** note saying exactly
 what moves, and that note is the compatibility contract until strict SemVer begins.
 
+## [Unreleased]
+
 ## [1.5.11] - 2026-11-20
 
 A patch release.
@@ -76,8 +78,9 @@ A patch release.
 ### Apply to a derived backend
 
 Nothing is removed from the public declarations. The `@bymax-one/nest-auth/observability` subpath is new and needs no
-change until you use it: its counters need `prom-client`, its spans need `@opentelemetry/api`, and both are optional
-peers. `rxjs` is now declared as a peer of the server entry; `@nestjs/common` already requires it. The server entry adds
+change until you use it: its counters need `prom-client`, its spans need `@opentelemetry/api`, and `@bymax-one/nest-core`
+`>=1.6.15` is a new optional peer whose metrics-contributor and readiness contracts the subpath meets without importing it;
+all three are optional. `rxjs` is now declared as a peer of the server entry; `@nestjs/common` already requires it. The server entry adds
 `AuthMetricsTally`, `AuthHealthProbe`, `AUTH_PLANES`, `LOGIN_OUTCOMES`, `REFRESH_OUTCOMES`, `MFA_OUTCOMES` and the
 matching outcome types. `BruteForceService` takes an optional third constructor argument, the tally, and the methods of
 `NoOpEmailProvider` name their address parameter `_email` instead of `email` (the types are the same).
