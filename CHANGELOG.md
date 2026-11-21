@@ -36,14 +36,21 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **Access to a workspace is refused when the repository answers with a row of another tenant.** The workspace and the
   membership read for a tenant, a workspace and a user are now checked to carry the tenant that was asked about; the
   key given to a repository is not a proof of the row it returned.
-- **An id names one row.** The ids of users and workspaces, and the ids a membership holds, were accepted as a string, a finite number or
-  any instance of a class of the host, so a `Map` or a `Date` was an id, and two of them printed the same in a claim,
-  a key or the scope of a query. An id is now a non-empty string, a safe integer, or an object of the host that prints
-  as a non-empty text of its own (the id type of a document database, kept as the host's own object, printed once when
-  it is read). A `Date`, a `RegExp`, a `Map`, a `Set`, a `Promise`, an array, a plain object, a function, a boolean, a
-  fraction, an integer past the safe range and an object that prints as nothing or as `[object ...]` end as
-  `auth.internal`. **Apply to a derived backend:** a repository that serves a numeric id as a fraction or past
-  2^53 has to serve it as a string.
+- **An id names one row, and the library keeps it as a string.** The ids of users, workspaces and memberships were
+  accepted as a string, a finite number or any instance of a class of the host, so a `Map` or a `Date` was an id, and
+  two of them printed the same in a claim, a key or the scope of a query. An id is now a non-empty string, a safe
+  integer, or an object of the host that prints as a non-empty text of its own, and what the library keeps is the text
+  it prints as, read once. A `Date`, a `RegExp`, a `Map`, a `Set`, a `Promise`, an array, a plain object, a function, a
+  boolean, a fraction, an integer past the safe range and an object that prints as nothing or as `[object ...]` end as
+  `auth.internal`. An account whose id is a number now works after the login: the token's subject was the number, which
+  the verifier refuses, so `/me`, a refresh and a password change answered 401 for an account that had just logged in.
+  **Apply to a derived backend:** the library hands the repository the id as a string (it always did, from the token),
+  so a repository keyed by a number has to accept the string; a repository that serves a numeric id as a fraction or
+  past 2^53 has to serve it as a string.
+- **A resend of the verification code that fails gives the cooldown back.** The request took the one-minute cooldown
+  before it looked the account up, so a request that failed there (a repository that throws, or answers with a record the
+  copy refuses) left the retry it invites refused for the rest of the minute. A request that took the cooldown and failed
+  releases it, as the password reset request already did; a request that sent, or found the cooldown taken, keeps it.
 
 ## [1.5.12] - 2026-11-21
 
