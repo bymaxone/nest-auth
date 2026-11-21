@@ -41,7 +41,10 @@ function build(due: Date): { service: WorkspaceService; updateStatus: jest.Mock 
     createWithOwner: jest.fn()
   }
   const service = new WorkspaceService(
-    guardRepository(host, WORKSPACE_REPOSITORY_CONTRACT) as unknown as IWorkspaceRepository,
+    guardRepository(
+      host as Partial<IWorkspaceRepository>,
+      WORKSPACE_REPOSITORY_CONTRACT
+    ) as IWorkspaceRepository,
     { countOwned: jest.fn() } as Partial<IMembershipRepository> as IMembershipRepository,
     { invalidateWorkspace: jest.fn() } as never,
     { emit: jest.fn() } as never,
