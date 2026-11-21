@@ -54,7 +54,8 @@ A patch release.
 - **The fields of the contract are visible to a spread of the copy.** An entity that serves its fields through its
   prototype (a Sequelize or Mongoose one) used to log in and then fail every later request with a 401, because the copy
   kept those fields out of the token payload. They are now enumerable, except the credentials (`passwordHash`,
-  `mfaSecret`, `mfaRecoveryCodes`, `digest`), which are as visible as the host's record made them.
+  `mfaSecret`, `mfaRecoveryCodes`, `digest`), which are as visible as the host's record made them, so no spread of the
+  copy can carry them out and one that loses a credential fails closed, because the library reads them by name.
 - **An instance of a class of the host in a field of the contract is kept as it is.** An id type of a database driver
   or the date of a date library used to be copied into a plain object, so an id printed as `[object Object]`; plain
   objects and arrays are still copied.
