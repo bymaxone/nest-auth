@@ -286,15 +286,65 @@ describe('copyHostRecord', () => {
       const cyclic: unknown[] = [1, 2]
       cyclic.push(cyclic)
 
-      const copy = copyHostRecord({ scopes: [1, 2], mfaRecoveryCodes: cyclic }, USER) as {
-        scopes: unknown[]
+      const copy = copyHostRecord({ mfaRecoveryCodes: cyclic, oauthProvider: [1, 2] }, USER) as {
+        oauthProvider: unknown[]
         mfaRecoveryCodes: unknown[]
       }
 
       expect(causeOf(() => copyHostRecord({ mfaRecoveryCodes: deep }, USER))).toBeDefined()
-      expect(copy.scopes).toEqual([1, 2])
-      expect(copy.scopes).toHaveLength(2)
+      expect(copy.oauthProvider).toEqual([1, 2])
+      expect(copy.oauthProvider).toHaveLength(2)
       expect(copy.mfaRecoveryCodes[2]).toBe(copy.mfaRecoveryCodes)
+    })
+
+    // The path of a page is four contract levels deep before the data starts, so the limit applies to what is left.
+    it('applies the limit along the path of a page, down to a value of its workspace', () => {
+      const pageWith = (levels: number): unknown => ({
+        items: [{ workspace: { name: nest(levels) } }],
+        nextCursor: null
+      })
+
+      expect(() => copyHostRecord(pageWith(12), PAGE)).not.toThrow()
+      expect(causeOf(() => copyHostRecord(pageWith(13), PAGE))).toBe(
+        'the record nests deeper than the library follows'
+      )
+    })
+
+    it('copies a list of records to exactly its length and a list that holds itself once', () => {
+      const rows = [{ id: 'a' }, { id: 'b' }]
+      const loop: unknown[] = []
+      loop.push(loop)
+
+      const copy = copyHostRecord(rows, { list: USER }) as unknown[]
+      const looped = copyHostRecord(loop, { list: USER }) as unknown[]
+
+      expect(copy).toEqual(rows)
+      expect(copy).toHaveLength(2)
+      expect(looped[0]).toBe(looped)
+    })
+
+    it('copies a plain object that holds itself once, inside a field of the contract', () => {
+      const own: Record<string, unknown> = {}
+      own['self'] = own
+
+      const copy = copyHostRecord({ name: own }, USER) as { name: { self: unknown } }
+
+      expect(copy.name.self).toBe(copy.name)
+      expect(copy.name).not.toBe(own)
+    })
+
+    it('defines no field for a name of the contract that is undefined or absent', () => {
+      const copy = copyHostRecord({ id: 'u1', name: undefined }, USER) as Record<string, unknown>
+
+      expect(Object.hasOwn(copy, 'name')).toBe(false)
+      expect(Object.hasOwn(copy, 'email')).toBe(false)
+      expect(copy['id']).toBe('u1')
+    })
+
+    it('refuses an answer that is no list where its method promises one, saying why', () => {
+      expect(causeOf(() => copyHostRecord({ not: 'a list' }, { list: USER }))).toBe(
+        'the answer is not the list its method promises'
+      )
     })
 
     it('copies a record that has no prototype', () => {
@@ -410,6 +460,7 @@ describe('copyHostRecord', () => {
 
     expect(copy.id).toBe('u1')
     expect(copy.state).toBe(state)
+    expect(Object.keys(copy)).toEqual(['id', 'state'])
   })
 
   // Scenario: an entity shaped like a hydrated ORM instance (the own fields of a Sequelize model with two levels of
