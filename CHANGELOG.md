@@ -28,6 +28,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `mfa.previousEncryptionKeys` and `apiKeys.scopes`, whose strength and format checks ran once at start.
   `jwt`, `mfa`, `apiKeys` and `workspaces.permissions` must be objects: a function, an array or a primitive given for
   one is refused with `[BymaxAuthModule] <option> must be an object (received …)`.
+- **The id of a row is required.** The ids of a user, a platform user, an API key, a workspace and of a membership (its
+  workspace and its user) were accepted when absent or `null`, so a row without an id logged in with a token whose
+  subject was nothing. Each is refused as `auth.internal` when it is absent, `undefined` or `null`; the user that invited
+  a member, which may be absent, is the one id that still is.
+- **A resend of the verification code gives the cooldown back when the code cannot be stored.** The write of the code
+  to the store was the one failure on the path that the response had not left yet and that kept the cooldown. A request
+  that finds no account, or an account that is already verified, still keeps it, so the throttle never tells the two
+  apart. A mail provider that fails after the response left does not release it: a delete by key from there could remove
+  the cooldown of a later request, so the user retries after the minute.
+- **The hierarchy of the platform is judged as the others are.** When the platform is enabled, `roles.platformHierarchy`
+  must be an object that names at least one role, whose children are lists of roles it declares (a string, a number, a
+  child that is no list or a child nobody declares ends the boot with the option and the role named).
 - **An id is never blank, the text of a missing value, an error or a buffer.** A string or a printed text that is empty
   or only whitespace, `undefined` or `null`, and an `Error`, a `Buffer` or any other view of bytes, are refused as an id
   with `auth.internal`.

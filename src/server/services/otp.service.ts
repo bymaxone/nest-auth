@@ -12,19 +12,28 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { sleep } from '../utils/sleep'
 
-/** Gives the cooldown back when the work of a resend request fails; a failed release is logged, never raised. */
-export async function releasingCooldownOnFailure<T>(
+/**
+ * Gives the cooldown back when the work of a resend request fails, by throwing or by answering `false` (nothing was issued);
+ * a failed release is logged, never raised. A send that fails after the response left does not release it: a delete by key
+ * from there could remove the cooldown of a later request.
+ */
+export async function releasingCooldownOnFailure(
   redis: Pick<AuthRedisService, 'del'>,
   logger: LoggerService,
   cooldownKey: string,
-  work: () => Promise<T>
-): Promise<T> {
+  work: () => Promise<boolean | undefined>
+): Promise<void> {
+  const release = (): Promise<void> =>
+    redis.del(cooldownKey).then(
+      () => undefined,
+      (err: unknown) => {
+        logStore(logger, 'AUTH_STORE_FAILED', 'resend_cooldown_release', err)
+      }
+    )
   try {
-    return await work()
+    if ((await work()) === false) await release()
   } catch (error: unknown) {
-    await redis.del(cooldownKey).catch((err: unknown) => {
-      logStore(logger, 'AUTH_STORE_FAILED', 'resend_cooldown_release', err)
-    })
+    await release()
     throw error
   }
 }
