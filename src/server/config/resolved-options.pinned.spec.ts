@@ -297,10 +297,9 @@ describe('the role hierarchy of the resolved options', () => {
     )
   })
 
-  // Scenario: each hierarchy given as a truthy value that is no object (a string, a number, true). Expected: the account
-  // hierarchy is refused with a message that names what is wrong with it, and the platform hierarchy, which the checks
-  // only test for being there, is kept as the host wrote it. Why: only an object is copied, so a value that is no object
-  // means to the checks exactly what the host wrote.
+  // Scenario: the hierarchy of the account given as a truthy value that is no object (a string, a number, true). Expected:
+  // it is refused with a message that names what is wrong with it. Why: only an object is copied, so a value that is no
+  // object means to the checks exactly what the host wrote. (The platform hierarchy has its own rows.)
   it.each([
     ['a string', 'abc', "roles.hierarchy['0'] must be an array"],
     ['a number', 5, 'roles.hierarchy must not be an empty object'],
@@ -311,21 +310,6 @@ describe('the role hierarchy of the resolved options', () => {
       expect(() => resolveOptions(optionsWith({ hierarchy: value }))).toThrow(message)
     }
   )
-
-  it.each([
-    ['a string', 'abc'],
-    ['a number', 5],
-    ['true', true]
-  ] as const)('keeps roles.platformHierarchy given as %s as the host wrote it', (_name, value) => {
-    const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
-      jwt: { secret: SECRET },
-      rateLimit: { clientIpSource: 'peer' },
-      roles: { hierarchy: { MEMBER: [] }, platformHierarchy: value },
-      platform: { enabled: true }
-    }
-
-    expect(resolveOptions(given as BymaxAuthModuleOptions).roles.platformHierarchy).toBe(value)
-  })
 
   // Scenario: the children of a role of the workspaces given as a string, a number, an object and null, with an owner that
   // would otherwise be valid. Expected: each is refused, naming the role whose children they are. Why: the hierarchy of

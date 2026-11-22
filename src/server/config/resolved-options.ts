@@ -15,6 +15,7 @@ import { DEFAULT_OPTIONS } from './default-options'
 import { describeReceived } from './describe-received'
 import { durationToSeconds } from './duration'
 import { readOptions, validateOptionValues } from './option-values'
+import { validatePlatformAdmin } from './platform-options'
 import { validateSecretStrength } from './secret-strength'
 import { assertArray, assertObject } from './shape-checks'
 import {
@@ -725,18 +726,6 @@ function validateRolesHierarchy(roles: BymaxAuthModuleOptions['roles']): void {
         )
       }
     }
-  }
-}
-
-function validatePlatformAdmin(
-  platform: BymaxAuthModuleOptions['platform'],
-  roles: BymaxAuthModuleOptions['roles']
-): void {
-  if (platform?.enabled && !roles.platformHierarchy) {
-    throw new Error(
-      `[BymaxAuthModule] roles.platformHierarchy is required when platform.enabled is true. ` +
-        `Define the platform role hierarchy (e.g. { SUPER_ADMIN: ['SUPPORT'], SUPPORT: [] }).`
-    )
   }
 }
 
