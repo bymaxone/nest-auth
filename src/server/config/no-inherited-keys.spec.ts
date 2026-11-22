@@ -65,5 +65,7 @@ describe('withoutInheritedKeys', () => {
     expect(Object.getPrototypeOf(withoutInheritedKeys(foreign))).toBeNull()
     expect(withoutInheritedKeys('text')).toBe('text')
     expect(withoutInheritedKeys(null)).toBeNull()
+    expect(withoutInheritedKeys(undefined)).toBeUndefined()
+    expect(withoutInheritedKeys({ unset: undefined })).toHaveProperty('unset', undefined)
   })
 })

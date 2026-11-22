@@ -196,7 +196,7 @@ function isObjectGroup(value: unknown): value is object {
  */
 function readOwnOrClass(group: object, key: string): unknown {
   const value: unknown = Reflect.get(group, key)
-  if (value === undefined || Object.hasOwn(group, key)) return value
+  if (Object.hasOwn(group, key)) return value
   let root = group
   for (let next = Object.getPrototypeOf(root); next !== null; next = Object.getPrototypeOf(root)) {
     if (Object.getPrototypeOf(next) !== null && Object.hasOwn(next, key)) return value

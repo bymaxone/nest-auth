@@ -5,6 +5,8 @@
  * @layer Test
  */
 
+import { runInNewContext } from 'node:vm'
+
 import { membershipRecord, userRecord, workspaceRecord } from './__tests__/host-records'
 import { copyHostRecord } from './host-read'
 import {
@@ -85,7 +87,11 @@ const NOT_AN_ID: readonly (readonly [string, unknown])[] = [
   ['a Proxy of a RegExp', new Proxy(/id/u, {})],
   ['an object made from RegExp.prototype', Object.create(RegExp.prototype) as object],
   ['a Proxy of a Buffer', new Proxy(Buffer.from('id'), {})],
-  ['an object made from Uint8Array.prototype', Object.create(Uint8Array.prototype) as object]
+  ['an object made from Uint8Array.prototype', Object.create(Uint8Array.prototype) as object],
+  ['a Date of another realm', runInNewContext('new Date(0)') as object],
+  ['a RegExp of another realm', runInNewContext('/id/u') as object],
+  ['an Error of another realm', runInNewContext("new Error('id')") as object],
+  ['a Uint8Array of another realm', runInNewContext('new Uint8Array([1])') as object]
 ]
 
 /** The reason a copy ended in, or undefined when it ended in none. */

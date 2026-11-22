@@ -29,6 +29,7 @@ function options(extra: Written = {}): BymaxAuthModuleOptions {
 
 /** Runs `body` with `key` planted on the shared prototype of every plain object, and always takes it away again. */
 function withPlanted<T>(key: string, value: unknown, body: () => T): T {
+  const held = Object.getOwnPropertyDescriptor(Object.prototype, key)
   Object.defineProperty(Object.prototype, key, {
     value,
     configurable: true,
@@ -38,7 +39,8 @@ function withPlanted<T>(key: string, value: unknown, body: () => T): T {
   try {
     return body()
   } finally {
-    Reflect.deleteProperty(Object.prototype, key)
+    if (held === undefined) Reflect.deleteProperty(Object.prototype, key)
+    else Object.defineProperty(Object.prototype, key, held)
   }
 }
 
@@ -76,8 +78,8 @@ const TOP_LEVEL: readonly (readonly [string, unknown])[] = [
 describe('a key planted on Object.prototype', () => {
   // Scenario: each top-level option planted on Object.prototype with a value that would enable a feature, weaken a check
   // or change a default, and options that do not write it. Expected: the options resolve exactly as they do with nothing
-  // planted. Why: a planted key reached every option the host left unwritten, so a flaw elsewhere that pollutes the
-  // prototype could switch on invitations or sessions, turn off the verification of the email, or empty the blocked statuses.
+  // planted. Why: a key inherited from the root object is not an option the host wrote, so it must not switch on a
+  // feature, turn off the verification of the email or empty the blocked statuses.
   it.each(TOP_LEVEL)('does not become the option %s', (key, value) => {
     const baseline = resolveOptions(options())
 
@@ -146,6 +148,26 @@ describe('a key planted on Object.prototype', () => {
     expect(Reflect.get(resolvedForeign, 'sessions')).toEqual(
       Reflect.get(resolveOptions(options()), 'sessions')
     )
+  })
+
+  // Scenario: a class that serves `enabled` on its prototype while the same key is planted on Object.prototype with the
+  // opposite value. Expected: the value of the class is read. Why: what the host wrote on its own class is an option, and
+  // the planted key beside it is not, so the nearer holder decides.
+  it('reads the key of a class before the same key planted on the root object', () => {
+    class Sessions {
+      get enabled(): boolean {
+        return true
+      }
+      get defaultMaxSessions(): number {
+        return 7
+      }
+    }
+
+    const resolved = withPlanted('enabled', false, () =>
+      resolveOptions(options({ sessions: new Sessions() }))
+    )
+
+    expect(resolved.sessions).toMatchObject({ enabled: true })
   })
 
   // Scenario: the same options written as an instance of a class that serves its settings on its prototype. Expected: they
