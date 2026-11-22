@@ -209,6 +209,19 @@ describe('signing with a key planted on Object.prototype', () => {
     service.sign({ sub: 'usér €' }, { ...JWT_SIGN_SHADOWS, ...chosen } as JwtSignOptions)
   const claimsOf = (token: string): unknown => service.decode(token, { complete: true })
 
+  // Scenario: a payload object handed to the signature while `mutatePayload` is planted as true. Expected: the object the caller
+  // handed in is left as it was, with no `iat` or `exp` written into it. Why: the option makes `jsonwebtoken` write the
+  // claims into the caller's own object, so a planted one would change an object the backend still holds.
+  it('does not read mutatePayload, and leaves the payload object as it was', () => {
+    const payload: Record<string, unknown> = { sub: 'user' }
+
+    withPlanted('mutatePayload', true, () =>
+      service.sign(payload, { ...JWT_SIGN_SHADOWS, ...chosen } as JwtSignOptions)
+    )
+
+    expect(Object.keys(payload)).toEqual(['sub'])
+  })
+
   // Scenario: the option names of `jsonwebtoken.sign` that have a neutral value, planted. Expected: the token has the
   // header and the claims it has with nothing planted. Why: a token without `iat`, or with a header the host never wrote,
   // is a token this backend would mint on the word of a flaw elsewhere.
