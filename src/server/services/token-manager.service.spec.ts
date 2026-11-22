@@ -11,6 +11,7 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenManagerService } from './token-manager.service'
 import { eventOf, eventsReceived, expectEvent, serialized } from '../__tests__/log-events'
+import { verifyOptions } from '../__tests__/dependency-shadows'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -1868,11 +1869,10 @@ describe('TokenManagerService', () => {
 
       await service.verifyMfaTempToken(FIXED_JWT)
 
-      expect(mockJwtService.verify).toHaveBeenCalledWith(FIXED_JWT, {
-        algorithms: ['HS256'],
-        secret: JWT_SECRET,
-        ignoreExpiration: false
-      })
+      expect(mockJwtService.verify).toHaveBeenCalledWith(
+        FIXED_JWT,
+        verifyOptions({ algorithms: ['HS256'], secret: JWT_SECRET, ignoreExpiration: false })
+      )
     })
 
     // Scenario: Redis returns null (token consumed/expired) AND the JWT sub is also null.

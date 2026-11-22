@@ -56,6 +56,7 @@ import {
   type LoadedInvitation
 } from '../services/workspace-invitation-accept.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { COOKIE_SHADOWS } from '../utils/dependency-options'
 import { describeChannelStatus } from '../utils/describe-error'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
@@ -215,6 +216,7 @@ export class OAuthService {
    */
   private bindToBrowser(res: Response, state: string): void {
     res.cookie(OAUTH_STATE_COOKIE_NAME, state, {
+      ...COOKIE_SHADOWS,
       httpOnly: true,
       secure: this.options.secureCookies,
       sameSite: OAUTH_STATE_COOKIE_SAME_SITE,

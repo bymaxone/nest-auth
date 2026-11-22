@@ -50,6 +50,7 @@ import type {
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { resolveClientAddress } from '../utils/client-address'
+import { COOKIE_SHADOWS } from '../utils/dependency-options'
 
 // ---------------------------------------------------------------------------
 // Type guard
@@ -160,6 +161,7 @@ export class MfaController {
    */
   private clearMfaTempCookie(res: Response): void {
     res.clearCookie(MFA_TEMP_COOKIE_NAME, {
+      ...COOKIE_SHADOWS,
       path: this.options.cookies.mfaTempCookiePath,
       httpOnly: true,
       secure: this.options.secureCookies,

@@ -99,6 +99,7 @@ import { WorkspaceInvitationService } from './services/workspace-invitation.serv
 import { WorkspaceInvitationStore } from './services/workspace-invitation.store'
 import { WorkspaceService } from './services/workspace.service'
 import { WsTicketService } from './services/ws-ticket.service'
+import { jwtModuleOptions } from './utils/dependency-options'
 import { hostHasKey, readHostOptions, callFactory, withGuardedViews } from './utils/host-read'
 
 // ---------------------------------------------------------------------------
@@ -583,11 +584,8 @@ export class BymaxAuthModule {
           useFactory: async (...args: unknown[]) => {
             // Nest supplies the injected values, and their types are the consumer's declaration.
             const { value: userOptions } = await callFactory(options.useFactory, args)
-            return {
-              secret: readHostOptions(() => userOptions.jwt.secret),
-              // Stryker disable next-line ObjectLiteral: jsonwebtoken defaults to HS256 and TokenManagerService overrides signOptions per call, so the emptied `signOptions` produces identical signing
-              signOptions: { algorithm: 'HS256' }
-            }
+            // Stryker disable next-line ObjectLiteral: jsonwebtoken defaults to HS256 and TokenManagerService overrides signOptions per call, so the emptied `signOptions` produces identical signing
+            return jwtModuleOptions(readHostOptions(() => userOptions.jwt.secret))
           },
           inject: options.inject ?? []
         })

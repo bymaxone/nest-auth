@@ -29,6 +29,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { COOKIE_SHADOWS } from '../utils/dependency-options'
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -452,10 +453,9 @@ describe('OAuthController', () => {
       expect((mockOAuthService.handleCallback.mock.calls[0] as unknown[])[3]).toBeUndefined()
     })
 
-    // The cookie is single-use and must be cleared whatever the callback's outcome; a stale
-    // one left behind would never match the next flow's freshly minted state, turning one
-    // failed login into a permanently broken one. The clear attributes must match the plant
-    // attributes or the browser keeps the original cookie.
+    // The cookie is single-use and cleared whatever the callback's outcome: a stale one would never
+    // match the next flow's state and would break every later login. The clear attributes must
+    // match the plant attributes or the browser keeps the original cookie.
     it('should clear the oauth_state cookie on the callback', async () => {
       const mockReq = makeReq()
       const mockRes = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
@@ -471,6 +471,7 @@ describe('OAuthController', () => {
       )
 
       expect(mockRes.clearCookie).toHaveBeenCalledWith('oauth_state', {
+        ...COOKIE_SHADOWS,
         httpOnly: true,
         secure: false,
         sameSite: 'lax',
@@ -694,10 +695,9 @@ describe('OAuthController', () => {
 
       const result = await controller.callback('google', query as never, mockReq, mockRes)
 
-      // Cookie was planted with the right shape. The Max-Age must equal
-      // `MFA_TEMP_COOKIE_MAX_AGE_SECONDS * 1000` = 300_000 ms (5 min) —
-      // pinned exactly to match the underlying MFA temp JWT TTL.
+      // Max-Age is MFA_TEMP_COOKIE_MAX_AGE_SECONDS * 1000 = 300_000 ms, the MFA temp JWT TTL.
       expect(mockRes.cookie).toHaveBeenCalledWith('mfa_temp_token', 'mfa.temp.jwt', {
+        ...COOKIE_SHADOWS,
         httpOnly: true,
         secure: false,
         sameSite: 'lax',
