@@ -112,6 +112,30 @@ describe('a field the record lacks, with its name planted on Object.prototype', 
     expect(Reflect.get(fromClass as object, field)).toEqual(own)
   })
 
+  // Scenario: a getter planted on the root object under the name of a field the record lacks. Expected: the copy is refused
+  // as absent and the getter is never called. Why: where a field is held decides whose it is, and the root is not read.
+  it('never runs a getter planted as a field the record lacks', () => {
+    let calls = 0
+    Object.defineProperty(Object.prototype, 'mfaEnabled', {
+      get(): unknown {
+        calls += 1
+        return false
+      },
+      configurable: true
+    })
+    const record: Record<string, unknown> = { ...userRecord() }
+    Reflect.deleteProperty(record, 'mfaEnabled')
+    let cause: unknown
+    try {
+      cause = causeOf(() => copyHostRecord(record, RECORD_CONTRACTS.user))
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'mfaEnabled')
+    }
+
+    expect(cause).toBe(ABSENT)
+    expect(calls).toBe(0)
+  })
+
   // Scenario: a copy of each record. Expected: it has no prototype. Why: a field the copy does not hold must read as
   // nothing, not as what the root object holds.
   it.each(Object.keys(RECORDS) as (keyof typeof RECORDS)[])(

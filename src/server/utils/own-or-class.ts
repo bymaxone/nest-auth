@@ -15,12 +15,12 @@
  * @returns The value the host gave, or `undefined` when the host wrote none.
  */
 export function readOwnOrClass(group: object, key: string): unknown {
-  const value: unknown = Reflect.get(group, key)
-  if (Object.hasOwn(group, key)) return value
-  let root = group
-  for (let next = Object.getPrototypeOf(root); next !== null; next = Object.getPrototypeOf(root)) {
-    if (Object.getPrototypeOf(next) !== null && Object.hasOwn(next, key)) return value
-    root = next
+  for (let holder: object | null = group; holder !== null; holder = Object.getPrototypeOf(holder)) {
+    if (!Object.hasOwn(holder, key)) continue
+    // The first holder decides, and the root object is never read: a getter planted there does not run.
+    return holder !== group && Object.getPrototypeOf(holder) === null
+      ? undefined
+      : Reflect.get(group, key)
   }
-  return Object.hasOwn(root, key) ? undefined : value
+  return Reflect.get(group, key)
 }

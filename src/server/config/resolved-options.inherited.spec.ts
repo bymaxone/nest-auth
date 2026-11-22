@@ -150,6 +150,27 @@ describe('a key planted on Object.prototype', () => {
     )
   })
 
+  // Scenario: a getter planted on Object.prototype under the name of an option the host did not write, and under a key of a
+  // group it did. Expected: the options resolve and the getter is never called. Why: the owner of a key is decided from where
+  // the key is held, and the root object is not read, so nothing a planted getter does can run.
+  it.each(['sessions', 'enabled'] as const)('never runs a getter planted as %s', (name) => {
+    let calls = 0
+    Object.defineProperty(Object.prototype, name, {
+      get(): unknown {
+        calls += 1
+        return false
+      },
+      configurable: true
+    })
+    try {
+      resolveOptions(options({ invitations: {} }))
+    } finally {
+      Reflect.deleteProperty(Object.prototype, name)
+    }
+
+    expect(calls).toBe(0)
+  })
+
   // Scenario: a class that serves `enabled` on its prototype while the same key is planted on Object.prototype with the
   // opposite value. Expected: the value of the class is read. Why: what the host wrote on its own class is an option, and
   // the planted key beside it is not, so the nearer holder decides.
