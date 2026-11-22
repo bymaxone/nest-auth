@@ -61,18 +61,26 @@ describe('judge', () => {
 
 describe('parseOptions', () => {
   it('defaults to src, dist, tsup.config.ts and package.json, and repeats --src and --also', () => {
-    assert.deepEqual(parseOptions([]), { src: ['src'], dist: 'dist', also: ['tsup.config.ts', 'package.json'] })
+    assert.deepEqual(parseOptions([]), { src: ['src'], dist: 'dist', also: ['tsup.config.ts', 'package.json'], tarballOk: false })
     assert.deepEqual(parseOptions(['--src', 'a', '--src', 'b', '--also', 'x', '--dist', 'out']), {
       src: ['a', 'b'],
       dist: 'out',
       also: ['x'],
+      tarballOk: false,
     })
+  })
+
+  it('reads --tarball-ok as a flag that takes no value, in any position', () => {
+    assert.equal(parseOptions(['--tarball-ok']).tarballOk, true)
+    const options = parseOptions(['--src', 'a', '--tarball-ok', '--dist', 'out'])
+    assert.deepEqual([options.src, options.dist, options.tarballOk], [['a'], 'out', true])
   })
 
   it('refuses an unknown option and an option without a value', () => {
     assert.throws(() => parseOptions(['--nope', 'x']), /Unknown option/)
     assert.throws(() => parseOptions(['--src']), /--src needs a value/)
     assert.throws(() => parseOptions(['--dist', '--src']), /--dist needs a value/)
+    assert.throws(() => parseOptions(['--src', undefined]), /--src needs a value/)
   })
 })
 
@@ -113,10 +121,30 @@ describe('the command', () => {
     assert.match(result.stderr, /pnpm build/)
   })
 
-  it('passes without comparing when PACKAGE_TARBALL is set', () => {
+  it('ignores PACKAGE_TARBALL without --tarball-ok, so a script that measures dist/ is still guarded', () => {
+    const root = pkg({ 'src/a.ts': 300, 'dist/a.mjs': 200, 'x.tgz': 100 })
+    assert.equal(cli(root, [], { PACKAGE_TARBALL: join(root, 'x.tgz') }).status, 1)
+    assert.equal(cli(root, [], { PACKAGE_TARBALL: '/missing.tgz' }).status, 1)
+  })
+
+  it('passes without comparing when --tarball-ok is given and PACKAGE_TARBALL names a file', () => {
+    const root = pkg({ 'src/a.ts': 300, 'dist/a.mjs': 200, 'x.tgz': 100 })
+    assert.equal(cli(root, ['--tarball-ok'], { PACKAGE_TARBALL: join(root, 'x.tgz') }).status, 0)
+    assert.equal(cli(root, ['--tarball-ok'], { PACKAGE_TARBALL: 'x.tgz' }).status, 0)
+  })
+
+  it('fails with --tarball-ok when PACKAGE_TARBALL names a file that is not there, or a directory', () => {
+    const root = pkg({ 'src/a.ts': 100, 'dist/a.mjs': 200 })
+    const missing = cli(root, ['--tarball-ok'], { PACKAGE_TARBALL: '/missing.tgz' })
+    assert.equal(missing.status, 1)
+    assert.match(missing.stderr, /not a file/)
+    assert.equal(cli(root, ['--tarball-ok'], { PACKAGE_TARBALL: join(root, 'dist') }).status, 1)
+  })
+
+  it('compares dist/ with --tarball-ok when PACKAGE_TARBALL is unset or empty', () => {
     const root = pkg({ 'src/a.ts': 300, 'dist/a.mjs': 200 })
-    assert.equal(cli(root, [], { PACKAGE_TARBALL: '/x/y.tgz' }).status, 0)
-    assert.equal(cli(root, [], { PACKAGE_TARBALL: '' }).status, 1)
+    assert.equal(cli(root, ['--tarball-ok']).status, 1)
+    assert.equal(cli(root, ['--tarball-ok'], { PACKAGE_TARBALL: '' }).status, 1)
   })
 
   it('exits 2 on a bad command line', () => {
