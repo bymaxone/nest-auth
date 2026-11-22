@@ -221,6 +221,26 @@ function copyStrings(value: unknown, read: Read): string[] {
   return copy
 }
 
+/** The built-in classes whose objects print as what they are; the brand checks do not see a Proxy of one or an object made from its prototype. */
+const BUILT_IN_VALUES: readonly (abstract new (...args: never[]) => object)[] = [
+  Date,
+  RegExp,
+  Error,
+  DataView,
+  Object.getPrototypeOf(Uint8Array) as abstract new (...args: never[]) => object
+]
+
+/** Whether `value` is a date, a regular expression, an error or a view of bytes, itself or as a Proxy or a descendant of one. */
+function isBuiltInValue(value: object): boolean {
+  return (
+    types.isDate(value) ||
+    types.isRegExp(value) ||
+    types.isNativeError(value) ||
+    types.isArrayBufferView(value) ||
+    BUILT_IN_VALUES.some((kind) => value instanceof kind)
+  )
+}
+
 /** What an id may not print as: text that names nothing, or the text of a value that was never there. */
 const NOT_AN_ID_TEXT: ReadonlySet<string> = new Set(['undefined', 'null'])
 
@@ -232,14 +252,7 @@ const NOT_AN_ID_TEXT: ReadonlySet<string> = new Set(['undefined', 'null'])
  */
 function readId(value: unknown): string {
   if (typeof value === 'number') return accept(Number.isSafeInteger(value), String(value)) as string
-  if (
-    typeof value !== 'string' &&
-    (!isHostInstance(value) ||
-      types.isDate(value) ||
-      types.isRegExp(value) ||
-      types.isNativeError(value) ||
-      types.isArrayBufferView(value))
-  )
+  if (typeof value !== 'string' && (!isHostInstance(value) || isBuiltInValue(value as object)))
     throw new Error(WRONG_KIND)
   const text = String(value)
   const printed = typeof value !== 'string'
@@ -280,6 +293,8 @@ function readInformingDate(value: unknown): unknown {
 const READERS = {
   boolean: (value: unknown): unknown => accept(typeof value === 'boolean', value),
   string: (value: unknown): unknown => accept(typeof value === 'string', value),
+  tenant: (value: unknown): unknown =>
+    accept(typeof value === 'string' && value.trim() !== '', value),
   id: readId,
   number: (value: unknown): unknown => accept(Number.isFinite(value), value),
   date: copyDate,

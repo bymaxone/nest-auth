@@ -45,7 +45,7 @@ type BaseKind<V> = [V] extends [boolean]
   : [V] extends [number]
     ? 'number'
     : [V] extends [string]
-      ? 'string' | 'id'
+      ? 'string' | 'id' | 'tenant'
       : [V] extends [Date]
         ? 'date'
         : [V] extends [readonly string[]]
@@ -135,7 +135,7 @@ export const RECORD_CONTRACTS = {
   workspace: {
     fields: {
       id: 'id',
-      tenantId: 'string',
+      tenantId: 'tenant',
       name: '~string',
       status: 'string',
       createdAt: '~date',
@@ -145,7 +145,7 @@ export const RECORD_CONTRACTS = {
   },
   membership: {
     fields: {
-      tenantId: 'string',
+      tenantId: 'tenant',
       workspaceId: 'id',
       userId: 'id',
       role: 'string',
@@ -164,7 +164,7 @@ export const RECORD_CONTRACTS = {
       passwordHash: 'string|null',
       role: 'string',
       status: 'string',
-      tenantId: 'string',
+      tenantId: 'tenant',
       emailVerified: 'boolean',
       mfaEnabled: 'boolean',
       mfaSecret: 'string?',

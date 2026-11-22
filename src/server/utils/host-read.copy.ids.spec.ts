@@ -76,7 +76,16 @@ const NOT_AN_ID: readonly (readonly [string, unknown])[] = [
   ['a Buffer', Buffer.from('id')],
   ['a typed array', new Uint8Array([1, 2])],
   ['a symbol', Symbol('id')],
-  ['a bigint', 1n]
+  ['a bigint', 1n],
+  ['a Proxy of an Error', new Proxy(new Error('id'), {})],
+  ['an object made from Error.prototype', Object.create(Error.prototype) as object],
+  ['an instance of a subclass of Error', new (class DriverError extends Error {})('id')],
+  ['a Proxy of a Date', new Proxy(new Date(0), {})],
+  ['an object made from Date.prototype', Object.create(Date.prototype) as object],
+  ['a Proxy of a RegExp', new Proxy(/id/u, {})],
+  ['an object made from RegExp.prototype', Object.create(RegExp.prototype) as object],
+  ['a Proxy of a Buffer', new Proxy(Buffer.from('id'), {})],
+  ['an object made from Uint8Array.prototype', Object.create(Uint8Array.prototype) as object]
 ]
 
 /** The reason a copy ended in, or undefined when it ended in none. */
