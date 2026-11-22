@@ -70,7 +70,6 @@
     "src/server/services/token-delivery.refresh-samesite.spec.ts": 5,
     "src/server/services/token-delivery.service.spec.ts": 1,
     "src/server/services/token-manager.service.spec.ts": 1,
-    "src/server/services/token-manager.service.ts": 2,
     "src/server/services/ws-ticket.service.spec.ts": 1,
     "src/server/utils/client-address.spec.ts": 1,
     "src/server/utils/pending-logout.spec.ts": 2,

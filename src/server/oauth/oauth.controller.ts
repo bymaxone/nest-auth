@@ -64,6 +64,7 @@ import type {
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { resolveClientAddress } from '../utils/client-address'
+import { cookieOptions } from '../utils/dependency-options'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -398,6 +399,7 @@ export class OAuthController {
    */
   private clearOAuthStateCookie(res: Response): void {
     res.clearCookie(OAUTH_STATE_COOKIE_NAME, {
+      ...cookieOptions(),
       httpOnly: true,
       secure: this.options.secureCookies,
       sameSite: OAUTH_STATE_COOKIE_SAME_SITE,
@@ -423,6 +425,7 @@ export class OAuthController {
    */
   private setMfaTempCookie(res: Response, mfaTempToken: string): void {
     res.cookie(MFA_TEMP_COOKIE_NAME, mfaTempToken, {
+      ...cookieOptions(),
       httpOnly: true,
       secure: this.options.secureCookies,
       sameSite: this.options.cookies.sameSite,

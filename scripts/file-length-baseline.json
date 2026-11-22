@@ -8,7 +8,7 @@
     "src/server/config/resolved-options.spec.ts": 3362,
     "src/server/config/resolved-options.ts": 1295,
     "src/server/conformance.spec.ts": 1342,
-    "src/server/controllers/mfa.controller.spec.ts": 902,
+    "src/server/controllers/mfa.controller.spec.ts": 901,
     "src/server/interfaces/auth-module-options.interface.ts": 992,
     "src/server/oauth/oauth.controller.spec.ts": 1078,
     "src/server/oauth/oauth.service.spec.ts": 1534,
@@ -27,7 +27,7 @@
     "src/server/services/session.service.ts": 1059,
     "src/server/services/token-delivery.service.spec.ts": 1176,
     "src/server/services/token-manager.service.spec.ts": 2657,
-    "src/server/services/token-manager.service.ts": 1389,
+    "src/server/services/token-manager.service.ts": 1384,
     "test/e2e/oauth-flow.e2e-spec.ts": 1289
   }
 }

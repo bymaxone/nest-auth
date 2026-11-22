@@ -36,6 +36,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
 import { eventOf, expectEvent, serialized } from '../__tests__/log-events'
+import { COOKIE_SHADOWS } from '../utils/dependency-options'
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -363,10 +364,9 @@ describe('OAuthService', () => {
       expect(ttlArg).toBe(600)
     })
 
-    // Verifies the browser binding required by RFC 6749 §10.12: the raw state is planted as
-    // an HttpOnly cookie so the callback can prove it reached the same browser that started
-    // the flow. Without it, an attacker who holds a valid `?code=…&state=…` URL can have a
-    // victim's browser complete THEIR login and inherit whatever the victim does next.
+    // Verifies the browser binding of RFC 6749 §10.12: the raw state is planted as an HttpOnly
+    // cookie so the callback can prove it reached the browser that started the flow. Without it, an
+    // attacker holding a valid `?code=…&state=…` URL can have a victim's browser complete THEIR login.
     it('should plant the raw state as an HttpOnly oauth_state cookie', async () => {
       mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
 
@@ -374,10 +374,10 @@ describe('OAuthService', () => {
 
       const [generatedState] = mockPlugin.authorizeUrl.mock.calls[0] as [string, string | undefined]
       expect(mockRes.cookie).toHaveBeenCalledWith('oauth_state', generatedState, {
+        ...COOKIE_SHADOWS,
         httpOnly: true,
         secure: true,
-        // Always 'lax', never the configured value: the provider's callback is a cross-site
-        // top-level GET, and 'strict' would withhold the cookie on exactly that hop.
+        // Always 'lax': the provider's callback is a cross-site GET that 'strict' would withhold.
         sameSite: 'lax',
         path: '/',
         // Matches OAUTH_STATE_TTL_SECONDS so neither half of the pair outlives the other.

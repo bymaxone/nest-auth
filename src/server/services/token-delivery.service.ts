@@ -1,11 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common'
-import type { Request, Response } from 'express'
+import type { CookieOptions, Request, Response } from 'express'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
+import { cookieOptions } from '../utils/dependency-options'
 
 /** Hostname validation — allows only alphanumeric, dots, and hyphens. */
 const HOSTNAME_RE = /^[a-z0-9.-]+$/i
@@ -395,14 +396,11 @@ export class TokenDeliveryService {
   }
 
   /** Returns base Set-Cookie options for auth cookies, optionally scoped to a domain. */
-  private baseCookieOptions(domain: string | undefined): {
-    sameSite: 'lax' | 'strict' | 'none'
-    domain?: string
-  } {
-    return {
+  private baseCookieOptions(domain: string | undefined): CookieOptions {
+    return cookieOptions({
       sameSite: this.options.cookies.sameSite,
       ...(domain ? { domain } : {})
-    }
+    })
   }
 
   /** Reads the value of the cookie identified by `name` from the request. */

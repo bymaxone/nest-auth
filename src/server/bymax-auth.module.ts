@@ -99,7 +99,9 @@ import { WorkspaceInvitationService } from './services/workspace-invitation.serv
 import { WorkspaceInvitationStore } from './services/workspace-invitation.store'
 import { WorkspaceService } from './services/workspace.service'
 import { WsTicketService } from './services/ws-ticket.service'
+import { jwtModuleOptions } from './utils/dependency-options'
 import { hostHasKey, readHostOptions, callFactory, withGuardedViews } from './utils/host-read'
+import { assertRootIsStandardAtBoot } from './utils/object-prototype-guard'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -340,11 +342,10 @@ export class BymaxAuthModule {
         // Nest supplies the injected values, and their types are the consumer's declaration.
         const { value: userOptions } = await callFactory(options.useFactory, args)
 
-        // `controllers` belongs on the `registerAsync()` call, never in the factory's return
-        // value. Nest decides a module's shape before any factory runs, so a `controllers` key
-        // here is read by nothing: the flags are silently dropped and the endpoints they were
-        // meant to enable are simply absent — a 404 whose cause is in a different object from
-        // the one the developer edited. It was documented; documentation is not a control.
+        // `controllers` belongs on the `registerAsync()` call, never in the factory's return value.
+        // Nest decides a module's shape before any factory runs, so a `controllers` key here is read
+        // by nothing: the flags are dropped and the endpoints they were meant to enable are simply
+        // absent. It was documented; documentation is not a control.
         if (hostHasKey(userOptions, 'controllers')) {
           throw new Error(
             '[BymaxAuthModule] `controllers` must be passed to registerAsync() itself, not ' +
@@ -353,6 +354,7 @@ export class BymaxAuthModule {
           )
         }
 
+        assertRootIsStandardAtBoot()
         const resolved = readHostOptions(() => resolveOptions(userOptions))
 
         // Cross-validate: controllers.mfa: true without the mfa config group would
@@ -583,11 +585,8 @@ export class BymaxAuthModule {
           useFactory: async (...args: unknown[]) => {
             // Nest supplies the injected values, and their types are the consumer's declaration.
             const { value: userOptions } = await callFactory(options.useFactory, args)
-            return {
-              secret: readHostOptions(() => userOptions.jwt.secret),
-              // Stryker disable next-line ObjectLiteral: jsonwebtoken defaults to HS256 and TokenManagerService overrides signOptions per call, so the emptied `signOptions` produces identical signing
-              signOptions: { algorithm: 'HS256' }
-            }
+            // Stryker disable next-line ObjectLiteral: jsonwebtoken defaults to HS256 and TokenManagerService overrides signOptions per call, so the emptied `signOptions` produces identical signing
+            return jwtModuleOptions(readHostOptions(() => userOptions.jwt.secret))
           },
           inject: options.inject ?? []
         })

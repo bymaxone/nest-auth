@@ -17,6 +17,7 @@ import { MfaController } from './mfa.controller'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
+import { cookieOptions } from '../__tests__/dependency-shadows'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -408,12 +409,10 @@ describe('MfaController', () => {
 
       await controller.challenge({ code: '654321' } as never, reqWithCookie, res)
 
-      expect(res.clearCookie).toHaveBeenCalledWith('mfa_temp_token', {
-        path: '/auth/mfa',
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax'
-      })
+      expect(res.clearCookie).toHaveBeenCalledWith(
+        'mfa_temp_token',
+        cookieOptions({ path: '/auth/mfa', httpOnly: true, secure: false, sameSite: 'lax' })
+      )
     })
 
     /**

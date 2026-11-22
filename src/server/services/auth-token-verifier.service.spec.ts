@@ -18,6 +18,7 @@ import { AuthException } from '../errors/auth-exception'
 import { AccountStatusService } from './account-status.service'
 import { AuthRevocationService } from './auth-revocation.service'
 import { AuthTokenVerifierService } from './auth-token-verifier.service'
+import { verifyOptions } from '../__tests__/dependency-shadows'
 
 /** Extracts the canonical error code from a thrown AuthException response body. */
 function errorCodeOf(err: unknown): string {
@@ -127,12 +128,15 @@ describe('AuthTokenVerifierService', () => {
   it('verifies under the pinned algorithm and the configured issuer and audience', async () => {
     await verifier.verifyAccessToken('tok', { plane: 'dashboard' })
 
-    expect(mockJwt.verify).toHaveBeenCalledWith('tok', {
-      algorithms: ['HS256'],
-      ignoreExpiration: false,
-      issuer: 'iss',
-      audience: 'aud'
-    })
+    expect(mockJwt.verify).toHaveBeenCalledWith(
+      'tok',
+      verifyOptions({
+        algorithms: ['HS256'],
+        ignoreExpiration: false,
+        issuer: 'iss',
+        audience: 'aud'
+      })
+    )
   })
 
   // -------------------------------------------------------------------------

@@ -29,6 +29,7 @@ import { logEvent, logHook } from '../observability/log-event'
 import { markingPlane, observed } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
+import { jwtSignOptions } from '../utils/dependency-options'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { serializeSession } from '../utils/serialize-session'
 import { dashboardSessionDetail, platformSessionExtra } from '../utils/session-detail'
@@ -156,22 +157,13 @@ export class TokenManagerService {
     return this.jwtService.sign({ ...payload, jti }, this.accessSignOptions())
   }
 
-  /**
-   * Builds JwtSignOptions from resolved configuration.
-   *
-   * The double-cast through `unknown` is required because:
-   * 1. `@nestjs/jwt` types `expiresIn` as the branded `StringValue` from `ms`
-   *    (not a plain `string`), and
-   * 2. `exactOptionalPropertyTypes` rejects `string | undefined` as the value
-   *    type of an optional property typed as `StringValue`.
-   * At runtime the value is always a valid `ms` string — the cast is safe.
-   */
+  /** The options of an access-token `sign` call: the resolved configuration, over a neutral value for every option the library does not choose. */
   private accessSignOptions(): JwtSignOptions {
-    return {
+    return jwtSignOptions({
       expiresIn: this.options.jwt.accessExpiresIn,
       ...signerOf(this.options),
       ...this.issuerAudience()
-    } as unknown as JwtSignOptions
+    })
   }
 
   /**
@@ -1227,14 +1219,17 @@ export class TokenManagerService {
       epoch: await this.redis.getUserTokenEpoch(userId, tenantId, context)
     }
 
-    const token = this.jwtService.sign(payload, {
-      expiresIn: `${MFA_TEMP_TOKEN_TTL_SECONDS}s`,
-      ...signerOf(this.options),
-      // The challenge token is stamped and checked like every other: it grants no resource
-      // access on its own, but it is still a token this backend minted, and a verifier that
-      // exempted one shape would be a verifier an attacker aims at.
-      ...this.issuerAudience()
-    } as unknown as JwtSignOptions)
+    const token = this.jwtService.sign(
+      payload,
+      jwtSignOptions({
+        expiresIn: `${MFA_TEMP_TOKEN_TTL_SECONDS}s`,
+        ...signerOf(this.options),
+        // The challenge token is stamped and checked like every other: it grants no resource
+        // access on its own, but it is still a token this backend minted, and a verifier that
+        // exempted one shape would be a verifier an attacker aims at.
+        ...this.issuerAudience()
+      })
+    )
 
     await this.redis.set(`mfa:${sha256(jti)}`, userId, MFA_TEMP_TOKEN_TTL_SECONDS)
 
