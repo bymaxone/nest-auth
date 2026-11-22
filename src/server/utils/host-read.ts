@@ -280,6 +280,7 @@ function readInformingDate(value: unknown): unknown {
 const READERS = {
   boolean: (value: unknown): unknown => accept(typeof value === 'boolean', value),
   string: (value: unknown): unknown => accept(typeof value === 'string', value),
+  id: readId,
   number: (value: unknown): unknown => accept(Number.isFinite(value), value),
   date: copyDate,
   strings: copyStrings,

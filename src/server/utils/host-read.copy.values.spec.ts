@@ -296,7 +296,13 @@ describe('the kinds of the contract', () => {
     ['expiresAt', KEY, apiKeyRecord],
     ['scopes', KEY, apiKeyRecord],
     ['role', MEMBERSHIP, membershipRecord],
-    ['status', MEMBERSHIP, membershipRecord]
+    ['status', MEMBERSHIP, membershipRecord],
+    ['id', USER, userRecord],
+    ['id', PLATFORM, platformRecord],
+    ['id', KEY, apiKeyRecord],
+    ['id', WORKSPACE, workspaceRecord],
+    ['workspaceId', MEMBERSHIP, membershipRecord],
+    ['userId', MEMBERSHIP, membershipRecord]
   ] as const)('refuses a %s that is absent', (field, contract, make) => {
     const absent: Record<string, unknown> = { ...make() }
     Reflect.deleteProperty(absent, field)
@@ -306,6 +312,20 @@ describe('the kinds of the contract', () => {
     expect(
       causeOf(() => copyHostRecord(new Proxy({ ...absent }, { get: () => undefined }), contract))
     ).toBe(ABSENT)
+  })
+
+  // Scenario: the id of a user, a platform user, an API key and a workspace, and the workspace and the user of a membership,
+  // each served as null. Expected: each is refused as a value that is not the kind its method promises. Why: an id that
+  // names no row is no id, and a token whose subject is null is a token for nobody that still logs in.
+  it.each([
+    ['id', USER, userRecord],
+    ['id', PLATFORM, platformRecord],
+    ['id', KEY, apiKeyRecord],
+    ['id', WORKSPACE, workspaceRecord],
+    ['workspaceId', MEMBERSHIP, membershipRecord],
+    ['userId', MEMBERSHIP, membershipRecord]
+  ] as const)('refuses a %s that is null', (field, contract, make) => {
+    expect(causeOf(() => copyHostRecord({ ...make(), [field]: null }, contract))).toBe(WRONG_KIND)
   })
 
   it('lets a field the interface makes optional be absent, and null where null is promised', () => {

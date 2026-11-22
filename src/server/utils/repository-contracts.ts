@@ -45,7 +45,7 @@ type BaseKind<V> = [V] extends [boolean]
   : [V] extends [number]
     ? 'number'
     : [V] extends [string]
-      ? 'string'
+      ? 'string' | 'id'
       : [V] extends [Date]
         ? 'date'
         : [V] extends [readonly string[]]
@@ -64,8 +64,9 @@ type LenientKind<V> = [V] extends [string]
  * promised and `?` when it may be absent, so a required field has no `?` and one that holds a record or a list of them
  * is `nested`. A field that only informs (an id, a name, a date the library returns or displays) may be lenient: `~id`,
  * `~string` or `~date`, which accept absence and `null`, and an object of the host's own classes, and refuse a function,
- * a symbol and a bigint. A `~id` is narrower still: it must name one row, so it is a non-empty string, a safe integer or
- * an object of the host that prints as a text of its own.
+ * a symbol and a bigint. An id is narrower still: it must name one row, so it is a non-empty string, a safe integer or
+ * an object of the host that prints as a text of its own. The id of a row (`id`, with its `null` and `?` as any strict
+ * field) is required, and a `~id` is the optional one, such as the user that invited a member.
  */
 export type FieldSpec<V> =
   | `${BaseKind<NonNullable<V>>}${null extends V ? '|null' : ''}${undefined extends V ? '?' : ''}`
@@ -133,7 +134,7 @@ export type ErasedRepositoryContract = Readonly<Record<string, ErasedContract>>
 export const RECORD_CONTRACTS = {
   workspace: {
     fields: {
-      id: '~id',
+      id: 'id',
       tenantId: 'string',
       name: '~string',
       status: 'string',
@@ -145,8 +146,8 @@ export const RECORD_CONTRACTS = {
   membership: {
     fields: {
       tenantId: 'string',
-      workspaceId: '~id',
-      userId: '~id',
+      workspaceId: 'id',
+      userId: 'id',
       role: 'string',
       status: 'string',
       invitedByUserId: '~id',
@@ -157,7 +158,7 @@ export const RECORD_CONTRACTS = {
   },
   user: {
     fields: {
-      id: '~id',
+      id: 'id',
       email: '~string',
       name: '~string',
       passwordHash: 'string|null',
@@ -177,7 +178,7 @@ export const RECORD_CONTRACTS = {
   },
   platformUser: {
     fields: {
-      id: '~id',
+      id: 'id',
       email: '~string',
       name: '~string',
       passwordHash: 'string',
@@ -195,7 +196,7 @@ export const RECORD_CONTRACTS = {
   },
   apiKey: {
     fields: {
-      id: '~id',
+      id: 'id',
       label: '~string',
       digest: 'string',
       scopes: 'strings',
@@ -206,7 +207,7 @@ export const RECORD_CONTRACTS = {
     },
     nested: {}
   },
-  removedMembership: { fields: { workspaceId: '~id', role: 'string' }, nested: {} }
+  removedMembership: { fields: { workspaceId: 'id', role: 'string' }, nested: {} }
 } as const satisfies {
   readonly workspace: Contract<AuthWorkspace>
   readonly membership: Contract<AuthMembership>
@@ -221,9 +222,10 @@ export const RECORD_CONTRACTS = {
  * by kind, as required where the interface requires it, and never coerced.
  */
 export const SECURITY_FIELDS = {
-  workspace: ['tenantId', 'status', 'deletionScheduledAt'],
-  membership: ['tenantId', 'role', 'status'],
+  workspace: ['id', 'tenantId', 'status', 'deletionScheduledAt'],
+  membership: ['tenantId', 'workspaceId', 'userId', 'role', 'status'],
   user: [
+    'id',
     'passwordHash',
     'role',
     'status',
@@ -233,9 +235,17 @@ export const SECURITY_FIELDS = {
     'mfaSecret',
     'mfaRecoveryCodes'
   ],
-  platformUser: ['passwordHash', 'role', 'status', 'mfaEnabled', 'mfaSecret', 'mfaRecoveryCodes'],
-  apiKey: ['digest', 'scopes', 'expiresAt', 'revokedAt'],
-  removedMembership: ['role']
+  platformUser: [
+    'id',
+    'passwordHash',
+    'role',
+    'status',
+    'mfaEnabled',
+    'mfaSecret',
+    'mfaRecoveryCodes'
+  ],
+  apiKey: ['id', 'digest', 'scopes', 'expiresAt', 'revokedAt'],
+  removedMembership: ['workspaceId', 'role']
 } as const satisfies {
   readonly workspace: readonly (keyof AuthWorkspace)[]
   readonly membership: readonly (keyof AuthMembership)[]
