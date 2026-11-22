@@ -34,17 +34,41 @@ const STANDARD = [
 
 // Captured at load, so a later overwrite of these built-ins cannot change how the root is judged.
 const ownKeys = Reflect.ownKeys
-const describe = Object.getOwnPropertyDescriptor
+const hasOwn = Object.hasOwn
+const getDescriptor = Object.getOwnPropertyDescriptor
 const root = Object.prototype
 
+/** The fields of a descriptor, each read only when the descriptor holds it: a descriptor inherits from the root too. */
+interface Held {
+  readonly value: unknown
+  readonly get: unknown
+  readonly set: unknown
+  readonly enumerable: boolean
+  readonly writable: boolean
+  readonly configurable: boolean
+}
+
+/** The descriptor of an entry of the root as a record that holds no prototype, or `undefined` when the entry is not there. */
+function describe(name: string): Held | undefined {
+  const descriptor = getDescriptor(root, name) as Record<string, unknown> | undefined
+  if (descriptor === undefined) return undefined
+  const field = (key: string): unknown => (hasOwn(descriptor, key) ? descriptor[key] : undefined)
+  return Object.assign(Object.create(null) as Held, {
+    value: field('value'),
+    get: field('get'),
+    set: field('set'),
+    enumerable: field('enumerable') === true,
+    writable: field('writable') === true,
+    configurable: field('configurable') === true
+  })
+}
+
 /** The descriptor each standard entry had at load. */
-const BASELINE = new Map<string, PropertyDescriptor | undefined>(
-  STANDARD.map((name) => [name, describe(root, name)])
-)
+const BASELINE = new Map<string, Held | undefined>(STANDARD.map((name) => [name, describe(name)]))
 
 /** Whether an entry is the kind the runtime defines: a function that is not enumerable, or the accessor of `__proto__`. */
-function isStandardKind(name: string, descriptor: PropertyDescriptor | undefined): boolean {
-  if (descriptor === undefined || descriptor.enumerable === true) return false
+function isStandardKind(name: string, descriptor: Held | undefined): boolean {
+  if (descriptor === undefined || descriptor.enumerable) return false
   return name === '__proto__'
     ? typeof descriptor.get === 'function' && typeof descriptor.set === 'function'
     : typeof descriptor.value === 'function'
@@ -54,10 +78,7 @@ function isStandardKind(name: string, descriptor: PropertyDescriptor | undefined
 const LOADED_STANDARD = STANDARD.every((name) => isStandardKind(name, BASELINE.get(name)))
 
 /** Whether two descriptors describe the same entry. */
-function same(
-  left: PropertyDescriptor | undefined,
-  right: PropertyDescriptor | undefined
-): boolean {
+function same(left: Held | undefined, right: Held | undefined): boolean {
   return (
     left !== undefined &&
     right !== undefined &&
@@ -79,8 +100,8 @@ function same(
 export function plantedOnRoot(): number {
   let count = LOADED_STANDARD ? 0 : 1
   for (const key of ownKeys(root))
-    if (typeof key === 'string' && !same(describe(root, key), BASELINE.get(key))) count += 1
-  for (const name of STANDARD) if (describe(root, name) === undefined) count += 1
+    if (typeof key === 'string' && !same(describe(key), BASELINE.get(key))) count += 1
+  for (const name of STANDARD) if (describe(name) === undefined) count += 1
   return count
 }
 

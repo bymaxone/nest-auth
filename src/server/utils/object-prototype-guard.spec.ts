@@ -88,6 +88,30 @@ describe('the root object of the runtime', () => {
     expect(JSON.stringify(refusal)).not.toContain(key)
   })
 
+  // Scenario: an accessor that throws, planted under each name a property descriptor is read by (`get`, `set`, `value`,
+  // `enumerable`, `writable` and `configurable`). Expected: the root is counted once, the accessor is never run, and the
+  // refusal is the library's. Why: a descriptor is an object that inherits from the root too, so reading a field it does not
+  // hold would run what is planted under that name.
+  it.each(['get', 'set', 'value', 'enumerable', 'writable', 'configurable'] as const)(
+    'never runs an accessor planted as %s while it judges the root',
+    (name) => {
+      let calls = 0
+      const accessor = {
+        get: (): never => {
+          calls += 1
+          throw new Error('planted accessor ran')
+        }
+      }
+
+      const counted = withRoot(name, accessor, plantedOnRoot)
+      const refusal = withRoot(name, accessor, () => failureOf(assertRootIsStandard))
+
+      expect(counted).toBe(1)
+      expect(refusal).toBeInstanceOf(AuthException)
+      expect(calls).toBe(0)
+    }
+  )
+
   // Scenario: a symbol planted on the root. Expected: it is not counted. Why: the guard judges the string keys that a JSON
   // flaw can write and an option name can be.
   it('does not count a symbol key', () => {
