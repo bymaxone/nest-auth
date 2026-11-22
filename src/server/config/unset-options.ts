@@ -14,6 +14,7 @@
  */
 
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import { readOwnOrClass } from '../utils/own-or-class'
 
 /** The shape of a key list the compiler checks is complete: every key of `T` and no other. */
 type Keys<T> = Record<keyof T, true>
@@ -183,26 +184,6 @@ const WORKSPACE_SUBGROUP_KEYS: Readonly<Record<string, readonly string[]>> = {
 /** Whether a value can be a group: an object, a class instance included, and not an array. */
 function isObjectGroup(value: unknown): value is object {
   return Object(value) === value && typeof value !== 'function' && !Array.isArray(value)
-}
-
-/**
- * Reads one key of a group as the host wrote it: from the object itself or from the class it is an instance of, and
- * never from the runtime's root object. A key planted on `Object.prototype` is not an option, so it must not reach an
- * option the host left unwritten; a Proxy answers for itself.
- *
- * @param group - The group, of any prototype.
- * @param key - The key to read.
- * @returns The value the host gave, or `undefined` when the host wrote none.
- */
-function readOwnOrClass(group: object, key: string): unknown {
-  const value: unknown = Reflect.get(group, key)
-  if (Object.hasOwn(group, key)) return value
-  let root = group
-  for (let next = Object.getPrototypeOf(root); next !== null; next = Object.getPrototypeOf(root)) {
-    if (Object.getPrototypeOf(next) !== null && Object.hasOwn(next, key)) return value
-    root = next
-  }
-  return Object.hasOwn(root, key) ? undefined : value
 }
 
 /**

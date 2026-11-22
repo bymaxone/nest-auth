@@ -27,6 +27,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
+import { readOwnOrClass } from './own-or-class'
 import {
   API_KEY_REPOSITORY_CONTRACT,
   CREDENTIAL_FIELDS,
@@ -221,12 +222,14 @@ function copyStrings(value: unknown, read: Read): string[] {
   return copy
 }
 
-/** The built-in classes whose objects print as what they are; the brand checks do not see a Proxy of one or an object made from its prototype. */
+/** The built-in classes whose objects print as what they are (a date, a pattern, a message, a link, a locale); the brand checks do not see a Proxy of one or an object made from its prototype. */
 const BUILT_IN_VALUES: readonly (abstract new (...args: never[]) => object)[] = [
   Date,
   RegExp,
   Error,
   DataView,
+  URL,
+  Intl.Locale,
   Object.getPrototypeOf(Uint8Array) as abstract new (...args: never[]) => object
 ]
 
@@ -347,7 +350,7 @@ function readScalar(value: unknown, spec: string, run: Read): unknown {
  * is an accessor is left out, because reading it is what the contract forbids.
  */
 function copyRecord(value: object, contract: RecordContract, run: Read): unknown {
-  const copy: Record<string, unknown> = {}
+  const copy = Object.create(null) as Record<string, unknown>
   rememberUnder(run, value, contract, copy)
   ENTITIES.set(copy, value)
   const source = value as Record<string, unknown>
@@ -361,7 +364,7 @@ function copyRecord(value: object, contract: RecordContract, run: Read): unknown
   const own = new Set(keys)
   for (const [field, spec] of Object.entries(contract.fields)) {
     const { base, nullable, optional } = parseSpec(spec)
-    const held = source[field]
+    const held = readOwnOrClass(source, field)
     if (held === undefined) {
       if (optional) continue
       throw new Error(ABSENT)

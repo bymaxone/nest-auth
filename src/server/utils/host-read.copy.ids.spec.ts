@@ -88,6 +88,8 @@ const NOT_AN_ID: readonly (readonly [string, unknown])[] = [
   ['an object made from RegExp.prototype', Object.create(RegExp.prototype) as object],
   ['a Proxy of a Buffer', new Proxy(Buffer.from('id'), {})],
   ['an object made from Uint8Array.prototype', Object.create(Uint8Array.prototype) as object],
+  ['a URL', new URL('https://id.example/a')],
+  ['an Intl.Locale', new Intl.Locale('en')],
   ['a Date of another realm', runInNewContext('new Date(0)') as object],
   ['a RegExp of another realm', runInNewContext('/id/u') as object],
   ['an Error of another realm', runInNewContext("new Error('id')") as object],

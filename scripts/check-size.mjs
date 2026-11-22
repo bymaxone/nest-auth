@@ -150,7 +150,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     its helper, the closed-set tally, the span seam, the interceptor that counts and traces the eight observed routes, the readiness probe, bounded and
 //     recovering from a PING that never settles, the refusal and plane markers, and the call that marks
 //     every way a verified MFA token's flow can end.
-//     178.57 KiB sits 0.03 KiB above the measured 178.54 KiB, which holds the boundary that ends a failed read of what
+//     178.64 KiB sits 0.03 KiB above the measured 178.61 KiB, which holds the boundary that ends a failed read of what
 //     the host owns (the options, the records of a repository) in the library's own error, the guarded view of each
 //     repository, the contract of every repository method that says which fields of an answer are read and as which
 //     kind, the bounds of that copy (per container and in all), the record of the entity behind each copy, the tenant
@@ -159,7 +159,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     scopes, the refusal of an id that names nothing or is absent, the shape checks of the platform hierarchy, the
 //     release of a resend cooldown, the kind check of each hierarchy child, the reading of an option from the object or
 //     its class and never from the root object, the options and the resolved tree that hold no prototype, and the
-//     refusal of a blank tenant and of a lookalike of a built-in value as an id.
+//     refusal of a blank tenant and of a lookalike of a built-in value as an id, and the reading of each field of a
+//     repository's record from the record or its class, into a copy that holds no prototype.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
@@ -227,7 +228,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 178.57 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 178.64 * 1024 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },

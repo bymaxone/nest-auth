@@ -233,18 +233,15 @@ describe('copyHostRecord', () => {
     expect(copy['connection']).toBeUndefined()
   })
 
-  // Scenario: fields of the contract held by an ancestor that has no prototype of its own. Expected: they are found.
-  it('finds the fields of the contract on an ancestor that has no prototype of its own', () => {
+  // Scenario: fields of the contract held only by an ancestor that has no prototype of its own, which is how the root object
+  // of a runtime looks. Expected: they are not read, and a strict one is refused as absent. Why: the root of a realm cannot
+  // be told from such an ancestor, and a key found there is not something the host's record or its class holds.
+  it('does not read a field held only by an ancestor that has no prototype of its own', () => {
     const { passwordHash, email, ...rest } = userRecord({ email: 'x@y.z' })
     const root = Object.assign(Object.create(null) as object, { passwordHash, email })
     const record = Object.assign(Object.create(root) as Record<string, unknown>, rest)
 
-    const copy = copyHostRecord(record, USER) as Record<string, unknown>
-
-    expect(copy['passwordHash']).toBe('hash')
-    expect(copy['email']).toBe('x@y.z')
-    expect(Object.keys(copy)).toContain('email')
-    expect(Object.keys(copy)).not.toContain('passwordHash')
+    expect(() => copyHostRecord(record, USER)).toThrow(AuthException)
   })
 
   // Scenario: a record with no prototype, and one with an own key named __proto__. Expected: both are copied, the key
@@ -264,7 +261,7 @@ describe('copyHostRecord', () => {
     const fromForged = copyHostRecord(forged, USER) as Record<string, unknown>
 
     expect(fromBare['id']).toBe('u1')
-    expect(Object.getPrototypeOf(fromForged)).toBe(Object.prototype)
+    expect(Object.getPrototypeOf(fromForged)).toBeNull()
     expect(Object.getOwnPropertyDescriptor(fromForged, '__proto__')).toEqual({
       value: { role: 'ADMIN' },
       writable: true,
