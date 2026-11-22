@@ -33,7 +33,7 @@ function withPlanted<T>(key: string, value: unknown, body: () => T): T {
   Object.defineProperty(Object.prototype, key, {
     value,
     configurable: true,
-    enumerable: false,
+    enumerable: true,
     writable: true
   })
   try {
