@@ -67,8 +67,9 @@ describe('a child in a role hierarchy', () => {
     )
   })
 
-  // Scenario: a child that is a string no role declares, in each hierarchy. Expected: the existing refusal naming the
-  // role is kept. Why: the check on the kind comes first and must not replace the check on the declaration.
+  // Scenario: a child that is a string no role declares, in each hierarchy. Expected: it is refused as an unknown role,
+  // naming the role. Why: the kind of a child is checked first, and a string must still be checked against the roles the
+  // hierarchy declares.
   it.each(HIERARCHIES)('keeps refusing a string nobody declares in %s', (path, write) => {
     expect(() => resolveOptions(write('GHOST'))).toThrow(
       `${path}['ADMIN'] references unknown role 'GHOST'`
