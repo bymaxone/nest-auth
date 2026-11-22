@@ -43,7 +43,7 @@ export const JWT_SIGN_SHADOWS = Object.freeze({
   noTimestamp: false,
   mutatePayload: false,
   header: Object.freeze({}),
-  // Stryker disable next-line StringLiteral: an empty encoding falls back to utf8 inside `jws`, so the emptied value signs the same bytes as the shadow
+  // Stryker disable next-line StringLiteral: an empty encoding falls back to utf8 in `jsonwebtoken` and in `jws`, so the emptied value signs the same bytes as the shadow
   encoding: 'utf8',
   allowInsecureKeySizes: false,
   allowInvalidAsymmetricKeyTypes: false

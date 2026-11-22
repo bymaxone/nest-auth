@@ -5,8 +5,8 @@
  * Every plain object inherits from `Object.prototype`, so a key planted there (by a flaw elsewhere in the process, in a JSON
  * the flaw can write) is read as an option, a claim or a cookie attribute by every dependency that copies an object into a
  * new one. The own keys the library puts on what it hands to its dependencies shadow the names it knows; this guard covers
- * the names it does not know. The standard entries are listed by name and each is compared with the descriptor it had when
- * this module loaded, so an entry that is overwritten (`hasOwnProperty`, `toString`, `constructor`) is counted like a new one.
+ * the names it does not know. The standard entries are listed by name and each is compared, by value, accessors and
+ * enumerability, with what it was when this module loaded, so an entry that is overwritten (`hasOwnProperty`, `toString`, `constructor`) is counted like a new one.
  * A root that already differed from the standard kinds at load is counted too: the guard refuses on use and never throws
  * from the import.
  *
