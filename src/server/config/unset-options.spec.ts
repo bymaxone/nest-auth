@@ -220,7 +220,7 @@ describe('an unset option means its default', () => {
     // Scenario: a group that is a class instance, with a getter on its prototype, a field that holds
     // `undefined` and one that holds `null`. Expected: read into a plain object with the getter's value
     // and the set field, and without the unset ones, so a typed configuration class is read like a literal.
-    it('reads a class instance by property access', () => {
+    it('reads a class instance by property access, into an object with no prototype', () => {
       class Settings {
         enabled = true
         defaultMaxSessions: number | undefined = undefined
@@ -233,7 +233,7 @@ describe('an unset option means its default', () => {
       const group = Reflect.get(cleaned, 'sessions')
 
       expect(group).toEqual({ enabled: true })
-      expect(Object.getPrototypeOf(group)).toBe(Object.prototype)
+      expect(Object.getPrototypeOf(group)).toBeNull()
     })
 
     // Scenario: a class whose getter supplies a known key. Expected: the getter's value is read.
@@ -484,8 +484,8 @@ describe('an unset option means its default', () => {
     const oauth: unknown = Reflect.get(dropUnset(optionsWith('oauth', { google: make() })), 'oauth')
     const google: unknown = Reflect.get(oauth as object, 'google')
 
-    expect(Object.getPrototypeOf(google)).toBe(Object.prototype)
-    expect(google).toStrictEqual({
+    expect(Object.getPrototypeOf(google)).toBeNull()
+    expect({ ...(google as object) }).toStrictEqual({
       clientId: 'id',
       clientSecret: 'secret',
       callbackUrl: 'https://app.example/cb'

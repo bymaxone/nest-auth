@@ -6,7 +6,7 @@
     "src/react/__tests__/AuthProvider.spec.tsx": 1121,
     "src/server/bymax-auth.module.spec.ts": 1362,
     "src/server/config/resolved-options.spec.ts": 3362,
-    "src/server/config/resolved-options.ts": 1301,
+    "src/server/config/resolved-options.ts": 1295,
     "src/server/conformance.spec.ts": 1342,
     "src/server/controllers/mfa.controller.spec.ts": 902,
     "src/server/interfaces/auth-module-options.interface.ts": 992,

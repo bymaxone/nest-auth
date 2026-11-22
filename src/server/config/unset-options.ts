@@ -186,6 +186,26 @@ function isObjectGroup(value: unknown): value is object {
 }
 
 /**
+ * Reads one key of a group as the host wrote it: from the object itself or from the class it is an instance of, and
+ * never from the runtime's root object. A key planted on `Object.prototype` is not an option, so it must not reach an
+ * option the host left unwritten; a Proxy answers for itself.
+ *
+ * @param group - The group, of any prototype.
+ * @param key - The key to read.
+ * @returns The value the host gave, or `undefined` when the host wrote none.
+ */
+function readOwnOrClass(group: object, key: string): unknown {
+  const value: unknown = Reflect.get(group, key)
+  if (value === undefined || Object.hasOwn(group, key)) return value
+  let root = group
+  for (let next = Object.getPrototypeOf(root); next !== null; next = Object.getPrototypeOf(root)) {
+    if (Object.getPrototypeOf(next) !== null && Object.hasOwn(next, key)) return value
+    root = next
+  }
+  return Object.hasOwn(root, key) ? undefined : value
+}
+
+/**
  * Reads a group by property access into a plain object, without the keys that hold `undefined` or
  * `null`. The listed keys are read through the property, so a getter on a class prototype counts; an
  * own enumerable key the list does not name is carried over, so a key this module does not know is kept.
@@ -195,9 +215,9 @@ function isObjectGroup(value: unknown): value is object {
  * @returns A plain object with the set keys.
  */
 function readSetKeys(group: object, keys: readonly string[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>
   for (const key of new Set([...keys, ...Object.keys(group)])) {
-    const entry: unknown = Reflect.get(group, key)
+    const entry = readOwnOrClass(group, key)
     if (entry !== undefined && entry !== null) out[key] = entry
   }
   return out
@@ -212,9 +232,9 @@ function readSetKeys(group: object, keys: readonly string[]): Record<string, unk
  * @returns A plain object with the keys as given.
  */
 function readKeptKeys(group: object, keys: readonly string[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>
   for (const key of new Set([...keys, ...Object.keys(group)])) {
-    const entry: unknown = Reflect.get(group, key)
+    const entry = readOwnOrClass(group, key)
     if (entry !== undefined || Object.hasOwn(group, key)) out[key] = entry
   }
   return out
@@ -265,10 +285,10 @@ export function dropUnset(options: BymaxAuthModuleOptions): BymaxAuthModuleOptio
   }
   const oauth = copy['oauth']
   if (isObjectGroup(oauth)) {
-    const google = Reflect.get(oauth, 'google')
+    const google = readOwnOrClass(oauth, 'google')
     if (isObjectGroup(google)) {
       Reflect.set(oauth, 'google', readKeptKeys(google, Object.keys(OAUTH_GOOGLE_KEYS)))
     }
   }
-  return Object.assign({} as BymaxAuthModuleOptions, copy)
+  return Object.assign(Object.create(null) as BymaxAuthModuleOptions, copy)
 }

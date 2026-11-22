@@ -5,7 +5,7 @@
  * @layer Config
  */
 
-import { assertArray, assertObject } from './shape-checks'
+import { assertArray, assertKnownChildren, assertObject } from './shape-checks'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
 /**
@@ -38,13 +38,6 @@ export function validatePlatformAdmin(
   }
   for (const [role, children] of Object.entries(hierarchy)) {
     assertArray(`roles.platformHierarchy['${role}']`, children)
-    for (const child of children) {
-      if (!names.has(child)) {
-        throw new Error(
-          `[BymaxAuthModule] roles.platformHierarchy['${role}'] references unknown role '${child}'. ` +
-            `All roles referenced as children must be declared as keys in the hierarchy.`
-        )
-      }
-    }
+    assertKnownChildren(`roles.platformHierarchy['${role}']`, children, names)
   }
 }

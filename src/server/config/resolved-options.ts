@@ -14,10 +14,11 @@ import { resolveApiKeys, validateApiKeys } from './api-key-options'
 import { DEFAULT_OPTIONS } from './default-options'
 import { describeReceived } from './describe-received'
 import { durationToSeconds } from './duration'
+import { withoutInheritedKeys } from './no-inherited-keys'
 import { readOptions, validateOptionValues } from './option-values'
 import { validatePlatformAdmin } from './platform-options'
 import { validateSecretStrength } from './secret-strength'
-import { assertArray, assertObject } from './shape-checks'
+import { assertArray, assertKnownChildren, assertObject } from './shape-checks'
 import {
   resolveRegistration,
   resolveWorkspaceOptions,
@@ -238,7 +239,7 @@ export function resolveOptions(given: BymaxAuthModuleOptions): ResolvedOptions {
     ...userOptionsWithoutMfa
   } = userOptions
 
-  const resolved: ResolvedOptions = {
+  const resolved: ResolvedOptions = withoutInheritedKeys({
     ...userOptionsWithoutMfa,
 
     jwt: {
@@ -347,7 +348,7 @@ export function resolveOptions(given: BymaxAuthModuleOptions): ResolvedOptions {
         NonNullable<BymaxAuthModuleOptions['mfa']>
       >
     })
-  }
+  })
 
   withholdSecrets(resolved)
 
@@ -718,14 +719,7 @@ function validateRolesHierarchy(roles: BymaxAuthModuleOptions['roles']): void {
   const allRoles = new Set(Object.keys(roles.hierarchy))
   for (const [role, children] of Object.entries(roles.hierarchy)) {
     assertArray(`roles.hierarchy['${role}']`, children)
-    for (const child of children) {
-      if (!allRoles.has(child)) {
-        throw new Error(
-          `[BymaxAuthModule] roles.hierarchy['${role}'] references unknown role '${child}'. ` +
-            `All roles referenced as children must be declared as keys in the hierarchy.`
-        )
-      }
-    }
+    assertKnownChildren(`roles.hierarchy['${role}']`, children, allRoles)
   }
 }
 
