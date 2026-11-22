@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, randomBytes } from './captured-crypto'
 
 /**
  * AES-256-GCM authenticated encryption and decryption.

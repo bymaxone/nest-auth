@@ -8,8 +8,6 @@
  * @layer Config
  */
 
-import { createHash } from 'node:crypto'
-
 import { resolveApiKeys, validateApiKeys } from './api-key-options'
 import { DEFAULT_OPTIONS } from './default-options'
 import { describeReceived } from './describe-received'
@@ -25,6 +23,7 @@ import {
   type ResolvedWorkspaceOptions
 } from './workspace-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
+import { createHash } from '../crypto/captured-crypto'
 import type {
   BymaxAuthModuleOptions,
   ClientIpSource

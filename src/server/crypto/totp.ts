@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from './captured-crypto'
 
 /**
  * TOTP (Time-based One-Time Password) implementation per RFC 6238 / HOTP per RFC 4226.

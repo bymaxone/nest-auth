@@ -6,8 +6,6 @@
  * @layer Service
  */
 
-import { randomBytes } from 'node:crypto'
-
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import {
@@ -17,6 +15,7 @@ import {
 } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { userSubject } from '../constants/user-subject'
+import { randomBytes } from '../crypto/captured-crypto'
 import { hmacSha256 } from '../crypto/secure-token'
 import { MAX_VERIFY_WINDOW, TOTP_STEP_SECONDS, verifyTotp } from '../crypto/totp'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'

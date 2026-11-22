@@ -22,7 +22,11 @@ import {
   hasOwn,
   ownKeys
 } from './captured-builtins'
-import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import {
+  AUTH_ERROR_CODES,
+  AUTH_ERROR_MESSAGES,
+  AUTH_ERROR_STATUS
+} from '../errors/auth-error-codes'
 import type { AuthErrorCode } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 
@@ -126,14 +130,9 @@ export function plantedOnRoot(): number {
 export function assertRootIsStandard(): void {
   const planted = plantedOnRoot()
   if (planted > 0) {
-    // The descriptor holds no prototype: defining a property reads `get`, `set` and `enumerable` through it, and a planted one
-    // would be read as part of the descriptor.
-    const descriptor = createObject(null) as PropertyDescriptor
-    descriptor.value = new ErrorOf(
-      `Object.prototype holds ${planted} entries that are not the runtime's own`
+    const descriptor = dataOf(
+      new ErrorOf(`Object.prototype holds ${planted} entries that are not the runtime's own`)
     )
-    descriptor.configurable = true
-    descriptor.writable = true
     defineKey(REFUSAL_INSTANCE, 'cause', descriptor)
     throw REFUSAL_INSTANCE
   }
@@ -151,14 +150,41 @@ export class RootNotStandardException extends AuthException {
   }
 }
 
+/** A data descriptor, with no prototype: defining a property reads `get`, `set` and `enumerable` through it. */
+function dataOf(value: unknown): PropertyDescriptor {
+  const descriptor = createObject(null) as PropertyDescriptor
+  descriptor.value = value
+  descriptor.configurable = true
+  descriptor.writable = true
+  return descriptor
+}
+
 /**
- * The refusal, built once when the module loads. Constructing an exception assigns `response`, `status`, `options`, `message`,
- * `name` and `cause` to the new object, and an accessor planted on the root under one of those names would turn the assignment
- * into a `TypeError`, so nothing is constructed while the root is being judged.
+ * Builds the refusal. Constructing an exception assigns `response`, `status`, `options`, `message`, `name` and `cause` to the
+ * new object, and an accessor planted on the root under one of those names turns the assignment into a `TypeError`. That cannot
+ * happen while the root is judged, because the refusal is built once, here, when the module loads; and when the root already
+ * held such an accessor at load, the refusal is made without running the constructor, so the import never throws and the
+ * refusal is the same on use.
  */
-const REFUSAL_INSTANCE = new RootNotStandardException({
-  cause: new ErrorOf("Object.prototype holds entries that are not the runtime's own")
-})
+function buildRefusal(): RootNotStandardException {
+  try {
+    return new RootNotStandardException({
+      cause: new ErrorOf("Object.prototype holds entries that are not the runtime's own")
+    })
+  } catch {
+    const bare = createObject(RootNotStandardException.prototype) as RootNotStandardException
+    const code = AUTH_ERROR_CODES.INTERNAL
+    const message = AUTH_ERROR_MESSAGES[code]
+    defineKey(bare, 'response', dataOf({ error: { code, message, details: null } }))
+    defineKey(bare, 'status', dataOf(AUTH_ERROR_STATUS[code]))
+    defineKey(bare, 'message', dataOf(message))
+    defineKey(bare, 'name', dataOf('RootNotStandardException'))
+    defineKey(bare, REFUSAL, dataOf(true))
+    return bare
+  }
+}
+
+const REFUSAL_INSTANCE = buildRefusal()
 
 /** Whether `error` is the refusal of the guard. */
 function isRefusal(error: unknown): error is RootNotStandardException {

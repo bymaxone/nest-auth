@@ -4,8 +4,6 @@
  * @layer Service
  */
 
-import { randomUUID } from 'node:crypto'
-
 import { Inject, Injectable } from '@nestjs/common'
 
 import {
@@ -16,6 +14,7 @@ import {
 import type { ApiKeyClock } from './api-key-clock'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { apiKeyDigest, formatApiKey, generateApiKeySecret } from '../crypto/api-key'
+import { randomUUID } from '../crypto/captured-crypto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type {

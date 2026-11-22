@@ -1,9 +1,4 @@
-import {
-  randomBytes,
-  ScryptOptions,
-  scrypt as nodeScrypt,
-  timingSafeEqual as cryptoTimingSafeEqual
-} from 'node:crypto'
+import type { ScryptOptions } from 'node:crypto'
 import { promisify } from 'node:util'
 
 import { Inject, Injectable, Logger } from '@nestjs/common'
@@ -11,6 +6,11 @@ import { Inject, Injectable, Logger } from '@nestjs/common'
 import { BYMAX_AUTH_BREACH_CHECKER, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { MAX_KDF_BYTES_PER_DERIVATION } from '../config/resolved-options'
 import type { ResolvedOptions } from '../config/resolved-options'
+import {
+  randomBytes,
+  scrypt as nodeScrypt,
+  timingSafeEqual as cryptoTimingSafeEqual
+} from '../crypto/captured-crypto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IPasswordBreachChecker } from '../interfaces/password-breach-checker.interface'

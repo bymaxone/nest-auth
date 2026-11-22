@@ -10,7 +10,7 @@ import {
   createHmac,
   randomBytes,
   timingSafeEqual as cryptoTimingSafeEqual
-} from 'node:crypto'
+} from './captured-crypto'
 
 /**
  * Generates a cryptographically secure random token as a hex string.

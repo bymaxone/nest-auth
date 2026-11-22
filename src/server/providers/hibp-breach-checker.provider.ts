@@ -3,10 +3,9 @@
  *
  * @layer Provider
  */
-import { createHash } from 'node:crypto'
-
 import { Injectable, Logger } from '@nestjs/common'
 
+import { createHash } from '../crypto/captured-crypto'
 import type { IPasswordBreachChecker } from '../interfaces/password-breach-checker.interface'
 import { logEvent } from '../observability/log-event'
 

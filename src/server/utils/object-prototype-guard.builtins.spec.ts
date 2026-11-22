@@ -15,6 +15,7 @@ import {
 const define = Object.defineProperty
 const getOwn = Object.getOwnPropertyDescriptor
 const remove = Reflect.deleteProperty
+const rootObject = Object.prototype
 
 const empty = (): undefined => undefined
 const iteratorOfNothing = function (): { next: () => { done: boolean; value: undefined } } {
@@ -114,6 +115,85 @@ describe('the guard with a built-in replaced after it loaded', () => {
 
       expect(counted).toBe(0)
       expect(refusal).toBeUndefined()
+    }
+  )
+})
+
+/** The global bindings a check could reach through, each replaced by a binding that answers nothing. */
+const GLOBALS = ['Object', 'Reflect', 'Array', 'JSON', 'Map', 'Set', 'Error', 'Symbol'] as const
+
+describe('the guard with a global binding replaced after it loaded', () => {
+  // Scenario: each global binding the guard's source names, replaced after the module loaded by one that answers nothing, then a
+  // key planted. Expected: the planted entry is still counted and the guard still refuses. Why: the guard calls the copies it
+  // took at load, never the binding by name, so replacing the binding cannot blind it.
+  it.each(GLOBALS)('still refuses a planted key with the global %s replaced', (name) => {
+    const holder = globalThis as Record<string, unknown>
+    const held = getOwn(globalThis, name) as PropertyDescriptor
+    let counted = -1
+    let refusal: unknown
+    define(globalThis, name, { value: undefined, configurable: true, writable: true })
+    define(rootObject, 'sessions', {
+      value: 1,
+      configurable: true,
+      enumerable: true,
+      writable: true
+    })
+    try {
+      counted = plantedOnRoot()
+      try {
+        assertRootIsStandard()
+      } catch (error) {
+        refusal = error
+      }
+    } finally {
+      remove(rootObject, 'sessions')
+      define(globalThis, name, held)
+    }
+
+    expect(holder[name]).toBe(held.value)
+    expect(counted).toBe(1)
+    expect(refusal).toBeInstanceOf(RootNotStandardException)
+  })
+})
+
+describe('the guard loaded over a root that already holds an accessor under a name an exception assigns', () => {
+  // Scenario: an accessor with no setter planted under each such name before the module loads. Expected: the import does not
+  // throw, the guard counts the entry and refuses with the library's refusal (500, auth.internal), and the helper a
+  // verification's catch uses passes it through. Why: the guard promises never to throw from the import and to refuse on use.
+  // `options` is not a row: with it planted, `@nestjs/common` throws while it builds its own logger, before this module loads.
+  it.each(['response', 'status', 'message', 'name', 'cause'] as const)(
+    'loads, and refuses on use, with an accessor planted as %s',
+    (name) => {
+      let loaded: typeof import('./object-prototype-guard') | undefined
+      let thrown: unknown
+      define(Object.prototype, name, { get: (): number => 1, configurable: true })
+      try {
+        jest.isolateModules(() => {
+          try {
+            loaded = jest.requireActual<typeof import('./object-prototype-guard')>(
+              './object-prototype-guard'
+            )
+          } catch (error) {
+            thrown = error
+          }
+        })
+        let refusal: unknown
+        try {
+          loaded?.assertRootIsStandard()
+        } catch (error) {
+          refusal = error
+        }
+        expect(thrown).toBeUndefined()
+        expect(refusal).toBeInstanceOf(loaded?.RootNotStandardException)
+        expect(loaded?.refusedOr(refusal, 'auth.token_invalid')).toBe(refusal)
+        expect((refusal as { getStatus(): number }).getStatus()).toBe(500)
+        expect((refusal as { getResponse(): unknown }).getResponse()).toEqual({
+          error: { code: 'auth.internal', message: expect.any(String), details: null }
+        })
+        expect(((refusal as { cause: Error }).cause as Error).message).toMatch(/holds \d+ entries/)
+      } finally {
+        remove(Object.prototype, name)
+      }
     }
   )
 })

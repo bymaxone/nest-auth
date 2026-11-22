@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto'
-
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import type { JwtSignOptions } from '@nestjs/jwt'
@@ -9,6 +7,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { RECENT_AUTH_TTL_SECONDS, recentAuthKey } from '../constants/recent-auth'
 import { sessionId } from '../constants/session-id'
 import { sessionIndexKey } from '../constants/user-keys'
+import { randomUUID } from '../crypto/captured-crypto'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'

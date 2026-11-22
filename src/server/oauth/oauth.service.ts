@@ -17,8 +17,6 @@
  * @layer Service
  */
 
-import { createHash } from 'node:crypto'
-
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import type { Request, Response } from 'express'
 
@@ -36,6 +34,7 @@ import {
   OAUTH_STATE_COOKIE_NAME,
   OAUTH_STATE_COOKIE_SAME_SITE
 } from '../constants/oauth-state-cookie'
+import { createHash } from '../crypto/captured-crypto'
 import { generateSecureToken, sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'

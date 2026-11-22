@@ -73,9 +73,10 @@ export function verifyWithRotation<T extends object>(
     return jwtService.verify<T>(token, base)
   } catch (currentFailure: unknown) {
     const previous = options.jwt.previousSecrets ?? []
-    for (const secret of previous) {
+    // An indexed loop: `for...of` calls the iterator of the array, a built-in a replacement could answer for.
+    for (let index = 0; index < previous.length; index += 1) {
       try {
-        return jwtService.verify<T>(token, { ...base, secret })
+        return jwtService.verify<T>(token, { ...base, secret: previous[index] as string })
       } catch {
         // Try the next retired secret. A token nobody accepts falls out of the loop and the
         // original failure is rethrown, so the caller sees the same error it always did.

@@ -9,8 +9,7 @@
  * @layer Crypto
  */
 
-import { randomBytes, timingSafeEqual } from 'node:crypto'
-
+import { randomBytes, timingSafeEqual } from './captured-crypto'
 import { hmacSha256 } from './secure-token'
 
 /** Separator between the three parts of a key. Base64url's alphabet contains it, hence the parse rule. */
