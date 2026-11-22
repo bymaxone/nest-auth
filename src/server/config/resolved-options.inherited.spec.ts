@@ -12,15 +12,17 @@ import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.i
 const MFA_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='
 const PEPPER = 'pQ3$rT6&uW9*xZ2!aC5%dF8^gJ1(kM4)nP7+sV0-yB'
 
+type Written = Partial<Record<keyof BymaxAuthModuleOptions, unknown>>
+
 /** Valid options in which the keys under test are not written. */
-function options(extra: Record<string, unknown> = {}): BymaxAuthModuleOptions {
-  const given: Record<string, unknown> = {
+function options(extra: Written = {}): BymaxAuthModuleOptions {
+  const given: Written = {
     jwt: { secret: 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B' },
     roles: { hierarchy: { MEMBER: [] } },
     rateLimit: { clientIpSource: 'peer' },
     ...extra
   }
-  return given as unknown as BymaxAuthModuleOptions
+  return given as BymaxAuthModuleOptions
 }
 
 /** Runs `body` with `key` planted on the shared prototype of every plain object, and always takes it away again. */
@@ -97,7 +99,9 @@ describe('a key planted on Object.prototype', () => {
     ['bruteForce', 'maxAttempts', 1000],
     ['cookies', 'sameSite', 'none']
   ] as const)('does not become the key %s.%s of a group', (group, key, value) => {
-    const written = { [group]: { ...(group === 'sessions' ? { defaultMaxSessions: 5 } : {}) } }
+    const written: Written = {
+      [group]: { ...(group === 'sessions' ? { defaultMaxSessions: 5 } : {}) }
+    }
     const baseline = resolveOptions(options(written))
 
     const planted = withPlanted(key, value, () => {
