@@ -6,6 +6,8 @@
  * @layer Test
  */
 
+import { generateKeyPairSync } from 'node:crypto'
+
 import { JwtService } from '@nestjs/jwt'
 import type { JwtSignOptions, JwtVerifyOptions } from '@nestjs/jwt'
 import { JWT_SIGN_SHADOWS, JWT_VERIFY_SHADOWS, jwtModuleOptions } from './dependency-options'
@@ -110,11 +112,101 @@ describe('verifying with a key planted on Object.prototype', () => {
   })
 })
 
+const pem = (key: import('node:crypto').KeyObject, type: 'pkcs8' | 'spki'): string =>
+  key.export({ type, format: 'pem' }) as string
+const RSA = generateKeyPairSync('rsa', { modulusLength: 2048 })
+const RSA_SMALL = generateKeyPairSync('rsa', { modulusLength: 1024 })
+const EC = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+
+/** The message of the failure of `call`, or the word `signed` when it did not fail. */
+function refusalOf(call: () => unknown): string {
+  try {
+    call()
+    return 'signed'
+  } catch (error) {
+    return (error as Error).message
+  }
+}
+
+describe('the options that decide how a key and a clock are judged, planted on Object.prototype', () => {
+  const service = new JwtService(jwtModuleOptions(SECRET))
+  const early = real.sign({ sub: 'user' }, { expiresIn: 600, notBefore: 300 })
+  const asymmetric = real.sign(
+    { sub: 'user' },
+    { algorithm: 'RS256', secret: pem(RSA.privateKey, 'pkcs8'), expiresIn: 600 }
+  )
+  const verifyAs = (token: string, secret: string, algorithm: 'HS256' | 'RS256'): string =>
+    refusalOf(() =>
+      service.verify(token, {
+        ...JWT_VERIFY_SHADOWS,
+        algorithms: [algorithm],
+        ignoreExpiration: false,
+        issuer: undefined,
+        audience: undefined,
+        secret
+      } as JwtVerifyOptions)
+    )
+  const signAs = (secret: string): string =>
+    refusalOf(() =>
+      service.sign(
+        { sub: 'user' },
+        Object.assign({} as JwtSignOptions, JWT_SIGN_SHADOWS, {
+          algorithm: 'RS256',
+          expiresIn: '10m',
+          secret
+        })
+      )
+    )
+
+  // Scenario: a token that is not yet valid, and a key of another type than the algorithm asks for, verified with
+  // `ignoreNotBefore` and `allowInvalidAsymmetricKeyTypes` planted as true. Expected: each is refused with the message it has
+  // with nothing planted. Why: those two options turn off the check of the clock and the check of the type of the key, and
+  // the answer has to be the library's, not a refusal for another reason.
+  it.each([
+    ['ignoreNotBefore', () => verifyAs(early, SECRET, 'HS256'), /jwt not active/u],
+    [
+      'allowInvalidAsymmetricKeyTypes',
+      () => verifyAs(asymmetric, pem(EC.publicKey, 'spki'), 'RS256'),
+      /"alg" parameter for "ec" key type/u
+    ]
+  ] as const)('does not read %s on verify', (name, run, message) => {
+    const baseline = run()
+
+    const planted = withPlanted(name, true, run)
+
+    expect(baseline).toMatch(message)
+    expect(planted).toBe(baseline)
+  })
+
+  // Scenario: a key that is too small and a key of another type than the algorithm asks for, used to sign, with
+  // `allowInsecureKeySizes` and `allowInvalidAsymmetricKeyTypes` planted as true. Expected: each is refused with the message
+  // it has with nothing planted. Why: those two options turn off the minimum size of a key and the check of its type.
+  it.each([
+    [
+      'allowInsecureKeySizes',
+      () => signAs(pem(RSA_SMALL.privateKey, 'pkcs8')),
+      /minimum key size of 2048/u
+    ],
+    [
+      'allowInvalidAsymmetricKeyTypes',
+      () => signAs(pem(EC.privateKey, 'pkcs8')),
+      /"alg" parameter for "ec" key type/u
+    ]
+  ] as const)('does not read %s on sign', (name, run, message) => {
+    const baseline = run()
+
+    const planted = withPlanted(name, true, run)
+
+    expect(baseline).toMatch(message)
+    expect(planted).toBe(baseline)
+  })
+})
+
 describe('signing with a key planted on Object.prototype', () => {
   const service = new JwtService(jwtModuleOptions(SECRET))
   const chosen = { expiresIn: '10m', secret: SECRET, algorithm: 'HS256' }
   const sign = (): string =>
-    service.sign({ sub: 'user' }, { ...JWT_SIGN_SHADOWS, ...chosen } as JwtSignOptions)
+    service.sign({ sub: 'usér €' }, { ...JWT_SIGN_SHADOWS, ...chosen } as JwtSignOptions)
   const claimsOf = (token: string): unknown => service.decode(token, { complete: true })
 
   // Scenario: the option names of `jsonwebtoken.sign` that have a neutral value, planted. Expected: the token has the

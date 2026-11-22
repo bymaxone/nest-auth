@@ -72,7 +72,10 @@ describe('the root object of the runtime', () => {
       { value: function Impostor() {}, writable: true }
     ],
     ['valueOf overwritten as an accessor', 'valueOf', { get: (): number => 1 }],
-    ['isPrototypeOf deleted', 'isPrototypeOf', undefined]
+    ['isPrototypeOf deleted', 'isPrototypeOf', undefined],
+    ['toString made enumerable', 'toString', { enumerable: true }],
+    ['the getter of __proto__ replaced', '__proto__', { get: (): number => 1 }],
+    ['the setter of __proto__ replaced', '__proto__', { set: (): void => undefined }]
   ] as const)('is counted when %s', (_what, key, descriptor) => {
     const planted = withRoot(key, descriptor, plantedOnRoot)
     const refusal = withRoot(key, descriptor, () => failureOf(assertRootIsStandard))
@@ -136,7 +139,9 @@ describe('the root object of the runtime', () => {
       '__lookupGetter__',
       (held: PropertyDescriptor) => ({ ...held, enumerable: true })
     ],
-    ['turned into data', '__proto__', () => ({ value: 1, writable: true })]
+    ['turned into data', '__proto__', () => ({ value: 1, writable: true })],
+    ['left with only a getter', '__proto__', () => ({ get: (): number => 1 })],
+    ['left with only a setter', '__proto__', () => ({ set: (): void => undefined })]
   ] as const)(
     'refuses on use, and does not throw at import, when %s at load',
     (_what, key, change) => {
@@ -293,6 +298,9 @@ describe('what the library refuses to do while the root holds a planted key', ()
       Reflect.deleteProperty(Object.prototype, 'sessions')
     }
 
+    expect((refusal as Error).message).toContain(
+      "Object.prototype holds 1 entries that are not the runtime's own; the module does not start while a key is planted there."
+    )
     expect((refusal as Error).message).toContain('Object.prototype holds 1 entries')
     expect((refusal as Error).message).not.toContain('sessions')
   })

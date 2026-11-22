@@ -129,6 +129,8 @@ describe('setting a cookie with a key planted on Object.prototype', () => {
     const baselineSet = set()
     const baselineClear = clear()
 
+    expect(baselineSet).not.toContain('Partitioned')
+    expect(baselineClear).not.toContain('Partitioned')
     expect(withPlanted(name, value, set)).toBe(baselineSet)
     expect(withPlanted(name, value, clear)).toBe(baselineClear)
   })

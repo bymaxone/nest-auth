@@ -43,6 +43,7 @@ export const JWT_SIGN_SHADOWS = Object.freeze({
   noTimestamp: false,
   mutatePayload: false,
   header: Object.freeze({}),
+  // Stryker disable next-line StringLiteral: an empty encoding falls back to utf8 inside `jws`, so the emptied value signs the same bytes as the shadow
   encoding: 'utf8',
   allowInsecureKeySizes: false,
   allowInvalidAsymmetricKeyTypes: false
@@ -92,6 +93,7 @@ export const COOKIE_SHADOWS: Readonly<CookieOptions> = Object.freeze(
  */
 export function jwtModuleOptions(secret: string): JwtModuleOptions {
   return Object.assign<JwtModuleOptions, object>(
+    // Stryker disable next-line ObjectLiteral: jsonwebtoken defaults to HS256 and every sign call names its own algorithm, so the emptied `signOptions` signs identically
     { secret, signOptions: { algorithm: 'HS256' } },
     JWT_MODULE_SHADOWS
   )

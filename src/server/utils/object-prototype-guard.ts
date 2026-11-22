@@ -44,8 +44,6 @@ interface Held {
   readonly get: unknown
   readonly set: unknown
   readonly enumerable: boolean
-  readonly writable: boolean
-  readonly configurable: boolean
 }
 
 /** The descriptor of an entry of the root as a record that holds no prototype, or `undefined` when the entry is not there. */
@@ -57,9 +55,7 @@ function describe(name: string): Held | undefined {
     value: field('value'),
     get: field('get'),
     set: field('set'),
-    enumerable: field('enumerable') === true,
-    writable: field('writable') === true,
-    configurable: field('configurable') === true
+    enumerable: field('enumerable') === true
   })
 }
 
@@ -87,9 +83,7 @@ function same(left: Held | undefined, right: Held | undefined): boolean {
     left.value === right.value &&
     left.get === right.get &&
     left.set === right.set &&
-    left.enumerable === right.enumerable &&
-    left.writable === right.writable &&
-    left.configurable === right.configurable
+    left.enumerable === right.enumerable
   )
 }
 
