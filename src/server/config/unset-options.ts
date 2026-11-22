@@ -14,6 +14,7 @@
  */
 
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import { readOwnOrClass } from '../utils/own-or-class'
 
 /** The shape of a key list the compiler checks is complete: every key of `T` and no other. */
 type Keys<T> = Record<keyof T, true>
@@ -195,9 +196,9 @@ function isObjectGroup(value: unknown): value is object {
  * @returns A plain object with the set keys.
  */
 function readSetKeys(group: object, keys: readonly string[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>
   for (const key of new Set([...keys, ...Object.keys(group)])) {
-    const entry: unknown = Reflect.get(group, key)
+    const entry = readOwnOrClass(group, key)
     if (entry !== undefined && entry !== null) out[key] = entry
   }
   return out
@@ -212,9 +213,9 @@ function readSetKeys(group: object, keys: readonly string[]): Record<string, unk
  * @returns A plain object with the keys as given.
  */
 function readKeptKeys(group: object, keys: readonly string[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>
   for (const key of new Set([...keys, ...Object.keys(group)])) {
-    const entry: unknown = Reflect.get(group, key)
+    const entry = readOwnOrClass(group, key)
     if (entry !== undefined || Object.hasOwn(group, key)) out[key] = entry
   }
   return out
@@ -265,10 +266,10 @@ export function dropUnset(options: BymaxAuthModuleOptions): BymaxAuthModuleOptio
   }
   const oauth = copy['oauth']
   if (isObjectGroup(oauth)) {
-    const google = Reflect.get(oauth, 'google')
+    const google = readOwnOrClass(oauth, 'google')
     if (isObjectGroup(google)) {
       Reflect.set(oauth, 'google', readKeptKeys(google, Object.keys(OAUTH_GOOGLE_KEYS)))
     }
   }
-  return Object.assign({} as BymaxAuthModuleOptions, copy)
+  return Object.assign(Object.create(null) as BymaxAuthModuleOptions, copy)
 }

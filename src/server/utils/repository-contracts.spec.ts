@@ -237,8 +237,11 @@ describe('the tables of contracts are checked by the compiler', () => {
     const kinds: [
       Same<FieldSpec<boolean>, 'boolean'>,
       Same<FieldSpec<AuthUser['mfaEnabled']>, 'boolean'>,
-      Same<FieldSpec<AuthUser['mfaSecret']>, 'string?' | 'id?' | '~id' | '~string'>,
-      Same<FieldSpec<AuthUser['passwordHash']>, 'string|null' | 'id|null' | '~id' | '~string'>,
+      Same<FieldSpec<AuthUser['mfaSecret']>, 'string?' | 'id?' | 'tenant?' | '~id' | '~string'>,
+      Same<
+        FieldSpec<AuthUser['passwordHash']>,
+        'string|null' | 'id|null' | 'tenant|null' | '~id' | '~string'
+      >,
       Same<FieldSpec<AuthUser['lastLoginAt']>, 'date|null' | '~date'>,
       Same<FieldSpec<AuthUser['mfaRecoveryCodes']>, 'strings?'>,
       Same<FieldSpec<AuthApiKey['scopes']>, 'strings'>,

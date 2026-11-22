@@ -27,6 +27,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
+import { readOwnOrClass } from './own-or-class'
 import {
   API_KEY_REPOSITORY_CONTRACT,
   CREDENTIAL_FIELDS,
@@ -221,6 +222,28 @@ function copyStrings(value: unknown, read: Read): string[] {
   return copy
 }
 
+/** The built-in classes whose objects print as what they are (a date, a pattern, a message, a link, a locale); the brand checks do not see a Proxy of one or an object made from its prototype. */
+const BUILT_IN_VALUES: readonly (abstract new (...args: never[]) => object)[] = [
+  Date,
+  RegExp,
+  Error,
+  DataView,
+  URL,
+  Intl.Locale,
+  Object.getPrototypeOf(Uint8Array) as abstract new (...args: never[]) => object
+]
+
+/** Whether `value` is a date, a regular expression, an error or a view of bytes, itself or as a Proxy or a descendant of one. */
+function isBuiltInValue(value: object): boolean {
+  return (
+    types.isDate(value) ||
+    types.isRegExp(value) ||
+    types.isNativeError(value) ||
+    types.isArrayBufferView(value) ||
+    BUILT_IN_VALUES.some((kind) => value instanceof kind)
+  )
+}
+
 /** What an id may not print as: text that names nothing, or the text of a value that was never there. */
 const NOT_AN_ID_TEXT: ReadonlySet<string> = new Set(['undefined', 'null'])
 
@@ -232,14 +255,7 @@ const NOT_AN_ID_TEXT: ReadonlySet<string> = new Set(['undefined', 'null'])
  */
 function readId(value: unknown): string {
   if (typeof value === 'number') return accept(Number.isSafeInteger(value), String(value)) as string
-  if (
-    typeof value !== 'string' &&
-    (!isHostInstance(value) ||
-      types.isDate(value) ||
-      types.isRegExp(value) ||
-      types.isNativeError(value) ||
-      types.isArrayBufferView(value))
-  )
+  if (typeof value !== 'string' && (!isHostInstance(value) || isBuiltInValue(value as object)))
     throw new Error(WRONG_KIND)
   const text = String(value)
   const printed = typeof value !== 'string'
@@ -280,6 +296,8 @@ function readInformingDate(value: unknown): unknown {
 const READERS = {
   boolean: (value: unknown): unknown => accept(typeof value === 'boolean', value),
   string: (value: unknown): unknown => accept(typeof value === 'string', value),
+  tenant: (value: unknown): unknown =>
+    accept(typeof value === 'string' && value.trim() !== '', value),
   id: readId,
   number: (value: unknown): unknown => accept(Number.isFinite(value), value),
   date: copyDate,
@@ -332,7 +350,7 @@ function readScalar(value: unknown, spec: string, run: Read): unknown {
  * is an accessor is left out, because reading it is what the contract forbids.
  */
 function copyRecord(value: object, contract: RecordContract, run: Read): unknown {
-  const copy: Record<string, unknown> = {}
+  const copy = Object.create(null) as Record<string, unknown>
   rememberUnder(run, value, contract, copy)
   ENTITIES.set(copy, value)
   const source = value as Record<string, unknown>
@@ -346,7 +364,7 @@ function copyRecord(value: object, contract: RecordContract, run: Read): unknown
   const own = new Set(keys)
   for (const [field, spec] of Object.entries(contract.fields)) {
     const { base, nullable, optional } = parseSpec(spec)
-    const held = source[field]
+    const held = readOwnOrClass(source, field)
     if (held === undefined) {
       if (optional) continue
       throw new Error(ABSENT)

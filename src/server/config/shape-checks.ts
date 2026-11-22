@@ -35,3 +35,35 @@ export function assertArray(label: string, value: unknown): void {
     `[BymaxAuthModule] ${label} must be an array (received ${describeReceived(value)}).`
   )
 }
+
+/**
+ * Requires every child of a role in a hierarchy to be the name of a role the hierarchy declares.
+ *
+ * The kind is checked before the value is printed: a child that is not a string is named by what it is, so a
+ * `toString` the host wrote never runs and a symbol never throws from a template.
+ *
+ * @param label - The role's dotted path, such as `roles.hierarchy['ADMIN']`.
+ * @param children - The array of children the role lists.
+ * @param declared - The role names the hierarchy declares as keys.
+ * @throws {Error} Naming the path, and the position and kind of a child that is not a string, or the unknown role.
+ */
+export function assertKnownChildren(
+  label: string,
+  children: readonly unknown[],
+  declared: ReadonlySet<string>
+): void {
+  children.forEach((child, position) => {
+    if (typeof child !== 'string') {
+      throw new Error(
+        `[BymaxAuthModule] ${label} must name roles as strings ` +
+          `(received ${describeReceived(child)} at position ${position}).`
+      )
+    }
+    if (!declared.has(child)) {
+      throw new Error(
+        `[BymaxAuthModule] ${label} references unknown role '${child}'. ` +
+          `All roles referenced as children must be declared as keys in the hierarchy.`
+      )
+    }
+  })
+}

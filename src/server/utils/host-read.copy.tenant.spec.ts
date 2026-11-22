@@ -21,13 +21,16 @@ class DriverId {
   }
 }
 
-/** What a host could serve as a tenant that is not a string, each an instance or a value an id could be. */
+/** What a host could serve as a tenant that is not a string, or a string with nothing in it. */
 const NOT_A_TENANT: readonly (readonly [string, unknown])[] = [
   ['a Date', new Date(0)],
   ['a Map', new Map()],
   ['an object with a plain prototype', Object.create({}) as object],
   ['an instance of a class with toString', new DriverId()],
-  ['a finite number', 42]
+  ['a finite number', 42],
+  ['an empty string', ''],
+  ['a string of spaces', '   '],
+  ['a string of line breaks and tabs', '\n\t ']
 ]
 
 /** The reason a copy ended in, or undefined when it ended in none. */
