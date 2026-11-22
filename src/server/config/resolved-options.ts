@@ -352,7 +352,7 @@ export function resolveOptions(given: BymaxAuthModuleOptions): ResolvedOptions {
 
   withholdSecrets(resolved)
 
-  return resolved
+  return withoutInheritedKeys(resolved)
 }
 
 /**

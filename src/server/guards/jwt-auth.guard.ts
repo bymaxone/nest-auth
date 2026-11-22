@@ -19,6 +19,7 @@ import {
   assertValidSub,
   assertValidTenantId
 } from './utils/assert-token-type'
+import { refusedOr } from '../utils/object-prototype-guard'
 
 /**
  * Primary authentication guard for dashboard (tenant) routes.
@@ -72,8 +73,8 @@ export class JwtAuthGuard implements CanActivate {
     let payload: DashboardJwtPayload
     try {
       payload = verifyWithRotation<DashboardJwtPayload>(this.jwtService, this.options, token)
-    } catch {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    } catch (error) {
+      throw refusedOr(error, AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     // Require jti as a well-formed UUID v4 — used for revocation checks (`rv:{jti}`)

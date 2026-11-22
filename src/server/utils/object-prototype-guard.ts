@@ -14,6 +14,7 @@
  */
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import type { AuthErrorCode } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 
 /** What the runtime defines on `Object.prototype`. */
@@ -110,9 +111,28 @@ export function plantedOnRoot(): number {
 export function assertRootIsStandard(): void {
   const planted = plantedOnRoot()
   if (planted > 0)
-    throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, {
+    throw new RootNotStandardException({
       cause: new Error(`Object.prototype holds ${planted} entries that are not the runtime's own`)
     })
+}
+
+/** The refusal of the library while the root object holds a planted entry: `auth.internal`, which no caller turns into another answer. */
+export class RootNotStandardException extends AuthException {
+  constructor(options: { cause: Error }) {
+    super(AUTH_ERROR_CODES.INTERNAL, undefined, options)
+  }
+}
+
+/**
+ * The failure a verification reports: the library's own refusal passes through, so a polluted process answers 500 and does not
+ * look like every token being invalid, and anything else is the code the caller gives for a token that did not verify.
+ *
+ * @param error - What the verification threw.
+ * @param code - The code of the failure of a token.
+ * @returns The refusal itself, or an `AuthException` with `code`.
+ */
+export function refusedOr(error: unknown, code: AuthErrorCode): AuthException {
+  return error instanceof RootNotStandardException ? error : new AuthException(code)
 }
 
 /**

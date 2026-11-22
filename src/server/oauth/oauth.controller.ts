@@ -65,6 +65,7 @@ import type {
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { resolveClientAddress } from '../utils/client-address'
 import { cookieOptions } from '../utils/dependency-options'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -209,6 +210,7 @@ export class OAuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ): Promise<void> {
+    assertRootIsStandard()
     await this.oauthService.initiateOAuth(
       provider,
       query.tenantId,
@@ -269,9 +271,9 @@ export class OAuthController {
   ): Promise<
     CookieAuthResponse | BearerAuthResponse | BothAuthResponse | OAuthMfaChallengeResult | undefined
   > {
-    // Truncate to match the limits applied in all other auth controllers:
-    // 64 chars for IP (longest IPv6 address is 39 chars; 64 gives ample headroom).
-    // 512 chars for User-Agent (stored in the Redis session record; prevents key bloat).
+    assertRootIsStandard()
+    // Truncated as in every auth controller: 64 chars for the IP (an IPv6 address is at most 39),
+    // 512 for the User-Agent (it is stored in the Redis session record; prevents key bloat).
     // Stryker disable next-line MethodExpression: the resolver returns at most 45 characters, so this cap never takes effect and stays only as a second line of defence
     const ip = resolveClientAddress(req).slice(0, 64)
     const userAgent = String(req.headers['user-agent'] ?? '').slice(0, 512)

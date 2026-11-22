@@ -79,7 +79,12 @@ export const COOKIE_SHADOWS: Readonly<CookieOptions> = Object.freeze(
       encode: undefined,
       partitioned: false,
       priority: undefined,
-      signed: false
+      signed: false,
+      httpOnly: false,
+      secure: false,
+      sameSite: undefined,
+      path: undefined,
+      maxAge: undefined
     }
   )
 )

@@ -18,6 +18,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A key planted on `Object.prototype` after the module started is not an OAuth option.** The group of the OAuth providers and each provider were rebuilt after the resolved options had been copied without a prototype, so they inherited the root object again: a planted `errorRedirectUrl` sent the browser of a failed callback to an address the host never wrote. The resolved options are copied once more at the end, and the OAuth start and callback refuse with `auth.internal` while the root object holds a planted entry.
+- **A planted key does not decide whether an expiry is ignored, or which attributes a cookie carries.** The flag that lets a verification ignore the expiry is read by own key, after the guard; the cookie options carry an own `httpOnly`, `secure`, `sameSite`, `path` and `maxAge`, so a cookie the library writes with none of them (the access cookie is cleared with none) does not pick one up. Two limits remain: `express` removes `maxAge` from its copy in `clearCookie`, and the sign options `keyid` and `notBefore` have no neutral value (the schema of `jsonwebtoken` refuses an own `undefined`), so for those two the guard is what refuses.
+- **A polluted process answers 500, not 401.** The refusal of the guard passes through the access guards, the token verifier and the temporary token of the second factor as `auth.internal`, so an operator sees the fault and a client does not read every session as invalid.
+- **The judgement of whose a key is no longer depends on three built-ins.** `Object.hasOwn`, `Object.getPrototypeOf` and `Reflect.get` are captured when the module loads.
+
 ## [1.5.15] - 2026-11-22
 
 A patch release.

@@ -49,9 +49,12 @@ export function verifyWithRotation<T extends object>(
   jwtService: JwtService,
   options: ResolvedOptions,
   token: string,
-  { ignoreExpiration = false }: { ignoreExpiration?: boolean } = {}
+  flags: { ignoreExpiration?: boolean } = {}
 ): T {
   assertRootIsStandard()
+  // Read by own key: the default of a destructured parameter would be read from the root object before the guard ran.
+  const ignoreExpiration =
+    Object.hasOwn(flags, 'ignoreExpiration') && flags.ignoreExpiration === true
   const algorithms = [options.jwt.algorithm]
   // `issuer`/`audience` are REQUIREMENTS here, not hints: `jsonwebtoken` rejects a token whose
   // claim differs — and one that carries none at all. That is the point. A verifier that

@@ -14,6 +14,7 @@ import { AuthRevocationService } from '../services/auth-revocation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertValidJti, assertValidSub } from './utils/assert-token-type'
+import { refusedOr } from '../utils/object-prototype-guard'
 
 /**
  * Authentication guard for platform administrator routes.
@@ -74,8 +75,8 @@ export class JwtPlatformGuard implements CanActivate {
     let payload: PlatformJwtPayload
     try {
       payload = verifyWithRotation<PlatformJwtPayload>(this.jwtService, this.options, token)
-    } catch {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    } catch (error) {
+      throw refusedOr(error, AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     // Require jti as a well-formed UUID v4 — the shared helper keeps this check

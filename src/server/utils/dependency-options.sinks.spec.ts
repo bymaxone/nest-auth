@@ -136,6 +136,43 @@ describe('setting a cookie with a key planted on Object.prototype', () => {
   })
 })
 
+describe('writing a cookie with only the shadows and a planted attribute', () => {
+  const bareSet = (): string => {
+    const { res, header } = response()
+    res.cookie('a', 'token', { ...COOKIE_SHADOWS })
+    return header()
+  }
+  const bareClear = (): string => {
+    const { res, header } = response()
+    res.clearCookie('a', { ...COOKIE_SHADOWS })
+    return header()
+  }
+
+  // Scenario: each attribute of a cookie the shadows must hold, planted on Object.prototype, for a cookie written with nothing but
+  // the shadows. Expected: the header is the one written with nothing planted. Why: the call sites name their attributes, but the
+  // shadows are what keeps an attribute a site does not name (the access cookie is cleared with none) from being planted.
+  it.each([
+    ['httpOnly', true],
+    ['secure', true],
+    ['sameSite', 'none'],
+    ['path', '/evil']
+  ] as const)('does not read %s', (name, value) => {
+    const baselineSet = bareSet()
+    const baselineClear = bareClear()
+
+    expect(withPlanted(name, value, bareSet)).toBe(baselineSet)
+    expect(withPlanted(name, value, bareClear)).toBe(baselineClear)
+  })
+
+  // Scenario: `maxAge` planted for a cookie that is set. Expected: the header has no lifetime but the library's own. Why: `maxAge`
+  // turns a session cookie into a persistent one.
+  it('does not read maxAge on a cookie that is set', () => {
+    const baseline = bareSet()
+
+    expect(withPlanted('maxAge', 99_999_999, bareSet)).toBe(baseline)
+  })
+})
+
 /** The shipped source files of the server, without the specs. */
 function serverSources(dir = join(__dirname, '..')): string[] {
   return readdirSync(dir).flatMap((entry) => {

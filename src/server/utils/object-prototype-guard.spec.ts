@@ -18,7 +18,12 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { PasswordService } from '../services/password.service'
 import { cookieOptions, jwtModuleOptions, jwtSignOptions } from './dependency-options'
-import { assertRootIsStandard, plantedOnRoot } from './object-prototype-guard'
+import {
+  RootNotStandardException,
+  assertRootIsStandard,
+  plantedOnRoot,
+  refusedOr
+} from './object-prototype-guard'
 import { verifyWithRotation } from './verify-with-rotation'
 
 const SECRET = 'real-secret-real-secret-real-secret-1234'
@@ -201,6 +206,29 @@ describe('a runtime started with --disable-proto=delete', () => {
 
     expect(hardened).toBe(0)
     expect(later).toBe(1)
+  })
+})
+
+describe('the failure a verification reports', () => {
+  // Scenario: the library's own refusal, and any other error, given to the helper a verification's catch uses. Expected: the
+  // refusal comes back as it is and the other error becomes the code the caller gives. Why: a polluted process must answer 500
+  // and must not look like every token being invalid.
+  it('passes the refusal through and gives any other error the code of a token that did not verify', () => {
+    const refusal = withRoot('sessions', PLANTED, () => failureOf(assertRootIsStandard))
+
+    expect(refusal).toBeInstanceOf(RootNotStandardException)
+    expect(refusedOr(refusal, AUTH_ERROR_CODES.TOKEN_INVALID)).toBe(refusal)
+    expect(
+      refusedOr(new Error('jwt expired'), AUTH_ERROR_CODES.TOKEN_INVALID).getResponse()
+    ).toMatchObject({
+      error: { code: AUTH_ERROR_CODES.TOKEN_INVALID }
+    })
+    expect(
+      refusedOr(
+        new AuthException(AUTH_ERROR_CODES.INTERNAL),
+        AUTH_ERROR_CODES.TOKEN_INVALID
+      ).getResponse()
+    ).toMatchObject({ error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } })
   })
 })
 
