@@ -6,6 +6,8 @@
  * @layer Test
  */
 
+import { runInNewContext } from 'node:vm'
+
 import { resolveOptions } from './resolved-options'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
@@ -114,6 +116,36 @@ describe('a key planted on Object.prototype', () => {
 
     expect(planted.json).toBe(JSON.stringify(baseline))
     expect(planted.read).toEqual(Reflect.get(Reflect.get(baseline, group), key))
+  })
+
+  // Scenario: `constructor` overwritten on the root object together with a planted option, here and in the realm the
+  // options were written in. Expected: the options resolve as they do with nothing planted. Why: the root is found by its
+  // missing prototype, never by what it says its constructor is, and a constructor the attacker replaced says anything.
+  it('is not bypassed by an overwritten constructor, here or in another realm', () => {
+    const baseline = JSON.stringify(resolveOptions(options()))
+    const planted = { enabled: true, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
+
+    const here = withPlanted(
+      'constructor',
+      function Impostor() {},
+      () => withPlanted('sessions', planted, () => JSON.stringify(resolveOptions(options())))
+    )
+    const foreign = runInNewContext(`
+      Object.defineProperty(Object.prototype, 'constructor', { value: function Impostor() {}, configurable: true, writable: true })
+      Object.prototype.sessions = { enabled: true, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
+      ;({
+        jwt: { secret: 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B' },
+        roles: { hierarchy: { MEMBER: [] } },
+        rateLimit: { clientIpSource: 'peer' }
+      })
+    `) as BymaxAuthModuleOptions
+    const resolvedForeign = resolveOptions(foreign)
+
+    expect(here).toBe(baseline)
+    expect(JSON.stringify(resolvedForeign)).toBe(baseline)
+    expect(Reflect.get(resolvedForeign, 'sessions')).toEqual(
+      Reflect.get(resolveOptions(options()), 'sessions')
+    )
   })
 
   // Scenario: the same options written as an instance of a class that serves its settings on its prototype. Expected: they
