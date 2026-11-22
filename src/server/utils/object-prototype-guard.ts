@@ -13,6 +13,7 @@
  * @layer Utility
  */
 
+import { ErrorOf, createObject, getDescriptor, getKey, hasOwn, ownKeys } from './captured-builtins'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import type { AuthErrorCode } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -33,35 +34,32 @@ const STANDARD = [
   'toLocaleString'
 ] as const
 
-// Captured at load, so a later overwrite of these built-ins cannot change how the root is judged.
-const ownKeys = Reflect.ownKeys
-const hasOwn = Object.hasOwn
-const getDescriptor = Object.getOwnPropertyDescriptor
 const root = Object.prototype
 
 /** The fields of a descriptor, each read only when the descriptor holds it: a descriptor inherits from the root too. */
 interface Held {
-  readonly value: unknown
-  readonly get: unknown
-  readonly set: unknown
-  readonly enumerable: boolean
+  value: unknown
+  get: unknown
+  set: unknown
+  enumerable: boolean
 }
 
 /** The descriptor of an entry of the root as a record that holds no prototype, or `undefined` when the entry is not there. */
 function describe(name: string): Held | undefined {
   const descriptor = getDescriptor(root, name) as Record<string, unknown> | undefined
   if (descriptor === undefined) return undefined
-  const field = (key: string): unknown => (hasOwn(descriptor, key) ? descriptor[key] : undefined)
-  return Object.assign(Object.create(null) as Held, {
-    value: field('value'),
-    get: field('get'),
-    set: field('set'),
-    enumerable: field('enumerable') === true
-  })
+  const held = createObject(null) as Held
+  held.value = hasOwn(descriptor, 'value') ? descriptor['value'] : undefined
+  held.get = hasOwn(descriptor, 'get') ? descriptor['get'] : undefined
+  held.set = hasOwn(descriptor, 'set') ? descriptor['set'] : undefined
+  held.enumerable = hasOwn(descriptor, 'enumerable') && descriptor['enumerable'] === true
+  return held
 }
 
-/** The descriptor each standard entry had at load. */
-const BASELINE = new Map<string, Held | undefined>(STANDARD.map((name) => [name, describe(name)]))
+/** The descriptor each standard entry had at load, by name, in a record that holds no prototype. */
+const BASELINE = createObject(null) as Record<string, Held | undefined>
+for (let index = 0; index < STANDARD.length; index += 1)
+  BASELINE[STANDARD[index] as string] = describe(STANDARD[index] as string)
 
 /** Whether an entry is the kind the runtime defines: a function that is not enumerable, or the accessor of `__proto__`. */
 function isStandardKind(name: string, descriptor: Held | undefined): boolean {
@@ -74,7 +72,11 @@ function isStandardKind(name: string, descriptor: Held | undefined): boolean {
 }
 
 /** Whether the root was already unlike the runtime's own when this module loaded. */
-const LOADED_STANDARD = STANDARD.every((name) => isStandardKind(name, BASELINE.get(name)))
+let LOADED_STANDARD = true
+for (let index = 0; index < STANDARD.length; index += 1) {
+  const name = STANDARD[index] as string
+  if (!isStandardKind(name, BASELINE[name])) LOADED_STANDARD = false
+}
 
 /** Whether two descriptors describe the same entry. */
 function same(left: Held | undefined, right: Held | undefined): boolean {
@@ -96,10 +98,15 @@ function same(left: Held | undefined, right: Held | undefined): boolean {
  */
 export function plantedOnRoot(): number {
   let count = LOADED_STANDARD ? 0 : 1
-  for (const key of ownKeys(root))
-    if (typeof key === 'string' && !same(describe(key), BASELINE.get(key))) count += 1
-  for (const name of STANDARD)
-    if (describe(name) === undefined && BASELINE.get(name) !== undefined) count += 1
+  const keys = ownKeys(root)
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]
+    if (typeof key === 'string' && !same(describe(key), BASELINE[key])) count += 1
+  }
+  for (let index = 0; index < STANDARD.length; index += 1) {
+    const name = STANDARD[index] as string
+    if (describe(name) === undefined && BASELINE[name] !== undefined) count += 1
+  }
   return count
 }
 
@@ -112,15 +119,25 @@ export function assertRootIsStandard(): void {
   const planted = plantedOnRoot()
   if (planted > 0)
     throw new RootNotStandardException({
-      cause: new Error(`Object.prototype holds ${planted} entries that are not the runtime's own`)
+      cause: new ErrorOf(`Object.prototype holds ${planted} entries that are not the runtime's own`)
     })
 }
 
+/** The mark the refusal carries, so it is recognised without `instanceof`, which calls a live built-in. */
+const REFUSAL = Symbol('root-not-standard')
+
 /** The refusal of the library while the root object holds a planted entry: `auth.internal`, which no caller turns into another answer. */
 export class RootNotStandardException extends AuthException {
+  readonly [REFUSAL] = true
+
   constructor(options: { cause: Error }) {
     super(AUTH_ERROR_CODES.INTERNAL, undefined, options)
   }
+}
+
+/** Whether `error` is the refusal of the guard. */
+function isRefusal(error: unknown): error is RootNotStandardException {
+  return typeof error === 'object' && error !== null && getKey(error, REFUSAL) === true
 }
 
 /**
@@ -132,7 +149,7 @@ export class RootNotStandardException extends AuthException {
  * @returns The refusal itself, or an `AuthException` with `code`.
  */
 export function refusedOr(error: unknown, code: AuthErrorCode): AuthException {
-  return error instanceof RootNotStandardException ? error : new AuthException(code)
+  return isRefusal(error) ? error : new AuthException(code)
 }
 
 /**
@@ -143,7 +160,7 @@ export function refusedOr(error: unknown, code: AuthErrorCode): AuthException {
 export function assertRootIsStandardAtBoot(): void {
   const planted = plantedOnRoot()
   if (planted > 0)
-    throw new Error(
+    throw new ErrorOf(
       `[BymaxAuthModule] Object.prototype holds ${planted} entries that are not the runtime's own; ` +
         'the module does not start while a key is planted there.'
     )

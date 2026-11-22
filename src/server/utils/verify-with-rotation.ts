@@ -6,6 +6,7 @@
 
 import type { JwtService } from '@nestjs/jwt'
 
+import { hasOwn } from './captured-builtins'
 import { JWT_VERIFY_SHADOWS } from './dependency-options'
 import { assertRootIsStandard } from './object-prototype-guard'
 import type { ResolvedOptions } from '../config/resolved-options'
@@ -53,8 +54,7 @@ export function verifyWithRotation<T extends object>(
 ): T {
   assertRootIsStandard()
   // Read by own key: the default of a destructured parameter would be read from the root object before the guard ran.
-  const ignoreExpiration =
-    Object.hasOwn(flags, 'ignoreExpiration') && flags.ignoreExpiration === true
+  const ignoreExpiration = hasOwn(flags, 'ignoreExpiration') && flags.ignoreExpiration === true
   const algorithms = [options.jwt.algorithm]
   // `issuer`/`audience` are REQUIREMENTS here, not hints: `jsonwebtoken` rejects a token whose
   // claim differs — and one that carries none at all. That is the point. A verifier that

@@ -10,7 +10,12 @@ import { generateKeyPairSync } from 'node:crypto'
 
 import { JwtService } from '@nestjs/jwt'
 import type { JwtSignOptions, JwtVerifyOptions } from '@nestjs/jwt'
-import { JWT_SIGN_SHADOWS, JWT_VERIFY_SHADOWS, jwtModuleOptions } from './dependency-options'
+import {
+  JWT_SIGN_SHADOWS,
+  JWT_VERIFY_SHADOWS,
+  jwtModuleOptions,
+  jwtSignOptions
+} from './dependency-options'
 
 const SECRET = 'real-secret-real-secret-real-secret-1234'
 const ATTACKER = 'attacker-secret-attacker-secret-1234'
@@ -208,6 +213,22 @@ describe('signing with a key planted on Object.prototype', () => {
   const sign = (): string =>
     service.sign({ sub: 'usér €' }, { ...JWT_SIGN_SHADOWS, ...chosen } as JwtSignOptions)
   const claimsOf = (token: string): unknown => service.decode(token, { complete: true })
+
+  // Scenario: `Object.assign` replaced by a function that returns an empty object after the module loaded, then the options of a
+  // signature built. Expected: they still carry every neutral value and what the caller chose. Why: the options are built with the
+  // copy of the built-in taken at load, so a replacement cannot drop the shadows.
+  it('builds the options with the built-in as it was at load', () => {
+    const held = Object.getOwnPropertyDescriptor(Object, 'assign') as PropertyDescriptor
+    let built: Record<string, unknown> = {}
+    Object.defineProperty(Object, 'assign', { ...held, value: (): object => ({}) })
+    try {
+      built = jwtSignOptions({ expiresIn: '10m' }) as Record<string, unknown>
+    } finally {
+      Object.defineProperty(Object, 'assign', held)
+    }
+
+    expect(built).toMatchObject({ ...JWT_SIGN_SHADOWS, expiresIn: '10m' })
+  })
 
   // Scenario: a payload object handed to the signature while `mutatePayload` is planted as true. Expected: the object the caller
   // handed in is left as it was, with no `iat` or `exp` written into it. Why: the option makes `jsonwebtoken` write the

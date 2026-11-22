@@ -5,10 +5,7 @@
  * @layer Utility
  */
 
-// Captured at load, so a later replacement of these built-ins cannot change whose a key is judged to be.
-const hasOwn = Object.hasOwn
-const prototypeOf = Object.getPrototypeOf
-const getKey = Reflect.get
+import { getKey, hasOwn, prototypeOf } from './captured-builtins'
 
 /**
  * Reads one key of an object as the host wrote it: from the object itself or from the class it is an instance of, and

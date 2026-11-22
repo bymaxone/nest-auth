@@ -14,6 +14,7 @@
 import type { JwtModuleOptions, JwtSignOptions } from '@nestjs/jwt'
 import type { CookieOptions } from 'express'
 
+import { assign } from './captured-builtins'
 import { assertRootIsStandard } from './object-prototype-guard'
 
 /** The module options of `@nestjs/jwt` that pick the key or merge more options in; the library gives only `secret` and `signOptions`. */
@@ -97,7 +98,7 @@ export const COOKIE_SHADOWS: Readonly<CookieOptions> = Object.freeze(
  * @returns The options for `JwtModule`.
  */
 export function jwtModuleOptions(secret: string): JwtModuleOptions {
-  return Object.assign<JwtModuleOptions, object>(
+  return assign<JwtModuleOptions, object>(
     // Stryker disable next-line ObjectLiteral: jsonwebtoken defaults to HS256 and every sign call names its own algorithm, so the emptied `signOptions` signs identically
     { secret, signOptions: { algorithm: 'HS256' } },
     JWT_MODULE_SHADOWS
@@ -113,7 +114,7 @@ export function jwtModuleOptions(secret: string): JwtModuleOptions {
  */
 export function jwtSignOptions(chosen: object): JwtSignOptions {
   assertRootIsStandard()
-  return Object.assign({} as JwtSignOptions, JWT_SIGN_SHADOWS, chosen)
+  return assign({} as JwtSignOptions, JWT_SIGN_SHADOWS, chosen)
 }
 
 /**
