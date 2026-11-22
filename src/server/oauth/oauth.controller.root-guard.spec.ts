@@ -22,12 +22,12 @@ const service = { initiateOAuth: jest.fn(), handleCallback: jest.fn() }
 
 describe('OAuthController while a key is planted on Object.prototype', () => {
   let controller: OAuthController
-  const res = {
+  const res = Object.assign({} as Response, {
     redirect: jest.fn(),
     cookie: jest.fn(),
     clearCookie: jest.fn()
-  } as unknown as Response
-  const req = { ip: '1.2.3.4', headers: {}, cookies: {} } as unknown as Request
+  })
+  const req = Object.assign({} as Request, { ip: '1.2.3.4', headers: {}, cookies: {} })
 
   beforeEach(async () => {
     jest.resetAllMocks()
@@ -38,11 +38,11 @@ describe('OAuthController while a key is planted on Object.prototype', () => {
         { provide: TokenDeliveryService, useValue: {} },
         {
           provide: BYMAX_AUTH_OPTIONS,
-          useValue: {
+          useValue: Object.assign({} as ResolvedOptions, {
             routePrefix: 'auth',
             secureCookies: false,
             cookies: {}
-          } as unknown as ResolvedOptions
+          })
         }
       ]
     })
