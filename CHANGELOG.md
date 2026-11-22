@@ -18,6 +18,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A key planted on `Object.prototype` is not an option.** The options a host did not write were read by property from objects that inherit from `Object.prototype`, so a key planted there by a library with a prototype-pollution flaw (`sessions`, `invitations`, `emailChange`, `workspaces`, `apiKeys`, `mfa`, `blockedStatuses`, `environment`, `tokenDelivery`, `redisNamespace` and the rest) reached every option the host left unwritten: it switched a feature on, turned `emailVerification.required` off or emptied the blocked statuses. The options are read from the object itself or from the class it is an instance of, never from the runtime's root object, and the resolved options and their groups hold no prototype to fall through to.
+- **A child in a role hierarchy is a role name.** A child of `roles.hierarchy` or `roles.platformHierarchy` that is not a string is refused naming its position and what it is (`must name roles as strings (received … at position N)`), and the value is no longer printed, so a `toString` the host wrote does not run and a symbol does not throw from the message.
+- **The tenant of a record is not blank.** A `tenantId` that is empty or only whitespace is refused as `auth.internal`, with the other tenants that are no string.
+- **A lookalike of an error, a date, a regular expression or a view of bytes is no id.** A Proxy of one, an object made from the prototype of one and an instance of a subclass are refused as an id, as the real ones already were.
+
 ## [1.5.14] - 2026-11-22
 
 A patch release.
