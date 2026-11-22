@@ -13,7 +13,15 @@
  * @layer Utility
  */
 
-import { ErrorOf, createObject, getDescriptor, getKey, hasOwn, ownKeys } from './captured-builtins'
+import {
+  ErrorOf,
+  createObject,
+  defineKey,
+  getDescriptor,
+  getKey,
+  hasOwn,
+  ownKeys
+} from './captured-builtins'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import type { AuthErrorCode } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -117,10 +125,18 @@ export function plantedOnRoot(): number {
  */
 export function assertRootIsStandard(): void {
   const planted = plantedOnRoot()
-  if (planted > 0)
-    throw new RootNotStandardException({
-      cause: new ErrorOf(`Object.prototype holds ${planted} entries that are not the runtime's own`)
-    })
+  if (planted > 0) {
+    // The descriptor holds no prototype: defining a property reads `get`, `set` and `enumerable` through it, and a planted one
+    // would be read as part of the descriptor.
+    const descriptor = createObject(null) as PropertyDescriptor
+    descriptor.value = new ErrorOf(
+      `Object.prototype holds ${planted} entries that are not the runtime's own`
+    )
+    descriptor.configurable = true
+    descriptor.writable = true
+    defineKey(REFUSAL_INSTANCE, 'cause', descriptor)
+    throw REFUSAL_INSTANCE
+  }
 }
 
 /** The mark the refusal carries, so it is recognised without `instanceof`, which calls a live built-in. */
@@ -134,6 +150,15 @@ export class RootNotStandardException extends AuthException {
     super(AUTH_ERROR_CODES.INTERNAL, undefined, options)
   }
 }
+
+/**
+ * The refusal, built once when the module loads. Constructing an exception assigns `response`, `status`, `options`, `message`,
+ * `name` and `cause` to the new object, and an accessor planted on the root under one of those names would turn the assignment
+ * into a `TypeError`, so nothing is constructed while the root is being judged.
+ */
+const REFUSAL_INSTANCE = new RootNotStandardException({
+  cause: new ErrorOf("Object.prototype holds entries that are not the runtime's own")
+})
 
 /** Whether `error` is the refusal of the guard. */
 function isRefusal(error: unknown): error is RootNotStandardException {

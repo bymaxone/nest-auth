@@ -232,6 +232,27 @@ describe('the failure a verification reports', () => {
   })
 })
 
+describe('the refusal of the guard while an accessor is planted under a name an exception assigns', () => {
+  // Scenario: an accessor with no setter planted on the root under each name that building an exception assigns (`response`,
+  // `status`, `options`, `message`, `name`, `cause`), then the guard called and its failure given to the helper a verification's
+  // catch uses. Expected: the failure is the library's refusal and the helper passes it through. Why: a refusal built while the
+  // root is judged would throw a TypeError from the assignment, and a polluted process would answer 401 and not 500.
+  it.each(['response', 'status', 'options', 'message', 'name', 'cause'] as const)(
+    'still refuses, and is still recognised, with an accessor planted as %s',
+    (name) => {
+      const refusal = withRoot(name, { get: (): number => 1 }, () =>
+        failureOf(assertRootIsStandard)
+      )
+
+      expect(refusal).toBeInstanceOf(RootNotStandardException)
+      expect(refusedOr(refusal, AUTH_ERROR_CODES.TOKEN_INVALID)).toBe(refusal)
+      expect(((refusal as AuthException).cause as Error).message).toBe(
+        "Object.prototype holds 1 entries that are not the runtime's own"
+      )
+    }
+  )
+})
+
 describe('what the library refuses to do while the root holds a planted key', () => {
   const options = Object.assign({} as ResolvedOptions, {
     jwt: { secret: SECRET, algorithm: 'HS256', previousSecrets: [] }

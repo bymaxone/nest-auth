@@ -16,4 +16,5 @@ export const ownKeys = Reflect.ownKeys
 export const getDescriptor = Object.getOwnPropertyDescriptor
 export const createObject = Object.create
 export const assign = Object.assign
+export const defineKey = Object.defineProperty
 export const ErrorOf = Error
