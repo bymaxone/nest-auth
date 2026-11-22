@@ -254,6 +254,39 @@ describe('the option names the pinned dependencies read', () => {
     expect(unknown).toEqual({ verify: [], sign: [], nest: [], cookie: [], express: [] })
   })
 
+  // Scenario: the properties `@nestjs/jwt` and the cookie methods of `express` read from `this`, not from an options object.
+  // Expected: each is an own property, a method of the class, or `req.secret`, which only a signed cookie reads. Why: an
+  // optional property read from an instance resolves through `Object.prototype` like an option does, and the library cannot
+  // shadow what it does not construct; the one such read is closed by `signed: false` in the cookie shadows.
+  it('reads from the instance only what the instance holds', () => {
+    const nest = dependencySource('@nestjs/jwt', '@nestjs/jwt', 'dist/jwt.service.js')
+    const response = dependencySource('express', 'express', 'lib/response.js')
+    const cookieMethods = response.slice(
+      response.indexOf('res.cookie = function'),
+      response.indexOf('res.location = function')
+    )
+
+    const unknown = {
+      nest: [...namesRead(nest, /\bthis\.([A-Za-z]+)/gu)].filter(
+        (name) =>
+          ![
+            'options',
+            'logger',
+            'mergeJwtOptions',
+            'getSecretKey',
+            'overrideSecretFromOptions'
+          ].includes(name)
+      ),
+      express: [...namesRead(cookieMethods, /\bthis\.([A-Za-z]+)/gu)].filter(
+        (name) => !['req', 'append', 'cookie'].includes(name)
+      )
+    }
+
+    expect(unknown).toEqual({ nest: [], express: [] })
+    expect(cookieMethods).toMatch(/this\.req\.secret/u)
+    expect(COOKIE_SHADOWS).toHaveProperty('signed', false)
+  })
+
   // Scenario: the aliases of `crypto.scrypt` that the library shadows. Expected: they are exactly the three Node documents.
   // Why: the aliases are fixed by the runtime, not by a package, so the list is pinned here.
   it('lists the aliases of the scrypt options', () => {
