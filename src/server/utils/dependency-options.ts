@@ -14,8 +14,7 @@
 import type { JwtModuleOptions, JwtSignOptions } from '@nestjs/jwt'
 import type { CookieOptions } from 'express'
 
-import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
-import { AuthException } from '../errors/auth-exception'
+import { assertRootIsStandard } from './object-prototype-guard'
 
 /** The module options of `@nestjs/jwt` that pick the key or merge more options in; the library gives only `secret` and `signOptions`. */
 export const JWT_MODULE_SHADOWS = Object.freeze({
@@ -85,17 +84,6 @@ export const COOKIE_SHADOWS: Readonly<CookieOptions> = Object.freeze(
 )
 
 /**
- * Refuses to sign while the root object of the process carries an option name that cannot be shadowed.
- *
- * @param names - The option names that have no neutral own value.
- * @throws {AuthException} `auth.internal` when `Object.prototype` holds one of them.
- */
-export function assertRootCarries(names: readonly string[]): void {
-  if (names.some((name) => Object.hasOwn(Object.prototype, name)))
-    throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
-}
-
-/**
  * The module options the library registers `@nestjs/jwt` with: the secret and the algorithm it signs under, and an own
  * key for every option that would pick another key or merge more options in.
  *
@@ -114,9 +102,21 @@ export function jwtModuleOptions(secret: string): JwtModuleOptions {
  *
  * @param chosen - The options the call sets (`expiresIn`, the secret, the algorithm, the issuer and the audience).
  * @returns The options to hand to `JwtService.sign`.
- * @throws {AuthException} `auth.internal` when `Object.prototype` holds an option that has no neutral value.
+ * @throws {AuthException} `auth.internal` while `Object.prototype` holds an entry that is not the runtime's own.
  */
 export function jwtSignOptions(chosen: object): JwtSignOptions {
-  assertRootCarries(JWT_SIGN_UNSHADOWABLE)
+  assertRootIsStandard()
   return Object.assign({} as JwtSignOptions, JWT_SIGN_SHADOWS, chosen)
+}
+
+/**
+ * The options of one cookie write: what the library chose, over the neutral value of every option it did not.
+ *
+ * @param chosen - The attributes the call sets.
+ * @returns The options to hand to `res.cookie` or `res.clearCookie`.
+ * @throws {AuthException} `auth.internal` while `Object.prototype` holds an entry that is not the runtime's own.
+ */
+export function cookieOptions(chosen: CookieOptions): CookieOptions {
+  assertRootIsStandard()
+  return { ...COOKIE_SHADOWS, ...chosen }
 }

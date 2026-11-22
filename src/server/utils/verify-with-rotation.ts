@@ -7,6 +7,7 @@
 import type { JwtService } from '@nestjs/jwt'
 
 import { JWT_VERIFY_SHADOWS } from './dependency-options'
+import { assertRootIsStandard } from './object-prototype-guard'
 import type { ResolvedOptions } from '../config/resolved-options'
 
 /** The resolved secret and the algorithm, named in every sign call: the signer service's own secret came from a second call of the host's factory. */
@@ -50,6 +51,7 @@ export function verifyWithRotation<T extends object>(
   token: string,
   { ignoreExpiration = false }: { ignoreExpiration?: boolean } = {}
 ): T {
+  assertRootIsStandard()
   const algorithms = [options.jwt.algorithm]
   // `issuer`/`audience` are REQUIREMENTS here, not hints: `jsonwebtoken` rejects a token whose
   // claim differs — and one that carries none at all. That is the point. A verifier that

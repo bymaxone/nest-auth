@@ -56,7 +56,7 @@ import {
   type LoadedInvitation
 } from '../services/workspace-invitation-accept.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { COOKIE_SHADOWS } from '../utils/dependency-options'
+import { cookieOptions } from '../utils/dependency-options'
 import { describeChannelStatus } from '../utils/describe-error'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
@@ -215,14 +215,17 @@ export class OAuthService {
    * @param state - The raw state nonce.
    */
   private bindToBrowser(res: Response, state: string): void {
-    res.cookie(OAUTH_STATE_COOKIE_NAME, state, {
-      ...COOKIE_SHADOWS,
-      httpOnly: true,
-      secure: this.options.secureCookies,
-      sameSite: OAUTH_STATE_COOKIE_SAME_SITE,
-      path: '/',
-      maxAge: OAUTH_STATE_COOKIE_MAX_AGE_SECONDS * 1_000
-    })
+    res.cookie(
+      OAUTH_STATE_COOKIE_NAME,
+      state,
+      cookieOptions({
+        httpOnly: true,
+        secure: this.options.secureCookies,
+        sameSite: OAUTH_STATE_COOKIE_SAME_SITE,
+        path: '/',
+        maxAge: OAUTH_STATE_COOKIE_MAX_AGE_SECONDS * 1_000
+      })
+    )
   }
 
   // ---------------------------------------------------------------------------

@@ -6,15 +6,13 @@
  * @layer Test
  */
 
+import { scryptSync } from 'node:crypto'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
-import { Test } from '@nestjs/testing'
 import express from 'express'
 
-import { BYMAX_AUTH_BREACH_CHECKER, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
-import { PasswordService } from '../services/password.service'
 import {
   COOKIE_SHADOWS,
   JWT_MODULE_SHADOWS,
@@ -42,35 +40,26 @@ function withPlanted<T>(key: string, value: unknown, body: () => T): T {
 }
 
 describe('hashing with a key planted on Object.prototype', () => {
-  const options = {
-    password: { minLength: 15, costFactor: 16_384, blockSize: 8, parallelization: 1 }
-  }
+  const derive = (): string =>
+    scryptSync('correct horse battery staple', 'salt', 32, {
+      ...SCRYPT_SHADOWS,
+      N: 16_384,
+      r: 8,
+      p: 1,
+      maxmem: 64 * 1024 * 1024
+    }).toString('hex')
 
-  // Scenario: each alias of the scrypt cost options planted on Object.prototype, then a hash and its verification.
-  // Expected: the hash is made and it verifies. Why: `crypto.scrypt` throws when an alias is given next to `N`, `r` or
-  // `p`, so a planted alias would end every login and every password change.
+  // Scenario: each alias of the scrypt cost options planted on Object.prototype, then a derivation with the options the
+  // library hands to `crypto.scrypt`. Expected: the key is derived and equals the one derived with nothing planted. Why:
+  // `crypto.scrypt` throws when an alias is given next to `N`, `r` or `p`, so a planted alias would end every login.
   it.each([
     ['cost', 4],
     ['blockSize', 1],
     ['parallelization', 2]
-  ] as const)('does not read %s', async (name, value) => {
-    const module = await Test.createTestingModule({
-      providers: [
-        PasswordService,
-        { provide: BYMAX_AUTH_OPTIONS, useValue: options },
-        { provide: BYMAX_AUTH_BREACH_CHECKER, useValue: { isBreached: jest.fn() } }
-      ]
-    }).compile()
-    const service = module.get(PasswordService)
+  ] as const)('does not read %s', (name, value) => {
+    const baseline = derive()
 
-    const stored = await withPlanted(name, value, () =>
-      service.hash('correct horse battery staple')
-    )
-    const verified = await withPlanted(name, value, () =>
-      service.compare('correct horse battery staple', stored)
-    )
-
-    expect(verified).toBe(true)
+    expect(withPlanted(name, value, derive)).toBe(baseline)
   })
 })
 
@@ -168,13 +157,13 @@ describe('every call that sets or clears a cookie', () => {
     })
 
     const missing = calls.filter(
-      ({ call }) => !/COOKIE_SHADOWS|\.\.\.(?:base|cookieOpts)\b/u.test(call)
+      ({ call }) => !/cookieOptions\(|\.\.\.(?:base|cookieOpts)\b/u.test(call)
     )
     const base = readFileSync(join(__dirname, '../services/token-delivery.service.ts'), 'utf8')
 
     expect(calls.length).toBeGreaterThan(0)
     expect(missing).toEqual([])
-    expect(base).toMatch(/baseCookieOptions[\s\S]{0,400}\.\.\.COOKIE_SHADOWS/u)
+    expect(base).toMatch(/baseCookieOptions[\s\S]{0,400}cookieOptions\(/u)
   })
 })
 

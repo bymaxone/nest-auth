@@ -17,6 +17,7 @@ import type { IPasswordBreachChecker } from '../interfaces/password-breach-check
 import { logEvent } from '../observability/log-event'
 import { isShorterThanCodePoints } from '../utils/code-points'
 import { SCRYPT_SHADOWS } from '../utils/dependency-options'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 // promisify picks the 3-arg overload (no options); cast to the 4-arg form we need.
 const scrypt = promisify(nodeScrypt) as (
@@ -423,6 +424,7 @@ export class PasswordService {
   }
 
   async hash(plain: string): Promise<string> {
+    assertRootIsStandard()
     const salt = randomBytes(SALT_BYTES)
     const derived = await scrypt(plain, salt, SCRYPT_KEY_LEN, {
       ...SCRYPT_SHADOWS,
@@ -485,6 +487,7 @@ export class PasswordService {
    * without revealing the reason (invalid hash vs. wrong password).
    */
   async compare(plain: string, hash: string): Promise<boolean> {
+    assertRootIsStandard()
     const parsed = parseStoredHash(hash)
     if (parsed === null) return false
 
@@ -547,6 +550,7 @@ export class PasswordService {
    * password request already costs; pair it with route-level rate limiting.
    */
   async compareDummy(plain: string): Promise<boolean> {
+    assertRootIsStandard()
     // Stryker disable next-line ObjectLiteral: emptying the options makes scrypt fall back to
     // its own defaults, which still derives a key and still compares unequal — so the RESULT is
     // identical and no assertion can separate them. What the mutant actually breaks is the

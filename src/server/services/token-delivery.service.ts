@@ -6,7 +6,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
-import { COOKIE_SHADOWS } from '../utils/dependency-options'
+import { cookieOptions } from '../utils/dependency-options'
 
 /** Hostname validation — allows only alphanumeric, dots, and hyphens. */
 const HOSTNAME_RE = /^[a-z0-9.-]+$/i
@@ -397,11 +397,10 @@ export class TokenDeliveryService {
 
   /** Returns base Set-Cookie options for auth cookies, optionally scoped to a domain. */
   private baseCookieOptions(domain: string | undefined): CookieOptions {
-    return {
-      ...COOKIE_SHADOWS,
+    return cookieOptions({
       sameSite: this.options.cookies.sameSite,
       ...(domain ? { domain } : {})
-    }
+    })
   }
 
   /** Reads the value of the cookie identified by `name` from the request. */

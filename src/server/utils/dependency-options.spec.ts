@@ -7,24 +7,13 @@
  */
 
 import { JwtService } from '@nestjs/jwt'
-import type { ResolvedOptions } from '../config/resolved-options'
-import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
-import { AuthException } from '../errors/auth-exception'
-import { jwtModuleOptions, jwtSignOptions } from './dependency-options'
-import { signerOf, verifyWithRotation } from './verify-with-rotation'
+import type { JwtSignOptions, JwtVerifyOptions } from '@nestjs/jwt'
+import { JWT_SIGN_SHADOWS, JWT_VERIFY_SHADOWS, jwtModuleOptions } from './dependency-options'
 
 const SECRET = 'real-secret-real-secret-real-secret-1234'
 const ATTACKER = 'attacker-secret-attacker-secret-1234'
 
-const OPTIONS = {
-  jwt: {
-    secret: SECRET,
-    algorithm: 'HS256',
-    previousSecrets: [],
-    issuer: undefined,
-    audience: undefined
-  }
-} as unknown as ResolvedOptions
+const OPTIONS = { jwt: { algorithm: 'HS256' } }
 
 /** Runs `body` with `key` planted on the root object of the process and always takes it away again. */
 function withPlanted<T>(key: string, value: unknown, body: () => T): T {
@@ -49,12 +38,17 @@ const expired = real.sign({ sub: 'user', exp: NOW - 3600 }, { noTimestamp: true 
 const forged = new JwtService({ secret: ATTACKER }).sign({ sub: 'attacker' })
 const valid = real.sign({ sub: 'user' }, { expiresIn: 600 })
 
-/** The result of verifying `token` with the real service, as `accepted` or the refusal. */
+/** The result of verifying `token` with the real service, with the options the library hands to it, as `accepted` or the refusal. */
 function outcome(service: JwtService, token: string, ignoreExpiration = false): string {
   try {
-    const claims = verifyWithRotation<{ sub?: string }>(service, OPTIONS, token, {
-      ignoreExpiration
-    })
+    const claims = service.verify<{ sub?: string }>(token, {
+      ...JWT_VERIFY_SHADOWS,
+      algorithms: [OPTIONS.jwt.algorithm],
+      ignoreExpiration,
+      issuer: undefined,
+      audience: undefined,
+      secret: SECRET
+    } as JwtVerifyOptions)
     return `accepted ${JSON.stringify(claims)}`
   } catch (error) {
     return `refused ${(error as Error).message}`
@@ -118,8 +112,9 @@ describe('verifying with a key planted on Object.prototype', () => {
 
 describe('signing with a key planted on Object.prototype', () => {
   const service = new JwtService(jwtModuleOptions(SECRET))
-  const chosen = { expiresIn: '10m', ...signerOf(OPTIONS) }
-  const sign = (): string => service.sign({ sub: 'user' }, jwtSignOptions(chosen))
+  const chosen = { expiresIn: '10m', secret: SECRET, algorithm: 'HS256' }
+  const sign = (): string =>
+    service.sign({ sub: 'user' }, { ...JWT_SIGN_SHADOWS, ...chosen } as JwtSignOptions)
   const claimsOf = (token: string): unknown => service.decode(token, { complete: true })
 
   // Scenario: the option names of `jsonwebtoken.sign` that have a neutral value, planted. Expected: the token has the
@@ -137,26 +132,6 @@ describe('signing with a key planted on Object.prototype', () => {
 
     expect(planted).toEqual(baseline)
   })
-
-  // Scenario: the names that add a claim or a header field and have no neutral value, planted. Expected: no token is
-  // signed, and the refusal is the library's `auth.internal`. Why: signing with one of them would put a planted claim into
-  // a token the backend signed, and the schema of `jsonwebtoken` refuses an own `undefined` that would shadow it.
-  it.each(['keyid', 'notBefore', 'jwtid', 'subject', 'issuer', 'audience'] as const)(
-    'refuses to sign while %s is planted',
-    (name) => {
-      let refused: unknown
-      try {
-        withPlanted(name, 'planted', sign)
-      } catch (error) {
-        refused = error
-      }
-
-      expect(refused).toBeInstanceOf(AuthException)
-      expect((refused as AuthException).getResponse()).toMatchObject({
-        error: { code: AUTH_ERROR_CODES.INTERNAL }
-      })
-    }
-  )
 
   // Scenario: nothing planted. Expected: a token with `iat`, `exp` and the algorithm the library pinned. Why: the shadows
   // are neutral, so the token is the one the library always signed.
