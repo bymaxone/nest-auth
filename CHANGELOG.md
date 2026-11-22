@@ -30,8 +30,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   one is refused with `[BymaxAuthModule] <option> must be an object (received …)`.
 - **The id of a row is required.** The ids of a user, a platform user, an API key, a workspace and of a membership (its
   workspace and its user) were accepted when absent or `null`, so a row without an id logged in with a token whose
-  subject was nothing. Each is refused as `auth.internal` when it is absent, `undefined` or `null`; the user that invited
-  a member, which may be absent, is the one id that still is.
+  subject was nothing. Each is refused as `auth.internal` when it is absent, `undefined` or `null`; an id that
+  is optional by design, such as the user that invited a member, is still accepted when absent.
 - **A resend of the verification code gives the cooldown back when the code cannot be stored.** The write of the code
   to the store was the one failure on the path that the response had not left yet and that kept the cooldown. A request
   that finds no account, or an account that is already verified, still keeps it, so the throttle never tells the two
