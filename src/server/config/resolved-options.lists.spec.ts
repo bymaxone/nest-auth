@@ -52,6 +52,21 @@ describe('the permissions of the workspaces', () => {
     )
   })
 
+  // Scenario: each of the four lists served as a getter on the prototype of a class and naming a role that does not
+  // exist. Expected: the options are refused naming that permission. Why: each of the four is read by name from the
+  // class, and a list the validation never read would grant a role nobody checked.
+  it.each(['manageWorkspace', 'deleteWorkspace', 'manageMembers', 'viewMembers'] as const)(
+    'validates %s when a class serves it on its prototype',
+    (action) => {
+      class Permissions {}
+      Object.defineProperty(Permissions.prototype, action, { get: (): string[] => ['ghost'] })
+
+      expect(() => resolveOptions(withPermissions(new Permissions()))).toThrow(
+        `workspaces.permissions.${action} names a role at position 0 that is not a workspace role`
+      )
+    }
+  )
+
   // Scenario: valid permissions, then the host pushing a role that does not exist into one of its lists and replacing
   // another after the options resolved. Expected: the resolved permissions are what was validated. Why: the lists are the
   // host's own arrays, and a change after validation must never become a grant.

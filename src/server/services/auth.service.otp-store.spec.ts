@@ -291,4 +291,32 @@ describe('AuthService — a refused write of the verification code', () => {
 
     expect(mockRedis.del).not.toHaveBeenCalled()
   })
+
+  // Scenario: the cooldown is claimed, the account is found and no email provider is configured. Expected: nothing is
+  // sent, no code is stored and the cooldown is kept. Why: with no provider nothing was attempted, so there is no failed
+  // send to give the cooldown back for; releasing it would let the route be called without limit.
+  it('keeps the cooldown when no email provider is configured', async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+        { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: null },
+        { provide: BYMAX_AUTH_HOOKS, useValue: {} },
+        { provide: PasswordService, useValue: mockPasswordService },
+        { provide: TokenManagerService, useValue: mockTokenManager },
+        { provide: BruteForceService, useValue: {} },
+        { provide: AuthRedisService, useValue: mockRedis },
+        { provide: OtpService, useValue: mockOtpService },
+        { provide: SessionService, useValue: {} },
+        { provide: AccountStatusService, useValue: {} }
+      ]
+    }).compile()
+    mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+
+    await module.get(AuthService).resendVerificationEmail('tenant-1', EMAIL, REQUEST)
+
+    expect(mockRedis.del).not.toHaveBeenCalled()
+    expect(mockOtpService.store).not.toHaveBeenCalled()
+  })
 })

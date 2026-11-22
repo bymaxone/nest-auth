@@ -40,16 +40,20 @@ describe('roles.platformHierarchy', () => {
   // names a child it does not declare. Expected: each is refused naming the role. Why: the same integrity the hierarchy of
   // the account has: every child is a role the hierarchy declares.
   it.each([
-    ['is an empty object', {}, 'roles.platformHierarchy must not be an empty object'],
+    [
+      'is an empty object',
+      {},
+      `roles.platformHierarchy must not be an empty object. Define at least one role (e.g. { SUPER_ADMIN: [] }).`
+    ],
     [
       'is a function that carries no role',
       () => undefined,
-      'roles.platformHierarchy must not be an empty object'
+      `roles.platformHierarchy must not be an empty object. Define at least one role (e.g. { SUPER_ADMIN: [] }).`
     ],
     [
       'is an array of lists whose children name no index',
       [['SUPPORT']],
-      "roles.platformHierarchy['0'] references unknown role 'SUPPORT'"
+      `roles.platformHierarchy['0'] references unknown role 'SUPPORT'. All roles referenced as children must be declared as keys in the hierarchy.`
     ],
     [
       'has a role whose children are a string',
@@ -74,7 +78,7 @@ describe('roles.platformHierarchy', () => {
     [
       'names a child it does not declare',
       { SUPER_ADMIN: ['GHOST'], SUPPORT: [] },
-      "roles.platformHierarchy['SUPER_ADMIN'] references unknown role 'GHOST'"
+      `roles.platformHierarchy['SUPER_ADMIN'] references unknown role 'GHOST'. All roles referenced as children must be declared as keys in the hierarchy.`
     ]
   ] as const)('is refused when it %s', (_name, value, message) => {
     expect(() => resolveOptions(platformWith(value))).toThrow(message)
