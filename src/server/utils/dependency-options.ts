@@ -116,7 +116,7 @@ export function jwtSignOptions(chosen: object): JwtSignOptions {
  * @returns The options to hand to `res.cookie` or `res.clearCookie`.
  * @throws {AuthException} `auth.internal` while `Object.prototype` holds an entry that is not the runtime's own.
  */
-export function cookieOptions(chosen: CookieOptions): CookieOptions {
+export function cookieOptions(chosen: CookieOptions = {}): CookieOptions {
   assertRootIsStandard()
   return { ...COOKIE_SHADOWS, ...chosen }
 }

@@ -215,17 +215,14 @@ export class OAuthService {
    * @param state - The raw state nonce.
    */
   private bindToBrowser(res: Response, state: string): void {
-    res.cookie(
-      OAUTH_STATE_COOKIE_NAME,
-      state,
-      cookieOptions({
-        httpOnly: true,
-        secure: this.options.secureCookies,
-        sameSite: OAUTH_STATE_COOKIE_SAME_SITE,
-        path: '/',
-        maxAge: OAUTH_STATE_COOKIE_MAX_AGE_SECONDS * 1_000
-      })
-    )
+    res.cookie(OAUTH_STATE_COOKIE_NAME, state, {
+      ...cookieOptions(),
+      httpOnly: true,
+      secure: this.options.secureCookies,
+      sameSite: OAUTH_STATE_COOKIE_SAME_SITE,
+      path: '/',
+      maxAge: OAUTH_STATE_COOKIE_MAX_AGE_SECONDS * 1_000
+    })
   }
 
   // ---------------------------------------------------------------------------

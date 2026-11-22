@@ -145,7 +145,8 @@ function serverSources(dir = join(__dirname, '..')): string[] {
 
 describe('every call that sets or clears a cookie', () => {
   // Scenario: each `res.cookie(` and `res.clearCookie(` in the shipped code. Expected: its options carry the shadows, or are
-  // the base options of the delivery service, which carry them. Why: a new call site that forgets the shadows would read a
+  // the base options of the delivery service, which carry them, and a call that spreads them names `httpOnly` in its own
+  // literal, where a reader of the code (and a static analysis) can see it. Why: a new call site that forgets the shadows would read a
   // planted `domain` again, and no row of the existing sites would notice.
   it('names the shadows in its options', () => {
     const calls = serverSources().flatMap((file) => {
@@ -161,8 +162,13 @@ describe('every call that sets or clears a cookie', () => {
     )
     const base = readFileSync(join(__dirname, '../services/token-delivery.service.ts'), 'utf8')
 
+    const hidden = calls.filter(
+      ({ call }) => /\.\.\.cookieOptions\(/u.test(call) && !/httpOnly:/u.test(call)
+    )
+
     expect(calls.length).toBeGreaterThan(0)
     expect(missing).toEqual([])
+    expect(hidden).toEqual([])
     expect(base).toMatch(/baseCookieOptions[\s\S]{0,400}cookieOptions\(/u)
   })
 })

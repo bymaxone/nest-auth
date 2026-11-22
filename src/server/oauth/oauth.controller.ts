@@ -398,15 +398,13 @@ export class OAuthController {
    * the next flow would arrive carrying a state that can no longer match.
    */
   private clearOAuthStateCookie(res: Response): void {
-    res.clearCookie(
-      OAUTH_STATE_COOKIE_NAME,
-      cookieOptions({
-        httpOnly: true,
-        secure: this.options.secureCookies,
-        sameSite: OAUTH_STATE_COOKIE_SAME_SITE,
-        path: '/'
-      })
-    )
+    res.clearCookie(OAUTH_STATE_COOKIE_NAME, {
+      ...cookieOptions(),
+      httpOnly: true,
+      secure: this.options.secureCookies,
+      sameSite: OAUTH_STATE_COOKIE_SAME_SITE,
+      path: '/'
+    })
   }
 
   /**
@@ -426,16 +424,13 @@ export class OAuthController {
    *   on a request that otherwise looked legitimate.
    */
   private setMfaTempCookie(res: Response, mfaTempToken: string): void {
-    res.cookie(
-      MFA_TEMP_COOKIE_NAME,
-      mfaTempToken,
-      cookieOptions({
-        httpOnly: true,
-        secure: this.options.secureCookies,
-        sameSite: this.options.cookies.sameSite,
-        path: this.options.cookies.mfaTempCookiePath,
-        maxAge: MFA_TEMP_COOKIE_MAX_AGE_SECONDS * 1_000
-      })
-    )
+    res.cookie(MFA_TEMP_COOKIE_NAME, mfaTempToken, {
+      ...cookieOptions(),
+      httpOnly: true,
+      secure: this.options.secureCookies,
+      sameSite: this.options.cookies.sameSite,
+      path: this.options.cookies.mfaTempCookiePath,
+      maxAge: MFA_TEMP_COOKIE_MAX_AGE_SECONDS * 1_000
+    })
   }
 }

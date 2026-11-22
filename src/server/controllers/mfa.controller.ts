@@ -160,15 +160,13 @@ export class MfaController {
    * @param res - Express response in passthrough mode.
    */
   private clearMfaTempCookie(res: Response): void {
-    res.clearCookie(
-      MFA_TEMP_COOKIE_NAME,
-      cookieOptions({
-        path: this.options.cookies.mfaTempCookiePath,
-        httpOnly: true,
-        secure: this.options.secureCookies,
-        sameSite: this.options.cookies.sameSite
-      })
-    )
+    res.clearCookie(MFA_TEMP_COOKIE_NAME, {
+      ...cookieOptions(),
+      path: this.options.cookies.mfaTempCookiePath,
+      httpOnly: true,
+      secure: this.options.secureCookies,
+      sameSite: this.options.cookies.sameSite
+    })
   }
 
   /**
