@@ -164,6 +164,41 @@ describe('the root object of the runtime', () => {
   )
 })
 
+describe('a runtime started with --disable-proto=delete', () => {
+  // Scenario: the guard module loaded while `__proto__` is absent from Object.prototype, as the runtime leaves it with
+  // `--disable-proto=delete`, and then a `__proto__` added afterwards. Expected: the root with no `__proto__` is standard, and
+  // the one that appears is counted once. Why: a hardened runtime is not a planted one, and an entry that was not there at
+  // load is one the process added.
+  it('has a standard root without __proto__, and counts one that appears later', () => {
+    const held = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      '__proto__'
+    ) as PropertyDescriptor
+    let late: { plantedOnRoot: () => number } | undefined
+    let hardened = -1
+    let later = -1
+    try {
+      Reflect.deleteProperty(Object.prototype, '__proto__')
+      jest.isolateModules(() => {
+        late = require('./object-prototype-guard') as { plantedOnRoot: () => number }
+      })
+      hardened = late?.plantedOnRoot() ?? -1
+      Object.defineProperty(Object.prototype, '__proto__', {
+        value: 1,
+        writable: true,
+        configurable: true
+      })
+      later = late?.plantedOnRoot() ?? -1
+    } finally {
+      Reflect.deleteProperty(Object.prototype, '__proto__')
+      Object.defineProperty(Object.prototype, '__proto__', held)
+    }
+
+    expect(hardened).toBe(0)
+    expect(later).toBe(1)
+  })
+})
+
 describe('what the library refuses to do while the root holds a planted key', () => {
   const options = Object.assign({} as ResolvedOptions, {
     jwt: { secret: SECRET, algorithm: 'HS256', previousSecrets: [] }

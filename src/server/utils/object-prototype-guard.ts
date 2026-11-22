@@ -68,6 +68,8 @@ const BASELINE = new Map<string, Held | undefined>(STANDARD.map((name) => [name,
 
 /** Whether an entry is the kind the runtime defines: a function that is not enumerable, or the accessor of `__proto__`. */
 function isStandardKind(name: string, descriptor: Held | undefined): boolean {
+  // A runtime started with `--disable-proto=delete` has no `__proto__` at all, which is as standard as having one.
+  if (name === '__proto__' && descriptor === undefined) return true
   if (descriptor === undefined || descriptor.enumerable) return false
   return name === '__proto__'
     ? typeof descriptor.get === 'function' && typeof descriptor.set === 'function'
@@ -101,7 +103,8 @@ export function plantedOnRoot(): number {
   let count = LOADED_STANDARD ? 0 : 1
   for (const key of ownKeys(root))
     if (typeof key === 'string' && !same(describe(key), BASELINE.get(key))) count += 1
-  for (const name of STANDARD) if (describe(name) === undefined) count += 1
+  for (const name of STANDARD)
+    if (describe(name) === undefined && BASELINE.get(name) !== undefined) count += 1
   return count
 }
 
