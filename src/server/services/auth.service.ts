@@ -1110,7 +1110,7 @@ export class AuthService {
 
     await releasingCooldownOnFailure(this.redis, this.logger, cooldownKey, async () => {
       const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
-      if (user && !user.emailVerified) await this.sendVerificationOtp(tenantId, email)
+      return user && !user.emailVerified ? this.sendVerificationOtp(tenantId, email) : undefined
     })
 
     await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
@@ -1385,29 +1385,28 @@ export class AuthService {
     assertNotBlocked(user.status, this.options.blockedStatuses)
   }
 
-  private async sendVerificationOtp(tenantId: string, email: string): Promise<void> {
+  private async sendVerificationOtp(tenantId: string, email: string): Promise<boolean> {
     if (!this.emailProvider) {
       logEvent(this.logger, 'AUTH_PROVIDER_MISSING', { flow: 'email_verification_otp' })
-      return
+      return true
     }
 
     const identifier = this.otpIdentifier(tenantId, email)
     const otp = this.otpService.generate(6) // emailVerification has no otpLength: fixed 6 digits
     const { otpTtlSeconds: ttl } = this.options.emailVerification
-    if (!(await storeVerificationCode(this.otpService, this.logger, identifier, otp, ttl))) return
+    if (!(await storeVerificationCode(this.otpService, this.logger, identifier, otp, ttl)))
+      return false
 
-    // Captured out of the field: the guard above narrowed `this.emailProvider`, and that narrowing
-    // does not survive into a handler the compiler cannot prove runs before the field changes.
+    // Captured out of the field: the narrowing of `this.emailProvider` above does not survive into the handler below.
     const provider = this.emailProvider
 
     // An async IIFE, NOT `Promise.resolve().then(...)`. Both catch a provider that throws
     // SYNCHRONOUSLY — which `Promise.resolve(provider.send(...))` does not, because it evaluates
     // the call before the promise wraps it, so the throw skips this handler and reaches the
     // caller's own error path, which logs raw. The difference is WHEN the send starts: `.then`
-    // defers it by a microtask, so the response leaves before the provider is even called. That
-    // is observable — it broke an e2e that read the dispatched code the instant the response
-    // landed — and the delay buys nothing. Inside the IIFE the call is made synchronously and
-    // the `try` still catches a synchronous throw.
+    // defers it by a microtask, so the response leaves before the provider is even called (an e2e
+    // that read the dispatched code the instant the response landed observed it), and the delay
+    // buys nothing. Inside the IIFE the call is made synchronously and the `try` still catches it.
     void (async (): Promise<void> => {
       try {
         await provider.sendEmailVerificationOtp(tenantId, email, otp)
@@ -1422,6 +1421,7 @@ export class AuthService {
         logDelivery(this.logger, 'email_verification_otp', err)
       }
     })()
+    return true
   }
 }
 

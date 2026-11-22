@@ -281,6 +281,37 @@ describe('values a host serves for the fields of a contract (E2E)', () => {
     expect(login.body.accessToken !== undefined).toBe(status === 200)
   })
 
+  // Scenario: an account whose id is absent, undefined and null, served by the repository at login. Expected: the login
+  // ends in the internal error and issues no token. Why: a token whose subject is nothing is a token for nobody, and it
+  // must never be issued for a row that names none.
+  it.each(['absent', 'undefined', 'null'] as const)(
+    'refuses a login whose account has an id that is %s, and issues no token',
+    async (kind) => {
+      const http = request(app.getHttpServer())
+      await http
+        .post('/register')
+        .send({ email: EMAIL, password: PASSWORD, name: 'Hydrated User', tenantId: 't1' })
+        .expect(201)
+      const byEmail = booted.repo.findByEmail.bind(booted.repo)
+      booted.repo.findByEmail = async (...args: Parameters<typeof byEmail>) => {
+        const user = await byEmail(...args)
+        if (user === null) return user
+        const row: Record<string, unknown> = { ...user }
+        if (kind === 'absent') Reflect.deleteProperty(row, 'id')
+        else row['id'] = kind === 'null' ? null : undefined
+        return row as Partial<AuthUser> as AuthUser
+      }
+
+      const login = await http
+        .post('/login')
+        .send({ email: EMAIL, password: PASSWORD, tenantId: 't1' })
+
+      expect(login.status).toBe(500)
+      expect(login.body).not.toHaveProperty('accessToken')
+      expect(JSON.stringify(login.body)).toContain(AUTH_ERROR_CODES.INTERNAL)
+    }
+  )
+
   // Scenario: an account whose id is a number, and one whose id is an object that prints as its hex, through login, me,
   // refresh and a password change, with a repository that finds a row by the id the library gives it, as a driver does.
   // Expected: every step works and the token's subject is the id as a string. Why: a claim, a key and a comparison all

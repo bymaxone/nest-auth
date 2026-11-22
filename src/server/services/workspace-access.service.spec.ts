@@ -381,6 +381,23 @@ describe('WorkspaceAccessService', () => {
       expect(fills(redis)).toEqual([])
     })
 
+    // Scenario: a repository that answers, for the workspace and the user asked about, a workspace of another id, a
+    // membership of another workspace or a membership of another user. Expected: no access and nothing cached. Why: the
+    // key a repository is given is no proof of the row it returns, and the ids of the row are strings that are compared
+    // exactly, as the tenant is.
+    it.each([
+      ['a workspace of another id', { workspace: { ...WORKSPACE, id: 'w2' } }],
+      ['a membership of another workspace', { membership: { ...MEMBERSHIP, workspaceId: 'w2' } }],
+      ['a membership of another user', { membership: { ...MEMBERSHIP, userId: 'u2' } }]
+    ])('answers null, and caches nothing, for %s', async (_name, answer) => {
+      const { service, redis, workspaces, memberships } = build()
+      if ('workspace' in answer) workspaces.findById.mockResolvedValue(answer.workspace)
+      if ('membership' in answer) memberships.find.mockResolvedValue(answer.membership)
+
+      await expect(service.resolveMembership(REF)).resolves.toBeNull()
+      expect(fills(redis)).toEqual([])
+    })
+
     it('skips the cache entirely when its lifetime is zero', async () => {
       const { service, redis } = build(0)
 

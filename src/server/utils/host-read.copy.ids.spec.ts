@@ -34,6 +34,14 @@ class PrintsEmpty {
   }
 }
 
+/** An object that prints as the text it was given. */
+class PrintsText {
+  constructor(private readonly text: string) {}
+  toString(): string {
+    return this.text
+  }
+}
+
 class PrintsAsAnObject {
   toString(): string {
     return '[object Anything]'
@@ -57,6 +65,16 @@ const NOT_AN_ID: readonly (readonly [string, unknown])[] = [
   ['a plain object', {}],
   ['an object that prints as nothing', new PrintsEmpty()],
   ['an object that prints as an object', new PrintsAsAnObject()],
+  ['a blank string', '   '],
+  ['a string of line breaks and tabs', '\t\n'],
+  ['the text undefined', 'undefined'],
+  ['the text null', 'null'],
+  ['an object that prints as blank', new PrintsText(' ')],
+  ['an object that prints as undefined', new PrintsText('undefined')],
+  ['an object that prints as null', new PrintsText('null')],
+  ['an Error', new Error('id')],
+  ['a Buffer', Buffer.from('id')],
+  ['a typed array', new Uint8Array([1, 2])],
   ['a symbol', Symbol('id')],
   ['a bigint', 1n]
 ]
@@ -92,7 +110,17 @@ describe('an id that only informs', () => {
   // the library supports key their rows, and a claim, a key and a comparison all take a string, as the interface says.
   it('keeps a string, a safe integer and an object that prints as its id, as a string', () => {
     const objectId = new ObjectIdLike('64b0000000000000000000a1')
-    const ids = ['w1', 42, 0, -7, objectId]
+    const ids = [
+      'w1',
+      42,
+      0,
+      -7,
+      objectId,
+      '[object custom]',
+      ' padded ',
+      'nullable',
+      'undefined-1'
+    ]
 
     for (const id of ids) {
       const copy = copyHostRecord(workspaceRecord({ id: id as never }), WORKSPACE) as {

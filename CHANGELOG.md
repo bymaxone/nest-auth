@@ -18,6 +18,37 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **The lists a host keeps in its options are read once and what is checked is what is kept.** The permissions of the
+  workspaces (`manageWorkspace`, `deleteWorkspace`, `manageMembers`, `viewMembers`) were validated through their own
+  entries and then read again by property and kept as the host's arrays: a typed configuration class that served them on
+  its prototype was never validated, and a change by the host after start reached the authorization table. They are read
+  by property like the other groups and kept as copies, and so are `jwt.previousSecrets`,
+  `mfa.previousEncryptionKeys` and `apiKeys.scopes`, whose strength and format checks ran once at start.
+  `jwt`, `mfa`, `apiKeys` and `workspaces.permissions` must be objects: a function, an array or a primitive given for
+  one is refused with `[BymaxAuthModule] <option> must be an object (received …)`.
+- **The id of a row is required.** The ids of a user, a platform user, an API key, a workspace and of a membership (its
+  workspace and its user) were accepted when absent or `null`, so a row without an id logged in with a token whose
+  subject was nothing. Each is refused as `auth.internal` when it is absent, `undefined` or `null`; an id that
+  is optional by design, such as the user that invited a member, is still accepted when absent.
+- **A resend of the verification code gives the cooldown back when the code cannot be stored.** The write of the code
+  to the store was the one failure on the path that the response had not left yet and that kept the cooldown. A request
+  that finds no account, or an account that is already verified, still keeps it, so the throttle never tells the two
+  apart. A mail provider that fails after the response left does not release it: a delete by key from there could remove
+  the cooldown of a later request, so the user retries after the minute.
+- **The hierarchy of the platform is judged as the others are.** When the platform is enabled, `roles.platformHierarchy`
+  must be an object that names at least one role, whose children are lists of roles it declares (a string, a number, a
+  child that is no list or a child nobody declares ends the boot with the option and the role named).
+- **An id is never blank, the text of a missing value, an error or a buffer.** A string or a printed text that is empty
+  or only whitespace, `undefined` or `null`, and an `Error`, a `Buffer` or any other view of bytes, are refused as an id
+  with `auth.internal`.
+- **The ids of the rows the workspace access reads are compared with the ones asked about.** The id of the workspace, the
+  workspace of the membership and the user of the membership are compared exactly, as the tenant already was; a
+  repository that answers another row is denied access and nothing is cached. **Apply to a derived backend:** the ids
+  are compared as the exact strings the library keeps, so a store that normalises an id when it reads it (a column that
+  lowercases a uuid) has to be asked for the id in the form it returns, or it answers a row that is denied.
+
 ## [1.5.13] - 2026-11-21
 
 A patch release.

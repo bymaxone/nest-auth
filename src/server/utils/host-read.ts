@@ -221,17 +221,32 @@ function copyStrings(value: unknown, read: Read): string[] {
   return copy
 }
 
+/** What an id may not print as: text that names nothing, or the text of a value that was never there. */
+const NOT_AN_ID_TEXT: ReadonlySet<string> = new Set(['undefined', 'null'])
+
 /**
- * An id names one row: a non-empty string, a safe integer, or a host object that prints as a non-empty text of its own
- * (not `[object ...]`, which every plain object, Map, Set and Promise shares). Kept as that text, read once.
+ * An id names one row: a non-empty text that is not blank, `undefined` or `null`, a safe integer, or a host object that
+ * prints as such a text of its own. What an object prints is not `[object ...]`, which every plain object, Map, Set and
+ * Promise shares, and an object that is a date, a regular expression, an error or a buffer prints as what it is, so it is
+ * refused; a string the host gave is kept as it is. Kept as that text, read once.
  */
 function readId(value: unknown): string {
-  if (typeof value === 'string') return accept(value !== '', value) as string
   if (typeof value === 'number') return accept(Number.isSafeInteger(value), String(value)) as string
-  if (!isHostInstance(value) || types.isDate(value) || types.isRegExp(value))
+  if (
+    typeof value !== 'string' &&
+    (!isHostInstance(value) ||
+      types.isDate(value) ||
+      types.isRegExp(value) ||
+      types.isNativeError(value) ||
+      types.isArrayBufferView(value))
+  )
     throw new Error(WRONG_KIND)
-  const printed = String(value)
-  return accept(printed !== '' && !printed.startsWith('[object '), printed) as string
+  const text = String(value)
+  const printed = typeof value !== 'string'
+  return accept(
+    text.trim() !== '' && !NOT_AN_ID_TEXT.has(text) && !(printed && text.startsWith('[object ')),
+    text
+  ) as string
 }
 
 /**
@@ -265,6 +280,7 @@ function readInformingDate(value: unknown): unknown {
 const READERS = {
   boolean: (value: unknown): unknown => accept(typeof value === 'boolean', value),
   string: (value: unknown): unknown => accept(typeof value === 'string', value),
+  id: readId,
   number: (value: unknown): unknown => accept(Number.isFinite(value), value),
   date: copyDate,
   strings: copyStrings,

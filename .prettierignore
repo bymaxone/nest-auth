@@ -35,6 +35,8 @@ conformance/wire-contract.json
 scripts/check-double-assertions.mjs
 scripts/check-function-length.mjs
 scripts/function-length-key.mjs
+scripts/check-dist-fresh.mjs
+scripts/check-dist-fresh.test.mjs
 src/check-double-assertions.spec.ts
 src/check-function-length.spec.ts
 src/check-function-length.baseline.spec.ts

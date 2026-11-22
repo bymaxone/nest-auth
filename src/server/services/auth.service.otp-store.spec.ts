@@ -85,6 +85,7 @@ describe('AuthService — a refused write of the verification code', () => {
     mockEmailProvider.sendEmailVerificationOtp.mockResolvedValue(undefined)
     mockOtpService.generate.mockReturnValue(CODE)
     mockRedis.setnx.mockResolvedValue(true)
+    mockRedis.del.mockResolvedValue(1)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -245,6 +246,39 @@ describe('AuthService — a refused write of the verification code', () => {
     if (fault === 'release') expect(errorLog).toHaveBeenCalledTimes(1)
   })
 
+  // Scenario: the cooldown is claimed, the account is found and the store refuses the write of the code. Expected: the
+  // request still answers as it does on success, and the cooldown it took is released. Why: no code was issued, so the
+  // retry the failure invites must not be refused for the rest of the minute; the store being down is the one failure on
+  // this path that the response has not left yet.
+  it('releases the cooldown it took when the code could not be stored', async () => {
+    mockRedis.del.mockResolvedValue(1)
+    mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+    mockOtpService.store.mockRejectedValue(STORE_REFUSED)
+
+    await expect(
+      service.resendVerificationEmail('tenant-1', EMAIL, REQUEST)
+    ).resolves.toBeUndefined()
+
+    const key = `resend:email_verification:${hmacSha256(`tenant-1:${EMAIL}`, HMAC_KEY)}`
+    expect(mockRedis.del).toHaveBeenCalledWith(key)
+    expect(mockEmailProvider.sendEmailVerificationOtp).not.toHaveBeenCalled()
+  })
+
+  // Scenario: the cooldown is claimed for an address that has no account, and for an account that is already verified.
+  // Expected: nothing is sent and the cooldown is kept in both. Why: only a request that was to issue a code and could not
+  // gives the cooldown back, so the throttle never tells an address that has an account from one that has not.
+  it.each([
+    ['an address without an account', null],
+    ['an account that is already verified', { ...USER, emailVerified: true }]
+  ] as const)('keeps the cooldown for %s', async (_name, found) => {
+    mockUserRepo.findByEmail.mockResolvedValue(found)
+
+    await service.resendVerificationEmail('tenant-1', EMAIL, REQUEST)
+
+    expect(mockRedis.del).not.toHaveBeenCalled()
+    expect(mockEmailProvider.sendEmailVerificationOtp).not.toHaveBeenCalled()
+  })
+
   // Scenario: a send that succeeds, and a request that finds the cooldown already taken. Expected: the cooldown is not
   // released in either. Why: it is the throttle; only a request that took it and failed gives it back.
   it('keeps the cooldown after a send and after a hit', async () => {
@@ -256,5 +290,33 @@ describe('AuthService — a refused write of the verification code', () => {
     await service.resendVerificationEmail('tenant-1', EMAIL, REQUEST)
 
     expect(mockRedis.del).not.toHaveBeenCalled()
+  })
+
+  // Scenario: the cooldown is claimed, the account is found and no email provider is configured. Expected: nothing is
+  // sent, no code is stored and the cooldown is kept. Why: with no provider nothing was attempted, so there is no failed
+  // send to give the cooldown back for; releasing it would let the route be called without limit.
+  it('keeps the cooldown when no email provider is configured', async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+        { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: null },
+        { provide: BYMAX_AUTH_HOOKS, useValue: {} },
+        { provide: PasswordService, useValue: mockPasswordService },
+        { provide: TokenManagerService, useValue: mockTokenManager },
+        { provide: BruteForceService, useValue: {} },
+        { provide: AuthRedisService, useValue: mockRedis },
+        { provide: OtpService, useValue: mockOtpService },
+        { provide: SessionService, useValue: {} },
+        { provide: AccountStatusService, useValue: {} }
+      ]
+    }).compile()
+    mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+
+    await module.get(AuthService).resendVerificationEmail('tenant-1', EMAIL, REQUEST)
+
+    expect(mockRedis.del).not.toHaveBeenCalled()
+    expect(mockOtpService.store).not.toHaveBeenCalled()
   })
 })

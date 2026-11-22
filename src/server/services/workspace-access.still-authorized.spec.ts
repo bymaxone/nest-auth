@@ -76,10 +76,17 @@ function world(
   }
 ): void {
   repos.workspaces.findById.mockResolvedValue(
-    workspace === null ? null : { tenantId: JOB.tenantId, status: workspace }
+    workspace === null ? null : { id: JOB.workspaceId, tenantId: JOB.tenantId, status: workspace }
   )
   repos.memberships.find.mockResolvedValue(
-    membership === null ? null : { tenantId: JOB.tenantId, ...membership }
+    membership === null
+      ? null
+      : {
+          tenantId: JOB.tenantId,
+          workspaceId: JOB.workspaceId,
+          userId: JOB.actorUserId,
+          ...membership
+        }
   )
   repos.users.findById.mockResolvedValue(account)
 }
@@ -235,9 +242,15 @@ describe('assertStillAuthorized', () => {
   it('accepts a tenant and an actor of exactly 128 characters and refuses 129', async () => {
     world('active', { role: 'viewer', status: 'active' })
     const edge = { tenantId: 't'.repeat(128), workspaceId: 'w1', actorUserId: 'u'.repeat(128) }
-    repos.workspaces.findById.mockResolvedValue({ tenantId: edge.tenantId, status: 'active' })
+    repos.workspaces.findById.mockResolvedValue({
+      id: edge.workspaceId,
+      tenantId: edge.tenantId,
+      status: 'active'
+    })
     repos.memberships.find.mockResolvedValue({
       tenantId: edge.tenantId,
+      workspaceId: edge.workspaceId,
+      userId: edge.actorUserId,
       role: 'viewer',
       status: 'active'
     })

@@ -297,10 +297,9 @@ describe('the role hierarchy of the resolved options', () => {
     )
   })
 
-  // Scenario: each hierarchy given as a truthy value that is no object (a string, a number, true). Expected: the account
-  // hierarchy is refused with a message that names what is wrong with it, and the platform hierarchy, which the checks
-  // only test for being there, is kept as the host wrote it. Why: only an object is copied, so a value that is no object
-  // means to the checks exactly what the host wrote.
+  // Scenario: the hierarchy of the account given as a truthy value that is no object (a string, a number, true). Expected:
+  // it is refused with a message that names what is wrong with it. Why: only an object is copied, so a value that is no
+  // object means to the checks exactly what the host wrote. (The platform hierarchy has its own rows.)
   it.each([
     ['a string', 'abc', "roles.hierarchy['0'] must be an array"],
     ['a number', 5, 'roles.hierarchy must not be an empty object'],
@@ -312,18 +311,27 @@ describe('the role hierarchy of the resolved options', () => {
     }
   )
 
+  // Scenario: the children of a role of the workspaces given as a string, a number, an object and null, with an owner that
+  // would otherwise be valid. Expected: each is refused, naming the role whose children they are. Why: the hierarchy of
+  // the workspaces is judged on the copy that is kept, and a child that is no list is no list of roles.
   it.each([
-    ['a string', 'abc'],
-    ['a number', 5],
-    ['true', true]
-  ] as const)('keeps roles.platformHierarchy given as %s as the host wrote it', (_name, value) => {
+    ['a string', 'editor'],
+    ['a number', 7],
+    ['an object', { editor: true }],
+    ['null', null]
+  ] as const)('refuses the children of a workspace role given as %s', (_name, children) => {
     const given: Partial<Record<keyof BymaxAuthModuleOptions, unknown>> = {
       jwt: { secret: SECRET },
       rateLimit: { clientIpSource: 'peer' },
-      roles: { hierarchy: { MEMBER: [] }, platformHierarchy: value },
-      platform: { enabled: true }
+      roles: { hierarchy: { MEMBER: [] } },
+      workspaces: {
+        enabled: true,
+        roles: { hierarchy: { owner: children, editor: [] }, ownerRole: 'owner' }
+      }
     }
 
-    expect(resolveOptions(given as BymaxAuthModuleOptions).roles.platformHierarchy).toBe(value)
+    expect(() => resolveOptions(given as BymaxAuthModuleOptions)).toThrow(
+      'workspaces.roles.hierarchy.owner must list only roles that are keys of the hierarchy'
+    )
   })
 })
