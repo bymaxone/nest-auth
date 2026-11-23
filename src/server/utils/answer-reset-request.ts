@@ -23,6 +23,7 @@
 
 import type { Logger } from '@nestjs/common'
 
+import { rethrowRefusal } from './object-prototype-guard'
 import { sleep } from './sleep'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -102,6 +103,7 @@ export async function answerResetRequest(
   try {
     if (account && !request.isBlocked(account.status)) await request.issue(account.id)
   } catch (err: unknown) {
+    rethrowRefusal(err)
     logStore(logger, 'AUTH_STORE_FAILED', 'reset_issue', err)
     await releaseCooldown()
   }

@@ -24,7 +24,7 @@
 import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 
-import { getDescriptor, getKey, hasOwn, prototypeOf } from './captured-builtins'
+import { getDescriptor, getKey, hasOwn, ownKeys, prototypeOf } from './captured-builtins'
 import { nodeCrypto } from '../crypto/captured-crypto'
 
 /** The name under which the iterator function of a type is listed: the key is the well-known symbol. */
@@ -231,6 +231,37 @@ export const BASELINED_ITERATORS = {
   'SetIterator.prototype': ['next']
 } as const satisfies Record<string, readonly string[]>
 
+/**
+ * The prototypes the language dispatches through without a source naming the function: a regular expression given to `replace`,
+ * `split`, `match` or `search` runs `RegExp.prototype[Symbol.replace]` and the rest, `for...of` runs the iterator of its operand,
+ * and a primitive is turned into a value through `Symbol.toPrimitive`. Every symbol-keyed function of these is recorded, and a
+ * symbol key added to one is counted; a name-based scan of the sources cannot see either.
+ */
+export const PROTOCOL_HOLDERS = [
+  'Array.prototype',
+  'Date.prototype',
+  'Map.prototype',
+  'Number.prototype',
+  'RegExp.prototype',
+  'Set.prototype',
+  'String.prototype',
+  'TypedArray.prototype'
+] as const
+
+/** The accessors of `RegExp.prototype` the algorithms of `replace`, `split`, `match` and `search` read for every regular expression. */
+export const BASELINED_REGEXP_ACCESSORS = [
+  'dotAll',
+  'flags',
+  'global',
+  'hasIndices',
+  'ignoreCase',
+  'multiline',
+  'source',
+  'sticky',
+  'unicode',
+  'unicodeSets'
+] as const
+
 /** The global bindings the sources name, whose identity is compared. */
 export const BASELINED_GLOBALS = [
   'Array',
@@ -305,6 +336,9 @@ const fields: string[] = []
 const originals: unknown[] = []
 
 function record(holder: object, key: PropertyKey): void {
+  // An entry the lists and the protocol both name is recorded once, so a replacement is counted once.
+  for (let index = 0; index < holders.length; index += 1)
+    if (holders[index] === holder && keys[index] === key) return
   const descriptor = getDescriptor(holder, key)
   if (descriptor === undefined) return
   // A function that can neither be assigned nor redefined (`Function.prototype[Symbol.hasInstance]`) cannot be replaced.
@@ -330,12 +364,52 @@ function recordAll(lists: Record<string, readonly string[]>): void {
 recordAll(BASELINED_PROTOTYPES)
 recordAll(BASELINED_ITERATORS)
 recordAll(BASELINED_DEPENDENCIES)
+
+// The protocol: each symbol-keyed function of a protocol holder, and the symbols the holder had, to count one that is added.
+const protocolHolders: object[] = []
+const protocolSymbols: symbol[][] = []
+for (let index = 0; index < PROTOCOL_HOLDERS.length; index += 1) {
+  const holder = BASELINED_HOLDERS[PROTOCOL_HOLDERS[index] as string] as object
+  const known: symbol[] = []
+  const present = ownKeys(holder)
+  for (let at = 0; at < present.length; at += 1) {
+    const key = present[at] as string | symbol
+    if (typeof key !== 'symbol') continue
+    known[known.length] = key
+    record(holder, key)
+  }
+  protocolHolders[protocolHolders.length] = holder
+  protocolSymbols[protocolSymbols.length] = known
+}
+for (let index = 0; index < BASELINED_REGEXP_ACCESSORS.length; index += 1)
+  record(RegExp.prototype, BASELINED_REGEXP_ACCESSORS[index] as string)
 for (const [namespace, list] of Object.entries(BASELINED_STATICS))
   for (let at = 0; at < list.length; at += 1) record(world[namespace] as object, list[at] as string)
 
 const globalOriginals: unknown[] = []
 for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)
   globalOriginals[index] = world[BASELINED_GLOBALS[index] as string]
+
+/** Counts the symbol keys a protocol holder has now that it did not have when this module loaded. */
+function addedProtocolSymbols(): number {
+  let added = 0
+  for (let index = 0; index < protocolHolders.length; index += 1) {
+    const present = ownKeys(protocolHolders[index] as object)
+    const known = protocolSymbols[index] as symbol[]
+    for (let at = 0; at < present.length; at += 1) {
+      const key = present[at] as string | symbol
+      if (typeof key !== 'symbol') continue
+      let found = false
+      for (let seen = 0; seen < known.length; seen += 1)
+        if (known[seen] === key) {
+          found = true
+          break
+        }
+      if (!found) added += 1
+    }
+  }
+  return added
+}
 
 /**
  * Takes again the function of the polyfill that decorators load (`Reflect.getMetadata`, and no other function of `Reflect`), which a second copy of
@@ -371,6 +445,7 @@ export function replacedBuiltins(): number {
     )
       count += 1
   }
+  count += addedProtocolSymbols()
   // Read by `Reflect.get` and not through a descriptor: the global object of a `vm` context answers a descriptor through a native
   // interceptor that reads the root, and a planted `get` or `value` there aborts the process.
   for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)

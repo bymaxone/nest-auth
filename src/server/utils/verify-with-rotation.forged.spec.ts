@@ -117,6 +117,28 @@ describe('a forged token while a function of node:crypto is replaced', () => {
     }
   )
 
+  // Scenario: `RegExp.prototype[Symbol.replace]`, which `jwa` reaches through the regular expressions it converts a digest with,
+  // replaced by a function that answers the same text for every digest, then a token validly signed for an ordinary user
+  // verified. Expected: the library's refusal. Why: with it replaced every signature computes to the same text, so a token signed
+  // with that text verifies, and no source names the function.
+  it('is refused while RegExp.prototype[Symbol.replace] is replaced', () => {
+    const token = service.sign({ sub: 'user', role: 'MEMBER' })
+    const held = getOwn(RegExp.prototype, Symbol.replace) as PropertyDescriptor
+    define(RegExp.prototype, Symbol.replace, { ...held, value: () => 'AAAA' })
+    let payload: unknown
+    let status: number | undefined
+    try {
+      status = refusalStatus(() => {
+        payload = verifyWithRotation(service, options, token)
+      })
+    } finally {
+      define(RegExp.prototype, Symbol.replace, held)
+    }
+
+    expect(payload).toBeUndefined()
+    expect(status).toBe(500)
+  })
+
   // Scenario: a token validly signed with the real secret for an ordinary user, verified while `JSON.parse` is replaced by a function
   // that answers an administrator. Expected: the library's refusal, never the administrator's claims. Why: `jws` decodes the payload
   // with `JSON.parse` after the signature was checked, so a replaced one turns any validly signed token into any claims.

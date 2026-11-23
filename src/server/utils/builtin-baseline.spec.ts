@@ -20,7 +20,9 @@ import {
   BASELINED_ITERATORS,
   BASELINED_PROTOTYPES,
   BASELINED_STATICS,
+  BASELINED_REGEXP_ACCESSORS,
   ITERATOR,
+  PROTOCOL_HOLDERS,
   rebaselinePolyfills,
   replacedBuiltins
 } from './builtin-baseline'
@@ -321,4 +323,77 @@ describe('the built-ins the library baselines', () => {
       expect(replacedBuiltins()).toBe(1)
     })
   })
+})
+
+describe('the protocol the language dispatches through', () => {
+  /** Every symbol-keyed function of a protocol holder, found from the holder itself and not from a list. */
+  const protocol = PROTOCOL_HOLDERS.flatMap((name): [string, () => object, symbol][] => {
+    const holder = BASELINED_HOLDERS[name] as object
+    return keysOf(holder)
+      .filter((key): key is symbol => typeof key === 'symbol')
+      .filter((key) => {
+        const descriptor = getOwn(holder, key)
+        return (
+          typeof descriptor?.value === 'function' &&
+          (descriptor.configurable === true || descriptor.writable === true)
+        )
+      })
+      .map((key): [string, () => object, symbol] => [`${name}[${String(key)}]`, () => holder, key])
+  })
+
+  it('finds the functions a regular expression and an iteration run', () => {
+    const labels = protocol.map(([label]) => label)
+
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        'RegExp.prototype[Symbol(Symbol.replace)]',
+        'RegExp.prototype[Symbol(Symbol.split)]',
+        'RegExp.prototype[Symbol(Symbol.match)]',
+        'Array.prototype[Symbol(Symbol.iterator)]'
+      ])
+    )
+  })
+
+  // Scenario: each symbol-keyed function of a protocol holder replaced, in turn. Expected: counted once, and none once put back.
+  // Why: `'a=b'.replace(/=/g, '')` runs `RegExp.prototype[Symbol.replace]`, which no source names, so a replaced one decides what
+  // `jwa` makes of every digest.
+  it.each(protocol)('counts %s when it is replaced', (_label, holderOf, key) => {
+    let counted = -1
+    changed(holderOf(), key, { value: () => undefined, writable: true }, () => {
+      counted = replacedBuiltins()
+    })
+
+    expect(counted).toBe(1)
+    expect(replacedBuiltins()).toBe(0)
+  })
+
+  // Scenario: a symbol key added to each protocol holder (`String.prototype[Symbol.split]`, which every `split` with a string
+  // separator consults). Expected: counted. Why: an added key replaces no recorded function, so only a comparison of the keys sees it.
+  it.each(PROTOCOL_HOLDERS)('counts a symbol key added to %s', (name) => {
+    const holder = BASELINED_HOLDERS[name] as object
+    const added = Symbol('added')
+    define(holder, added, { value: () => undefined, configurable: true })
+    let counted = -1
+    try {
+      counted = replacedBuiltins()
+    } finally {
+      Reflect.deleteProperty(holder, added)
+    }
+
+    expect(counted).toBe(1)
+    expect(replacedBuiltins()).toBe(0)
+  })
+
+  // Scenario: each accessor the regular expression algorithms read, given another getter. Expected: counted.
+  it.each(BASELINED_REGEXP_ACCESSORS)(
+    'counts RegExp.prototype.%s when its getter is replaced',
+    (name) => {
+      let counted = -1
+      changed(RegExp.prototype, name, { get: () => false }, () => {
+        counted = replacedBuiltins()
+      })
+
+      expect(counted).toBe(1)
+    }
+  )
 })

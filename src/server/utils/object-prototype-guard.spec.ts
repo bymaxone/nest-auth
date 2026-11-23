@@ -127,13 +127,14 @@ describe('the root object of the runtime', () => {
     }
   )
 
-  // Scenario: a symbol planted on the root. Expected: it is not counted. Why: the guard judges the string keys that a JSON
-  // flaw can write and an option name can be.
-  it('does not count a symbol key', () => {
+  // Scenario: a symbol planted on the root. Expected: it is counted. Why: the language reads `Symbol.toPrimitive`,
+  // `Symbol.iterator` and `Symbol.toStringTag` for every object, and the runtime defines no symbol on the root, so one that is
+  // there was planted.
+  it('counts a symbol key', () => {
     const symbol = Symbol('planted')
     Object.defineProperty(Object.prototype, symbol, { value: 1, configurable: true })
     try {
-      expect(plantedOnRoot()).toBe(0)
+      expect(plantedOnRoot()).toBe(1)
     } finally {
       Reflect.deleteProperty(Object.prototype, symbol)
     }

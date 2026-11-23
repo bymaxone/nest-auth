@@ -181,6 +181,7 @@ export class AuthService {
       }
       await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash: upgraded })
     } catch (err: unknown) {
+      rethrowRefusal(err)
       logStore(this.logger, 'AUTH_STORE_FAILED', 'rehash_on_verify', err)
     }
   }
@@ -964,8 +965,7 @@ export class AuthService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    // Same status guards as login — keeps the password-less path from
-    // bypassing account-level holds.
+    // Same status guards as login — keeps the password-less path from bypassing account-level holds.
     this.assertUserNotBlocked(user)
     if (this.options.emailVerification.required && !user.emailVerified) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)

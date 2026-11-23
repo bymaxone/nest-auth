@@ -87,6 +87,27 @@ function isStandardKind(name: string, descriptor: Held | undefined): boolean {
     : typeof descriptor.value === 'function'
 }
 
+/**
+ * The symbol keys the root held when this module loaded (a test runner marks the root with one). The language reads
+ * `Symbol.toPrimitive`, `Symbol.iterator` and `Symbol.toStringTag` for every object and the runtime defines none on the root, so
+ * a symbol that is not one of these arrived later.
+ */
+const LOADED_SYMBOLS: symbol[] = []
+{
+  const held = ownKeys(root)
+  for (let index = 0; index < held.length; index += 1) {
+    const key = held[index]
+    if (typeof key === 'symbol') LOADED_SYMBOLS[LOADED_SYMBOLS.length] = key
+  }
+}
+
+/** Whether a symbol key is one the root held at load. */
+function isLoadedSymbol(key: symbol): boolean {
+  for (let index = 0; index < LOADED_SYMBOLS.length; index += 1)
+    if (LOADED_SYMBOLS[index] === key) return true
+  return false
+}
+
 /** Whether the root was already unlike the runtime's own when this module loaded. */
 let LOADED_STANDARD = true
 for (let index = 0; index < STANDARD.length; index += 1) {
@@ -116,8 +137,9 @@ export function plantedOnRoot(): number {
   let count = LOADED_STANDARD ? 0 : 1
   const keys = ownKeys(root)
   for (let index = 0; index < keys.length; index += 1) {
-    const key = keys[index]
-    if (typeof key === 'string' && !same(describe(key), BASELINE[key])) count += 1
+    const key = keys[index] as string | symbol
+    if (typeof key === 'symbol' ? !isLoadedSymbol(key) : !same(describe(key), BASELINE[key]))
+      count += 1
   }
   for (let index = 0; index < STANDARD.length; index += 1) {
     const name = STANDARD[index] as string

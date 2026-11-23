@@ -31,6 +31,7 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { assertDashboardTenant } from '../utils/mfa-plane-tenant'
 import { encryptMfaSecret, holdsSecret, type MfaSecretKeys } from '../utils/mfa-secret-cipher'
+import { rethrowRefusal } from '../utils/object-prototype-guard'
 
 /**
  * TTL in seconds for the single-use claim on a recovery code (5 minutes).
@@ -157,6 +158,7 @@ export class MfaRecordService {
         }
       })
     } catch (err: unknown) {
+      rethrowRefusal(err)
       logStore(this.logger, 'AUTH_STORE_FAILED', 'mfa_reencryption', err)
     }
   }

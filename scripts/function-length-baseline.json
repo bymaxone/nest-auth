@@ -30,7 +30,7 @@
     "[\"src/server/openapi/auth-openapi-fragment.ts\",[\"fn\",\"schemesFor\"]]": 71,
     "[\"src/server/openapi/derive-request-schemas.ts\",[\"fn\",\"applyValidator\"]]": 62,
     "[\"src/server/providers/default-auth-email.provider.ts\",[\"member\",\"DefaultAuthEmailProvider\",\"deliver\"]]": 67,
-    "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"issueTokensForUserId\"]]": 61,
+    "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"issueTokensForUserId\"]]": 60,
     "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"login\"]]": 169,
     "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"logout\"]]": 57,
     "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"refresh\"]]": 139,
