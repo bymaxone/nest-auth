@@ -13,7 +13,7 @@
  * zoned entry ends its walk at the last hop that was an address, and so does this one.
  */
 
-import { isIP } from 'node:net'
+import { isIP } from './captured-builtins'
 
 /** What `isIP` returns for an IPv6 literal. */
 const IPV6 = 6

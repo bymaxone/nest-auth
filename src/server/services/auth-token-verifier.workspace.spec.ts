@@ -317,4 +317,42 @@ describe('verifyAccessToken with a workspace', () => {
     expect(result).not.toHaveProperty('workspace')
     expect(repos.memberships.find).not.toHaveBeenCalled()
   })
+
+  // Scenario: a viewer asks for an owner-only workspace route, and the membership lookup that the verifier waits for replaces
+  // `Array.prototype.some` with a function that answers true and then returns the viewer. Expected: the library's refusal (500
+  // `auth.internal`), never the workspace context. Why: the decision is made after the await with the built-ins as the lookup left
+  // them, and the access service checks the runtime only at its entry, so the verifier must check right before it decides.
+  it('refuses a viewer on an owner-only route when a built-in is replaced during the lookup', async () => {
+    const verifier = await build()
+    const held = Object.getOwnPropertyDescriptor(Array.prototype, 'some') as PropertyDescriptor
+    repos.workspaces.findById.mockResolvedValue({
+      id: 'w1',
+      tenantId: 'tenant-1',
+      status: 'active'
+    })
+    repos.memberships.find.mockImplementation(async () => {
+      await Promise.resolve()
+      Object.defineProperty(Array.prototype, 'some', { ...held, value: () => true })
+      return {
+        tenantId: 'tenant-1',
+        workspaceId: 'w1',
+        userId: 'user-1',
+        role: 'viewer',
+        status: 'active'
+      }
+    })
+    let outcome: string | undefined
+    try {
+      outcome = await code(
+        verifier.verifyAccessToken('tok', {
+          plane: 'dashboard',
+          workspace: { workspaceId: 'w1', roles: ['owner'] }
+        })
+      )
+    } finally {
+      Object.defineProperty(Array.prototype, 'some', held)
+    }
+
+    expect(outcome).toBe('auth.internal')
+  })
 })

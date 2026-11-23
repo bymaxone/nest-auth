@@ -18,6 +18,9 @@ import { assertRootIsStandard, plantedOnRoot, refusedOr } from './object-prototy
 import { readOwnOrClass } from './own-or-class'
 import { verifyWithRotation } from './verify-with-rotation'
 
+/** The names of the functions a mutation run adds to a module; a call made by one of them is the run's, not the module's. */
+const INSTRUMENTATION = ['stryMutAct_', 'stryCov_', 'stryNS_']
+
 /** The modules whose calls to a built-in are recorded: a frame of the stack that names one of them. */
 const WATCHED = [
   'utils/object-prototype-guard',
@@ -105,7 +108,10 @@ function sweep(scenario: () => void): string[] {
             apply(stringIndexOf, caller, ['\n']) + 1,
             apply(stringIndexOf, caller, ['\n', apply(stringIndexOf, caller, ['\n']) + 1])
           ]) as string
-          for (const watched of WATCHED)
+          // The helpers a mutation run adds to a module (`stryMutAct_`, `stryCov_`, `stryNS_`) call `apply` themselves and are not the
+          // module's code.
+          const helper = INSTRUMENTATION.some((name) => apply(stringIndexOf, frames, [name]) !== -1)
+          for (const watched of helper ? [] : WATCHED)
             if (apply(stringIndexOf, frames, [watched]) !== -1) {
               apply(push, calls, [`${holderName}.${describeKey(key)} <- ${watched}`])
               break

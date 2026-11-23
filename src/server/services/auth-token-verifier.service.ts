@@ -26,7 +26,7 @@ import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-
 import type { WorkspaceRoleList } from '../interfaces/workspace-options.interface'
 import { assertTenantBinding, tenantBindingEnforced } from '../utils/assert-tenant-binding'
 import type { HandshakeLike } from '../utils/handshake-request'
-import { refusedOr } from '../utils/object-prototype-guard'
+import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
@@ -390,6 +390,7 @@ export class AuthTokenVerifierService {
         workspaceId,
         userId: payload.sub
       })
+      assertRootIsStandard()
       const decide = (): CurrentWorkspaceContext =>
         assertWorkspaceAccess(
           resolved,

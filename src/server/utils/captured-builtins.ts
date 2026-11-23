@@ -9,6 +9,8 @@
  * @layer Utility
  */
 
+import net from 'node:net'
+
 /** `Object.hasOwn` as it was when the module loaded: whether a key is an own key of an object, never a read through the prototype. */
 export const hasOwn = Object.hasOwn
 
@@ -43,3 +45,9 @@ export const captureStack = Error.captureStackTrace
 export const parseJson: (text: string) => unknown = JSON.parse
 /** `JSON.stringify` as it was when the module loaded: what the library writes to its stores goes through this copy. */
 export const stringifyJson: (value: unknown) => string = JSON.stringify
+
+/** `net.isIP` as it was when the module loaded: the family of an address (4, 6 or 0), which keys the rate limit and the client address. */
+export const isIP: (input: string) => number = net.isIP
+
+/** `net.isIPv6` as it was when the module loaded: whether an address is IPv6, which decides how the rate limit groups it. */
+export const isIPv6: (input: string) => boolean = net.isIPv6
