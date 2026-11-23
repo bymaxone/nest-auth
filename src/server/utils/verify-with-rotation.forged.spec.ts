@@ -86,6 +86,37 @@ describe('a forged token while a function of node:crypto is replaced', () => {
     }
   )
 
+  // Scenario: the methods `jwa` calls on the `Hmac` it gets back, replaced by ones that make the forged token's own signature the
+  // computed one (`digest` answers it, `update` ignores the data), each in turn, then the forged token verified. Expected: the
+  // library's refusal. Why: `timingSafeEqual` forges only when the lengths match, so these are the replacements that forge a
+  // token with the real comparison untouched.
+  it.each(['digest', 'update'] as const)(
+    'is refused with the library refusal while Hmac.prototype.%s is replaced',
+    (name) => {
+      const prototype = nodeCrypto['Hmac'] as { prototype: object }
+      const held = getOwn(prototype.prototype, name) as PropertyDescriptor
+      const signature = Buffer.from(forged.split('.')[2] as string, 'base64url').toString('base64')
+      define(prototype.prototype, name, {
+        ...held,
+        value: function (this: unknown): unknown {
+          return name === 'digest' ? signature : this
+        }
+      })
+      let payload: unknown
+      let status: number | undefined
+      try {
+        status = refusalStatus(() => {
+          payload = verifyWithRotation(service, options, forged)
+        })
+      } finally {
+        define(prototype.prototype, name, held)
+      }
+
+      expect(payload).toBeUndefined()
+      expect(status).toBe(500)
+    }
+  )
+
   // Scenario: `JwtService.prototype.verify` replaced by a function that answers an administrator. Expected: the library's
   // refusal. Why: the sources call `jwtService.verify` at each decision, and a replaced one is the same forgery.
   it('is refused while JwtService.prototype.verify is replaced', () => {

@@ -1573,6 +1573,8 @@ Code running in your process can plant a key on `Object.prototype` or replace a 
 
 The trade-off: a monitoring agent, polyfill or test double that **replaces** one of the recorded functions after the library loaded makes the library refuse until it is put back. Only the functions the library's sources call or read are recorded, so a function nothing calls can be patched freely, and `Promise`, `Date`, `Intl` and the timers (which test doubles replace) are never compared. Load such a patch before the library, or have it wrap without replacing the recorded functions.
 
+The boundary: the library checks the runtime's own built-ins (JavaScript globals and their prototypes, and the `node:*` modules). A host that replaces exports of `jsonwebtoken`, `jws` or `jwa` after load is outside what the library checks: that is code targeting a dependency, the same class as replacing the library itself.
+
 ### Security Checklist
 
 When integrating `@bymax-one/nest-auth` in production, verify each of the following:

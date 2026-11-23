@@ -334,6 +334,88 @@ describe('the list of built-ins the library baselines, against the sources', () 
       [...(BASELINED_DEPENDENCIES as Record<string, readonly string[]>)[holder]!].sort()
     ).toEqual([...called].sort())
   })
+
+  // Scenario: the installed `jwa`, read as syntax for the methods it calls on the `Hmac`, `Sign` and `Verify` objects that
+  // `crypto` hands it (`hmac.update`, `hmac.digest`, `signer.sign`, `verifier.verify`). Expected: exactly the methods the lists of
+  // `Hmac.prototype`, `Sign.prototype` and `Verify.prototype` hold. Why: these are read at each verification, so a replaced
+  // `Hmac.prototype.digest` forges a token while `timingSafeEqual` is untouched.
+  it.each([
+    ['hmac', 'Hmac.prototype'],
+    ['signer', 'Sign.prototype'],
+    ['verifier', 'Verify.prototype']
+  ] as const)('lists exactly the methods jwa calls on %s', (receiver, holder) => {
+    const file = createRequire(
+      createRequire(createRequire(require.resolve('@nestjs/jwt')).resolve('jsonwebtoken')).resolve(
+        'jws'
+      )
+    ).resolve('jwa')
+    const called = new Set<string>()
+    const source = ts.createSourceFile(
+      file,
+      readFileSync(file, 'utf8'),
+      ts.ScriptTarget.Latest,
+      true
+    )
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === receiver
+      )
+        called.add(node.expression.name.text)
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+
+    expect([...BASELINED_DEPENDENCIES[holder]].sort()).toEqual([...called].sort())
+  })
+
+  // Scenario: the sources, read as syntax for the methods they call on what `createHash` and `createHmac` return
+  // (`createHash('sha256').update(x).digest('hex')`). Expected: exactly the methods the lists of `Hash.prototype` and
+  // `Hmac.prototype` hold. Why: those objects' `update` and `digest` are read at each call, so a replaced one makes a wrong
+  // secret compute the digest that was stored, or stores another.
+  it.each([
+    ['createHash', 'Hash.prototype'],
+    ['createHmac', 'Hmac.prototype']
+  ] as const)(
+    'lists exactly the methods the sources call on what %s returns',
+    (factory, holder) => {
+      const called = new Set<string>()
+      const rootedAt = (node: ts.Expression): boolean => {
+        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression))
+          return node.expression.text === factory
+        if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression))
+          return rootedAt(node.expression.expression)
+        return false
+      }
+      for (const path of sourceFiles()) {
+        if (CAPTURING.some((file) => path.endsWith(file))) continue
+        const file = ts.createSourceFile(
+          path,
+          readFileSync(path, 'utf8'),
+          ts.ScriptTarget.Latest,
+          true
+        )
+        const visit = (node: ts.Node): void => {
+          if (ts.isFunctionDeclaration(node) && node.name?.text.startsWith('stry') === true) return
+          if (ts.isConditionalExpression(node) && isMutantSwitch(node.condition))
+            return visit(node.whenFalse)
+          if (
+            ts.isCallExpression(node) &&
+            ts.isPropertyAccessExpression(node.expression) &&
+            rootedAt(node.expression.expression) &&
+            ['update', 'digest'].includes(node.expression.name.text)
+          )
+            called.add(node.expression.name.text)
+          ts.forEachChild(node, visit)
+        }
+        visit(file)
+      }
+
+      expect([...BASELINED_DEPENDENCIES[holder]].sort()).toEqual([...called].sort())
+    }
+  )
 })
 
 /** The names the installed JWT libraries take from `crypto`, found by reading their sources as syntax. */

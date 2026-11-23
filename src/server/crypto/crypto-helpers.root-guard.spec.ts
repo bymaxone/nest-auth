@@ -5,12 +5,15 @@
  * @layer Test
  */
 
+import nodeCryptoModule from 'node:crypto'
+
 import { digestRecoveryCode, verifyRecoveryCode } from '../utils/mfa-recovery-codes'
 import { apiKeyDigest, digestsMatch } from './api-key'
 import { hmacSha256, sha256, timingSafeCompare } from './secure-token'
 import { generateHotp, generateTotp, generateTotpSecret, verifyTotp } from './totp'
 
 // The test's own copies: the window below replaces a built-in, so nothing inside it may call a live one.
+const nodeCrypto = nodeCryptoModule
 const define = Object.defineProperty
 const getOwn = Object.getOwnPropertyDescriptor
 
@@ -50,6 +53,37 @@ describe('the helpers that hash, compare or derive from a secret', () => {
       status = (error as { getStatus?: () => number }).getStatus?.()
     } finally {
       define(Array.prototype, 'includes', held)
+    }
+
+    expect(status).toBe(500)
+  })
+
+  // Scenario: the `update` or the `digest` of the objects `createHash` and `createHmac` return, replaced (before a value is hashed
+  // or compared) by functions that make every input compute the same digest, then each helper called with a wrong secret.
+  // Expected: the library's refusal for every helper, never a digest. Why: those methods are read at each call, so a replaced one
+  // makes a wrong secret compute the digest that was stored, and the helper's own check at its entry is what refuses it.
+  it.each(
+    HELPERS.flatMap(([helper, call]) =>
+      (['Hash', 'Hmac'] as const).flatMap((kind) =>
+        (['update', 'digest'] as const).map((method) => [helper, call, kind, method] as const)
+      )
+    )
+  )('%s is refused while %s.prototype.%s is replaced', async (_helper, call, kind, method) => {
+    const prototype = (nodeCrypto[kind] as { prototype: object }).prototype
+    const held = getOwn(prototype, method) as PropertyDescriptor
+    define(prototype, method, {
+      ...held,
+      value: function (this: unknown): unknown {
+        return method === 'digest' ? Buffer.from('same') : this
+      }
+    })
+    let status: number | undefined
+    try {
+      await call()
+    } catch (error) {
+      status = (error as { getStatus?: () => number }).getStatus?.()
+    } finally {
+      define(prototype, method, held)
     }
 
     expect(status).toBe(500)

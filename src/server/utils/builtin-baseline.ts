@@ -183,7 +183,8 @@ export const BASELINED_PROTOTYPES = {
 
 /**
  * The functions the libraries the decisions go through read at each call, by holder. `jwa` calls `crypto.timingSafeEqual` and
- * `crypto.createHmac` inside `verify`, so a replaced one verifies a forged token; `Reflector` reads `Reflect.getMetadata`, so a
+ * `crypto.createHmac` inside `verify`, and then `update` and `digest` on the `Hmac` it gets back, and the library's own digests are `createHash` and `createHmac` followed by `update` and
+ * `digest`, so a replaced one verifies a forged token, makes a wrong secret hash to the stored digest, or stores another; `Reflector` reads `Reflect.getMetadata`, so a
  * replaced one answers `@Public()` or `@SkipMfa()` for any route. A spec reads the installed `jsonwebtoken`, `jws`, `jwa` and
  * `Reflector` and fails for a name they read that is not listed, and for a method of `JwtService` or `Reflector` that the
  * sources call.
@@ -201,7 +202,11 @@ export const BASELINED_DEPENDENCIES = {
   ],
   'JwtService.prototype': ['sign', 'verify'],
   Reflect: ['getMetadata'],
-  'Reflector.prototype': ['get', 'getAllAndOverride']
+  'Reflector.prototype': ['get', 'getAllAndOverride'],
+  'Hash.prototype': ['digest', 'update'],
+  'Hmac.prototype': ['digest', 'update'],
+  'Sign.prototype': ['sign', 'update'],
+  'Verify.prototype': ['update', 'verify']
 } as const satisfies Record<string, readonly string[]>
 
 /** The iterator protocol the language calls without the sources naming it, by holder: the function that makes the iterator. */
@@ -271,7 +276,11 @@ export const BASELINED_HOLDERS: Record<string, object> = {
   'node:crypto': nodeCrypto,
   'JwtService.prototype': JwtService.prototype,
   Reflect,
-  'Reflector.prototype': Reflector.prototype
+  'Reflector.prototype': Reflector.prototype,
+  'Hash.prototype': nodeCrypto.Hash.prototype,
+  'Hmac.prototype': nodeCrypto.Hmac.prototype,
+  'Sign.prototype': nodeCrypto.Sign.prototype,
+  'Verify.prototype': nodeCrypto.Verify.prototype
 }
 
 // Parallel lists, filled once: the holder, the key, the field of the descriptor that holds the function (`value` for a method,
@@ -315,13 +324,13 @@ for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)
   globalOriginals[index] = world[BASELINED_GLOBALS[index] as string]
 
 /**
- * Takes again the functions of the polyfill that decorators load (`Reflect.getMetadata`), which a second copy of
+ * Takes again the function of the polyfill that decorators load (`Reflect.getMetadata`, and no other function of `Reflect`), which a second copy of
  * `reflect-metadata` replaces while the imports of the application run. Called when the module boots, after those imports,
  * so a host with two copies is not refused for the copy that loaded last; a change after the boot is counted as ever.
  */
 export function rebaselinePolyfills(): void {
   for (let index = 0; index < holders.length; index += 1) {
-    if (holders[index] !== Reflect) continue
+    if (holders[index] !== Reflect || keys[index] !== 'getMetadata') continue
     const descriptor = getDescriptor(holders[index] as object, keys[index] as PropertyKey)
     if (descriptor !== undefined && hasOwn(descriptor, fields[index] as string))
       originals[index] = getKey(descriptor, fields[index] as string)

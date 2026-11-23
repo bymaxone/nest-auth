@@ -294,6 +294,23 @@ describe('the built-ins the library baselines', () => {
       expect({ before, after, later }).toEqual({ before: 1, after: 0, later: 1 })
     })
 
+    // Scenario: `Reflect.get` replaced before the module boots, then the boot. Expected: still counted after it. Why: only the
+    // function the polyfill defines is taken again; any other function of `Reflect` that differs at the boot is a replacement.
+    it('does not take any other function of Reflect again at boot', () => {
+      const get = getOwn(Reflect, 'get') as PropertyDescriptor
+      define(Reflect, 'get', { ...get, value: () => undefined })
+      let counted = -1
+      try {
+        assertRootIsStandardAtBoot()
+      } catch {
+        counted = replacedBuiltins()
+      } finally {
+        define(Reflect, 'get', get)
+      }
+
+      expect(counted).toBe(1)
+    })
+
     // Scenario: the function deleted, then an accessor put in its place, each time with the module booting. Expected: still counted.
     // Why: a function that is gone, or one that answers through a getter, is not a copy of the polyfill to take again.
     it.each([
