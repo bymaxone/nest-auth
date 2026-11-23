@@ -14,14 +14,17 @@ import { join } from 'node:path'
 import { buildSync } from 'esbuild'
 
 import {
+  BASELINED_DEPENDENCIES,
   BASELINED_GLOBALS,
   BASELINED_HOLDERS,
   BASELINED_ITERATORS,
   BASELINED_PROTOTYPES,
   BASELINED_STATICS,
   ITERATOR,
+  rebaselinePolyfills,
   replacedBuiltins
 } from './builtin-baseline'
+import { assertRootIsStandardAtBoot } from './object-prototype-guard'
 
 // The test's own copies: the windows below replace built-ins, so nothing inside one may call a live one.
 const define = Object.defineProperty
@@ -32,7 +35,7 @@ const world = globalThis as Record<string, unknown>
 /** Every `[label, holder, key]` the module records, enumerated from its lists. */
 function entries(): [string, object, PropertyKey][] {
   const found: [string, object, PropertyKey][] = []
-  for (const lists of [BASELINED_PROTOTYPES, BASELINED_ITERATORS] as Record<
+  for (const lists of [BASELINED_PROTOTYPES, BASELINED_ITERATORS, BASELINED_DEPENDENCIES] as Record<
     string,
     readonly string[]
   >[])
@@ -99,7 +102,10 @@ describe('the built-ins the library baselines', () => {
         'URLSearchParams.prototype.set',
         'URL.prototype.origin',
         'Buffer.prototype.readUInt8',
-        'Date.prototype.getTime'
+        'Date.prototype.getTime',
+        'node:crypto.timingSafeEqual',
+        'node:crypto.createHmac',
+        'JwtService.prototype.verify'
       ])
     )
     expect(labels.length).toBeGreaterThan(150)
@@ -227,6 +233,7 @@ describe('the built-ins the library baselines', () => {
       bundle: true,
       platform: 'node',
       format: 'cjs',
+      packages: 'external',
       write: false
     }).outputFiles[0]?.text as string
     const directory = mkdtempSync(join(tmpdir(), 'builtin-baseline-'))
@@ -246,7 +253,10 @@ describe('the built-ins the library baselines', () => {
     ].join('\n')
     let result = ''
     try {
-      result = execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })
+      result = execFileSync(process.execPath, ['-e', script], {
+        encoding: 'utf8',
+        env: { ...process.env, NODE_PATH: join(process.cwd(), 'node_modules') }
+      })
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
@@ -257,6 +267,44 @@ describe('the built-ins the library baselines', () => {
       sameGetter: true,
       assigned: 1,
       restored: 0
+    })
+  })
+
+  describe('the functions of the polyfill that decorators load', () => {
+    const GET_METADATA = getOwn(Reflect, 'getMetadata') as PropertyDescriptor
+
+    /** Puts the polyfill back as the first copy defined it and records it again, so no case leaves its stub as the baseline. */
+    afterEach(() => {
+      define(Reflect, 'getMetadata', GET_METADATA)
+      rebaselinePolyfills()
+    })
+
+    // Scenario: a second copy of `reflect-metadata` redefines `Reflect.getMetadata` while the imports of the application run, then
+    // the module boots, then a third copy replaces it again. Expected: counted before the boot, accepted after it, counted again
+    // after the later replacement. Why: a host with two copies must not be refused for the copy that loaded last, and a change
+    // after the boot is exactly what the baseline is for.
+    it('takes the function again at boot and counts a change after it', () => {
+      define(Reflect, 'getMetadata', { ...GET_METADATA, value: () => 'second copy' })
+      const before = replacedBuiltins()
+      assertRootIsStandardAtBoot()
+      const after = replacedBuiltins()
+      define(Reflect, 'getMetadata', { ...GET_METADATA, value: () => 'third copy' })
+      const later = replacedBuiltins()
+
+      expect({ before, after, later }).toEqual({ before: 1, after: 0, later: 1 })
+    })
+
+    // Scenario: the function deleted, then an accessor put in its place, each time with the module booting. Expected: still counted.
+    // Why: a function that is gone, or one that answers through a getter, is not a copy of the polyfill to take again.
+    it.each([
+      ['deleted', undefined],
+      ['an accessor', { get: () => undefined, configurable: true }]
+    ] as const)('does not take the function again when it is %s', (_how, replacement) => {
+      if (replacement === undefined) Reflect.deleteProperty(Reflect, 'getMetadata')
+      else define(Reflect, 'getMetadata', replacement)
+      rebaselinePolyfills()
+
+      expect(replacedBuiltins()).toBe(1)
     })
   })
 })

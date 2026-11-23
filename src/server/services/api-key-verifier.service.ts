@@ -24,6 +24,7 @@ import {
 } from '../crypto/api-key'
 import type { AuthApiKey, IApiKeyRepository } from '../interfaces/api-key-repository.interface'
 import type { ApiKeyDenyReason } from '../interfaces/auth-hooks.interface'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 /** Why a key was not accepted. */
 export type ApiKeyRejection = Extract<
@@ -66,6 +67,7 @@ export class ApiKeyVerifierService {
    * @returns The verdict. A store fault propagates: the caller fails closed.
    */
   async verify(header: unknown): Promise<ApiKeyVerdict> {
+    assertRootIsStandard()
     // 1-2. Parse; a value that does not parse is replaced by a well-formed dummy so every later
     // step still runs on it.
     const parsed = parseApiKey(header, this.options.apiKeys.prefix)

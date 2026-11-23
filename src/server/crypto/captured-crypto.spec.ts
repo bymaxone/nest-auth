@@ -5,7 +5,7 @@
  * @layer Test
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { digestsMatch, apiKeyDigest, generateApiKeySecret } from './api-key'
@@ -33,9 +33,10 @@ function withReplaced<T>(name: string, stub: unknown, run: () => T): T {
 
 /** The files of `src/server` that are not specs, as `[path, text]`. */
 function sources(dir = join(__dirname, '..')): [string, string][] {
-  return readdirSync(dir).flatMap((name): [string, string][] => {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry): [string, string][] => {
+    const name = entry.name
     const path = join(dir, name)
-    if (statSync(path).isDirectory()) return sources(path)
+    if (entry.isDirectory()) return sources(path)
     return /\.ts$/.test(name) && !/\.(spec|test)\.ts$/.test(name)
       ? [[path, readFileSync(path, 'utf8')]]
       : []
@@ -54,35 +55,48 @@ describe('the crypto primitives of the library after a method of node:crypto is 
     expect(direct).toEqual([])
   })
 
-  // Scenario: `timingSafeEqual` replaced by a function that answers true, then a different digest compared. Expected: still false.
-  // Why: a replaced compare must not accept a secret that is not the stored one.
-  it('still rejects a different secret with timingSafeEqual replaced', () => {
+  // Scenario: `timingSafeEqual` replaced by a function that answers true, and `Buffer.from` replaced by one that answers a
+  // one-byte buffer, each in turn, then every helper that compares or derives from a secret called with a wrong one. Expected:
+  // no helper accepts it: each answers false or refuses with the library's refusal (500). Why: a compare built on a replaced
+  // `Buffer.from` or `timingSafeEqual` accepts any secret, and the guard at the entry of each helper compares those functions.
+  it.each([
+    ['timingSafeEqual', (): boolean => true, nodeCrypto],
+    [
+      'createHmac',
+      (): object => ({ update: () => ({ digest: (): string => 'attacker' }) }),
+      nodeCrypto
+    ],
+    ['from', (): Uint8Array => new Uint8Array(1), Buffer],
+    ['alloc', (): Uint8Array => new Uint8Array(1), Buffer],
+    ['byteLength', (): number => 0, Buffer]
+  ] as const)('does not accept a wrong secret with %s replaced', (name, stub, holder) => {
     const right = generateTotp(TOTP_SECRET)
     const wrongCode = right === '000000' ? '000001' : '000000'
-    const answer = withReplaced(
-      'timingSafeEqual',
-      () => true,
-      () => ({
-        digest: digestsMatch(apiKeyDigest('a', 'p'), apiKeyDigest('b', 'p')),
-        hex: timingSafeCompare('a'.repeat(64), 'b'.repeat(64)),
-        totp: verifyTotp(TOTP_SECRET, wrongCode)
-      })
-    )
+    const held = getOwn(holder, name) as PropertyDescriptor
+    define(holder, name, { ...held, value: stub })
+    const answers: unknown[] = []
+    try {
+      for (const run of [
+        (): unknown => digestsMatch(apiKeyDigest('a', 'p'), apiKeyDigest('b', 'p')),
+        (): unknown => timingSafeCompare('a'.repeat(64), 'b'.repeat(64)),
+        (): unknown => verifyTotp(TOTP_SECRET, wrongCode),
+        (): unknown => sha256('abc'),
+        (): unknown => hmacSha256('message', 'secret')
+      ]) {
+        try {
+          answers.push(run())
+        } catch (error) {
+          answers.push((error as { getStatus?: () => number }).getStatus?.())
+        }
+      }
+    } finally {
+      define(holder, name, held)
+    }
 
-    expect(answer).toEqual({ digest: false, hex: false, totp: false })
-  })
-
-  // Scenario: `createHmac` replaced by a function that answers a fixed object, then an HMAC and a TOTP computed. Expected: the
-  // same values as before the replacement. Why: a replaced HMAC would make every digest and code the attacker's.
-  it('computes the same HMAC and TOTP with createHmac replaced', () => {
-    const before = { hmac: hmacSha256('message', 'secret'), totp: generateTotp(TOTP_SECRET) }
-    const during = withReplaced(
-      'createHmac',
-      () => ({ update: () => ({ digest: (): string => 'attacker' }) }),
-      () => ({ hmac: hmacSha256('message', 'secret'), totp: generateTotp(TOTP_SECRET) })
-    )
-
-    expect(during).toEqual(before)
+    // The first three are compares: never true. The last two are derivations: never an attacker's value, so a value or a refusal.
+    expect(answers.slice(0, 3)).not.toContain(true)
+    expect(answers[3] === 500 || answers[3] === sha256('abc')).toBe(true)
+    expect(answers[4] === 500 || answers[4] === hmacSha256('message', 'secret')).toBe(true)
   })
 
   // Scenario: `randomBytes` replaced by a function that answers zeroes, then a token, an API-key secret generated. Expected:

@@ -9,6 +9,7 @@ import { PLATFORM_ROLES_KEY } from '../decorators/platform-roles.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { hasRole } from '../utils/roles.util'
 
 /**
@@ -50,6 +51,7 @@ export class PlatformRolesGuard implements CanActivate {
   ) {}
 
   canActivate(context: ExecutionContext): boolean {
+    assertRootIsStandard()
     const requiredRoles = this.reflector.getAllAndOverride<string[] | undefined>(
       PLATFORM_ROLES_KEY,
       [context.getHandler(), context.getClass()]

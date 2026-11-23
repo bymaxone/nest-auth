@@ -11,36 +11,34 @@
  * @layer Crypto
  */
 
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  createHmac,
-  randomBytes,
-  randomInt,
-  randomUUID,
-  scrypt,
-  timingSafeEqual
-} from 'node:crypto'
+import nodeCrypto from 'node:crypto'
 
-const capturedCreateCipheriv = createCipheriv
-const capturedCreateDecipheriv = createDecipheriv
-const capturedCreateHash = createHash
-const capturedCreateHmac = createHmac
-const capturedRandomBytes = randomBytes
-const capturedRandomInt = randomInt
-const capturedRandomUUID = randomUUID
-const capturedScrypt = scrypt
-const capturedTimingSafeEqual = timingSafeEqual
+/** The module object itself, which the JWT libraries read their primitives from at each call (`crypto.timingSafeEqual`). */
+export { nodeCrypto }
 
-export {
-  capturedCreateCipheriv as createCipheriv,
-  capturedCreateDecipheriv as createDecipheriv,
-  capturedCreateHash as createHash,
-  capturedCreateHmac as createHmac,
-  capturedRandomBytes as randomBytes,
-  capturedRandomInt as randomInt,
-  capturedRandomUUID as randomUUID,
-  capturedScrypt as scrypt,
-  capturedTimingSafeEqual as timingSafeEqual
-}
+/** `crypto.createCipheriv` as it was when the module loaded: the cipher of the encrypted secrets. */
+export const createCipheriv = nodeCrypto.createCipheriv
+
+/** `crypto.createDecipheriv` as it was when the module loaded: the decipher of the encrypted secrets. */
+export const createDecipheriv = nodeCrypto.createDecipheriv
+
+/** `crypto.createHash` as it was when the module loaded: the digests of tokens, keys and codes. */
+export const createHash = nodeCrypto.createHash
+
+/** `crypto.createHmac` as it was when the module loaded: the keyed digests (TOTP, recovery codes, derived keys). */
+export const createHmac = nodeCrypto.createHmac
+
+/** `crypto.randomBytes` as it was when the module loaded: the source of every secret and token. */
+export const randomBytes = nodeCrypto.randomBytes
+
+/** `crypto.randomInt` as it was when the module loaded: the source of the numeric codes. */
+export const randomInt = nodeCrypto.randomInt
+
+/** `crypto.randomUUID` as it was when the module loaded: the source of identifiers. */
+export const randomUUID = nodeCrypto.randomUUID
+
+/** `crypto.scrypt` as it was when the module loaded: the key derivation of the password hash. */
+export const scrypt = nodeCrypto.scrypt
+
+/** `crypto.timingSafeEqual` as it was when the module loaded: the comparison of every secret. */
+export const timingSafeEqual = nodeCrypto.timingSafeEqual

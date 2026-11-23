@@ -11,6 +11,7 @@
 
 import { randomBytes, timingSafeEqual } from './captured-crypto'
 import { hmacSha256 } from './secure-token'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 /** Separator between the three parts of a key. Base64url's alphabet contains it, hence the parse rule. */
 const SEPARATOR = '_'
@@ -125,6 +126,7 @@ export function apiKeyDigest(secret: string, pepper: string): string {
  * @returns `true` only when both are well-formed and equal.
  */
 export function digestsMatch(computed: string, stored: string): boolean {
+  assertRootIsStandard()
   const wellFormed = DIGEST_HEX.test(computed) && DIGEST_HEX.test(stored)
   const left = Buffer.from(wellFormed ? computed : API_KEY_DUMMY_DIGEST, 'hex')
   const right = Buffer.from(wellFormed ? stored : API_KEY_DUMMY_DIGEST, 'hex')

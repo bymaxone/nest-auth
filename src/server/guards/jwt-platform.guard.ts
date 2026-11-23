@@ -14,7 +14,7 @@ import { AuthRevocationService } from '../services/auth-revocation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertValidJti, assertValidSub } from './utils/assert-token-type'
-import { refusedOr } from '../utils/object-prototype-guard'
+import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard'
 
 /**
  * Authentication guard for platform administrator routes.
@@ -55,6 +55,7 @@ export class JwtPlatformGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    assertRootIsStandard()
     // Public routes bypass token validation entirely.
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
@@ -80,8 +81,7 @@ export class JwtPlatformGuard implements CanActivate {
     }
 
     // Require jti as a well-formed UUID v4 — the shared helper keeps this check
-    // in lockstep with {@link JwtAuthGuard} so the key space is uniform across
-    // platform and dashboard revocation lists.
+    // in lockstep with {@link JwtAuthGuard} so the key space is uniform across platform and dashboard revocation lists.
     assertValidJti(payload.jti)
 
     // Require sub as a bounded non-empty string — downstream Redis keys and HMAC

@@ -1,8 +1,10 @@
 import { Controller, Get, UseGuards } from '@nestjs/common'
 import request from 'supertest'
 
+import { IS_PUBLIC_KEY } from '../../src/server/decorators/public.decorator'
 import { Roles } from '../../src/server/decorators/roles.decorator'
 import { JwtAuthGuard } from '../../src/server/guards/jwt-auth.guard'
+import { JwtPlatformGuard } from '../../src/server/guards/jwt-platform.guard'
 import { RolesGuard } from '../../src/server/guards/roles.guard'
 import { bootstrapTestApp, expectAuthError } from './setup'
 import type { BootstrappedTestApp } from './setup'
@@ -14,6 +16,20 @@ class HostController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   adminOnly(): { admitted: boolean } {
+    return { admitted: true }
+  }
+
+  /** A route behind the dashboard JWT guard and nothing else. */
+  @Get('open/dashboard')
+  @UseGuards(JwtAuthGuard)
+  dashboardOnly(): { admitted: boolean } {
+    return { admitted: true }
+  }
+
+  /** A route behind the platform JWT guard and nothing else. */
+  @Get('open/platform')
+  @UseGuards(JwtPlatformGuard)
+  platformOnly(): { admitted: boolean } {
     return { admitted: true }
   }
 }
@@ -138,4 +154,91 @@ describe('a built-in replaced after the module started (E2E)', () => {
     expectAuthError(replaced, 'auth.internal')
     expect((replaced.body as Record<string, unknown>)['accessToken']).toBeUndefined()
   })
+
+  // Scenario: a member calls the admin route on an application that resolves the tenant of the host, and the resolver (which the
+  // JWT guard waits for, after its own checks) replaces `Array.prototype.some` with one that answers true for ADMIN and then
+  // answers the member's tenant. Expected: 500 `auth.internal`, never 200. Why: the replacement is made after the JWT guard's last
+  // check and before the roles guard decides, so only a check at the decision of the roles guard refuses it.
+  it('refuses the role-guarded route when a built-in is replaced while the JWT guard waits for the tenant', async () => {
+    let restore = (): void => undefined
+    let armed = false
+    const app = await bootstrapTestApp(
+      {
+        enforceTenantBinding: true,
+        tenantIdResolver: async (): Promise<string> => {
+          await Promise.resolve()
+          if (!armed) return 't1'
+          const held = Object.getOwnPropertyDescriptor(
+            Array.prototype,
+            'some'
+          ) as PropertyDescriptor
+          const original = held.value as (...args: unknown[]) => unknown
+          Object.defineProperty(Array.prototype, 'some', {
+            ...held,
+            value: function (this: unknown[], ...args: unknown[]): unknown {
+              return original.apply(this, args) === true || this.includes('ADMIN')
+            }
+          })
+          restore = (): void => void Object.defineProperty(Array.prototype, 'some', held)
+          return 't1'
+        }
+      },
+      { hostControllers: [HostController] }
+    )
+    try {
+      const registered = await request(app.app.getHttpServer()).post('/register').send({
+        email: 'tenant@example.com',
+        password: 'SuperSecret123!',
+        name: 'Tenant User'
+      })
+      const token = registered.body.accessToken as string
+      armed = true
+      const res = await request(app.app.getHttpServer())
+        .get('/host/roles/admin')
+        .set('Authorization', `Bearer ${token}`)
+
+      expectAuthError(res, 'auth.internal')
+    } finally {
+      restore()
+      await app.app.close()
+    }
+  })
+
+  // Scenario: `Reflect.getMetadata`, which Nest's reflector reads for `@Public()`, replaced by a function that answers true for it,
+  // then a request with no credential to a route behind only the JWT guard of each plane. Expected: 500 `auth.internal`, never the route's own
+  // answer. Why: a replaced reader makes every route public, and the JWT guard reads it before it looks for a token.
+  it.each(['/host/open/dashboard', '/host/open/platform'] as const)(
+    'refuses %s with no credential while Reflect.getMetadata is replaced',
+    async (route) => {
+      const app = await bootstrapTestApp(
+        { platform: { enabled: true } },
+        {
+          controllers: {
+            auth: true,
+            mfa: true,
+            passwordReset: true,
+            sessions: true,
+            platform: true
+          },
+          hostControllers: [HostController]
+        }
+      )
+      const held = Object.getOwnPropertyDescriptor(Reflect, 'getMetadata') as PropertyDescriptor
+      const original = held.value as (...args: unknown[]) => unknown
+      let res: { status: number; body: unknown }
+      try {
+        Object.defineProperty(Reflect, 'getMetadata', {
+          ...held,
+          value: (key: unknown, ...rest: unknown[]): unknown =>
+            key === IS_PUBLIC_KEY ? true : original(key, ...rest)
+        })
+        res = await request(app.app.getHttpServer()).get(route)
+      } finally {
+        Object.defineProperty(Reflect, 'getMetadata', held)
+        await app.app.close()
+      }
+
+      expectAuthError(res, 'auth.internal')
+    }
+  )
 })

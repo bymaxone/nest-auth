@@ -36,6 +36,7 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { resolveClientAddress } from '../utils/client-address'
 import { describeChannelStatus } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
+import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
@@ -596,7 +597,8 @@ export class AuthService {
       if (remainingTtl > 0) {
         return [(): Promise<unknown> => this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)]
       }
-    } catch {
+    } catch (error) {
+      rethrowRefusal(error)
       // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
     }
     return []
@@ -677,8 +679,7 @@ export class AuthService {
 
     // The invocation sits inside the try, not just the promise it returns: `afterLogout` may be
     // declared `void`, and a synchronous throw happens before `Promise.resolve` exists to wrap it,
-    // so `.catch` never sees it and the exception escapes into a `logout` whose Redis writes have
-    // completed.
+    // so `.catch` never sees it and the exception escapes into a `logout` whose Redis writes have completed.
     try {
       void Promise.resolve(this.hooks.afterLogout(userId, context)).catch(() => {
         logHook(this.logger, 'afterLogout', 'rejected')
@@ -836,8 +837,7 @@ export class AuthService {
       void this.sessionService
         .rotateSession(sha256(oldRefreshToken), sha256(result.rawRefreshToken), ip, userAgent)
         .catch((err: unknown) => {
-          // Same reasoning as the logout path above: bounded, control-character-free, and no
-          // secret in flight to name.
+          // Same reasoning as the logout path above: bounded, control-character-free, and no secret in flight to name.
           logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_detail_rotation', err)
         })
     }

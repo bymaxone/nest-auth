@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from './captured-crypto'
 import { stringifyJson } from '../utils/captured-builtins'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 /**
  * TOTP (Time-based One-Time Password) implementation per RFC 6238 / HOTP per RFC 4226.
@@ -221,6 +222,7 @@ export function buildTotpUri(secretBase32: string, accountEmail: string, issuer:
  * @internal Exported for unit testing against RFC 4226 Appendix D vectors only.
  */
 export function generateHotp(secretBase32: string, counter: number): string {
+  assertRootIsStandard()
   const key = fromBase32(secretBase32)
 
   if (key.length < MIN_SECRET_BYTES) {

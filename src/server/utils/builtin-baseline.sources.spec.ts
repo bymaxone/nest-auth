@@ -10,12 +10,14 @@
  * @layer Test
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { readdirSync, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 
 import ts from 'typescript'
 
 import {
+  BASELINED_DEPENDENCIES,
   BASELINED_GLOBALS,
   BASELINED_HOLDERS,
   BASELINED_ITERATORS,
@@ -56,9 +58,10 @@ const RUNTIME = Reflect.ownKeys(globalThis)
 
 /** The `.ts` sources of the server that are not tests (the helpers of the specs under `__tests__` are not sources). */
 function sourceFiles(dir = join(__dirname, '..')): string[] {
-  return readdirSync(dir).flatMap((name) => {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const name = entry.name
     const path = join(dir, name)
-    if (statSync(path).isDirectory()) return name === '__tests__' ? [] : sourceFiles(path)
+    if (entry.isDirectory()) return name === '__tests__' ? [] : sourceFiles(path)
     return /\.ts$/.test(name) && !/\.(spec|test)\.ts$/.test(name) ? [path] : []
   })
 }
@@ -217,7 +220,12 @@ describe('the list of built-ins the library baselines, against the sources', () 
   // Why: the other half of the check above, for a prototype the list does not name at all.
   it('has no prototype the sources use a function of that the list leaves out', () => {
     const left = Object.entries(BASELINED_HOLDERS)
-      .filter(([name]) => !(name in BASELINED_PROTOTYPES) && !(name in BASELINED_ITERATORS))
+      .filter(
+        ([name]) =>
+          !(name in BASELINED_PROTOTYPES) &&
+          !(name in BASELINED_ITERATORS) &&
+          !(name in BASELINED_DEPENDENCIES)
+      )
       .flatMap(([name, holder]) => expectedOn(holder, names).map((key) => `${name}.${key}`))
 
     expect(left).toEqual([])
@@ -252,4 +260,123 @@ describe('the list of built-ins the library baselines, against the sources', () 
     expect([...found.names.keys()].sort()).toEqual(['startsWith'])
     expect(found.globals.has('Function')).toBe(false)
   })
+
+  // Scenario: the installed `jsonwebtoken`, `jws` and `jwa`, read as syntax for what they take from `crypto`
+  // (`crypto.timingSafeEqual`, `require('crypto')` destructured). Expected: every function they read is on the list of the
+  // module's functions, and the list holds nothing they do not read (`constants`, which is data, is the one name left out).
+  // Why: `jwa` calls `crypto.timingSafeEqual` and `crypto.createHmac` inside `verify`, so a replaced one verifies a forged
+  // token, and a library that starts reading another one must fail here.
+  it('lists exactly the functions the JWT libraries read from node:crypto', () => {
+    const read = jwtLibraryCryptoReads()
+    const listed = [...BASELINED_DEPENDENCIES['node:crypto']].sort()
+
+    expect(listed).toEqual(read.filter((name) => name !== 'constants').sort())
+  })
+
+  // Scenario: `Reflector`, read as syntax for what it takes from `Reflect`. Expected: only the functions the list names. Why:
+  // `Reflector.get` and `getAllAndOverride` read `Reflect.getMetadata` at each call, and `@Public()`, `@SkipMfa()` and `@Roles()`
+  // are answered through it, so a replaced one would answer them for every route.
+  it('lists exactly the functions of Reflect that Reflector reads', () => {
+    const file = require.resolve('@nestjs/core/services/reflector.service.js')
+    const found = new Set<string>()
+    const source = ts.createSourceFile(
+      file,
+      readFileSync(file, 'utf8'),
+      ts.ScriptTarget.Latest,
+      true
+    )
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'Reflect'
+      )
+        found.add(node.name.text)
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+
+    expect([...BASELINED_DEPENDENCIES.Reflect].sort()).toEqual([...found].sort())
+  })
+
+  // Scenario: the methods the sources call on a `JwtService` and on a `Reflector`, found by the name of the receiver. Expected:
+  // exactly the methods the lists of `JwtService.prototype` and `Reflector.prototype` hold. Why: a method the sources call and
+  // the list lacks is one a replacement can answer for, and one the list holds that nothing calls is a false refusal.
+  it.each([
+    ['jwtService', 'JwtService.prototype'],
+    ['reflector', 'Reflector.prototype']
+  ] as const)('lists exactly the methods the sources call on %s', (receiver, holder) => {
+    const called = new Set<string>()
+    for (const path of sourceFiles()) {
+      if (CAPTURING.some((file) => path.endsWith(file))) continue
+      const file = ts.createSourceFile(
+        path,
+        readFileSync(path, 'utf8'),
+        ts.ScriptTarget.Latest,
+        true
+      )
+      const visit = (node: ts.Node): void => {
+        if (ts.isFunctionDeclaration(node) && node.name?.text.startsWith('stry') === true) return
+        if (ts.isConditionalExpression(node) && isMutantSwitch(node.condition))
+          return visit(node.whenFalse)
+        if (
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.expression.getText(file).toLowerCase().endsWith(receiver.toLowerCase())
+        )
+          called.add(node.expression.name.text)
+        ts.forEachChild(node, visit)
+      }
+      visit(file)
+    }
+
+    expect(
+      [...(BASELINED_DEPENDENCIES as Record<string, readonly string[]>)[holder]!].sort()
+    ).toEqual([...called].sort())
+  })
 })
+
+/** The names the installed JWT libraries take from `crypto`, found by reading their sources as syntax. */
+function jwtLibraryCryptoReads(): string[] {
+  const resolveFrom = (from: string, name: string): string => createRequire(from).resolve(name)
+  const jwtFile = resolveFrom(require.resolve('@nestjs/jwt'), 'jsonwebtoken')
+  const jwsFile = resolveFrom(jwtFile, 'jws')
+  const jwaFile = resolveFrom(jwsFile, 'jwa')
+  const names = new Set<string>()
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) return entry.name === 'node_modules' ? [] : walk(path)
+      return entry.name.endsWith('.js') ? [path] : []
+    })
+  for (const root of [jwtFile, jwsFile, jwaFile].map((file) => dirname(file)))
+    for (const path of walk(root)) {
+      const file = ts.createSourceFile(
+        path,
+        readFileSync(path, 'utf8'),
+        ts.ScriptTarget.Latest,
+        true
+      )
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isPropertyAccessExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === 'crypto'
+        )
+          names.add(node.name.text)
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isObjectBindingPattern(node.name) &&
+          node.initializer !== undefined &&
+          ts.isCallExpression(node.initializer) &&
+          node.initializer.expression.getText(file) === 'require' &&
+          /crypto/.test(node.initializer.arguments[0]?.getText(file) ?? '')
+        )
+          for (const element of node.name.elements)
+            names.add((element.propertyName ?? element.name).getText(file))
+        ts.forEachChild(node, visit)
+      }
+      visit(file)
+    }
+  return [...names]
+}

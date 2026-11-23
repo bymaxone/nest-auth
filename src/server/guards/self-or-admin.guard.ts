@@ -7,6 +7,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { hasRole } from '../utils/roles.util'
 
 /**
@@ -69,6 +70,7 @@ export class SelfOrAdminGuard implements CanActivate {
   constructor(@Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions) {}
 
   canActivate(context: ExecutionContext): boolean {
+    assertRootIsStandard()
     const request = context.switchToHttp().getRequest<Request & { user?: DashboardJwtPayload }>()
 
     // Defensive — JwtAuthGuard should always run before this guard.

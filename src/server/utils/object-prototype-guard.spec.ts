@@ -26,6 +26,13 @@ import {
 } from './object-prototype-guard'
 import { verifyWithRotation } from './verify-with-rotation'
 
+// Loading a module in isolation loads another copy of `reflect-metadata`, which redefines `Reflect.getMetadata`; the baseline of
+// the modules under test holds the function the first copy defined, so each case puts it back.
+const GET_METADATA = Object.getOwnPropertyDescriptor(Reflect, 'getMetadata') as PropertyDescriptor
+afterEach(() => {
+  Object.defineProperty(Reflect, 'getMetadata', GET_METADATA)
+})
+
 const SECRET = 'real-secret-real-secret-real-secret-1234'
 
 /** Runs `body` with `descriptor` defined on the root object of the process and puts back what was there. */
@@ -352,5 +359,49 @@ describe('what the library refuses to do while the root holds a planted key', ()
     )
     expect((refusal as Error).message).toContain('Object.prototype holds 1 entries')
     expect((refusal as Error).message).not.toContain('sessions')
+  })
+})
+
+describe('each refusal of the guard is its own object', () => {
+  /** Plants `key` on the root, runs the guard, takes the root back and returns what the guard threw. */
+  const refusedWith = (...keys: string[]): AuthException => {
+    for (const key of keys)
+      Object.defineProperty(Object.prototype, key, {
+        value: 1,
+        configurable: true,
+        enumerable: true,
+        writable: true
+      })
+    try {
+      return failureOf(assertRootIsStandard) as AuthException
+    } finally {
+      for (const key of keys) Reflect.deleteProperty(Object.prototype, key)
+    }
+  }
+
+  // Scenario: two refusals, one for one planted key and one for two, the first one's fields then changed by the code that caught
+  // it. Expected: two objects, each with its own cause and body, and the second untouched by what was done to the first. Why: a
+  // refusal shared by every request would show one request's cause to another and let one caller change what the next is told.
+  it('does not share the cause or the body between two refusals', () => {
+    const first = refusedWith('sessions')
+    const second = refusedWith('sessions', 'invitations')
+    ;(first.cause as Error).message = 'changed'
+    ;(first.getResponse() as { error: { code: string } }).error.code = 'changed'
+
+    expect(second).not.toBe(first)
+    expect((second.cause as Error).message).toBe(
+      "Object.prototype holds 2 entries that are not the runtime's own"
+    )
+    expect((second.getResponse() as { error: { code: string } }).error.code).toBe('auth.internal')
+  })
+
+  // Scenario: the refusal read as an error. Expected: the status 500, the class, a stack and the mark `refusedOr` passes through.
+  it('is an HTTP exception with a stack of its own', () => {
+    const refusal = refusedWith('sessions')
+
+    expect(refusal).toBeInstanceOf(RootNotStandardException)
+    expect(refusal.getStatus()).toBe(500)
+    expect(typeof refusal.stack).toBe('string')
+    expect(refusedOr(refusal, AUTH_ERROR_CODES.TOKEN_INVALID)).toBe(refusal)
   })
 })

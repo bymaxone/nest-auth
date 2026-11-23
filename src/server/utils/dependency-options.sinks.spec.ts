@@ -7,7 +7,7 @@
  */
 
 import { scryptSync } from 'node:crypto'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
@@ -175,10 +175,10 @@ describe('writing a cookie with only the shadows and a planted attribute', () =>
 
 /** The shipped source files of the server, without the specs. */
 function serverSources(dir = join(__dirname, '..')): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    const path = join(dir, entry)
-    if (statSync(path).isDirectory()) return entry === '__tests__' ? [] : serverSources(path)
-    return /\.ts$/u.test(entry) && !/\.(spec|test)\.ts$/u.test(entry) ? [path] : []
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) return entry.name === '__tests__' ? [] : serverSources(path)
+    return /\.ts$/u.test(entry.name) && !/\.(spec|test)\.ts$/u.test(entry.name) ? [path] : []
   })
 }
 

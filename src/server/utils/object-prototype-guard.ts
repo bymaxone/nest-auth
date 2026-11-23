@@ -15,9 +15,10 @@
  * @layer Utility
  */
 
-import { replacedBuiltins } from './builtin-baseline'
+import { rebaselinePolyfills, replacedBuiltins } from './builtin-baseline'
 import {
   ErrorOf,
+  captureStack,
   createObject,
   defineKey,
   getDescriptor,
@@ -133,11 +134,7 @@ export function plantedOnRoot(): number {
 export function assertRootIsStandard(): void {
   const planted = plantedOnRoot()
   const replaced = replacedBuiltins()
-  if (planted > 0 || replaced > 0) {
-    const descriptor = dataOf(new ErrorOf(reasonOf(planted, replaced)))
-    defineKey(REFUSAL_INSTANCE, 'cause', descriptor)
-    throw REFUSAL_INSTANCE
-  }
+  if (planted > 0 || replaced > 0) throw refusalOf(reasonOf(planted, replaced))
 }
 
 /** What the refusal reports: the counts and nothing else, a reason for each of the two ways the runtime can differ. */
@@ -151,14 +148,11 @@ function reasonOf(planted: number, replaced: number): string {
 /** The mark the refusal carries, so it is recognised without `instanceof`, which calls a live built-in. */
 const REFUSAL = Symbol('root-not-standard')
 
-/** The refusal of the library while the root object holds a planted entry: `auth.internal`, which no caller turns into another answer. */
-export class RootNotStandardException extends AuthException {
-  readonly [REFUSAL] = true
-
-  constructor(options: { cause: Error }) {
-    super(AUTH_ERROR_CODES.INTERNAL, undefined, options)
-  }
-}
+/**
+ * The refusal of the library while the runtime differs from its own: `auth.internal`, which no caller turns into another answer.
+ * It is never constructed: `refusalOf` makes the object, so no accessor planted on the root can run in a constructor.
+ */
+export class RootNotStandardException extends AuthException {}
 
 /** A data descriptor, with no prototype: defining a property reads `get`, `set` and `enumerable` through it. */
 function dataOf(value: unknown): PropertyDescriptor {
@@ -169,36 +163,44 @@ function dataOf(value: unknown): PropertyDescriptor {
   return descriptor
 }
 
-/**
- * Builds the refusal. Constructing an exception assigns `response`, `status`, `options`, `message`, `name` and `cause` to the
- * new object, and an accessor planted on the root under one of those names turns the assignment into a `TypeError`. That cannot
- * happen while the root is judged, because the refusal is built once, here, when the module loads; and when the root already
- * held such an accessor at load, the refusal is made without running the constructor, so the import never throws and the
- * refusal is the same on use.
- */
-function buildRefusal(): RootNotStandardException {
-  try {
-    return new RootNotStandardException({
-      cause: new ErrorOf("Object.prototype holds entries that are not the runtime's own")
-    })
-  } catch {
-    const bare = createObject(RootNotStandardException.prototype) as RootNotStandardException
-    const code = AUTH_ERROR_CODES.INTERNAL
-    const message = AUTH_ERROR_MESSAGES[code]
-    defineKey(bare, 'response', dataOf({ error: { code, message, details: null } }))
-    defineKey(bare, 'status', dataOf(AUTH_ERROR_STATUS[code]))
-    defineKey(bare, 'message', dataOf(message))
-    defineKey(bare, 'name', dataOf('RootNotStandardException'))
-    defineKey(bare, REFUSAL, dataOf(true))
-    return bare
-  }
-}
+const CODE = AUTH_ERROR_CODES.INTERNAL
+const MESSAGE = AUTH_ERROR_MESSAGES[CODE]
+const STATUS = AUTH_ERROR_STATUS[CODE]
 
-const REFUSAL_INSTANCE = buildRefusal()
+/**
+ * Makes a fresh refusal for `reason`, from references taken when the module loaded. Constructing an exception assigns
+ * `response`, `status`, `options`, `message`, `name` and `cause` to the new object, and an accessor planted on the root under one
+ * of those names turns the assignment into a `TypeError`, so the object is made with the prototype of the exception and
+ * its fields defined as own data. Each refusal is its own object: two requests refused at the same time never see each other's
+ * cause, and nothing a caller does to one reaches another.
+ */
+function refusalOf(reason: string): RootNotStandardException {
+  const refusal = createObject(RootNotStandardException.prototype) as RootNotStandardException
+  defineKey(refusal, 'response', dataOf({ error: { code: CODE, message: MESSAGE, details: null } }))
+  defineKey(refusal, 'status', dataOf(STATUS))
+  defineKey(refusal, 'message', dataOf(MESSAGE))
+  defineKey(refusal, 'name', dataOf('RootNotStandardException'))
+  defineKey(refusal, 'cause', dataOf(new ErrorOf(reason)))
+  defineKey(refusal, REFUSAL, dataOf(true))
+  captureStack(refusal, refusalOf)
+  return refusal
+}
 
 /** Whether `error` is the refusal of the guard. */
 function isRefusal(error: unknown): error is RootNotStandardException {
   return typeof error === 'object' && error !== null && getKey(error, REFUSAL) === true
+}
+
+/**
+ * Rethrows `error` when it is the refusal of the guard, and returns for anything else. A `catch` that turns a failure into
+ * another answer (a token that did not verify becomes "nothing to blacklist") calls this first, so the refusal is never
+ * swallowed into a pass.
+ *
+ * @param error - What the `try` threw.
+ * @throws The refusal itself, when `error` is one.
+ */
+export function rethrowRefusal(error: unknown): void {
+  if (isRefusal(error)) throw error
 }
 
 /**
@@ -219,6 +221,7 @@ export function refusedOr(error: unknown, code: AuthErrorCode): AuthException {
  * @throws {Error} Naming the module and reporting the counts, and no name.
  */
 export function assertRootIsStandardAtBoot(): void {
+  rebaselinePolyfills()
   const planted = plantedOnRoot()
   const replaced = replacedBuiltins()
   if (planted > 0 || replaced > 0)

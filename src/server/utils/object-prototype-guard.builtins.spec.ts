@@ -12,6 +12,13 @@ import {
   plantedOnRoot
 } from './object-prototype-guard'
 
+// Loading a module in isolation loads another copy of `reflect-metadata`, which redefines `Reflect.getMetadata`; the baseline of
+// the modules under test holds the function the first copy defined, so each case puts it back.
+const GET_METADATA = Object.getOwnPropertyDescriptor(Reflect, 'getMetadata') as PropertyDescriptor
+afterEach(() => {
+  Object.defineProperty(Reflect, 'getMetadata', GET_METADATA)
+})
+
 // The test's own copies: the window below replaces built-ins, so nothing inside it may call a live one.
 const define = Object.defineProperty
 const getOwn = Object.getOwnPropertyDescriptor

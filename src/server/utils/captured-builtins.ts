@@ -9,16 +9,37 @@
  * @layer Utility
  */
 
+/** `Object.hasOwn` as it was when the module loaded: whether a key is an own key of an object, never a read through the prototype. */
 export const hasOwn = Object.hasOwn
+
+/** `Object.getPrototypeOf` as it was when the module loaded. */
 export const prototypeOf = Object.getPrototypeOf
+
+/** `Reflect.get` as it was when the module loaded: a read of a key that honours the receiver, taken once. */
 export const getKey = Reflect.get
+
+/** `Reflect.ownKeys` as it was when the module loaded: the own keys of an object, strings and symbols. */
 export const ownKeys = Reflect.ownKeys
+
+/** `Object.getOwnPropertyDescriptor` as it was when the module loaded. */
 export const getDescriptor = Object.getOwnPropertyDescriptor
+
+/** `Object.create` as it was when the module loaded: used to make objects that hold no prototype. */
 export const createObject = Object.create
+
+/** `Object.assign` as it was when the module loaded. */
 export const assign = Object.assign
+
+/** `Object.defineProperty` as it was when the module loaded: defines own data, never through a setter on the prototype. */
 export const defineKey = Object.defineProperty
+
+/** The `Error` constructor as it was when the module loaded. */
 export const ErrorOf = Error
 
-/** `JSON.parse` and `JSON.stringify`, taken at load: what the library reads from and writes to its stores goes through these. */
+/** `Error.captureStackTrace` as it was when the module loaded: gives a made object the stack of its caller. */
+export const captureStack = Error.captureStackTrace
+
+/** `JSON.parse` as it was when the module loaded: what the library reads from its stores goes through this copy. */
 export const parseJson: (text: string) => unknown = JSON.parse
+/** `JSON.stringify` as it was when the module loaded: what the library writes to its stores goes through this copy. */
 export const stringifyJson: (value: unknown) => string = JSON.stringify

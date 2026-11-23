@@ -43,13 +43,13 @@ describe('the baseline loaded over a runtime that differs from the usual one', (
   // Scenario: a listed built-in is a plain value and not a function when the module loads. Expected: the import does not throw,
   // nothing is counted and the entry is not compared.
   it('loads with a listed built-in that is not a function', () => {
-    const held = getOwn(Map.prototype, 'get') as PropertyDescriptor
-    define(Map.prototype, 'get', { ...held, value: 5 })
+    const held = getOwn(Number.prototype, 'toFixed') as PropertyDescriptor
+    define(Number.prototype, 'toFixed', { ...held, value: 5 })
     let counted = -1
     try {
       counted = loadFresh().replacedBuiltins()
     } finally {
-      define(Map.prototype, 'get', held)
+      define(Number.prototype, 'toFixed', held)
     }
 
     expect(counted).toBe(0)

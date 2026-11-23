@@ -5,8 +5,9 @@
  * PKCE parameters are written with `URLSearchParams.prototype.set`, and a flaw that can run code in the process can replace any
  * of them after the library loaded. A replaced `some` that answers `true` is a privilege escalation and a replaced `has` is a
  * revoked token that is accepted. The library cannot call a copy of every built-in its sources use, so it compares them
- * instead: each function listed here is read again whenever the root guard runs, at the entry of every verification, signature,
- * hash and cookie, and the guard refuses while one is not the function that was there at load.
+ * instead: each function listed here is read again whenever the root guard runs, and the guard refuses while one is not the
+ * function that was there at load. The guard runs at the entry of every verification, signature, hash and cookie, at the
+ * start of each guard that decides, and again after each lookup that a guard or a service waits for before it decides.
  *
  * Only what the sources call or read is listed, and a spec reads the sources as syntax and fails in both directions: for a
  * function or accessor they use that is not listed, and for one that is listed and nothing uses. A built-in that a polyfill or a
@@ -20,7 +21,11 @@
  * @layer Utility
  */
 
+import { Reflector } from '@nestjs/core'
+import { JwtService } from '@nestjs/jwt'
+
 import { getDescriptor, getKey, hasOwn, prototypeOf } from './captured-builtins'
+import { nodeCrypto } from '../crypto/captured-crypto'
 
 /** The name under which the iterator function of a type is listed: the key is the well-known symbol. */
 export const ITERATOR = '@@iterator'
@@ -176,6 +181,29 @@ export const BASELINED_PROTOTYPES = {
   ]
 } as const satisfies Record<string, readonly string[]>
 
+/**
+ * The functions the libraries the decisions go through read at each call, by holder. `jwa` calls `crypto.timingSafeEqual` and
+ * `crypto.createHmac` inside `verify`, so a replaced one verifies a forged token; `Reflector` reads `Reflect.getMetadata`, so a
+ * replaced one answers `@Public()` or `@SkipMfa()` for any route. A spec reads the installed `jsonwebtoken`, `jws`, `jwa` and
+ * `Reflector` and fails for a name they read that is not listed, and for a method of `JwtService` or `Reflector` that the
+ * sources call.
+ */
+export const BASELINED_DEPENDENCIES = {
+  'node:crypto': [
+    'KeyObject',
+    'createHmac',
+    'createPrivateKey',
+    'createPublicKey',
+    'createSecretKey',
+    'createSign',
+    'createVerify',
+    'timingSafeEqual'
+  ],
+  'JwtService.prototype': ['sign', 'verify'],
+  Reflect: ['getMetadata'],
+  'Reflector.prototype': ['get', 'getAllAndOverride']
+} as const satisfies Record<string, readonly string[]>
+
 /** The iterator protocol the language calls without the sources naming it, by holder: the function that makes the iterator. */
 export const BASELINED_ITERATORS = {
   'Array.prototype': [ITERATOR],
@@ -239,7 +267,11 @@ export const BASELINED_HOLDERS: Record<string, object> = {
   'ArrayIterator.prototype': prototypeOf([][Symbol.iterator]()) as object,
   'MapIterator.prototype': prototypeOf(new Map()[Symbol.iterator]()) as object,
   'SetIterator.prototype': prototypeOf(new Set()[Symbol.iterator]()) as object,
-  'StringIterator.prototype': prototypeOf(''[Symbol.iterator]()) as object
+  'StringIterator.prototype': prototypeOf(''[Symbol.iterator]()) as object,
+  'node:crypto': nodeCrypto,
+  'JwtService.prototype': JwtService.prototype,
+  Reflect,
+  'Reflector.prototype': Reflector.prototype
 }
 
 // Parallel lists, filled once: the holder, the key, the field of the descriptor that holds the function (`value` for a method,
@@ -274,12 +306,27 @@ function recordAll(lists: Record<string, readonly string[]>): void {
 
 recordAll(BASELINED_PROTOTYPES)
 recordAll(BASELINED_ITERATORS)
+recordAll(BASELINED_DEPENDENCIES)
 for (const [namespace, list] of Object.entries(BASELINED_STATICS))
   for (let at = 0; at < list.length; at += 1) record(world[namespace] as object, list[at] as string)
 
 const globalOriginals: unknown[] = []
 for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)
   globalOriginals[index] = world[BASELINED_GLOBALS[index] as string]
+
+/**
+ * Takes again the functions of the polyfill that decorators load (`Reflect.getMetadata`), which a second copy of
+ * `reflect-metadata` replaces while the imports of the application run. Called when the module boots, after those imports,
+ * so a host with two copies is not refused for the copy that loaded last; a change after the boot is counted as ever.
+ */
+export function rebaselinePolyfills(): void {
+  for (let index = 0; index < holders.length; index += 1) {
+    if (holders[index] !== Reflect) continue
+    const descriptor = getDescriptor(holders[index] as object, keys[index] as PropertyKey)
+    if (descriptor !== undefined && hasOwn(descriptor, fields[index] as string))
+      originals[index] = getKey(descriptor, fields[index] as string)
+  }
+}
 
 /**
  * Counts the built-ins that are not what they were when this module loaded: a function replaced, turned into an accessor or

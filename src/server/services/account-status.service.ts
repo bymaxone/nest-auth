@@ -21,6 +21,7 @@ import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 /**
  * The two cache keys naming one dashboard account.
@@ -187,6 +188,7 @@ export class AccountStatusService {
       }
     }
 
+    assertRootIsStandard()
     // Passed as stored, not normalized here: `assertNotBlocked` canonicalizes both sides itself,
     // so folding the case first does the same work twice and puts the case rule in two places.
     assertNotBlocked(status, this.options.blockedStatuses)
@@ -238,6 +240,7 @@ export class AccountStatusService {
   }): Promise<void> {
     const user = await this.userRepo.findById({ id: ref.userId, tenantId: ref.tenantId })
     if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    assertRootIsStandard()
     assertNotBlocked(user.status, this.options.blockedStatuses)
     if (this.options.emailVerification.required && !user.emailVerified) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
@@ -273,6 +276,7 @@ export class AccountStatusService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
+    assertRootIsStandard()
     assertNotBlocked(admin.status, this.options.blockedStatuses)
   }
 }

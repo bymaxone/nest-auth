@@ -20,6 +20,7 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { WorkspaceAccessService } from '../services/workspace-access.service'
 import { WorkspaceDeniedEventsService } from '../services/workspace-denied-events.service'
 import { admitsPendingWorkspace, declaredWorkspaceRoles } from '../utils/declared-workspace-roles'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { resolveRequestWorkspace } from '../utils/resolve-request-workspace'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
@@ -85,6 +86,7 @@ export class WorkspaceGuard implements CanActivate {
       workspaceId,
       userId: user.sub
     })
+    assertRootIsStandard()
     const member = this.denied.admit(
       { tenantId: user.tenantId, userId: user.sub, workspaceId, surface: 'http' },
       () =>

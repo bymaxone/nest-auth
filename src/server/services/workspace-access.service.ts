@@ -43,6 +43,7 @@ import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { exceedsCodePoints } from '../utils/code-points'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
@@ -134,6 +135,7 @@ export class WorkspaceAccessService {
    * @throws {TypeError} When any part of the key is blank.
    */
   async resolveAccess(ref: MembershipRef): Promise<WorkspaceAccess> {
+    assertRootIsStandard()
     assertKey(ref)
     const ttl = this.group.membershipCacheTtlSeconds
     if (ttl === 0) return this.readRepositories(ref)
@@ -192,8 +194,10 @@ export class WorkspaceAccessService {
       userId: ref.userId,
       tenantId: ref.tenantId
     })
+    const access = await this.readRepositories(ref)
+    assertRootIsStandard()
     return assertWorkspaceAccess(
-      await this.readRepositories(ref),
+      access,
       roles,
       this.group.roles.hierarchy,
       options.allowPending === true
