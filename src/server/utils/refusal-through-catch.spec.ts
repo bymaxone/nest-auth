@@ -108,20 +108,28 @@ describe('the answer to a reset request while the runtime is not standard', () =
     issue
   })
 
-  // Scenario: issuing the reset raises the library's refusal. Expected: the request rejects with it. Why: answering as if it
+  // Scenario: issuing the reset raises the library's refusal. Expected: the request rejects with it, after the cooldown was released
+  // and the floor of the response was held. Why: answering as if it
   // had been sent would tell a caller a reset is on its way from a process that cannot send one.
   it('rejects with the refusal that issuing raises', async () => {
     const raised = refusal()
     const deps = { redis: redis(), logger: new Logger('t') }
+    const began = Date.now()
 
     await expect(
       answerResetRequest(
-        deps,
-        request(async () => {
-          throw raised
-        })
+        { ...deps },
+        {
+          ...request(async () => {
+            throw raised
+          }),
+          floorMs: 60,
+          start: began
+        }
       )
     ).rejects.toBe(raised)
+    expect(deps.redis.del).toHaveBeenCalled()
+    expect(Date.now() - began).toBeGreaterThanOrEqual(50)
   })
 
   // Scenario: issuing fails the ordinary way. Expected: the request completes and the cooldown is released. Why: the control.

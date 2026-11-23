@@ -235,6 +235,41 @@ describe('the guards that wait before they decide', () => {
     )
   })
 
+  // Scenario: `Array[Symbol.species]`, which the `map` and `filter` that read the workspace id off the request go through, replaced
+  // by a getter that makes them build another array, then the guard asked about a workspace the member does not belong to.
+  // Expected: the library's refusal, never an admission to the workspace the replacement names. Why: no source names the
+  // accessor, and with it replaced the id the guard authorizes against is the attacker's.
+  it('WorkspaceGuard is refused when the species of Array is replaced', async () => {
+    const access = {
+      resolveAccess: async (): Promise<object> => ({ kind: 'member', member: { role: 'owner' } })
+    } as Partial<WorkspaceAccessService> as WorkspaceAccessService
+    const denied = {
+      admit: (_ref: unknown, run: () => unknown): unknown => run()
+    } as Partial<WorkspaceDeniedEventsService> as WorkspaceDeniedEventsService
+    const options = Object.assign({} as ResolvedOptions, {
+      workspaces: {
+        roles: { hierarchy: { owner: [] } },
+        permissions: {},
+        resolveRequestWorkspace: undefined
+      }
+    })
+    const guard = new WorkspaceGuard(new Reflector(), access, options, denied)
+    const held = getOwn(Array, Symbol.species) as PropertyDescriptor
+    define(Array, Symbol.species, { ...held, get: () => Object.assign(Array, { victim: true }) })
+    let status: number | undefined
+    try {
+      status = await refusalOf(() =>
+        guard.canActivate(
+          contextOf({ ...user }, { [WORKSPACE_ROLES_KEY]: ['owner'] }, { workspaceId: 'w1' })
+        )
+      )
+    } finally {
+      define(Array, Symbol.species, held)
+    }
+
+    expect(status).toBe(500)
+  })
+
   // The skip metadata read through the same reader.
   it('keeps the metadata key of @SkipMfa() the one the guard reads', () => {
     expect(SKIP_MFA_KEY).toBeDefined()

@@ -209,7 +209,7 @@ function refusalOf(reason: string): RootNotStandardException {
 }
 
 /** Whether `error` is the refusal of the guard. */
-function isRefusal(error: unknown): error is RootNotStandardException {
+export function isRefusal(error: unknown): error is RootNotStandardException {
   return typeof error === 'object' && error !== null && getKey(error, REFUSAL) === true
 }
 

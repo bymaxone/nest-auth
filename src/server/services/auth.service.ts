@@ -181,7 +181,6 @@ export class AuthService {
       }
       await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash: upgraded })
     } catch (err: unknown) {
-      rethrowRefusal(err)
       logStore(this.logger, 'AUTH_STORE_FAILED', 'rehash_on_verify', err)
     }
   }

@@ -20,11 +20,13 @@ import {
   BASELINED_ITERATORS,
   BASELINED_PROTOTYPES,
   BASELINED_STATICS,
+  BASELINED_CONSTRUCTORS,
   BASELINED_REGEXP_ACCESSORS,
   ITERATOR,
   PROTOCOL_HOLDERS,
   rebaselinePolyfills,
-  replacedBuiltins
+  replacedBuiltins,
+  SPECIES_CONSTRUCTORS
 } from './builtin-baseline'
 import { assertRootIsStandardAtBoot } from './object-prototype-guard'
 
@@ -396,4 +398,19 @@ describe('the protocol the language dispatches through', () => {
       expect(counted).toBe(1)
     }
   )
+})
+
+describe('the species of the constructors', () => {
+  // Scenario: the `Symbol.species` accessor of each constructor given another getter, then put back. Expected: counted once, and
+  // none once restored. Why: `[a, b].filter(...).map(...)` reads `Array[Symbol.species]` to choose what it builds, so a replaced
+  // one decides what the code destructures, and no source names it.
+  it.each(SPECIES_CONSTRUCTORS)('counts the species of %s when its getter is replaced', (name) => {
+    let counted = -1
+    changed(BASELINED_CONSTRUCTORS[name], Symbol.species, { get: () => Array }, () => {
+      counted = replacedBuiltins()
+    })
+
+    expect(counted).toBe(1)
+    expect(replacedBuiltins()).toBe(0)
+  })
 })

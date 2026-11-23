@@ -248,6 +248,31 @@ export const PROTOCOL_HOLDERS = [
   'TypedArray.prototype'
 ] as const
 
+/**
+ * The constructors whose `Symbol.species` accessor `map`, `filter`, `slice`, `concat` and `flatMap` of an array, the methods of a
+ * typed array, a regular expression's `split` and the copies of a map and a set read to choose what they build. It is an own
+ * accessor of the constructor, which neither a prototype nor a namespace list holds, and a replaced one makes every such call
+ * build, and the code destructure, what the attacker chose.
+ */
+export const SPECIES_CONSTRUCTORS = [
+  'Array',
+  'ArrayBuffer',
+  'Map',
+  'RegExp',
+  'Set',
+  'TypedArray'
+] as const
+
+/** The constructors named by `SPECIES_CONSTRUCTORS`, by name. */
+export const BASELINED_CONSTRUCTORS: Record<(typeof SPECIES_CONSTRUCTORS)[number], object> = {
+  Array,
+  ArrayBuffer,
+  Map,
+  RegExp,
+  Set,
+  TypedArray: prototypeOf(Uint8Array) as object
+}
+
 /** The accessors of `RegExp.prototype` the algorithms of `replace`, `split`, `match` and `search` read for every regular expression. */
 export const BASELINED_REGEXP_ACCESSORS = [
   'dotAll',
@@ -383,6 +408,11 @@ for (let index = 0; index < PROTOCOL_HOLDERS.length; index += 1) {
 }
 for (let index = 0; index < BASELINED_REGEXP_ACCESSORS.length; index += 1)
   record(RegExp.prototype, BASELINED_REGEXP_ACCESSORS[index] as string)
+for (let index = 0; index < SPECIES_CONSTRUCTORS.length; index += 1)
+  record(
+    BASELINED_CONSTRUCTORS[SPECIES_CONSTRUCTORS[index] as (typeof SPECIES_CONSTRUCTORS)[number]],
+    Symbol.species
+  )
 for (const [namespace, list] of Object.entries(BASELINED_STATICS))
   for (let at = 0; at < list.length; at += 1) record(world[namespace] as object, list[at] as string)
 
