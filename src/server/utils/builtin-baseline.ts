@@ -12,9 +12,10 @@
  * function or accessor they use that is not listed, and for one that is listed and nothing uses. A built-in that a polyfill or a
  * monitor of the host patches and no source calls is therefore never compared. What the library serialises and parses
  * (`JSON`) and what it hashes and compares secrets with (`node:crypto`) is not compared but captured, in
- * `captured-builtins` and `captured-crypto`, so no replacement reaches it. `Promise`, `Date` and `Intl` are not listed: a
- * decision never depends on them, and the test doubles of a host replace all three (a fake clock replaces `Intl` together
- * with `Date`).
+ * `captured-builtins` and `captured-crypto`, so no replacement reaches it. The clock source (the `Date` binding, `Date.now`
+ * and `Date.parse`), `Promise` and `Intl` are not compared: the test doubles of a host replace them (a fake clock replaces
+ * `Date` and `Intl` together). The methods of the dates themselves (`getTime`, `toISOString`), which the expiry of a key and the
+ * reading of a cursor are decided with, are compared.
  *
  * @layer Utility
  */
@@ -111,6 +112,7 @@ export const BASELINED_PROTOTYPES = {
   'RegExp.prototype': ['flags', 'source', 'toString', 'test'],
   'Function.prototype': ['apply', 'bind', 'call', 'toString'],
   'Number.prototype': ['toFixed', 'toString'],
+  'Date.prototype': ['toString', 'toISOString', 'getTime'],
   'URL.prototype': [
     'toString',
     'origin',
@@ -233,6 +235,7 @@ export const BASELINED_HOLDERS: Record<string, object> = {
   'Buffer.prototype': Buffer.prototype,
   'TypedArray.prototype': prototypeOf(Uint8Array.prototype) as object,
   'DataView.prototype': DataView.prototype,
+  'Date.prototype': Date.prototype,
   'ArrayIterator.prototype': prototypeOf([][Symbol.iterator]()) as object,
   'MapIterator.prototype': prototypeOf(new Map()[Symbol.iterator]()) as object,
   'SetIterator.prototype': prototypeOf(new Set()[Symbol.iterator]()) as object,

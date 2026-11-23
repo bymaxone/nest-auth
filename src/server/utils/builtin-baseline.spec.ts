@@ -6,6 +6,13 @@
  * @layer Test
  */
 
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { buildSync } from 'esbuild'
+
 import {
   BASELINED_GLOBALS,
   BASELINED_HOLDERS,
@@ -91,7 +98,8 @@ describe('the built-ins the library baselines', () => {
         'Reflect.get',
         'URLSearchParams.prototype.set',
         'URL.prototype.origin',
-        'Buffer.prototype.readUInt8'
+        'Buffer.prototype.readUInt8',
+        'Date.prototype.getTime'
       ])
     )
     expect(labels.length).toBeGreaterThan(150)
@@ -206,5 +214,49 @@ describe('the built-ins the library baselines', () => {
     })
 
     expect(counted).toBe(1)
+  })
+
+  // Scenario: a plain Node process, where `Buffer` is an accessor of the global object, loads the module and assigns `Buffer`
+  // another value. Expected: the getter is the same function and one built-in is counted, and none once it is put back. Why:
+  // assigning to an accessor binding changes what its getter answers without changing the getter, so the comparison reads the
+  // resolved value. Run in a process of its own because the sandbox of the test runner makes such a binding a plain property
+  // the first time it is read.
+  it('counts an accessor binding whose value was assigned, though its getter is unchanged', () => {
+    const bundle = buildSync({
+      entryPoints: [join(__dirname, 'builtin-baseline.ts')],
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      write: false
+    }).outputFiles[0]?.text as string
+    const directory = mkdtempSync(join(tmpdir(), 'builtin-baseline-'))
+    const file = join(directory, 'baseline.cjs')
+    writeFileSync(file, bundle)
+    const script = [
+      `const baseline = require(${JSON.stringify(file)})`,
+      "const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'Buffer')",
+      'const out = { accessor: typeof descriptor.get === "function", clean: baseline.replacedBuiltins() }',
+      'const held = globalThis.Buffer',
+      'globalThis.Buffer = function () {}',
+      "out.sameGetter = Object.getOwnPropertyDescriptor(globalThis, 'Buffer').get === descriptor.get",
+      'out.assigned = baseline.replacedBuiltins()',
+      'globalThis.Buffer = held',
+      'out.restored = baseline.replacedBuiltins()',
+      'process.stdout.write(JSON.stringify(out))'
+    ].join('\n')
+    let result = ''
+    try {
+      result = execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+
+    expect(JSON.parse(result)).toEqual({
+      accessor: true,
+      clean: 0,
+      sameGetter: true,
+      assigned: 1,
+      restored: 0
+    })
   })
 })

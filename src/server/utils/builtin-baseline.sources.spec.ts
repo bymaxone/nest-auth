@@ -25,8 +25,8 @@ import {
 
 /** The globals the sources may name without the library comparing them, each with the reason. */
 const EXEMPT: Record<string, string> = {
-  Promise: 'a decision never depends on it, and the test doubles of a host replace it',
-  Date: 'a decision never depends on its functions, and the test doubles of a host replace it',
+  Promise: 'a decision never depends on its functions, and the test doubles of a host replace it',
+  Date: 'the clock source (the binding, Date.now, Date.parse) is what the test doubles of a host replace; the methods of a date, which decide expiry, are compared',
   AbortSignal: 'bounds how long a request to another service may wait, and decides nothing',
   Intl: 'only validates a locale tag, decides nothing, and a fake clock replaces it together with Date',
   setTimeout: 'schedules, decides nothing, and fake timers replace it',
