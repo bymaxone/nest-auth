@@ -74,6 +74,7 @@ function describe(name: string): Held | undefined {
 
 /** The descriptor each standard entry had at load, by name, in a record that holds no prototype. */
 const BASELINE = createObject(null) as Record<string, Held | undefined>
+// Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is stored under the key `undefined`, where no root holds an entry at load, so the extra pass stores and reads `undefined` as before
 for (let index = 0; index < STANDARD.length; index += 1)
   BASELINE[STANDARD[index] as string] = describe(STANDARD[index] as string)
 
@@ -95,6 +96,7 @@ function isStandardKind(name: string, descriptor: Held | undefined): boolean {
 const LOADED_SYMBOLS: symbol[] = []
 {
   const held = ownKeys(root)
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and a key that is not a symbol is not kept
   for (let index = 0; index < held.length; index += 1) {
     const key = held[index]
     if (typeof key === 'symbol') LOADED_SYMBOLS[LOADED_SYMBOLS.length] = key
@@ -103,6 +105,7 @@ const LOADED_SYMBOLS: symbol[] = []
 
 /** Whether a symbol key is one the root held at load. */
 function isLoadedSymbol(key: symbol): boolean {
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is never the symbol compared
   for (let index = 0; index < LOADED_SYMBOLS.length; index += 1)
     if (LOADED_SYMBOLS[index] === key) return true
   return false
@@ -110,6 +113,7 @@ function isLoadedSymbol(key: symbol): boolean {
 
 /** Whether the root was already unlike the runtime's own when this module loaded. */
 let LOADED_STANDARD = true
+// Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and a root with no entry named `undefined` at load counts nothing for it; one planted later is counted by the loop over its keys
 for (let index = 0; index < STANDARD.length; index += 1) {
   const name = STANDARD[index] as string
   if (!isStandardKind(name, BASELINE[name])) LOADED_STANDARD = false

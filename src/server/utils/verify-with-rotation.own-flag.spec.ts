@@ -67,6 +67,14 @@ describe('the flag that lets a verification ignore the expiry', () => {
     expect(refusal).toBe('jwt expired')
   })
 
+  // Scenario: the flag written as `false`, an own key that is not `true`. Expected: the token is refused. Why: only an explicit
+  // `true` asks for the expiry to be ignored, and the presence of the key must not.
+  it('is not set by an own flag that is not true', () => {
+    expect(() =>
+      verifyWithRotation(service, options, expired, { ignoreExpiration: false })
+    ).toThrow('jwt expired')
+  })
+
   // Scenario: the same token, verified by the caller that writes the flag. Expected: it is accepted. Why: logout needs it.
   it('is read from the flag the caller wrote', () => {
     expect(

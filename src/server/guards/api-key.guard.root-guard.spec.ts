@@ -21,6 +21,7 @@ import {
   makeOptions,
   makeRow
 } from '../services/__tests__/api-key-fixtures'
+import { assertRootIsStandard, isRefusal } from '../utils/object-prototype-guard'
 import { ApiKeyGuard } from './api-key.guard'
 
 // The test's own copies: the windows below replace built-ins, so nothing inside one may call a live one.
@@ -174,5 +175,43 @@ describe('ApiKeyGuard while a built-in is replaced', () => {
 
     expect(result).toBe(500)
     expect(events).not.toContain('allowed')
+  })
+
+  // Scenario: the verification of the key fails with the refusal of the library, not with a store error. Expected: that refusal
+  // reaches the caller and no audit event says the store failed. Why: the guard must not turn it into a store outage.
+  it('passes on the refusal of the library raised by the verification', async () => {
+    const held = getOwn(Array.prototype, 'every') as PropertyDescriptor
+    define(Array.prototype, 'every', { ...held, value: () => true })
+    let refusal: unknown
+    try {
+      assertRootIsStandard()
+    } catch (error) {
+      refusal = error
+    } finally {
+      define(Array.prototype, 'every', held)
+    }
+    expect(isRefusal(refusal)).toBe(true)
+    const events: string[] = []
+    const hooks: IAuthHooks = {
+      onApiKeyRequest: (event): void => {
+        events.push(String(event.reason))
+      }
+    }
+    const verifier = { verify: jest.fn().mockRejectedValue(refusal) }
+    const guard = new ApiKeyGuard(
+      new Reflector(),
+      verifier as never,
+      makeOptions({ auditMode: 'required' }),
+      hooks
+    )
+    let thrown: unknown
+    try {
+      await guard.canActivate(context())
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBe(refusal)
+    expect(events).not.toContain('store_error')
   })
 })

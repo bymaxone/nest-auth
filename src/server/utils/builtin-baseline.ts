@@ -28,6 +28,7 @@ import { getDescriptor, getKey, hasOwn, ownKeys, prototypeOf } from './captured-
 import { nodeCrypto } from '../crypto/captured-crypto'
 
 /** The name under which the iterator function of a type is listed: the key is the well-known symbol. */
+// Stryker disable next-line StringLiteral: the marker is read only by `recordAll`, and every holder that names it is a protocol holder, whose symbol keys (the iterator among them) are recorded by the protocol loop, so a marker that matches nothing records the same entries
 export const ITERATOR = '@@iterator'
 
 /** The functions of the namespaces the sources call, by namespace; a source that calls another name must add it here. */
@@ -369,11 +370,13 @@ const originals: unknown[] = []
 
 function record(holder: object, key: PropertyKey): void {
   // An entry the lists and the protocol both name is recorded once, so a replacement is counted once.
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which equals no holder
   for (let index = 0; index < holders.length; index += 1)
     if (holders[index] === holder && keys[index] === key) return
   const descriptor = getDescriptor(holder, key)
   if (descriptor === undefined) return
   // A function that can neither be assigned nor redefined (`Function.prototype[Symbol.hasInstance]`) cannot be replaced.
+  // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: no entry of any list is non-configurable (measured over every list, the protocol keys and the accessors), so the test never decides and any of its mutations records the same entries
   if (descriptor.configurable !== true && descriptor.writable !== true) return
   const field = typeof descriptor.value === 'function' ? 'value' : 'get'
   const held = field === 'value' ? descriptor.value : descriptor.get
@@ -387,7 +390,9 @@ function record(holder: object, key: PropertyKey): void {
 /** Records the entries of `lists`, each name read from the holder named by its key. */
 function recordAll(lists: Record<string, readonly string[]>): void {
   for (const [name, list] of Object.entries(lists))
+    // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which names no property, so `record` finds no descriptor and returns
     for (let at = 0; at < list.length; at += 1) {
+      // Stryker disable next-line ConditionalExpression: every holder that names the iterator marker is a protocol holder, whose symbol keys the protocol loop records, so reading the marker as a name records the same entries
       const key = list[at] === ITERATOR ? Symbol.iterator : (list[at] as string)
       record(BASELINED_HOLDERS[name] as object, key)
     }
@@ -404,6 +409,7 @@ for (let index = 0; index < PROTOCOL_HOLDERS.length; index += 1) {
   const holder = BASELINED_HOLDERS[PROTOCOL_HOLDERS[index] as string] as object
   const known: symbol[] = []
   const present = ownKeys(holder)
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not a symbol and is skipped
   for (let at = 0; at < present.length; at += 1) {
     const key = present[at] as string | symbol
     if (typeof key !== 'symbol') continue
@@ -413,6 +419,7 @@ for (let index = 0; index < PROTOCOL_HOLDERS.length; index += 1) {
   protocolHolders[protocolHolders.length] = holder
   protocolSymbols[protocolSymbols.length] = known
 }
+// Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which names no property, so `record` finds no descriptor and returns
 for (let index = 0; index < BASELINED_REGEXP_ACCESSORS.length; index += 1)
   record(RegExp.prototype, BASELINED_REGEXP_ACCESSORS[index] as string)
 for (let index = 0; index < SPECIES_CONSTRUCTORS.length; index += 1) {
@@ -425,9 +432,12 @@ for (let index = 0; index < SPECIES_CONSTRUCTORS.length; index += 1) {
 record(Buffer.prototype, 'constructor')
 record(Uint8Array.prototype, 'constructor')
 for (const [namespace, list] of Object.entries(BASELINED_STATICS))
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which names no property, so `record` finds no descriptor and returns
   for (let at = 0; at < list.length; at += 1) record(world[namespace] as object, list[at] as string)
 
+// Stryker disable next-line ArrayDeclaration: the loop below assigns every index of the list from zero, so a seeded element is overwritten
 const globalOriginals: unknown[] = []
+// Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and the global named `undefined` is `undefined` when it is stored and when it is compared, so the extra pass counts nothing
 for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)
   globalOriginals[index] = world[BASELINED_GLOBALS[index] as string]
 
@@ -437,10 +447,12 @@ function addedProtocolSymbols(): number {
   for (let index = 0; index < protocolHolders.length; index += 1) {
     const present = ownKeys(protocolHolders[index] as object)
     const known = protocolSymbols[index] as symbol[]
+    // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not a symbol and is skipped
     for (let at = 0; at < present.length; at += 1) {
       const key = present[at] as string | symbol
       if (typeof key !== 'symbol') continue
       let found = false
+      // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is never the symbol compared
       for (let seen = 0; seen < known.length; seen += 1)
         if (known[seen] === key) {
           found = true
@@ -458,6 +470,7 @@ function addedProtocolSymbols(): number {
  * so a host with two copies is not refused for the copy that loaded last; a change after the boot is counted as ever.
  */
 export function rebaselinePolyfills(): void {
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not `Reflect`, so the pass continues
   for (let index = 0; index < holders.length; index += 1) {
     if (holders[index] !== Reflect || keys[index] !== 'getMetadata') continue
     const descriptor = getDescriptor(holders[index] as object, keys[index] as PropertyKey)
@@ -489,6 +502,7 @@ export function replacedBuiltins(): number {
   count += addedProtocolSymbols()
   // Read by `Reflect.get` and not through a descriptor: the global object of a `vm` context answers a descriptor through a native
   // interceptor that reads the root, and a planted `get` or `value` there aborts the process.
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and the global named `undefined` is `undefined` when it is stored and when it is compared, so the extra pass counts nothing
   for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)
     if (getKey(world, BASELINED_GLOBALS[index] as string) !== globalOriginals[index]) count += 1
   return count

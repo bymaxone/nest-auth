@@ -164,6 +164,14 @@ describe('writing a cookie with only the shadows and a planted attribute', () =>
     expect(withPlanted(name, value, bareClear)).toBe(baselineClear)
   })
 
+  // Scenario: a cookie written with nothing but the shadows. Expected: it carries neither `HttpOnly` nor `Secure`. Why: the shadows
+  // are the neutral value of each attribute, so one that is `true` would make a site that does not name it write it.
+  it('writes neither HttpOnly nor Secure with nothing but the shadows', () => {
+    expect(bareSet()).not.toMatch(/HttpOnly/iu)
+    expect(bareSet()).not.toMatch(/Secure/iu)
+    expect(COOKIE_SHADOWS).toMatchObject({ httpOnly: false, secure: false })
+  })
+
   // Scenario: `maxAge` planted for a cookie that is set. Expected: the header has no lifetime but the library's own. Why: `maxAge`
   // turns a session cookie into a persistent one.
   it('does not read maxAge on a cookie that is set', () => {
