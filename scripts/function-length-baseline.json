@@ -54,7 +54,7 @@
     "[\"src/server/services/platform-auth.service.ts\",[\"member\",\"PlatformAuthService\",\"logout\"]]": 65,
     "[\"src/server/services/platform-auth.service.ts\",[\"member\",\"PlatformAuthService\",\"refresh\"]]": 56,
     "[\"src/server/services/reauthentication.service.ts\",[\"member\",\"ReauthenticationService\",\"assertReauthenticated\"]]": 54,
-    "[\"src/server/services/session.service.ts\",[\"member\",\"SessionService\",\"enforceSessionLimit\"]]": 86,
+    "[\"src/server/services/session.service.ts\",[\"member\",\"SessionService\",\"enforceSessionLimit\"]]": 85,
     "[\"src/server/services/session.service.ts\",[\"member\",\"SessionService\",\"listSessions\"]]": 56,
     "[\"src/server/services/session.service.ts\",[\"member\",\"SessionService\",\"revokeAllExceptCurrent\"]]": 55,
     "[\"src/server/services/session.service.ts\",[\"member\",\"SessionService\",\"rotateSession\"]]": 64,
