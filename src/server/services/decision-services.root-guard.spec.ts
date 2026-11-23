@@ -55,7 +55,10 @@ describe('AuthRevocationService while a built-in is replaced', () => {
   // Scenario: `Set.prototype.has` replaced before the call. Expected: the library's refusal and no store read. Why: the first
   // check of the decision is made before anything is asked of the store.
   it('is refused before it reads the store when a built-in is replaced', async () => {
-    const redis = { get: jest.fn(), getUserTokenEpoch: jest.fn() } as unknown as AuthRedisService
+    const redis = {
+      get: jest.fn(),
+      getUserTokenEpoch: jest.fn()
+    } as Partial<AuthRedisService> as AuthRedisService
     const service = new AuthRevocationService(redis)
     const restore = { current: (): void => undefined }
     replaceDuringLookup(restore)
@@ -81,7 +84,7 @@ describe('AuthRevocationService while a built-in is replaced', () => {
         replaceDuringLookup(restore)
         return 0
       }
-    } as unknown as AuthRedisService
+    } as Partial<AuthRedisService> as AuthRedisService
     let result: number | true | undefined
     try {
       result = await outcome(() => new AuthRevocationService(redis).isAccessTokenRevoked(payload))
@@ -96,7 +99,7 @@ describe('AuthRevocationService while a built-in is replaced', () => {
     const redis = {
       get: async (): Promise<null> => null,
       getUserTokenEpoch: async (): Promise<number> => 0
-    } as unknown as AuthRedisService
+    } as Partial<AuthRedisService> as AuthRedisService
 
     await expect(new AuthRevocationService(redis).isAccessTokenRevoked(payload)).resolves.toBe(
       false
@@ -112,7 +115,7 @@ describe('AccountStatusService while a built-in is replaced', () => {
         lookup()
         return 'ACTIVE'
       }
-    } as unknown as AuthRedisService
+    } as Partial<AuthRedisService> as AuthRedisService
     const repository = {
       findById: async (): Promise<object> => {
         await Promise.resolve()

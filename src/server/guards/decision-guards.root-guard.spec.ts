@@ -62,7 +62,7 @@ async function refusalOf(run: () => unknown): Promise<number | undefined> {
 
 const OPTIONS = {
   roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] }, platformHierarchy: { SUPER_ADMIN: [] } }
-} as unknown as ResolvedOptions
+} as Partial<ResolvedOptions> as ResolvedOptions
 
 /** An execution context for a handler carrying `metadata`, a request carrying `user` and `params`. */
 function contextOf(
@@ -75,11 +75,11 @@ function contextOf(
   }
   for (const key of Reflect.ownKeys(metadata))
     Reflect.defineMetadata(key, metadata[key as string], Controller.prototype.handler)
-  return {
+  return Object.assign({} as ExecutionContext, {
     getHandler: () => Controller.prototype.handler,
     getClass: () => Controller,
     switchToHttp: () => ({ getRequest: () => ({ user, params }) })
-  } as unknown as ExecutionContext
+  })
 }
 
 describe('the synchronous guards that decide', () => {
@@ -171,7 +171,7 @@ describe('the guards that wait before they decide', () => {
         await Promise.resolve()
         restore = replace(Array.prototype, 'includes', () => true)
       }
-    } as unknown as AccountStatusService
+    } as Partial<AccountStatusService> as AccountStatusService
     const guard = new UserStatusGuard(accountStatus)
     let status: number | undefined
     try {
@@ -193,17 +193,17 @@ describe('the guards that wait before they decide', () => {
         restore = replace(Set.prototype, 'has', () => true)
         return { kind: 'member', member: { role: 'owner' } }
       }
-    } as unknown as WorkspaceAccessService
+    } as Partial<WorkspaceAccessService> as WorkspaceAccessService
     const denied = {
       admit: (_ref: unknown, run: () => unknown): unknown => run()
-    } as unknown as WorkspaceDeniedEventsService
-    const options = {
+    } as Partial<WorkspaceDeniedEventsService> as WorkspaceDeniedEventsService
+    const options = Object.assign({} as ResolvedOptions, {
       workspaces: {
         roles: { hierarchy: { owner: [] } },
         permissions: {},
         resolveRequestWorkspace: () => 'w1'
       }
-    } as unknown as ResolvedOptions
+    })
     const guard = new WorkspaceGuard(new Reflector(), access, options, denied)
     let status: number | undefined
     try {
@@ -228,7 +228,7 @@ describe('the guards that wait before they decide', () => {
   it('UserStatusGuard admits when nothing is replaced', async () => {
     const accountStatus = {
       assertDashboardAccountUsable: async (): Promise<void> => undefined
-    } as unknown as AccountStatusService
+    } as Partial<AccountStatusService> as AccountStatusService
 
     await expect(new UserStatusGuard(accountStatus).canActivate(contextOf(user))).resolves.toBe(
       true

@@ -46,11 +46,10 @@ function context(): ExecutionContext {
     ip: '10.0.0.7',
     headers: { 'x-api-key': SENTINEL_KEY, 'user-agent': 'agent/1' }
   }
-  return {
-    getHandler: () => Route.prototype.read,
+  return Object.assign({} as ExecutionContext, {
     getClass: () => Route,
     switchToHttp: () => ({ getRequest: () => request })
-  } as unknown as ExecutionContext
+  })
 }
 
 /** The status of the refusal, or `true` when the guard admitted, or `undefined` for any other failure. */

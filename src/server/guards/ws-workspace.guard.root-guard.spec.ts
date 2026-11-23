@@ -31,7 +31,7 @@ const OPTIONS = {
 } as BymaxAuthModuleOptions
 const DENIED = {
   admit: (_ref: unknown, decide: () => unknown) => decide()
-} as unknown as WorkspaceDeniedEventsService
+} as Partial<WorkspaceDeniedEventsService> as WorkspaceDeniedEventsService
 
 class Gateway {
   @WorkspaceRoles('editor')
@@ -40,16 +40,18 @@ class Gateway {
 
 function context(): ExecutionContext {
   const client = { data: { user: { sub: 'u1', tenantId: 't1' } } }
-  return {
+  return Object.assign({} as ExecutionContext, {
     getHandler: () => Gateway.prototype.edit,
     getClass: () => Gateway,
     switchToWs: () => ({ getClient: () => client, getData: () => ({ workspaceId: 'w1' }) })
-  } as unknown as ExecutionContext
+  })
 }
 
 /** The status of the refusal, `true` for an admission, or `undefined` for any other failure. */
 async function outcome(access: () => Promise<unknown>): Promise<number | true | undefined> {
-  const service = { resolveAccess: access } as unknown as WorkspaceAccessService
+  const service = {
+    resolveAccess: access
+  } as Partial<WorkspaceAccessService> as WorkspaceAccessService
   const guard = new WsWorkspaceGuard(new Reflector(), service, resolveOptions(OPTIONS), DENIED)
   try {
     return (await guard.canActivate(context())) ? true : undefined
