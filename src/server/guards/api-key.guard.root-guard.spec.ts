@@ -47,6 +47,7 @@ function context(): ExecutionContext {
     headers: { 'x-api-key': SENTINEL_KEY, 'user-agent': 'agent/1' }
   }
   return Object.assign({} as ExecutionContext, {
+    getHandler: () => Route.prototype.read,
     getClass: () => Route,
     switchToHttp: () => ({ getRequest: () => request })
   })
