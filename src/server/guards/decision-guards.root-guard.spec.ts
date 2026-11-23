@@ -270,6 +270,39 @@ describe('the guards that wait before they decide', () => {
     expect(status).toBe(500)
   })
 
+  // Scenario: `Array.prototype.constructor`, which every `map` and `filter` reads before the species, replaced by a function, then the
+  // guard asked about a workspace. Expected: the library's refusal. Why: the same forgery as the species, one step earlier.
+  it('WorkspaceGuard is refused when the constructor of Array.prototype is replaced', async () => {
+    const access = {
+      resolveAccess: async (): Promise<object> => ({ kind: 'member', member: { role: 'owner' } })
+    } as Partial<WorkspaceAccessService> as WorkspaceAccessService
+    const denied = {
+      admit: (_ref: unknown, run: () => unknown): unknown => run()
+    } as Partial<WorkspaceDeniedEventsService> as WorkspaceDeniedEventsService
+    const options = Object.assign({} as ResolvedOptions, {
+      workspaces: {
+        roles: { hierarchy: { owner: [] } },
+        permissions: {},
+        resolveRequestWorkspace: undefined
+      }
+    })
+    const guard = new WorkspaceGuard(new Reflector(), access, options, denied)
+    const held = getOwn(Array.prototype, 'constructor') as PropertyDescriptor
+    define(Array.prototype, 'constructor', { ...held, value: function Other() {} })
+    let status: number | undefined
+    try {
+      status = await refusalOf(() =>
+        guard.canActivate(
+          contextOf({ ...user }, { [WORKSPACE_ROLES_KEY]: ['owner'] }, { workspaceId: 'w1' })
+        )
+      )
+    } finally {
+      define(Array.prototype, 'constructor', held)
+    }
+
+    expect(status).toBe(500)
+  })
+
   // The skip metadata read through the same reader.
   it('keeps the metadata key of @SkipMfa() the one the guard reads', () => {
     expect(SKIP_MFA_KEY).toBeDefined()

@@ -400,6 +400,41 @@ describe('the protocol the language dispatches through', () => {
   )
 })
 
+describe('the constructor an instance names, which the species lookup reads first', () => {
+  // Scenario: the `constructor` property of the prototype of each constructor whose methods consult the species, replaced by a
+  // function. Expected: counted once, and none once restored. Why: `[a, b].map(...)` reads `array.constructor` and then
+  // `constructor[Symbol.species]`, so a replaced `Array.prototype.constructor` chooses what every `map` builds, and it is a key of
+  // a prototype that no list names and the root snapshot does not cover.
+  it.each(SPECIES_CONSTRUCTORS)('counts %s.prototype.constructor when it is replaced', (name) => {
+    const prototype = (BASELINED_CONSTRUCTORS[name] as { prototype: object }).prototype
+    let counted = -1
+    changed(prototype, 'constructor', { value: function Other() {}, writable: true }, () => {
+      counted = replacedBuiltins()
+    })
+
+    expect(counted).toBe(1)
+    expect(replacedBuiltins()).toBe(0)
+  })
+})
+
+describe('the constructor the buffers name', () => {
+  // Scenario: the `constructor` property of `Buffer.prototype` and of `Uint8Array.prototype` replaced. Expected: counted once.
+  // Why: `buffer.slice()` reads `constructor` and then the species it inherits from the typed arrays, so a replaced one chooses
+  // what the slice of a buffer builds.
+  it.each([
+    ['Buffer.prototype', () => Buffer.prototype],
+    ['Uint8Array.prototype', () => Uint8Array.prototype]
+  ] as const)('counts %s.constructor when it is replaced', (_name, holderOf) => {
+    let counted = -1
+    changed(holderOf(), 'constructor', { value: function Other() {}, writable: true }, () => {
+      counted = replacedBuiltins()
+    })
+
+    expect(counted).toBe(1)
+    expect(replacedBuiltins()).toBe(0)
+  })
+})
+
 describe('the species of the constructors', () => {
   // Scenario: the `Symbol.species` accessor of each constructor given another getter, then put back. Expected: counted once, and
   // none once restored. Why: `[a, b].filter(...).map(...)` reads `Array[Symbol.species]` to choose what it builds, so a replaced

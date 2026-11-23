@@ -252,7 +252,8 @@ export const PROTOCOL_HOLDERS = [
  * The constructors whose `Symbol.species` accessor `map`, `filter`, `slice`, `concat` and `flatMap` of an array, the methods of a
  * typed array, a regular expression's `split` and the copies of a map and a set read to choose what they build. It is an own
  * accessor of the constructor, which neither a prototype nor a namespace list holds, and a replaced one makes every such call
- * build, and the code destructure, what the attacker chose.
+ * build, and the code destructure, what the attacker chose. The lookup reads the `constructor` of the instance first, an own key of
+ * its prototype, so that is recorded too.
  */
 export const SPECIES_CONSTRUCTORS = [
   'Array',
@@ -262,6 +263,12 @@ export const SPECIES_CONSTRUCTORS = [
   'Set',
   'TypedArray'
 ] as const
+
+/**
+ * The classes of the buffers and the byte arrays, whose prototype names the constructor that `buffer.slice()` and the methods of a
+ * typed array read first; their species is inherited from `TypedArray`, which `SPECIES_CONSTRUCTORS` records.
+ */
+export const BUFFER_CONSTRUCTORS = ['Buffer', 'Uint8Array'] as const
 
 /** The constructors named by `SPECIES_CONSTRUCTORS`, by name. */
 export const BASELINED_CONSTRUCTORS: Record<(typeof SPECIES_CONSTRUCTORS)[number], object> = {
@@ -408,11 +415,15 @@ for (let index = 0; index < PROTOCOL_HOLDERS.length; index += 1) {
 }
 for (let index = 0; index < BASELINED_REGEXP_ACCESSORS.length; index += 1)
   record(RegExp.prototype, BASELINED_REGEXP_ACCESSORS[index] as string)
-for (let index = 0; index < SPECIES_CONSTRUCTORS.length; index += 1)
-  record(
-    BASELINED_CONSTRUCTORS[SPECIES_CONSTRUCTORS[index] as (typeof SPECIES_CONSTRUCTORS)[number]],
-    Symbol.species
-  )
+for (let index = 0; index < SPECIES_CONSTRUCTORS.length; index += 1) {
+  // The lookup reads the `constructor` of the instance (an own key of its prototype) and only then the species of that constructor.
+  const constructor =
+    BASELINED_CONSTRUCTORS[SPECIES_CONSTRUCTORS[index] as (typeof SPECIES_CONSTRUCTORS)[number]]
+  record(constructor, Symbol.species)
+  record((constructor as { prototype: object }).prototype, 'constructor')
+}
+record(Buffer.prototype, 'constructor')
+record(Uint8Array.prototype, 'constructor')
 for (const [namespace, list] of Object.entries(BASELINED_STATICS))
   for (let at = 0; at < list.length; at += 1) record(world[namespace] as object, list[at] as string)
 
