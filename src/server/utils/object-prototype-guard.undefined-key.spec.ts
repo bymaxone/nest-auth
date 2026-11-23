@@ -5,6 +5,8 @@
  * @layer Test
  */
 
+export {}
+
 const define = Object.defineProperty
 const remove = Reflect.deleteProperty
 
