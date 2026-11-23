@@ -7,12 +7,15 @@
  * new one. The own keys the library puts on what it hands to its dependencies shadow the names it knows; this guard covers
  * the names it does not know. The standard entries are listed by name and each is compared, by value, accessors and
  * enumerability, with what it was when this module loaded, so an entry that is overwritten (`hasOwnProperty`, `toString`, `constructor`) is counted like a new one.
+ * The built-ins the decisions are made with (`some`, `includes`, `has`, `get`, the string methods, `Object.keys`) are compared with
+ * what they were at load by `builtin-baseline`, and a replaced one refuses the call with a reason of its own.
  * A root that already differed from the standard kinds at load is counted too: the guard refuses on use and never throws
  * from the import.
  *
  * @layer Utility
  */
 
+import { replacedBuiltins } from './builtin-baseline'
 import {
   ErrorOf,
   createObject,
@@ -123,19 +126,26 @@ export function plantedOnRoot(): number {
 }
 
 /**
- * Refuses while `Object.prototype` holds an entry that is not the runtime's own.
+ * Refuses while `Object.prototype` holds an entry, or a built-in is a function, that is not the runtime's own.
  *
- * @throws {AuthException} `auth.internal`, whose cause reports the count and nothing else.
+ * @throws {AuthException} `auth.internal`, whose cause reports the counts and nothing else.
  */
 export function assertRootIsStandard(): void {
   const planted = plantedOnRoot()
-  if (planted > 0) {
-    const descriptor = dataOf(
-      new ErrorOf(`Object.prototype holds ${planted} entries that are not the runtime's own`)
-    )
+  const replaced = replacedBuiltins()
+  if (planted > 0 || replaced > 0) {
+    const descriptor = dataOf(new ErrorOf(reasonOf(planted, replaced)))
     defineKey(REFUSAL_INSTANCE, 'cause', descriptor)
     throw REFUSAL_INSTANCE
   }
+}
+
+/** What the refusal reports: the counts and nothing else, a reason for each of the two ways the runtime can differ. */
+function reasonOf(planted: number, replaced: number): string {
+  const entries = `Object.prototype holds ${planted} entries that are not the runtime's own`
+  const builtins = `${replaced} built-ins are not the runtime's own`
+  if (replaced === 0) return entries
+  return planted === 0 ? builtins : `${entries}; ${builtins}`
 }
 
 /** The mark the refusal carries, so it is recognised without `instanceof`, which calls a live built-in. */
@@ -204,15 +214,16 @@ export function refusedOr(error: unknown, code: AuthErrorCode): AuthException {
 }
 
 /**
- * Refuses to start while `Object.prototype` holds an entry that is not the runtime's own.
+ * Refuses to start while `Object.prototype` holds an entry, or a built-in is a function, that is not the runtime's own.
  *
- * @throws {Error} Naming the module and reporting the count, and no name.
+ * @throws {Error} Naming the module and reporting the counts, and no name.
  */
 export function assertRootIsStandardAtBoot(): void {
   const planted = plantedOnRoot()
-  if (planted > 0)
+  const replaced = replacedBuiltins()
+  if (planted > 0 || replaced > 0)
     throw new ErrorOf(
-      `[BymaxAuthModule] Object.prototype holds ${planted} entries that are not the runtime's own; ` +
-        'the module does not start while a key is planted there.'
+      `[BymaxAuthModule] ${reasonOf(planted, replaced)}; the module does not start while ` +
+        (replaced === 0 ? 'a key is planted there.' : 'a built-in differs.')
     )
 }

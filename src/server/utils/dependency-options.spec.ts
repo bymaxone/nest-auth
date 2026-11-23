@@ -215,19 +215,22 @@ describe('signing with a key planted on Object.prototype', () => {
   const claimsOf = (token: string): unknown => service.decode(token, { complete: true })
 
   // Scenario: `Object.assign` replaced by a function that returns an empty object after the module loaded, then the options of a
-  // signature built. Expected: they still carry every neutral value and what the caller chose. Why: the options are built with the
-  // copy of the built-in taken at load, so a replacement cannot drop the shadows.
-  it('builds the options with the built-in as it was at load', () => {
+  // signature built. Expected: the library's refusal (500 `auth.internal`) and no options. Why: the guard that runs at the
+  // entry compares the built-ins the library baselines, `Object.assign` among them, so the options are never built from a
+  // replaced one; that the options code calls no live built-in is shown by the sweep of the built-ins.
+  it('refuses to build the options while Object.assign is replaced', () => {
     const held = Object.getOwnPropertyDescriptor(Object, 'assign') as PropertyDescriptor
-    let built: Record<string, unknown> = {}
+    let refusal: unknown
     Object.defineProperty(Object, 'assign', { ...held, value: (): object => ({}) })
     try {
-      built = jwtSignOptions({ expiresIn: '10m' }) as Record<string, unknown>
+      jwtSignOptions({ expiresIn: '10m' })
+    } catch (error) {
+      refusal = error
     } finally {
       Object.defineProperty(Object, 'assign', held)
     }
 
-    expect(built).toMatchObject({ ...JWT_SIGN_SHADOWS, expiresIn: '10m' })
+    expect((refusal as { getStatus(): number }).getStatus()).toBe(500)
   })
 
   // Scenario: a payload object handed to the signature while `mutatePayload` is planted as true. Expected: the object the caller

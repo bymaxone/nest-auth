@@ -24,12 +24,15 @@ const WATCHED = [
   'utils/own-or-class',
   'utils/dependency-options',
   'utils/verify-with-rotation',
+  'utils/builtin-baseline',
   'utils/captured-builtins',
   'crypto/captured-crypto'
 ]
 
 // The sweep's own copies: nothing inside the window may call a live built-in, or the spy would record itself.
 const ownKeys = Reflect.ownKeys
+const remove = Reflect.deleteProperty
+const rootObject = Object.prototype
 const apply = Reflect.apply
 const getDescriptor = Object.getOwnPropertyDescriptor
 const define = Object.defineProperty
@@ -125,19 +128,44 @@ function sweep(scenario: () => void): string[] {
   return calls
 }
 
+const mockGuard = { bypass: false }
+
+jest.mock('./object-prototype-guard', () => {
+  const actual = jest.requireActual<typeof import('./object-prototype-guard')>(
+    './object-prototype-guard'
+  )
+  return {
+    ...actual,
+    assertRootIsStandard: (): void => {
+      if (!mockGuard.bypass) actual.assertRootIsStandard()
+    }
+  }
+})
+
+const real = jest.requireActual<typeof import('./object-prototype-guard')>(
+  './object-prototype-guard'
+)
+
 describe('the modules that decide the root guard, the ownership of a key, the dependency options and the verification', () => {
   const service = new JwtService(jwtModuleOptions(SECRET))
   const token = service.sign({ sub: 'user' }, { noTimestamp: true })
   const expired = service.sign({ sub: 'user', exp: 1 }, { noTimestamp: true })
-  const planted = (): never => {
-    throw new ErrorOf('not reached')
+
+  /** Runs one step and keeps going when it refuses: with every built-in replaced the guard refuses, and the rest must still run. */
+  const attempt = (step: () => unknown): void => {
+    try {
+      step()
+    } catch (error) {
+      refusedOr(error, 'auth.token_invalid')
+    }
   }
 
-  // Scenario: every function of every global replaced by a recording spy, then a clean-root judgement, a judgement over a root
-  // holding a planted key and the refusal passed through, the reading of an own key, a class key and a root-only key, the
-  // options for a signature, a cookie and the module, and a verification (current secret, previous secret, ignoring the
-  // expiry, and refused). Expected: no recorded call came from one of the modules. Why: a call to a live built-in is a
-  // call a replacement can answer for, and these modules decide the answers.
+  // Scenario: every function of every global replaced by a recording spy, then the guard run (it refuses, because the built-ins it
+  // baselines were replaced, and again with a key planted on the root so both reasons are built), the reading of an own key, a
+  // class key and a root-only key, the options for a signature, a cookie and the module, and a verification (current secret,
+  // previous secret, ignoring the expiry, and refused), the last group with the guard bypassed so that its bodies run. Expected:
+  // no recorded call came from one of the modules. Why: a call to a live built-in is a call a replacement can answer for, and
+  // these modules decide the answers.
   it('call no live built-in', () => {
     class Holder {
       get viaClass(): string {
@@ -146,23 +174,37 @@ describe('the modules that decide the root guard, the ownership of a key, the de
     }
     const own = { viaOwn: 'own' }
     const calls = sweep(() => {
-      plantedOnRoot()
-      assertRootIsStandard()
-      readOwnOrClass(own, 'viaOwn')
-      readOwnOrClass(new Holder(), 'viaClass')
-      readOwnOrClass(own, 'absent')
-      jwtSignOptions({ expiresIn: '10m' })
-      jwtModuleOptions(SECRET)
-      cookieOptions()
-      cookieOptions({ httpOnly: true, path: '/', maxAge: 1 })
-      verifyWithRotation(service, options, token)
-      verifyWithRotation(service, options, expired, { ignoreExpiration: true })
+      attempt(() => real.plantedOnRoot())
+      attempt(() => real.assertRootIsStandard())
+      attempt(() => real.assertRootIsStandardAtBoot())
+      define(rootObject, 'sessions', {
+        value: 1,
+        configurable: true,
+        enumerable: true,
+        writable: true
+      })
       try {
-        verifyWithRotation(service, options, 'not-a-token')
-      } catch (error) {
-        refusedOr(error, 'auth.token_invalid')
+        attempt(() => real.plantedOnRoot())
+        attempt(() => real.assertRootIsStandard())
+        attempt(() => real.assertRootIsStandardAtBoot())
+      } finally {
+        remove(rootObject, 'sessions')
       }
-      planted
+      attempt(() => readOwnOrClass(own, 'viaOwn'))
+      attempt(() => readOwnOrClass(new Holder(), 'viaClass'))
+      attempt(() => readOwnOrClass(own, 'absent'))
+      mockGuard.bypass = true
+      try {
+        attempt(() => jwtSignOptions({ expiresIn: '10m' }))
+        attempt(() => jwtModuleOptions(SECRET))
+        attempt(() => cookieOptions())
+        attempt(() => cookieOptions({ httpOnly: true, path: '/', maxAge: 1 }))
+        attempt(() => verifyWithRotation(service, options, token))
+        attempt(() => verifyWithRotation(service, options, expired, { ignoreExpiration: true }))
+        attempt(() => verifyWithRotation(service, options, 'not-a-token'))
+      } finally {
+        mockGuard.bypass = false
+      }
     })
 
     expect(calls).toEqual([])

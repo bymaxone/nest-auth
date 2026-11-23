@@ -5,6 +5,7 @@
  * @layer Test
  */
 
+import { replacedBuiltins } from './builtin-baseline'
 import {
   RootNotStandardException,
   assertRootIsStandard,
@@ -97,15 +98,18 @@ describe('the guard with a built-in replaced after it loaded', () => {
     expect(refusal).toBeInstanceOf(RootNotStandardException)
   })
 
-  // Scenario: the same replacements with nothing planted. Expected: the root is standard and the guard lets the call through.
-  // Why: a replaced built-in must not make a clean process refuse everything either.
+  // Scenario: the same replacements with nothing planted. Expected: the judgement of the root still counts nothing planted, and
+  // the guard refuses exactly when the replaced function is one the library baselines, with the reason that names built-ins and
+  // not planted entries. Why: a replaced built-in must neither blind the judgement of the root nor make it invent a planted key.
   it.each(REPLACED)(
-    'still accepts a standard root with %s replaced',
+    'counts no planted key, and a replaced built-in, with %s replaced',
     (_name, holder, key, stub) => {
-      let counted = -1
+      let planted = -1
+      let swapped = -1
       let refusal: unknown
       replaced(holder, key, stub, () => {
-        counted = plantedOnRoot()
+        planted = plantedOnRoot()
+        swapped = replacedBuiltins()
         try {
           assertRootIsStandard()
         } catch (error) {
@@ -113,8 +117,14 @@ describe('the guard with a built-in replaced after it loaded', () => {
         }
       })
 
-      expect(counted).toBe(0)
-      expect(refusal).toBeUndefined()
+      expect(planted).toBe(0)
+      expect(refusal === undefined).toBe(swapped === 0)
+      if (swapped > 0) {
+        expect(refusal).toBeInstanceOf(RootNotStandardException)
+        expect(((refusal as { cause: Error }).cause as Error).message).toBe(
+          `${swapped} built-ins are not the runtime's own`
+        )
+      }
     }
   )
 })
