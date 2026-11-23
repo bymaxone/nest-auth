@@ -29,30 +29,27 @@ function publicContext(): ExecutionContext {
   })
 }
 
-const GUARDS: readonly (readonly [string, () => { canActivate(c: ExecutionContext): unknown }])[] =
+const GUARDS: readonly (readonly [
+  string,
+  () => { canActivate(c: ExecutionContext): Promise<boolean> }
+])[] = [
   [
-    [
-      'JwtAuthGuard',
-      () => new JwtAuthGuard(...(Array(4).fill({}) as [never, never, never, never]), {} as never)
-    ],
-    [
-      'JwtPlatformGuard',
-      () =>
-        new JwtPlatformGuard(...(Array(4).fill({}) as [never, never, never, never]), {} as never)
-    ]
+    'JwtAuthGuard',
+    () => new JwtAuthGuard(...(Array(4).fill({}) as [never, never, never, never]), {} as never)
+  ],
+  [
+    'JwtPlatformGuard',
+    () => new JwtPlatformGuard(...(Array(4).fill({}) as [never, never, never, never]), {} as never)
   ]
+]
 
 describe('the JWT guards while a built-in is replaced', () => {
   // Scenario: each guard called on a public route with nothing replaced. Expected: admitted. Why: the control for the rows below.
   it.each(GUARDS)('%s admits a public route with nothing replaced', async (_name, make) => {
-    const guard = make() as unknown as { reflector: Reflector }
-    guard.reflector = new Reflector()
+    const guard = make()
+    Reflect.set(guard, 'reflector', new Reflector())
 
-    await expect(
-      (guard as unknown as { canActivate(c: ExecutionContext): Promise<boolean> }).canActivate(
-        publicContext()
-      )
-    ).resolves.toBe(true)
+    await expect(guard.canActivate(publicContext())).resolves.toBe(true)
   })
 
   // Scenario: `Array.prototype.every` replaced before each guard runs on a public route. Expected: the library's refusal (500).
@@ -60,11 +57,8 @@ describe('the JWT guards while a built-in is replaced', () => {
   it.each(GUARDS)(
     '%s is refused on a public route while a built-in is replaced',
     async (_name, make) => {
-      const guard = make() as unknown as {
-        reflector: Reflector
-        canActivate(c: ExecutionContext): Promise<boolean>
-      }
-      guard.reflector = new Reflector()
+      const guard = make()
+      Reflect.set(guard, 'reflector', new Reflector())
       const held = getOwn(Array.prototype, 'every') as PropertyDescriptor
       define(Array.prototype, 'every', { ...held, value: () => true })
       let status: number | undefined | true
