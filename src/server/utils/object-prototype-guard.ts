@@ -74,7 +74,6 @@ function describe(name: string): Held | undefined {
 
 /** The descriptor each standard entry had at load, by name, in a record that holds no prototype. */
 const BASELINE = createObject(null) as Record<string, Held | undefined>
-// Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is stored under the key `undefined`, where no root holds an entry at load, so the extra pass stores and reads `undefined` as before
 for (let index = 0; index < STANDARD.length; index += 1)
   BASELINE[STANDARD[index] as string] = describe(STANDARD[index] as string)
 
