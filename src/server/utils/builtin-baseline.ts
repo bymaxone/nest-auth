@@ -375,9 +375,6 @@ function record(holder: object, key: PropertyKey): void {
     if (holders[index] === holder && keys[index] === key) return
   const descriptor = getDescriptor(holder, key)
   if (descriptor === undefined) return
-  // A function that can neither be assigned nor redefined (`Function.prototype[Symbol.hasInstance]`) cannot be replaced.
-  // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: no entry of any list is non-configurable (measured over every list, the protocol keys and the accessors), so the test never decides and any of its mutations records the same entries
-  if (descriptor.configurable !== true && descriptor.writable !== true) return
   const field = typeof descriptor.value === 'function' ? 'value' : 'get'
   const held = field === 'value' ? descriptor.value : descriptor.get
   if (typeof held !== 'function') return

@@ -113,7 +113,6 @@ function isLoadedSymbol(key: symbol): boolean {
 
 /** Whether the root was already unlike the runtime's own when this module loaded. */
 let LOADED_STANDARD = true
-// Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and a root with no entry named `undefined` at load counts nothing for it; one planted later is counted by the loop over its keys
 for (let index = 0; index < STANDARD.length; index += 1) {
   const name = STANDARD[index] as string
   if (!isStandardKind(name, BASELINE[name])) LOADED_STANDARD = false
@@ -145,6 +144,7 @@ export function plantedOnRoot(): number {
     if (typeof key === 'symbol' ? !isLoadedSymbol(key) : !same(describe(key), BASELINE[key]))
       count += 1
   }
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and no entry named `undefined` was recorded at load (`BASELINE` holds none), so the condition below is false for it
   for (let index = 0; index < STANDARD.length; index += 1) {
     const name = STANDARD[index] as string
     if (describe(name) === undefined && BASELINE[name] !== undefined) count += 1
