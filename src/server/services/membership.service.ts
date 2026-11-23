@@ -26,6 +26,7 @@ import type {
 } from '../interfaces/membership-repository.interface'
 import type { WorkspaceAuditEvent } from '../interfaces/workspace-audit.interface'
 import type { AuthWorkspace, WorkspaceRef } from '../interfaces/workspace-repository.interface'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { hasRole } from '../utils/roles.util'
 
 /** The most rows one page may hold. */
@@ -514,6 +515,8 @@ export class MembershipService {
    * only on a role it includes and does not itself hold.
    */
   private outranks(actorRole: string, otherRole: string): boolean {
+    // Decided after the lookup of the member, and the write that follows commits whatever this answers.
+    assertRootIsStandard()
     const { hierarchy, ownerRole } = this.group.roles
     return (
       actorRole === ownerRole ||

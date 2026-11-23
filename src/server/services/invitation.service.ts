@@ -24,6 +24,7 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { hasRole } from '../utils/roles.util'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
@@ -579,6 +580,8 @@ export class InvitationService {
     revoker: { role: string; status: string },
     invitation: StoredInvitation
   ): boolean {
+    // Decided after the lookups of the revoker and of the invitation, and the deletion that follows is committed at once.
+    assertRootIsStandard()
     return hasRole(revoker.role, invitation.role, this.options.roles.hierarchy)
   }
 
