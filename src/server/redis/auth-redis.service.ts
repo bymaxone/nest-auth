@@ -1045,8 +1045,7 @@ export class AuthRedisService {
     // `Number(null)` is 0, which is exactly the "never bumped" default, so an absent key needs
     // no branch of its own. Anything that is not a whole number — a corrupt value, a float —
     // reads as 0 too: comparing a stamped epoch against NaN is always false, which would
-    // silently disable bulk revocation for that user. A negative value clamps up for the same
-    // reason.
+    // silently disable bulk revocation for that user. A negative value clamps up for the same reason.
     const parsed = Number(raw)
     return Number.isInteger(parsed) ? Math.max(0, parsed) : 0
   }

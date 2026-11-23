@@ -950,8 +950,7 @@ export class SessionService {
 
     // Names the account as well as the request. An eviction context must carry tenant-qualified
     // identity: a repository id is unique only within a tenant, so a consumer disconnecting sockets
-    // on a bare id reaches another tenant's user. Both values are parameters of this method, so
-    // there is nothing to look up.
+    // on a bare id reaches another tenant's user. Both values are parameters of this method, so there is nothing to look up.
     const context: HookContext = {
       plane: 'dashboard',
       userId,

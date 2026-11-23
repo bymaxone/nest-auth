@@ -187,8 +187,7 @@ export class TokenManagerService {
     // same value as "do not check". Signing is the side that cares, so this is the side that
     // guards.
     //
-    // `resolveOptions` has already dropped an empty value, so the only question left here is
-    // present-or-absent.
+    // `resolveOptions` has already dropped an empty value, so the only question left here is present-or-absent.
     const { issuer, audience } = this.options.jwt
     return {
       ...(issuer === undefined ? {} : { issuer }),

@@ -334,8 +334,7 @@ export class PasswordResetService {
     // `sendOtp` stores the OTP in Redis synchronously, then fires the email provider call as
     // fire-and-forget (void). The timing floor in `answerResetRequest` is correct only because
     // the email send is NOT awaited here. If this is changed to `await`, the email RTT is added
-    // to the synchronous path, creating a timing difference between "user found" and "user not
-    // found" responses.
+    // to the synchronous path, creating a timing difference between "user found" and "user not found" responses.
     await this.answerResetRequest(dto.email, tenantId, start, () =>
       this.sendOtp(dto.email, tenantId)
     )
