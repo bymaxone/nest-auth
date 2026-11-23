@@ -7,6 +7,7 @@
 
 import nodeCryptoModule from 'node:crypto'
 
+import { decrypt, encrypt } from './aes-gcm'
 import { digestRecoveryCode, verifyRecoveryCode } from '../utils/mfa-recovery-codes'
 import { apiKeyDigest, digestsMatch } from './api-key'
 import { hmacSha256, sha256, timingSafeCompare } from './secure-token'
@@ -20,6 +21,8 @@ const getOwn = Object.getOwnPropertyDescriptor
 const SECRET = generateTotpSecret().base32
 const DIGEST = apiKeyDigest('a', 'p')
 const OTHER = apiKeyDigest('b', 'p')
+const AES_KEY = Buffer.alloc(32, 7).toString('base64')
+const SEALED = encrypt('secret', AES_KEY)
 
 /** The helpers, each as a call that is valid on a standard runtime. */
 const HELPERS: readonly (readonly [string, () => unknown])[] = [
@@ -32,7 +35,9 @@ const HELPERS: readonly (readonly [string, () => unknown])[] = [
   ['generateTotp', () => generateTotp(SECRET)],
   ['verifyTotp', () => verifyTotp(SECRET, '000000')],
   ['digestRecoveryCode', () => digestRecoveryCode('code', 'key')],
-  ['verifyRecoveryCode', () => verifyRecoveryCode('code', [], 'key', [])]
+  ['verifyRecoveryCode', () => verifyRecoveryCode('code', [], 'key', [])],
+  ['encrypt', () => encrypt('secret', AES_KEY)],
+  ['decrypt', () => decrypt(SEALED, AES_KEY)]
 ]
 
 describe('the helpers that hash, compare or derive from a secret', () => {
@@ -86,6 +91,30 @@ describe('the helpers that hash, compare or derive from a secret', () => {
       define(prototype, method, held)
     }
 
+    expect(status).toBe(500)
+  })
+
+  // Scenario: `Decipheriv.prototype.final`, which is where a ciphertext with the wrong tag is refused, replaced by a function that
+  // answers nothing, then a ciphertext whose tag was altered decrypted. Expected: the library's refusal, never the plaintext.
+  // Why: with `final` replaced a tampered ciphertext is accepted, so the secret it carries is the attacker's.
+  it('decrypt refuses a tampered ciphertext while Decipheriv.prototype.final is replaced', () => {
+    const [iv, tag, body] = SEALED.split(':') as [string, string, string]
+    const tampered = [iv, Buffer.alloc(16, 1).toString('base64'), body].join(':')
+    const prototype = (nodeCrypto['Decipheriv'] as { prototype: object }).prototype
+    const held = getOwn(prototype, 'final') as PropertyDescriptor
+    define(prototype, 'final', { ...held, value: () => Buffer.alloc(0) })
+    let status: number | undefined
+    let plain: unknown
+    try {
+      plain = decrypt(tampered, AES_KEY)
+    } catch (error) {
+      status = (error as { getStatus?: () => number }).getStatus?.()
+    } finally {
+      define(prototype, 'final', held)
+    }
+
+    expect(tag).toBeDefined()
+    expect(plain).toBeUndefined()
     expect(status).toBe(500)
   })
 })

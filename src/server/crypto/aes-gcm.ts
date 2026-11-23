@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from './captured-crypto'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 /**
  * AES-256-GCM authenticated encryption and decryption.
@@ -57,6 +58,7 @@ const AUTH_TAG_BYTE_LENGTH = 16
  * @throws If the key does not decode to exactly 32 bytes.
  */
 export function encrypt(plaintext: string, keyBase64: string): string {
+  assertRootIsStandard()
   const key = Buffer.from(keyBase64, 'base64')
   if (key.length !== 32) {
     throw new Error(
@@ -95,6 +97,7 @@ export function encrypt(plaintext: string, keyBase64: string): string {
  * clients to avoid leaking information about the failure type.
  */
 export function decrypt(ciphertext: string, keyBase64: string): string {
+  assertRootIsStandard()
   // ':' is not part of the standard base64 alphabet (A-Za-z0-9+/=), so splitting on it
   // is safe for the wire format produced by encrypt(). If the encoding is ever changed
   // to base64url (-_) or another alphabet, verify that ':' is still not a valid character.

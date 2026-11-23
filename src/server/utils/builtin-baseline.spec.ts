@@ -181,16 +181,13 @@ describe('the built-ins the library baselines', () => {
     expect(replacedBuiltins()).toBe(0)
   })
 
-  // Scenario: functions that no source calls (a method a polyfill adds or patches, an HTML string method, the whole of `JSON`
-  // which the library captures) replaced. Expected: none counted. Why: a built-in nothing calls must never make a healthy
-  // process refuse, and what is captured needs no comparison.
+  // Scenario: functions that neither the sources nor the JWT libraries call (a method a polyfill adds or patches, an HTML string
+  // method) replaced. Expected: none counted. Why: a built-in nothing calls must never make a healthy process refuse.
   it.each([
     ['Array.prototype', Array.prototype, 'copyWithin'],
     ['String.prototype', String.prototype, 'anchor'],
     ['Map.prototype', Map.prototype, 'clear'],
-    ['Object', Object, 'getOwnPropertyNames'],
-    ['JSON', JSON, 'stringify'],
-    ['JSON', JSON, 'parse']
+    ['Object', Object, 'getOwnPropertyNames']
   ] as const)(
     'counts nothing when %s.%s, which no source calls, is replaced',
     (_name, holder, key) => {

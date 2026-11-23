@@ -117,6 +117,27 @@ describe('a forged token while a function of node:crypto is replaced', () => {
     }
   )
 
+  // Scenario: a token validly signed with the real secret for an ordinary user, verified while `JSON.parse` is replaced by a function
+  // that answers an administrator. Expected: the library's refusal, never the administrator's claims. Why: `jws` decodes the payload
+  // with `JSON.parse` after the signature was checked, so a replaced one turns any validly signed token into any claims.
+  it('is refused while JSON.parse is replaced', () => {
+    const token = service.sign({ sub: 'user', role: 'MEMBER' })
+    const held = getOwn(JSON, 'parse') as PropertyDescriptor
+    define(JSON, 'parse', { ...held, value: () => ({ sub: 'user', role: 'ADMIN' }) })
+    let payload: unknown
+    let status: number | undefined
+    try {
+      status = refusalStatus(() => {
+        payload = verifyWithRotation(service, options, token)
+      })
+    } finally {
+      define(JSON, 'parse', held)
+    }
+
+    expect(payload).toBeUndefined()
+    expect(status).toBe(500)
+  })
+
   // Scenario: `JwtService.prototype.verify` replaced by a function that answers an administrator. Expected: the library's
   // refusal. Why: the sources call `jwtService.verify` at each decision, and a replaced one is the same forgery.
   it('is refused while JwtService.prototype.verify is replaced', () => {

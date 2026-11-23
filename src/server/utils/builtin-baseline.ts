@@ -49,8 +49,9 @@ export const BASELINED_STATICS = {
   Reflect: ['apply', 'deleteProperty', 'get', 'set'],
   Array: ['from', 'isArray'],
   Number: ['isFinite', 'isInteger', 'isNaN', 'isSafeInteger', 'parseFloat'],
-  Math: ['ceil', 'floor', 'log2', 'max', 'min'],
-  Buffer: ['alloc', 'allocUnsafe', 'byteLength', 'concat', 'from']
+  Math: ['abs', 'ceil', 'floor', 'log2', 'max', 'min', 'round'],
+  JSON: ['parse', 'stringify'],
+  Buffer: ['alloc', 'allocUnsafe', 'allocUnsafeSlow', 'byteLength', 'concat', 'from', 'isBuffer']
 } as const satisfies Record<string, readonly string[]>
 
 /**
@@ -96,6 +97,7 @@ export const BASELINED_PROTOTYPES = {
     'indexOf',
     'lastIndexOf',
     'localeCompare',
+    'match',
     'padStart',
     'repeat',
     'replace',
@@ -109,15 +111,15 @@ export const BASELINED_PROTOTYPES = {
     'toString',
     'trim',
     'toLowerCase',
-    'toUpperCase'
+    'toUpperCase',
+    'valueOf'
   ],
   'Map.prototype': ['get', 'set', 'has', 'entries', 'forEach', 'keys', 'size', 'values'],
   'Set.prototype': ['has', 'add', 'entries', 'forEach', 'size', 'values', 'keys'],
   'WeakMap.prototype': ['get', 'set', 'has'],
-  'RegExp.prototype': ['flags', 'source', 'toString', 'test'],
+  'RegExp.prototype': ['exec', 'flags', 'source', 'toString', 'test'],
   'Function.prototype': ['apply', 'bind', 'call', 'toString'],
-  'Number.prototype': ['toFixed', 'toString'],
-  'Date.prototype': ['toString', 'toISOString', 'getTime'],
+  'Number.prototype': ['toFixed', 'toString', 'valueOf'],
   'URL.prototype': [
     'toString',
     'origin',
@@ -146,15 +148,19 @@ export const BASELINED_PROTOTYPES = {
   'Buffer.prototype': [
     'readUInt8',
     'writeUInt32BE',
+    'copy',
     'toString',
     'compare',
     'indexOf',
     'lastIndexOf',
     'includes',
     'fill',
+    'write',
     'slice'
   ],
   'TypedArray.prototype': [
+    'buffer',
+    'byteLength',
     'length',
     'entries',
     'keys',
@@ -178,7 +184,9 @@ export const BASELINED_PROTOTYPES = {
     'some',
     'sort',
     'toString'
-  ]
+  ],
+  'DataView.prototype': ['buffer', 'byteLength'],
+  'Date.prototype': ['toString', 'toISOString', 'getTime', 'valueOf']
 } as const satisfies Record<string, readonly string[]>
 
 /**
@@ -203,6 +211,8 @@ export const BASELINED_DEPENDENCIES = {
   'JwtService.prototype': ['sign', 'verify'],
   Reflect: ['getMetadata'],
   'Reflector.prototype': ['get', 'getAllAndOverride'],
+  'Cipheriv.prototype': ['final', 'getAuthTag', 'update'],
+  'Decipheriv.prototype': ['final', 'setAuthTag', 'update'],
   'Hash.prototype': ['digest', 'update'],
   'Hmac.prototype': ['digest', 'update'],
   'Sign.prototype': ['sign', 'update'],
@@ -229,6 +239,7 @@ export const BASELINED_GLOBALS = [
   'DataView',
   'Error',
   'Function',
+  'JSON',
   'Map',
   'Math',
   'Number',
@@ -245,6 +256,7 @@ export const BASELINED_GLOBALS = [
   'URL',
   'URLSearchParams',
   'WeakMap',
+  'isFinite',
   'isNaN',
   'parseFloat',
   'parseInt',
@@ -277,6 +289,8 @@ export const BASELINED_HOLDERS: Record<string, object> = {
   'JwtService.prototype': JwtService.prototype,
   Reflect,
   'Reflector.prototype': Reflector.prototype,
+  'Cipheriv.prototype': nodeCrypto.Cipheriv.prototype,
+  'Decipheriv.prototype': nodeCrypto.Decipheriv.prototype,
   'Hash.prototype': nodeCrypto.Hash.prototype,
   'Hmac.prototype': nodeCrypto.Hmac.prototype,
   'Sign.prototype': nodeCrypto.Sign.prototype,

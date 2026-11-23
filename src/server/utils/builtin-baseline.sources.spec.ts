@@ -138,12 +138,79 @@ function scan(text: string, path: string, into: Usage): void {
 }
 
 /** What the sources use: the globals named as values, the `Namespace.member` accesses and every other property name. */
+/** The packages whose code is not read: the type declarations, Nest itself, and `semver`, which only gates the asymmetric algorithms. */
+const NOT_READ =
+  /^(semver|@types\/node|undici-types|@nestjs\/common|@nestjs\/core|@nestjs\/jwt|reflect-metadata|rxjs)$/
+
+/** The functions the JWT chain reads that decide nothing, each with the reason; every other function it reads is compared. */
+const EXEMPT_READS: Record<string, string> = {
+  'Date.now': 'the clock source, which the test doubles of a host replace',
+  'Date.parse': 'the clock source, which the test doubles of a host replace',
+  'Promise.resolve': 'a decision never depends on it',
+  'Promise.all': 'a decision never depends on it',
+  'Promise.race': 'a decision never depends on it',
+  'Promise.reject': 'a decision never depends on it',
+  'Error.call': 'builds the message of an error, decides nothing',
+  'Reflect.decorate': 'runs once, when a class is defined, and decides nothing afterwards',
+  'Reflect.metadata': 'runs once, when a class is defined, and decides nothing afterwards',
+  'Error.captureStackTrace': 'gives an error its stack, decides nothing'
+}
+
+/** The directories of the installed packages the verification and the signature are made through, resolved from `@nestjs/jwt`. */
+function chainPackages(): string[] {
+  const found = new Set<string>()
+  const visit = (directory: string): void => {
+    if (found.has(directory)) return
+    found.add(directory)
+    const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>
+    }
+    for (const name of Object.keys(manifest.dependencies ?? {})) {
+      if (NOT_READ.test(name)) continue
+      const resolved = createRequire(join(directory, 'package.json')).resolve(
+        `${name}/package.json`
+      )
+      visit(dirname(resolved))
+    }
+  }
+  const jwt = dirname(createRequire(__filename).resolve('@nestjs/jwt/package.json'))
+  const manifest = JSON.parse(readFileSync(join(jwt, 'package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>
+  }
+  for (const name of Object.keys(manifest.dependencies ?? {}))
+    if (!NOT_READ.test(name))
+      visit(dirname(createRequire(join(jwt, 'package.json')).resolve(`${name}/package.json`)))
+  return [...found]
+}
+
+/** The `.js` files of a package (or the one service file of `@nestjs/jwt`), without its tests and its nested packages. */
+function jsFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory())
+      return ['node_modules', 'test', 'tests', 'docs', '__tests__', 'types'].includes(entry.name)
+        ? []
+        : jsFiles(path)
+    return /\.js$/.test(entry.name) && !/\.d\.js$/.test(entry.name) ? [path] : []
+  })
+}
+
+/** What the sources use, and what the JWT chain they call into reads: the built-ins the baseline must hold. */
 function usage(): Usage {
   const found: Usage = { globals: new Map(), members: new Map(), names: new Map() }
   for (const path of sourceFiles()) {
     if (CAPTURING.some((file) => path.endsWith(file))) continue
     scan(readFileSync(path, 'utf8'), path, found)
   }
+  for (const directory of chainPackages())
+    for (const path of jsFiles(directory)) scan(readFileSync(path, 'utf8'), path, found)
+  const jwtService = join(
+    dirname(createRequire(__filename).resolve('@nestjs/jwt')),
+    'dist',
+    'jwt.service.js'
+  )
+  scan(readFileSync(jwtService, 'utf8'), jwtService, found)
+  for (const access of Object.keys(EXEMPT_READS)) found.members.delete(access)
   return found
 }
 
@@ -416,6 +483,35 @@ describe('the list of built-ins the library baselines, against the sources', () 
       expect([...BASELINED_DEPENDENCIES[holder]].sort()).toEqual([...called].sort())
     }
   )
+
+  // Scenario: the sources, read as syntax for the methods they call on the objects `createCipheriv` and `createDecipheriv` hand
+  // back (`cipher.update`, `decipher.setAuthTag`, `decipher.final`). Expected: exactly the methods the lists of
+  // `Cipheriv.prototype` and `Decipheriv.prototype` hold. Why: `decipher.final` is where a tampered ciphertext is refused, so a
+  // replaced one accepts it.
+  it.each([
+    ['cipher', 'Cipheriv.prototype'],
+    ['decipher', 'Decipheriv.prototype']
+  ] as const)('lists exactly the methods the sources call on %s', (receiver, holder) => {
+    const called = new Set<string>()
+    const path = join(__dirname, '..', 'crypto', 'aes-gcm.ts')
+    const file = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true)
+    const visit = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text.startsWith('stry') === true) return
+      if (ts.isConditionalExpression(node) && isMutantSwitch(node.condition))
+        return visit(node.whenFalse)
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === receiver
+      )
+        called.add(node.expression.name.text)
+      ts.forEachChild(node, visit)
+    }
+    visit(file)
+
+    expect([...BASELINED_DEPENDENCIES[holder]].sort()).toEqual([...called].sort())
+  })
 })
 
 /** The names the installed JWT libraries take from `crypto`, found by reading their sources as syntax. */
