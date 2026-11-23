@@ -6,7 +6,15 @@
  * @layer Test
  */
 
-import { BASELINED_GLOBALS, BASELINED_STATICS, replacedBuiltins } from './builtin-baseline'
+import {
+  BASELINED_GLOBALS,
+  BASELINED_HOLDERS,
+  BASELINED_ITERATORS,
+  BASELINED_PROTOTYPES,
+  BASELINED_STATICS,
+  ITERATOR,
+  replacedBuiltins
+} from './builtin-baseline'
 
 // The test's own copies: the windows below replace built-ins, so nothing inside one may call a live one.
 const define = Object.defineProperty
@@ -14,37 +22,35 @@ const getOwn = Object.getOwnPropertyDescriptor
 const keysOf = Reflect.ownKeys
 const world = globalThis as Record<string, unknown>
 
-/** The prototypes the module records whole, found the same way it finds them. */
-const PROTOTYPES: [string, object][] = [
-  ['Array.prototype', Array.prototype],
-  ['String.prototype', String.prototype],
-  ['Map.prototype', Map.prototype],
-  ['Set.prototype', Set.prototype],
-  ['WeakMap.prototype', WeakMap.prototype],
-  ['RegExp.prototype', RegExp.prototype],
-  ['Function.prototype', Function.prototype],
-  ['ArrayIterator.prototype', Object.getPrototypeOf([][Symbol.iterator]()) as object],
-  ['MapIterator.prototype', Object.getPrototypeOf(new Map()[Symbol.iterator]()) as object],
-  ['SetIterator.prototype', Object.getPrototypeOf(new Set()[Symbol.iterator]()) as object],
-  ['StringIterator.prototype', Object.getPrototypeOf(''[Symbol.iterator]()) as object]
-]
-
-/** Every `[label, holder, key]` the module records on a function. */
+/** Every `[label, holder, key]` the module records, enumerated from its lists. */
 function entries(): [string, object, PropertyKey][] {
   const found: [string, object, PropertyKey][] = []
-  for (const [name, holder] of PROTOTYPES)
-    for (const key of keysOf(holder)) {
-      const descriptor = getOwn(holder, key)
-      if (
-        key !== 'constructor' &&
-        typeof descriptor?.value === 'function' &&
-        (descriptor.configurable === true || descriptor.writable === true)
-      )
-        found.push([`${name}.${String(key)}`, holder, key])
-    }
+  for (const lists of [BASELINED_PROTOTYPES, BASELINED_ITERATORS] as Record<
+    string,
+    readonly string[]
+  >[])
+    for (const [name, list] of Object.entries(lists))
+      for (const key of list) {
+        const holder = BASELINED_HOLDERS[name] as object
+        const at = key === ITERATOR ? Symbol.iterator : key
+        const descriptor = getOwn(holder, at)
+        if (
+          descriptor !== undefined &&
+          (descriptor.configurable === true || descriptor.writable === true)
+        )
+          found.push([`${name}.${key}`, holder, at])
+      }
   for (const [namespace, list] of Object.entries(BASELINED_STATICS))
     for (const name of list) found.push([`${namespace}.${name}`, world[namespace] as object, name])
   return found
+}
+
+/** What replaces the entry: a function for a method, an accessor with a different getter for an accessor. */
+function replacementFor(holder: object, key: PropertyKey): PropertyDescriptor {
+  const held = getOwn(holder, key) as PropertyDescriptor
+  return typeof held.value === 'function'
+    ? { value: () => undefined, writable: true }
+    : { get: () => undefined }
 }
 
 /** Runs `run` with `key` of `holder` changed to `descriptor`, and puts it back. */
@@ -83,17 +89,20 @@ describe('the built-ins the library baselines', () => {
         'String.prototype.startsWith',
         'Object.keys',
         'Reflect.get',
-        'JSON.parse'
+        'URLSearchParams.prototype.set',
+        'URL.prototype.origin',
+        'Buffer.prototype.readUInt8'
       ])
     )
     expect(labels.length).toBeGreaterThan(150)
+    expect(labels.length).toBeLessThan(260)
   })
 
   // Scenario: each recorded function replaced, in turn, by another function. Expected: exactly one built-in is counted while it
   // is replaced and none once it is put back. Why: a decision made with a replaced `some` or `has` must be refused.
   it.each(entries())('counts %s when it is replaced', (_label, holder, key) => {
     let counted = -1
-    changed(holder, key, { value: () => undefined, writable: true }, () => {
+    changed(holder, key, replacementFor(holder, key), () => {
       counted = replacedBuiltins()
     })
 
@@ -156,5 +165,46 @@ describe('the built-ins the library baselines', () => {
 
     expect(counted).toBe(1)
     expect(replacedBuiltins()).toBe(0)
+  })
+
+  // Scenario: functions that no source calls (a method a polyfill adds or patches, an HTML string method, the whole of `JSON`
+  // which the library captures) replaced. Expected: none counted. Why: a built-in nothing calls must never make a healthy
+  // process refuse, and what is captured needs no comparison.
+  it.each([
+    ['Array.prototype', Array.prototype, 'copyWithin'],
+    ['String.prototype', String.prototype, 'anchor'],
+    ['Map.prototype', Map.prototype, 'clear'],
+    ['Object', Object, 'getOwnPropertyNames'],
+    ['JSON', JSON, 'stringify'],
+    ['JSON', JSON, 'parse']
+  ] as const)(
+    'counts nothing when %s.%s, which no source calls, is replaced',
+    (_name, holder, key) => {
+      let counted = -1
+      changed(holder, key, { value: () => undefined, writable: true }, () => {
+        counted = replacedBuiltins()
+      })
+
+      expect(counted).toBe(0)
+    }
+  )
+
+  // Scenario: an accessor of a prototype that the sources read (`Map.prototype.size`, `URL.prototype.origin`) given another
+  // getter. Expected: counted. Why: a replaced `size` or `origin` answers a decision just as a replaced method does.
+  it.each([
+    ['Map.prototype.size', () => Map.prototype, 'size'],
+    ['URL.prototype.origin', () => URL.prototype, 'origin'],
+    [
+      'TypedArray.prototype.length',
+      () => Object.getPrototypeOf(Uint8Array.prototype) as object,
+      'length'
+    ]
+  ] as const)('counts the accessor %s when its getter is replaced', (_label, holderOf, key) => {
+    let counted = -1
+    changed(holderOf(), key, { get: () => 0 }, () => {
+      counted = replacedBuiltins()
+    })
+
+    expect(counted).toBe(1)
   })
 })

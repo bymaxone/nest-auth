@@ -17,6 +17,7 @@ import {
 import type { StoredWorkspaceInvitation } from '../interfaces/workspace-invitation.interface'
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { isStoredWorkspaceName } from '../utils/workspace-name'
 
 /** A pending invitation with the key it is stored under and the seconds it has left. */
@@ -134,7 +135,7 @@ export class WorkspaceInvitationStore {
     const outcome = await this.redis.eval(
       PUBLISH_SCRIPT,
       [this.indexKey(ref, email), key, this.setKey(ref), expectedKey ?? key],
-      [key, JSON.stringify(record), String(ttlSeconds), String(limit), expectedKey ?? '']
+      [key, stringifyJson(record), String(ttlSeconds), String(limit), expectedKey ?? '']
     )
     return outcome === 1 ? 'published' : outcome === 2 ? 'full' : 'lost'
   }
@@ -186,7 +187,7 @@ export class WorkspaceInvitationStore {
     const raw = await this.redis.get(key)
     if (raw === null) return null
     try {
-      return parseRecord(JSON.parse(raw))
+      return parseRecord(parseJson(raw))
     } catch {
       return null
     }

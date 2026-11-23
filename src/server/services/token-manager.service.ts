@@ -28,6 +28,7 @@ import { logEvent, logHook } from '../observability/log-event'
 import { markingPlane, observed } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
+import { parseJson } from '../utils/captured-builtins'
 import { jwtSignOptions } from '../utils/dependency-options'
 import { refusedOr } from '../utils/object-prototype-guard'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
@@ -730,7 +731,7 @@ export class TokenManagerService {
   private parseSession(json: string): RefreshSession {
     let parsed: unknown
     try {
-      parsed = JSON.parse(json)
+      parsed = parseJson(json)
     } catch {
       logEvent(this.logger, 'AUTH_RECORD_INVALID', { record: 'session_json' })
       // Stryker disable CallExpression: equivalent — the warn above has already been emitted, and

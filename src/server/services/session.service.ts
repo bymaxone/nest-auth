@@ -19,6 +19,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { logEvent, logHook, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { hostEntityOf } from '../utils/host-read'
 import { runDetached } from '../utils/run-detached'
@@ -140,7 +141,7 @@ type MemberRead =
  */
 function parseStoredDetail(raw: string): StoredSessionDetail | null {
   try {
-    const parsed: unknown = JSON.parse(raw)
+    const parsed: unknown = parseJson(raw)
     const p = parsed as Record<string, unknown>
     if (
       // Stryker disable next-line ConditionalExpression,LogicalOperator: `parsed === null` is subsumed by the adjacent `typeof parsed !== 'object'` clause (typeof null is 'object' but the field reads below reject it identically)
@@ -754,7 +755,7 @@ export class SessionService {
     try {
       const raw = await this.redis.get(`sd:${oldHash}`)
       if (raw !== null) {
-        const parsed: unknown = JSON.parse(raw)
+        const parsed: unknown = parseJson(raw)
         if (
           // Stryker disable next-line ConditionalExpression: defensive `parsed !== null` guard; `'createdAt' in null` would throw and the surrounding try/catch falls back to now(), the same result as the original false branch
           parsed !== null &&
@@ -782,7 +783,7 @@ export class SessionService {
     await this.redis.eval(
       ROTATE_SESSION_DETAIL_LUA,
       [`sd:${oldHash}`, `sd:${newHash}`],
-      [JSON.stringify(newDetail), String(ttl)]
+      [stringifyJson(newDetail), String(ttl)]
     )
   }
 
@@ -999,7 +1000,7 @@ export class SessionService {
     const raw = await this.redis.get(`sd:${memberHash}`)
     if (raw === null) return 0
     try {
-      const parsed: unknown = JSON.parse(raw)
+      const parsed: unknown = parseJson(raw)
       if (
         // Stryker disable next-line ConditionalExpression: defensive `parsed !== null` guard masked by the surrounding try/catch fallback, yielding the same result
         parsed !== null &&

@@ -20,6 +20,7 @@ import type { AuthUser, IUserRepository } from '../interfaces/user-repository.in
 import { logEvent, logDelivery } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
 
@@ -193,7 +194,7 @@ export class EmailChangeService implements OnModuleInit {
     }
     await this.redis.set(
       `ec:${sha256(rawToken)}`,
-      JSON.stringify(context),
+      stringifyJson(context),
       this.options.emailChange.tokenTtlSeconds
     )
 
@@ -341,7 +342,7 @@ export class EmailChangeService implements OnModuleInit {
   private parseContext(raw: string): EmailChangeContext | null {
     let parsed: unknown
     try {
-      parsed = JSON.parse(raw)
+      parsed = parseJson(raw)
     } catch {
       // Deliberately swallowed and deliberately not an early return: an unparsed value stays
       // `undefined` and fails the guard below, which is the same answer by the same route

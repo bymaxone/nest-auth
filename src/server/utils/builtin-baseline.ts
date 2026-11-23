@@ -1,22 +1,28 @@
 /**
  * @fileoverview The built-ins the decisions of the library are made with, as they were when this module loaded.
  *
- * A role check is `Array.prototype.some`, a revocation lookup is `Map.prototype.get`, a tenant match is a string method, and a
- * flaw that can run code in the process can replace any of them after the library loaded. A replaced `some` that answers
- * `true` is a privilege escalation and a replaced `has` is a revoked token that is accepted. The library cannot call a copy
- * of every built-in its services use, so it compares them instead: each function listed here is read again whenever the
- * root guard runs, at the entry of every verification, signature, hash and cookie, and the guard refuses while one is not
- * the function that was there at load.
+ * A role check is `Array.prototype.some`, a revocation lookup is `Map.prototype.get`, a tenant match is a string method, the
+ * PKCE parameters are written with `URLSearchParams.prototype.set`, and a flaw that can run code in the process can replace any
+ * of them after the library loaded. A replaced `some` that answers `true` is a privilege escalation and a replaced `has` is a
+ * revoked token that is accepted. The library cannot call a copy of every built-in its sources use, so it compares them
+ * instead: each function listed here is read again whenever the root guard runs, at the entry of every verification, signature,
+ * hash and cookie, and the guard refuses while one is not the function that was there at load.
  *
- * The prototypes are recorded whole (every function an instance of the type inherits), the namespaces by the names the
- * sources call (a spec reads the sources and fails for a name that is not listed), and the global bindings by name.
- * `Promise`, `Date` and `Intl` are not listed: a decision never depends on them, and the test doubles of a host replace all
- * three (a fake clock replaces `Intl` together with `Date`).
+ * Only what the sources call or read is listed, and a spec reads the sources as syntax and fails in both directions: for a
+ * function or accessor they use that is not listed, and for one that is listed and nothing uses. A built-in that a polyfill or a
+ * monitor of the host patches and no source calls is therefore never compared. What the library serialises and parses
+ * (`JSON`) and what it hashes and compares secrets with (`node:crypto`) is not compared but captured, in
+ * `captured-builtins` and `captured-crypto`, so no replacement reaches it. `Promise`, `Date` and `Intl` are not listed: a
+ * decision never depends on them, and the test doubles of a host replace all three (a fake clock replaces `Intl` together
+ * with `Date`).
  *
  * @layer Utility
  */
 
-import { getDescriptor, getKey, hasOwn, ownKeys, prototypeOf } from './captured-builtins'
+import { getDescriptor, getKey, hasOwn, prototypeOf } from './captured-builtins'
+
+/** The name under which the iterator function of a type is listed: the key is the well-known symbol. */
+export const ITERATOR = '@@iterator'
 
 /** The functions of the namespaces the sources call, by namespace; a source that calls another name must add it here. */
 export const BASELINED_STATICS = {
@@ -34,12 +40,150 @@ export const BASELINED_STATICS = {
     'keys',
     'values'
   ],
-  Reflect: ['apply', 'deleteProperty', 'get', 'ownKeys', 'set'],
+  Reflect: ['apply', 'deleteProperty', 'get', 'set'],
   Array: ['from', 'isArray'],
   Number: ['isFinite', 'isInteger', 'isNaN', 'isSafeInteger', 'parseFloat'],
   Math: ['ceil', 'floor', 'log2', 'max', 'min'],
-  JSON: ['parse', 'stringify'],
   Buffer: ['alloc', 'allocUnsafe', 'byteLength', 'concat', 'from']
+} as const satisfies Record<string, readonly string[]>
+
+/**
+ * The functions and accessors of the prototypes that the sources call or read, by prototype. The iterator functions, which
+ * `for...of`, spreads and destructuring call without naming them, are listed apart, in `BASELINED_ITERATORS`.
+ */
+export const BASELINED_PROTOTYPES = {
+  'Array.prototype': [
+    'at',
+    'concat',
+    'fill',
+    'find',
+    'findIndex',
+    'lastIndexOf',
+    'push',
+    'reverse',
+    'slice',
+    'sort',
+    'splice',
+    'includes',
+    'indexOf',
+    'join',
+    'keys',
+    'entries',
+    'values',
+    'forEach',
+    'filter',
+    'flat',
+    'flatMap',
+    'map',
+    'every',
+    'some',
+    'reduce',
+    'toString'
+  ],
+  'String.prototype': [
+    'at',
+    'charAt',
+    'charCodeAt',
+    'concat',
+    'endsWith',
+    'includes',
+    'indexOf',
+    'lastIndexOf',
+    'localeCompare',
+    'padStart',
+    'repeat',
+    'replace',
+    'replaceAll',
+    'search',
+    'slice',
+    'split',
+    'sub',
+    'substring',
+    'startsWith',
+    'toString',
+    'trim',
+    'toLowerCase',
+    'toUpperCase'
+  ],
+  'Map.prototype': ['get', 'set', 'has', 'entries', 'forEach', 'keys', 'size', 'values'],
+  'Set.prototype': ['has', 'add', 'entries', 'forEach', 'size', 'values', 'keys'],
+  'WeakMap.prototype': ['get', 'set', 'has'],
+  'RegExp.prototype': ['flags', 'source', 'toString', 'test'],
+  'Function.prototype': ['apply', 'bind', 'call', 'toString'],
+  'Number.prototype': ['toFixed', 'toString'],
+  'URL.prototype': [
+    'toString',
+    'origin',
+    'password',
+    'host',
+    'hostname',
+    'port',
+    'pathname',
+    'search',
+    'searchParams',
+    'hash'
+  ],
+  'URLSearchParams.prototype': [
+    'size',
+    'get',
+    'getAll',
+    'has',
+    'set',
+    'sort',
+    'entries',
+    'forEach',
+    'keys',
+    'values',
+    'toString'
+  ],
+  'Buffer.prototype': [
+    'readUInt8',
+    'writeUInt32BE',
+    'toString',
+    'compare',
+    'indexOf',
+    'lastIndexOf',
+    'includes',
+    'fill',
+    'slice'
+  ],
+  'TypedArray.prototype': [
+    'length',
+    'entries',
+    'keys',
+    'values',
+    'at',
+    'every',
+    'fill',
+    'filter',
+    'find',
+    'findIndex',
+    'forEach',
+    'includes',
+    'indexOf',
+    'join',
+    'lastIndexOf',
+    'map',
+    'reverse',
+    'reduce',
+    'set',
+    'slice',
+    'some',
+    'sort',
+    'toString'
+  ]
+} as const satisfies Record<string, readonly string[]>
+
+/** The iterator protocol the language calls without the sources naming it, by holder: the function that makes the iterator. */
+export const BASELINED_ITERATORS = {
+  'Array.prototype': [ITERATOR],
+  'String.prototype': [ITERATOR],
+  'Map.prototype': [ITERATOR],
+  'Set.prototype': [ITERATOR],
+  'ArrayIterator.prototype': ['next'],
+  'StringIterator.prototype': ['next'],
+  'MapIterator.prototype': ['next'],
+  'SetIterator.prototype': ['next']
 } as const satisfies Record<string, readonly string[]>
 
 /** The global bindings the sources name, whose identity is compared. */
@@ -50,7 +194,6 @@ export const BASELINED_GLOBALS = [
   'DataView',
   'Error',
   'Function',
-  'JSON',
   'Map',
   'Math',
   'Number',
@@ -75,48 +218,61 @@ export const BASELINED_GLOBALS = [
 
 const world = globalThis as Record<string, unknown>
 
-/** The instances whose whole prototype is recorded, with the object that holds it. */
-const PROTOTYPES: readonly object[] = [
-  Array.prototype,
-  String.prototype,
-  Map.prototype,
-  Set.prototype,
-  WeakMap.prototype,
-  RegExp.prototype,
-  Function.prototype,
-  prototypeOf([][Symbol.iterator]()) as object,
-  prototypeOf(new Map()[Symbol.iterator]()) as object,
-  prototypeOf(new Set()[Symbol.iterator]()) as object,
-  prototypeOf(''[Symbol.iterator]()) as object
-]
+/** The prototypes the lists name, by name. */
+export const BASELINED_HOLDERS: Record<string, object> = {
+  'Array.prototype': Array.prototype,
+  'String.prototype': String.prototype,
+  'Map.prototype': Map.prototype,
+  'Set.prototype': Set.prototype,
+  'WeakMap.prototype': WeakMap.prototype,
+  'RegExp.prototype': RegExp.prototype,
+  'Function.prototype': Function.prototype,
+  'Number.prototype': Number.prototype,
+  'URL.prototype': URL.prototype,
+  'URLSearchParams.prototype': URLSearchParams.prototype,
+  'Buffer.prototype': Buffer.prototype,
+  'TypedArray.prototype': prototypeOf(Uint8Array.prototype) as object,
+  'DataView.prototype': DataView.prototype,
+  'ArrayIterator.prototype': prototypeOf([][Symbol.iterator]()) as object,
+  'MapIterator.prototype': prototypeOf(new Map()[Symbol.iterator]()) as object,
+  'SetIterator.prototype': prototypeOf(new Set()[Symbol.iterator]()) as object,
+  'StringIterator.prototype': prototypeOf(''[Symbol.iterator]()) as object
+}
 
-// Parallel lists, filled once: the holder, the key and the function each entry held at load.
+// Parallel lists, filled once: the holder, the key, the field of the descriptor that holds the function (`value` for a method,
+// `get` for an accessor) and the function each entry held at load.
 const holders: object[] = []
-const names: PropertyKey[] = []
+const keys: PropertyKey[] = []
+const fields: string[] = []
 const originals: unknown[] = []
 
 function record(holder: object, key: PropertyKey): void {
   const descriptor = getDescriptor(holder, key)
-  if (descriptor === undefined || typeof descriptor.value !== 'function') return
+  if (descriptor === undefined) return
   // A function that can neither be assigned nor redefined (`Function.prototype[Symbol.hasInstance]`) cannot be replaced.
   if (descriptor.configurable !== true && descriptor.writable !== true) return
+  const field = typeof descriptor.value === 'function' ? 'value' : 'get'
+  const held = field === 'value' ? descriptor.value : descriptor.get
+  if (typeof held !== 'function') return
   holders[holders.length] = holder
-  names[names.length] = key
-  originals[originals.length] = descriptor.value
+  keys[keys.length] = key
+  fields[fields.length] = field
+  originals[originals.length] = held
 }
 
-for (let index = 0; index < PROTOTYPES.length; index += 1) {
-  const holder = PROTOTYPES[index] as object
-  const keys = ownKeys(holder)
-  for (let at = 0; at < keys.length; at += 1) {
-    const key = keys[at] as PropertyKey
-    if (key !== 'constructor') record(holder, key)
-  }
+/** Records the entries of `lists`, each name read from the holder named by its key. */
+function recordAll(lists: Record<string, readonly string[]>): void {
+  for (const [name, list] of Object.entries(lists))
+    for (let at = 0; at < list.length; at += 1) {
+      const key = list[at] === ITERATOR ? Symbol.iterator : (list[at] as string)
+      record(BASELINED_HOLDERS[name] as object, key)
+    }
 }
-for (const [namespace, list] of Object.entries(BASELINED_STATICS)) {
-  const holder = world[namespace] as object
-  for (let at = 0; at < list.length; at += 1) record(holder, list[at] as string)
-}
+
+recordAll(BASELINED_PROTOTYPES)
+recordAll(BASELINED_ITERATORS)
+for (const [namespace, list] of Object.entries(BASELINED_STATICS))
+  for (let at = 0; at < list.length; at += 1) record(world[namespace] as object, list[at] as string)
 
 const globalOriginals: unknown[] = []
 for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)
@@ -124,7 +280,7 @@ for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)
 
 /**
  * Counts the built-ins that are not what they were when this module loaded: a function replaced, turned into an accessor or
- * deleted, and a global binding that names another value.
+ * deleted, an accessor whose getter was replaced, and a global binding that names another value.
  *
  * The functions are read through descriptors, so an accessor planted in place of one is counted without being run.
  *
@@ -133,11 +289,12 @@ for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)
 export function replacedBuiltins(): number {
   let count = 0
   for (let index = 0; index < holders.length; index += 1) {
-    const descriptor = getDescriptor(holders[index] as object, names[index] as PropertyKey)
+    const descriptor = getDescriptor(holders[index] as object, keys[index] as PropertyKey)
+    const field = fields[index] as string
     if (
       descriptor === undefined ||
-      !hasOwn(descriptor, 'value') ||
-      descriptor['value'] !== originals[index]
+      !hasOwn(descriptor, field) ||
+      getKey(descriptor, field) !== originals[index]
     )
       count += 1
   }

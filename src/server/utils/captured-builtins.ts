@@ -18,3 +18,7 @@ export const createObject = Object.create
 export const assign = Object.assign
 export const defineKey = Object.defineProperty
 export const ErrorOf = Error
+
+/** `JSON.parse` and `JSON.stringify`, taken at load: what the library reads from and writes to its stores goes through these. */
+export const parseJson: (text: string) => unknown = JSON.parse
+export const stringifyJson: (value: unknown) => string = JSON.stringify

@@ -7,6 +7,7 @@
 
 import type { Logger } from '@nestjs/common'
 
+import { parseJson } from './captured-builtins'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { logEvent } from '../observability/log-event'
@@ -75,7 +76,7 @@ function isMfaSetupData(value: unknown): value is MfaSetupData {
 export function parseSetupData(raw: string, logger: Logger): MfaSetupData {
   let parsed: unknown
   try {
-    parsed = JSON.parse(raw)
+    parsed = parseJson(raw)
   } catch {
     // Recorded, not just refused. The caller gets an opaque MFA_SETUP_REQUIRED — correct, since
     // it must learn nothing about the payload's structure — which leaves this line as the only
@@ -112,7 +113,7 @@ export function parseSetupData(raw: string, logger: Logger): MfaSetupData {
 export function parsePlainRecoveryCodes(raw: string, logger: Logger): string[] {
   let parsed: unknown
   try {
-    parsed = JSON.parse(raw)
+    parsed = parseJson(raw)
   } catch {
     // Same reasoning as `parseSetupData`, and a stronger case: AES-GCM authenticates the
     // ciphertext, so a decrypted value that will not parse means the plaintext itself was

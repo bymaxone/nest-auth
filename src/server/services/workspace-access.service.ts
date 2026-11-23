@@ -41,6 +41,7 @@ import type {
 } from '../interfaces/workspace-repository.interface'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { exceedsCodePoints } from '../utils/code-points'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
@@ -268,7 +269,7 @@ export class WorkspaceAccessService {
           `${base}:${read.workspaceVersion}:${read.membershipVersion}`
         ],
         [
-          JSON.stringify({ role, status: 'active' }),
+          stringifyJson({ role, status: 'active' }),
           String(ttl),
           String(WORKSPACE_VERSION_RETENTION_SECONDS),
           read.workspaceVersion,
@@ -348,7 +349,7 @@ function parseRead(reply: unknown): MembershipRead | null {
 function parseEntry(entry: unknown): string | null {
   if (typeof entry !== 'string') return null
   try {
-    const parsed = JSON.parse(entry) as { role?: unknown; status?: unknown }
+    const parsed = parseJson(entry) as { role?: unknown; status?: unknown }
     return typeof parsed.role === 'string' && parsed.status === 'active' ? parsed.role : null
   } catch {
     return null

@@ -31,6 +31,7 @@ import type {
 import { logEvent, logDelivery } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { answerResetRequest } from '../utils/answer-reset-request'
+import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { classifyResetProof } from '../utils/classify-reset-proof'
 import { describeChannelStatus } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -301,7 +302,7 @@ export class PasswordResetService {
     }
     await this.redis.set(
       `pw_vtok:${sha256(rawVerifiedToken)}`,
-      JSON.stringify(context),
+      stringifyJson(context),
       VERIFIED_TOKEN_TTL_SECONDS
     )
 
@@ -764,7 +765,7 @@ export class PasswordResetService {
     }
     await this.redis.set(
       tokenKey,
-      JSON.stringify(context),
+      stringifyJson(context),
       this.options.passwordReset.tokenTtlSeconds
     )
 
@@ -889,7 +890,7 @@ export class PasswordResetService {
     // parsing is not accidentally swallowed and re-wrapped as TOKEN_INVALID.
     let parsed: unknown
     try {
-      parsed = JSON.parse(json)
+      parsed = parseJson(json)
     } catch {
       // Corrupted storage, not an expired or replayed token: indistinguishable to the caller
       // by design, and distinguishable to an operator only here.
