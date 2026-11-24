@@ -16,8 +16,9 @@
  * `captured-builtins` and `captured-crypto`, so no replacement reaches it. The clock source (the `Date` binding, `Date.now`
  * and `Date.parse`) and `Intl` are not compared: the test doubles of a host replace them (a fake clock replaces `Date` and
  * `Intl` together). Of `Promise` only `Promise.prototype.constructor` is compared, because `await` reads it; the statics
- * (`all`, `race`) and `then` are not, since the monitors of a host wrap them, so no decision of the library reads one: they
- * wait with `await` alone (`utils/settle`) and a spec fails on a static of `Promise` in the sources. The methods of the dates themselves (`getTime`, `toISOString`), which the expiry of a key and the
+ * (`all`, `race`) and `then` are not, since the monitors of a host wrap them, so no decision of the library calls one: they
+ * wait with `await` on promises they pinned (`utils/settle`), which attaches a handler without reading `then`, and a spec fails on a
+ * static of `Promise` in the sources. The methods of the dates themselves (`getTime`, `toISOString`), which the expiry of a key and the
  * reading of a cursor are decided with, are compared.
  *
  * @layer Utility
