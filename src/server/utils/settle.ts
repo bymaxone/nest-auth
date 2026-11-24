@@ -30,6 +30,7 @@ import {
   freezeObject,
   getDescriptor,
   hasOwn,
+  intrinsicPromisePrototype as IntrinsicPrototype,
   intrinsicThen,
   ownKeys
 } from './captured-builtins'
@@ -66,6 +67,12 @@ export function pinned<P>(promise: P): P {
   return promise
 }
 
+/** Whether `Promise.prototype.constructor` is still the language's own data property, read without running any accessor. */
+function rootConstructorIsIntact(): boolean {
+  const slot = getDescriptor(IntrinsicPrototype, 'constructor')
+  return slot !== undefined && hasOwn(slot, 'value') && slot.value === IntrinsicPromise
+}
+
 /**
  * Marks a promise's rejection as handled, through the `then` taken at load, before anything else can refuse. A call the root check
  * refuses would otherwise leave a rejecting `work` with no handler, and an unhandled rejection ends the process. A value that is
@@ -76,11 +83,11 @@ export function markHandled(work: unknown): void {
   try {
     pinned(work)
   } catch {
-    // A promise that cannot take the constructor is refused where it is awaited. Here it only has to have a handler. One that holds
-    // a constructor of its own (permanent, and not the language's) would send an `await` through the `then` it also holds, so the
-    // language's `then` is used; it reads the species of that constructor, which belongs to the promise. One that holds none (a
-    // frozen promise) is awaited: that reads neither `then` nor the species of the live `Promise`, which `then` would.
-    if (getDescriptor(work, 'constructor') !== undefined) {
+    // A promise that cannot take the constructor is refused where it is awaited. Here it only has to have a handler. A native `await`
+    // attaches it without reading `then` or the species, but it reads `constructor` first, and a slot that is not the language's own
+    // data property (a getter, a replaced value) can plant a `then` in that read, so then the language's `then` is used. A promise
+    // that holds a constructor of its own (permanent, and not the language's) goes the same way: `await` would use the `then` it holds.
+    if (getDescriptor(work, 'constructor') !== undefined || !rootConstructorIsIntact()) {
       try {
         applyFunction(intrinsicThen, work, [ignore, ignore])
       } catch {

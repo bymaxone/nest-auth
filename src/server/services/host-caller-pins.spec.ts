@@ -426,6 +426,57 @@ describe('a frozen promise whose species throws', () => {
   })
 })
 
+describe('a frozen promise while the constructor slot is a getter', () => {
+  // Scenario: a frozen host promise that rejects, `Promise.prototype.constructor` a one-shot getter that plants a no-op `then`.
+  // Expected: the rejection still has a handler, so nothing is reported as unhandled. Why: a native `await` reads `constructor`
+  // and would call the planted `then`, which never settles the handler.
+  it('has its rejection heard without reading the planted slot', async () => {
+    const unhandled: unknown[] = []
+    const listener = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', listener)
+    const slot = Object.getOwnPropertyDescriptor(
+      Promise.prototype,
+      'constructor'
+    ) as PropertyDescriptor
+    const then = Promise.prototype.then
+    const host = Object.freeze(Promise.reject(new Error('frozen-reject')))
+    Object.defineProperty(Promise.prototype, 'constructor', {
+      configurable: true,
+      get() {
+        Object.defineProperty(Promise.prototype, 'constructor', slot)
+        Object.defineProperty(Promise.prototype, 'then', {
+          configurable: true,
+          writable: true,
+          value() {
+            Object.defineProperty(Promise.prototype, 'then', {
+              configurable: true,
+              writable: true,
+              value: then
+            })
+          }
+        })
+        return function NotPromise() {}
+      }
+    })
+    try {
+      markHandled(host)
+    } finally {
+      Object.defineProperty(Promise.prototype, 'constructor', slot)
+      Object.defineProperty(Promise.prototype, 'then', {
+        configurable: true,
+        writable: true,
+        value: then
+      })
+    }
+    await new Promise((resolve) => setImmediate(resolve))
+    process.off('unhandledRejection', listener)
+
+    expect(unhandled).toEqual([])
+  })
+})
+
 describe('checked looks through the chain of prototypes', () => {
   // Scenario: a `then` on the prototype of a class, and on the prototype of that prototype. Expected: `checked` refuses both, and
   // answers a plain object (C9).
