@@ -28,7 +28,7 @@ import { assertTenantBinding, tenantBindingEnforced } from '../utils/assert-tena
 import type { HandshakeLike } from '../utils/handshake-request'
 import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
-import { pinned, PinnedMethods } from '../utils/settle'
+import { PinnedMethods, checked, pinned } from '../utils/settle'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
@@ -299,11 +299,14 @@ export class AuthTokenVerifierService {
       const verified = await pinned(
         this.verifyDashboard(token, requireMfa, checkStatus, options.request)
       )
-      if (admit === undefined) return verified
-      return { ...verified, workspace: await pinned(admit.resolve(verified.payload, admit.check)) }
+      if (admit === undefined) return checked(verified)
+      return checked({
+        ...verified,
+        workspace: await pinned(admit.resolve(verified.payload, admit.check))
+      })
     }
     if (plane === 'platform')
-      return await pinned(this.verifyPlatform(token, requireMfa, checkStatus))
+      return checked(await pinned(this.verifyPlatform(token, requireMfa, checkStatus)))
 
     // Neither, which TypeScript rules out and a runtime does not: a JavaScript consumer, or one
     // deriving the plane from a namespace segment or a config value it never narrowed. Written as
@@ -359,7 +362,7 @@ export class AuthTokenVerifierService {
 
     const verified = { plane: 'dashboard', payload } as const
     assertRootIsStandard()
-    return verified
+    return checked(verified)
   }
 
   /**
@@ -482,7 +485,7 @@ export class AuthTokenVerifierService {
 
     const verified = { plane: 'platform', payload } as const
     assertRootIsStandard()
-    return verified
+    return checked(verified)
   }
 
   /**

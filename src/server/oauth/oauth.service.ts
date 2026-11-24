@@ -62,7 +62,7 @@ import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
-import { awaiting, pinned } from '../utils/settle'
+import { awaiting, checked, pinned } from '../utils/settle'
 
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
 const OAUTH_STATE_TTL_SECONDS = 600
@@ -282,7 +282,6 @@ export class OAuthService {
 
     const record = await pinned(this.consumeState(provider, state, stateCookie))
     const { tenantId, codeVerifier } = record
-
     const profile = await pinned(this.fetchProfile(plugin, provider, code, codeVerifier))
     const invitation = await pinned(this.vetInvitation(record, profile))
 
@@ -310,7 +309,6 @@ export class OAuthService {
     // Null hooks or a missing onOAuthLogin method both result in OAUTH_FAILED,
     // preventing unauthenticated OAuth logins on unconfigured installations.
     const hookResult = await pinned(this.hooks?.onOAuthLogin?.(profile, existingUser, hookContext))
-
     if (!hookResult) {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
@@ -322,12 +320,14 @@ export class OAuthService {
     this.assertMaySignIn(authUser)
 
     if (authUser.mfaEnabled) {
-      return this.issueMfaChallenge(authUser)
+      return await pinned(this.issueMfaChallenge(authUser))
     }
 
     const created = hookResult.action === 'create'
     await pinned(invitation?.complete(authUser, created, { ...hookContext, userId: authUser.id }))
-    return this.openSession(authUser, provider, hookResult, hookContext, ip, userAgent)
+    return await pinned(
+      this.openSession(authUser, provider, hookResult, hookContext, ip, userAgent)
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -386,7 +386,7 @@ export class OAuthService {
       tenantId: authUser.tenantId,
       via: 'oauth'
     })
-    return { mfaRequired: true, mfaTempToken }
+    return checked({ mfaRequired: true, mfaTempToken })
   }
 
   /**
@@ -437,7 +437,7 @@ export class OAuthService {
     })
 
     this.runLoginSideEffects(safeUser, hookContext)
-    return result
+    return checked(result)
   }
 
   /** Starts the non-blocking side effects of a login; nothing waits for them. */
@@ -509,7 +509,7 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
-    return stored
+    return checked(stored)
   }
 
   /**
@@ -545,7 +545,7 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
-    return parsedState
+    return checked(parsedState)
   }
 
   /**
@@ -570,12 +570,12 @@ export class OAuthService {
         await awaiting(
           withDeadline(async () => {
             const tokenResponse = await pinned(plugin.exchangeCode(code, codeVerifier))
-            return await pinned(plugin.fetchProfile(tokenResponse.access_token))
+            return checked(await pinned(plugin.fetchProfile(tokenResponse.access_token)))
           }, pluginDeadlineMs(plugin))
         )
       ).value
       assertRootIsStandard()
-      return profile
+      return checked(profile)
     } catch (err: unknown) {
       // Nothing the plugin wrote is published. This path holds a LIVE ACCESS TOKEN: the plugin
       // received `code`, `codeVerifier` and `accessToken`, and an HTTP client attaching its
@@ -646,7 +646,7 @@ export class OAuthService {
       tenantId: created.tenantId,
       via: 'oauth'
     })
-    return created
+    return checked(created)
   }
 
   /**
@@ -685,7 +685,7 @@ export class OAuthService {
     if (!linked) {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
-    return linked
+    return checked(linked)
   }
 
   /**
@@ -717,9 +717,9 @@ export class OAuthService {
         if (invitation === null && this.options.registration === 'invitation-only') {
           throw new AuthException(AUTH_ERROR_CODES.REGISTRATION_CLOSED)
         }
-        return this.createAccount(provider, tenantId, profile)
+        return await pinned(this.createAccount(provider, tenantId, profile))
       case 'link':
-        return this.linkAccount(provider, profile, existingAuthUser)
+        return await pinned(this.linkAccount(provider, profile, existingAuthUser))
       case 'reject':
       default:
         throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
@@ -750,11 +750,11 @@ export class OAuthService {
         emailVerified: profile.emailVerified
       })
     )
-    return {
+    return checked({
       complete: async (user, created, context): Promise<void> => {
         await pinned(accepts.completeOAuth(loaded, user, created, context))
       }
-    }
+    })
   }
 
   /**

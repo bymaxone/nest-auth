@@ -25,6 +25,7 @@ import {
 import type { AuthApiKey, IApiKeyRepository } from '../interfaces/api-key-repository.interface'
 import type { ApiKeyDenyReason } from '../interfaces/auth-hooks.interface'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
+import { checked } from '../utils/settle'
 
 /** Why a key was not accepted. */
 export type ApiKeyRejection = Extract<
@@ -85,12 +86,12 @@ export class ApiKeyVerifierService {
     const now = this.clock.now()
     const reason = this.rejection(header, parsed !== null, row, equal, now.getTime())
     if (reason !== null) {
-      return { ok: false, reason, key: parsed === null ? null : row }
+      return checked({ ok: false, reason, key: parsed === null ? null : row })
     }
     // Reaching here means `row` is non-null: `rejection` answers 'unknown' for a null row.
     const key = row as AuthApiKey
     this.lastUsed.record(key.id, now)
-    return { ok: true, key }
+    return checked({ ok: true, key })
   }
 
   /**

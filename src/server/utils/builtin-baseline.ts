@@ -27,10 +27,10 @@ import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 
 import {
+  IntrinsicPromise,
   getDescriptor,
   getKey,
   hasOwn,
-  intrinsicPromisePrototype,
   ownKeys,
   prototypeOf
 } from './captured-builtins'
@@ -269,6 +269,7 @@ export const SPECIES_CONSTRUCTORS = [
   'Array',
   'ArrayBuffer',
   'Map',
+  'Promise',
   'RegExp',
   'Set',
   'TypedArray'
@@ -285,6 +286,7 @@ export const BASELINED_CONSTRUCTORS: Record<(typeof SPECIES_CONSTRUCTORS)[number
   Array,
   ArrayBuffer,
   Map,
+  Promise: IntrinsicPromise,
   RegExp,
   Set,
   TypedArray: prototypeOf(Uint8Array) as object
@@ -437,8 +439,7 @@ for (let index = 0; index < SPECIES_CONSTRUCTORS.length; index += 1) {
 }
 record(Buffer.prototype, 'constructor')
 record(Uint8Array.prototype, 'constructor')
-// `await` reads `constructor` of a promise to decide whether it is a native one; the statics of `Promise` are not read anywhere.
-record(intrinsicPromisePrototype, 'constructor')
+// `await` reads `constructor` of a promise to decide whether it is a native one (recorded above with the species of `Promise`); the statics of `Promise` are not read anywhere.
 for (const [namespace, list] of Object.entries(BASELINED_STATICS))
   // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which names no property, so `record` finds no descriptor and returns
   for (let at = 0; at < list.length; at += 1) record(world[namespace] as object, list[at] as string)

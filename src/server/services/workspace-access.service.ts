@@ -47,7 +47,7 @@ import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { exceedsCodePoints } from '../utils/code-points'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
-import { awaiting, started, pinned, PinnedMethods } from '../utils/settle'
+import { PinnedMethods, awaiting, checked, pinned, started } from '../utils/settle'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
 /** An active member of an active workspace, as the access check resolves it. */
@@ -126,7 +126,7 @@ export class WorkspaceAccessService {
    */
   async resolveMembership(ref: MembershipRef): Promise<ResolvedWorkspaceMember | null> {
     const access = await pinned(this.resolveAccess(ref))
-    return access.kind === 'member' ? access.member : null
+    return checked(access.kind === 'member' ? access.member : null)
   }
 
   /**
@@ -145,14 +145,14 @@ export class WorkspaceAccessService {
     if (ttl === 0) {
       const read = await pinned(this.readRepositories(ref))
       assertRootIsStandard()
-      return read
+      return checked(read)
     }
 
     const cached = await pinned(this.readCache(ref))
     if (cached !== null && cached.role !== null) {
       const member = { kind: 'member', member: { ...ref, role: cached.role } } as const
       assertRootIsStandard()
-      return member
+      return checked(member)
     }
 
     const access = await pinned(this.readRepositories(ref))
@@ -160,7 +160,7 @@ export class WorkspaceAccessService {
       await pinned(this.fillCache(ref, cached, access.member.role, ttl))
     }
     assertRootIsStandard()
-    return access
+    return checked(access)
   }
 
   /**
@@ -215,7 +215,7 @@ export class WorkspaceAccessService {
       options.allowPending === true
     )
     assertRootIsStandard()
-    return member
+    return checked(member)
   }
 
   /**
@@ -270,7 +270,7 @@ export class WorkspaceAccessService {
           []
         )
       )
-      return parseRead(reply)
+      return checked(parseRead(reply))
     } catch {
       // The cache is advisory: an unreachable store must cost a repository read, not a request.
       logEvent(this.logger, 'AUTH_STORE_DEGRADED', { operation: 'workspace_cache_read' })
@@ -327,7 +327,7 @@ export class WorkspaceAccessService {
     const access = this.accessFrom(ref, workspace, membership)
     // The answer is read for `then` when it is returned, so the root is checked as the last statement before the return.
     assertRootIsStandard()
-    return access
+    return checked(access)
   }
 
   private accessFrom(

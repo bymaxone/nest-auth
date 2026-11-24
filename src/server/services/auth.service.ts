@@ -41,6 +41,7 @@ import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-log
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
+import { checked, pinned } from '../utils/settle'
 import { raiseFirst, settleWrites } from '../utils/settle-writes'
 import { sleep } from '../utils/sleep'
 import { tenantScoped } from '../utils/tenant-scoped'
@@ -308,7 +309,7 @@ export class AuthService {
       runDetached(this.logger, () => afterRegister(safeUser, context), 'afterRegister')
     }
 
-    return result
+    return checked(result)
   }
 
   // ---------------------------------------------------------------------------
@@ -466,7 +467,7 @@ export class AuthService {
         user.tenantId
       )
       this.logLogin('AUTH_LOGIN_MFA_CHALLENGED', user.id, tenantId)
-      return { mfaRequired: true, mfaTempToken }
+      return checked({ mfaRequired: true, mfaTempToken })
     }
 
     const safeUser = toSafeUser(user)
@@ -494,7 +495,7 @@ export class AuthService {
       runDetached(this.logger, () => afterLogin(safeUser, context), 'afterLogin')
     }
 
-    return result
+    return checked(result)
   }
 
   // ---------------------------------------------------------------------------
@@ -842,7 +843,7 @@ export class AuthService {
         })
     }
 
-    return { ...result, accessToken: authoritative, user: toSafeUser(user) }
+    return checked({ ...result, accessToken: authoritative, user: toSafeUser(user) })
   }
 
   // ---------------------------------------------------------------------------
@@ -902,7 +903,7 @@ export class AuthService {
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
-    return toSafeUser(user)
+    return checked(toSafeUser(user))
   }
 
   // ---------------------------------------------------------------------------
@@ -1011,7 +1012,7 @@ export class AuthService {
       )
     }
 
-    return result
+    return checked(result)
   }
 
   // ---------------------------------------------------------------------------
@@ -1109,7 +1110,9 @@ export class AuthService {
 
     await releasingCooldownOnFailure(this.redis, this.logger, cooldownKey, async () => {
       const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
-      return user && !user.emailVerified ? this.sendVerificationOtp(tenantId, email) : undefined
+      return await pinned(
+        user && !user.emailVerified ? this.sendVerificationOtp(tenantId, email) : undefined
+      )
     })
 
     await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))

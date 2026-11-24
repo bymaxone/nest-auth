@@ -32,6 +32,7 @@ import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { assertDashboardTenant } from '../utils/mfa-plane-tenant'
 import { encryptMfaSecret, holdsSecret, type MfaSecretKeys } from '../utils/mfa-secret-cipher'
 import { rethrowRefusal } from '../utils/object-prototype-guard'
+import { checked } from '../utils/settle'
 
 /**
  * TTL in seconds for the single-use claim on a recovery code (5 minutes).
@@ -387,7 +388,7 @@ export class MfaRecordService {
       const user = await this.userRepo.findById({ id: userId, tenantId })
       if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       assertNotBlocked(user.status, this.options.blockedStatuses)
-      return user
+      return checked(user)
     }
 
     if (!this.platformUserRepo) {
@@ -399,6 +400,6 @@ export class MfaRecordService {
     const admin = await this.platformUserRepo.findById(userId)
     if (!admin) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     assertNotBlocked(admin.status, this.options.blockedStatuses)
-    return admin
+    return checked(admin)
   }
 }

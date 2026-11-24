@@ -28,7 +28,6 @@ import {
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
 import { applyFunction } from './captured-builtins'
-import { assertRootIsStandard } from './object-prototype-guard'
 import { readOwnOrClass } from './own-or-class'
 import {
   API_KEY_REPOSITORY_CONTRACT,
@@ -40,7 +39,7 @@ import {
   type ErasedContract,
   type ErasedRepositoryContract
 } from './repository-contracts'
-import { pinned } from './settle'
+import { checked, pinned } from './settle'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 
@@ -100,7 +99,9 @@ export async function readHostOptionsAsync<T>(
   read: () => Promise<T>
 ): Promise<{ readonly value: T }> {
   try {
-    return { value: await pinned(read()) }
+    // No prototype: nothing the root holds can answer for `then` when this resolves, and this is the boot, not a decision to refuse.
+    const boxed = { __proto__: null, value: await pinned(read()) }
+    return boxed
   } catch (error: unknown) {
     throw configurationError(error)
   }
@@ -496,8 +497,7 @@ export function guardRepository<T extends object>(host: T, contract: ErasedRepos
           typeof key === 'string' && Object.hasOwn(contract, key) ? contract[key] : undefined
         const copied = promised === undefined ? answer : copyHostRecord(answer, promised)
         // The copy is read for `then` when it is returned, so the root is checked as the last statement.
-        assertRootIsStandard()
-        return copied
+        return checked(copied)
       }
     }
   })

@@ -16,7 +16,7 @@ import { sessionIndexKey, tokenEpochKey } from '../constants/user-keys'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
-import { pinned } from '../utils/settle'
+import { checked, pinned } from '../utils/settle'
 
 /**
  * Entropy of a freshly-minted WebSocket ticket, in bytes (256-bit, like the opaque refresh
@@ -353,7 +353,7 @@ export class AuthRedisService {
    * @returns The stored string, or `null` if the key does not exist.
    */
   async get(key: string): Promise<string | null> {
-    return this.#redis.get(this.prefix(key))
+    return await pinned(this.#redis.get(this.prefix(key)))
   }
 
   /**
@@ -413,7 +413,7 @@ export class AuthRedisService {
    * @returns The value of the key after the increment.
    */
   async incr(key: string): Promise<number> {
-    return this.#redis.incr(this.prefix(key))
+    return await pinned(this.#redis.incr(this.prefix(key)))
   }
 
   /**
@@ -434,7 +434,7 @@ export class AuthRedisService {
    *   does not exist.
    */
   async ttl(key: string): Promise<number> {
-    return this.#redis.ttl(this.prefix(key))
+    return await pinned(this.#redis.ttl(this.prefix(key)))
   }
 
   // ---------------------------------------------------------------------------
@@ -449,7 +449,7 @@ export class AuthRedisService {
    * @returns `1` if the member was added, `0` if it already existed.
    */
   async sadd(setKey: string, member: string): Promise<number> {
-    return this.#redis.sadd(this.prefix(setKey), member)
+    return await pinned(this.#redis.sadd(this.prefix(setKey), member))
   }
 
   /**
@@ -460,7 +460,7 @@ export class AuthRedisService {
    * @returns `1` if the member was removed, `0` if it did not exist.
    */
   async srem(setKey: string, member: string): Promise<number> {
-    return this.#redis.srem(this.prefix(setKey), member)
+    return await pinned(this.#redis.srem(this.prefix(setKey), member))
   }
 
   /**
@@ -470,7 +470,7 @@ export class AuthRedisService {
    * @returns Array of member strings (empty array if the key does not exist).
    */
   async smembers(setKey: string): Promise<string[]> {
-    return this.#redis.smembers(this.prefix(setKey))
+    return await pinned(this.#redis.smembers(this.prefix(setKey)))
   }
 
   /**
@@ -505,7 +505,7 @@ export class AuthRedisService {
    */
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const prefixedKeys = keys.map((k) => this.prefix(k))
-    return this.#redis.eval(script, prefixedKeys.length, ...prefixedKeys, ...args)
+    return await pinned(this.#redis.eval(script, prefixedKeys.length, ...prefixedKeys, ...args))
   }
 
   // ---------------------------------------------------------------------------
@@ -560,16 +560,16 @@ export class AuthRedisService {
         ]
       )
     )
-    if (typeof raw !== 'string') return { kind: 'invalid' }
+    if (typeof raw !== 'string') return checked({ kind: 'invalid' })
     if (raw.startsWith(GRACE_TAG)) {
       const sessionJson = raw.slice(GRACE_TAG.length)
       const alive = await pinned(this.familyIsAlive(sessionJson, p.family))
-      return alive ? { kind: 'grace', sessionJson } : { kind: 'invalid' }
+      return checked(alive ? { kind: 'grace', sessionJson } : { kind: 'invalid' })
     }
     if (raw.startsWith(REUSED_TAG)) {
-      return { kind: 'reused', familyId: raw.slice(REUSED_TAG.length) }
+      return checked({ kind: 'reused', familyId: raw.slice(REUSED_TAG.length) })
     }
-    return { kind: 'rotated', sessionJson: raw }
+    return checked({ kind: 'rotated', sessionJson: raw })
   }
 
   /**
@@ -713,7 +713,7 @@ export class AuthRedisService {
     familyId: string,
     kind: 'dashboard' | 'platform' = 'dashboard'
   ): Promise<{ removed: number; ownerId: string }> {
-    if (familyId === '') return { removed: 0, ownerId: '' }
+    if (familyId === '') return checked({ removed: 0, ownerId: '' })
     const p = prefixesFor(kind)
     const members = await pinned(this.smembers(`${p.family}:${familyId}`))
     const { userId: ownerId, tenantId } = await pinned(this.readFamilyOwner(members, p.live))
@@ -735,7 +735,7 @@ export class AuthRedisService {
         [this.namespace, p.live, p.detail, indexKey]
       )
     )
-    return { removed: typeof removed === 'number' ? removed : 0, ownerId }
+    return checked({ removed: typeof removed === 'number' ? removed : 0, ownerId })
   }
 
   /**
@@ -774,10 +774,10 @@ export class AuthRedisService {
       const userId = parsed?.['userId']
       if (typeof userId === 'string' && userId !== '') {
         const tenantId = parsed?.['tenantId']
-        return { userId, tenantId: typeof tenantId === 'string' ? tenantId : undefined }
+        return checked({ userId, tenantId: typeof tenantId === 'string' ? tenantId : undefined })
       }
     }
-    return { userId: '', tenantId: undefined }
+    return checked({ userId: '', tenantId: undefined })
   }
 
   // ---------------------------------------------------------------------------
@@ -1094,17 +1094,17 @@ export class AuthRedisService {
   async readSessionOwner(key: string): Promise<{ userId: string; tenantId: string | undefined }> {
     const none = { userId: '', tenantId: undefined }
     const raw = await pinned(this.get(key))
-    if (raw === null) return none
+    if (raw === null) return checked(none)
     try {
       const parsed: unknown = parseJson(raw)
       // Stryker disable next-line ConditionalExpression,LogicalOperator: defensive shape guard
       // fully masked by what follows — a scalar reads `['userId']` as `undefined` and fails the
       // string test, and `null` throws on the index and is caught below. Every mutant of it
       // returns the same empty owner through a different path
-      if (typeof parsed !== 'object' || parsed === null) return none
+      if (typeof parsed !== 'object' || parsed === null) return checked(none)
       const record = parsed as Record<string, unknown>
       const userId = record['userId']
-      if (typeof userId !== 'string') return none
+      if (typeof userId !== 'string') return checked(none)
       const tenantId = record['tenantId']
       // A BLANK tenant is normalised to absent, not returned as a usable value. Callers test
       // presence to decide whether they can name an index, and `''` builds `dashboard:0::{userId}`
@@ -1112,14 +1112,14 @@ export class AuthRedisService {
       // as a string made `AuthService.logout`'s `tenantId !== undefined` check pass and then miss
       // the real index, leaving the member and its detail record behind. One shape of "no tenant"
       // at the boundary means every caller downstream gets the same answer.
-      return {
+      return checked({
         userId,
         tenantId: typeof tenantId === 'string' && tenantId !== '' ? tenantId : undefined
-      }
+      })
     } catch {
       // A malformed record names nobody. The session parser reports it on the paths that
       // need to fail loudly; here the caller only wants an owner or the absence of one.
-      return none
+      return checked(none)
     }
   }
 
@@ -1206,7 +1206,7 @@ export class AuthRedisService {
     if (raw === null) return null
     try {
       const parsed: unknown = parseJson(raw)
-      return isWsTicketSnapshot(parsed) ? parsed : null
+      return checked(isWsTicketSnapshot(parsed) ? parsed : null)
     } catch {
       // A stored value that will not parse is a corrupted record, not a valid ticket. It has
       // already been consumed by the GETDEL above, which is the right outcome either way.

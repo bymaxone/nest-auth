@@ -34,6 +34,7 @@ import { verifyRecoveryCode } from '../utils/mfa-recovery-codes'
 import { platformUserAsSafeUser, toSafePlatformUser, toSafeUser } from '../utils/mfa-safe-user'
 import { decryptWithRotation, encryptMfaSecret, holdsSecret } from '../utils/mfa-secret-cipher'
 import { runDetached } from '../utils/run-detached'
+import { checked, pinned } from '../utils/settle'
 
 /** The resolved MFA configuration group, present whenever the MFA services are registered. */
 export type MfaConfig = Required<NonNullable<ResolvedOptions['mfa']>>
@@ -154,36 +155,46 @@ export class MfaChallengeService {
     const scope: ChallengeScope = { userId, context, tenantId }
 
     // The token verified, so its plane is known: every way the rest of the challenge can end carries it.
-    return markingPlane(context, async () => {
-      // Step 2: brute-force check.
-      await this.assertNotLocked(scope)
+    return await pinned(
+      markingPlane(context, async () => {
+        // Step 2: brute-force check.
+        await this.assertNotLocked(scope)
 
-      // Step 3: load the account, tenant-scoped, and re-check its status: a blocked account must not spend the KDF.
-      const user = await this.records.loadAccount(context, userId, tenantId)
-      if (!user.mfaEnabled || !user.mfaSecret) {
-        throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
-      }
+        // Step 3: load the account, tenant-scoped, and re-check its status: a blocked account must not spend the KDF.
+        const user = await this.records.loadAccount(context, userId, tenantId)
+        if (!user.mfaEnabled || !user.mfaSecret) {
+          throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
+        }
 
-      // Step 4: decrypt the TOTP secret and validate the submitted code.
-      const opened = decryptWithRotation(user.mfaSecret, mfa)
-      const { valid, recoveryIndex } = await this.checkCode(user, scope, opened.secret, code, mfa)
-      if (!valid) await this.refuseWrongCode(scope)
-      await this.flowLockout.reset('challenge', context, userId, tenantId)
+        // Step 4: decrypt the TOTP secret and validate the submitted code.
+        const opened = decryptWithRotation(user.mfaSecret, mfa)
+        const { valid, recoveryIndex } = await this.checkCode(user, scope, opened.secret, code, mfa)
+        if (!valid) await this.refuseWrongCode(scope)
+        await this.flowLockout.reset('challenge', context, userId, tenantId)
 
-      // Step 5: consume the temp token, and the consume must WIN: two concurrent submissions both see the
-      // marker, and on the recovery-code path one code and one token would mint two sessions. The loser is
-      // reported as an invalid temp token.
-      if (!(await this.tokenManager.consumeMfaTempToken(tempTokenJti))) {
-        throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
-      }
-      await this.settleRecovery(user, scope, opened, recoveryIndex, mfa)
+        // Step 5: the consume must win (see `consumeOrRefuse`).
+        await this.consumeOrRefuse(tempTokenJti)
+        await this.settleRecovery(user, scope, opened, recoveryIndex, mfa)
 
-      logEvent(this.logger, 'AUTH_MFA_CHALLENGE_PASSED', { plane: context, userId })
-      // Step 6: issue full tokens with mfaVerified: true.
-      return context === 'dashboard'
-        ? this.issueDashboardSession(user as AuthUser, userId, ip, userAgent)
-        : this.issuePlatformSession(user as AuthPlatformUser, userId, ip, userAgent)
-    })
+        logEvent(this.logger, 'AUTH_MFA_CHALLENGE_PASSED', { plane: context, userId })
+        // Step 6: issue full tokens with mfaVerified: true.
+        return await pinned(
+          context === 'dashboard'
+            ? this.issueDashboardSession(user as AuthUser, userId, ip, userAgent)
+            : this.issuePlatformSession(user as AuthPlatformUser, userId, ip, userAgent)
+        )
+      })
+    )
+  }
+
+  /**
+   * Consumes the temp token, and the consume must WIN: two concurrent submissions both see the marker, and on the recovery-code
+   * path one code and one token would mint two sessions. The loser is reported as an invalid temp token.
+   */
+  private async consumeOrRefuse(tempTokenJti: string): Promise<void> {
+    if (!(await pinned(this.tokenManager.consumeMfaTempToken(tempTokenJti)))) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
   }
 
   /**
@@ -247,7 +258,7 @@ export class MfaChallengeService {
         mfa.totpWindow,
         tenantId
       )
-      return { valid, recoveryIndex: -1 }
+      return checked({ valid, recoveryIndex: -1 })
     }
     // Stryker disable next-line ArrayDeclaration: equivalent — the fallback stands in for an
     // account with no stored codes, and any content it could hold fails the constant-time
@@ -261,7 +272,7 @@ export class MfaChallengeService {
     )
     const valid =
       recoveryIndex >= 0 && (await this.records.claimRecoveryCode(context, userId, code, tenantId))
-    return { valid, recoveryIndex }
+    return checked({ valid, recoveryIndex })
   }
 
   /**
@@ -358,7 +369,7 @@ export class MfaChallengeService {
       )
     }
 
-    return result
+    return checked(result)
   }
 
   /**
@@ -407,7 +418,7 @@ export class MfaChallengeService {
       )
     }
 
-    return result
+    return checked(result)
   }
 
   /**
@@ -447,6 +458,6 @@ export class MfaChallengeService {
     if (!('admin' in result)) {
       throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
     }
-    return result
+    return checked(result)
   }
 }

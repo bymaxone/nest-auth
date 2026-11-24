@@ -57,9 +57,9 @@ describe('pinned', () => {
     expect(pinned(promise)).toBe(promise)
     expect(Object.getOwnPropertyDescriptor(promise, 'constructor')).toEqual({
       value: Promise,
-      writable: true,
+      writable: false,
       enumerable: false,
-      configurable: true
+      configurable: false
     })
   })
 
@@ -72,12 +72,24 @@ describe('pinned', () => {
     expect(pinned(undefined)).toBeUndefined()
   })
 
-  // Scenario: a frozen promise cannot take the property. Expected: handed back, no throw: the root check refuses a replaced one.
-  it('hands back a frozen promise without throwing', () => {
+  // Scenario: a frozen promise cannot take the property. Expected: the pin throws, so the wait that follows rejects and is never
+  // answered by a constructor the library did not choose.
+  it('throws for a frozen promise, and an async caller rejects', async () => {
     const promise = Object.freeze(Promise.resolve(1))
 
-    expect(pinned(promise)).toBe(promise)
+    expect(() => pinned(promise)).toThrow(TypeError)
     expect(Object.hasOwn(promise, 'constructor')).toBe(false)
+    await expect((async (): Promise<number> => await pinned(promise))()).rejects.toThrow(TypeError)
+  })
+
+  // Scenario: the constructor of a pinned promise is replaced afterwards. Expected: it cannot be, so the await keeps the language's.
+  it('cannot have its constructor replaced after the pin', () => {
+    const promise = pinned(Promise.resolve(1))
+
+    expect(() => Object.defineProperty(promise, 'constructor', { value: Array })).toThrow(TypeError)
+    expect(() => {
+      ;(promise as { constructor: unknown }).constructor = Array
+    }).toThrow(TypeError)
   })
 
   // Scenario: the constructor of promises watched while a pinned promise is awaited. Expected: it is never read for that promise.

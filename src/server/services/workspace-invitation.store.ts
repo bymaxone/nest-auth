@@ -18,7 +18,7 @@ import type { StoredWorkspaceInvitation } from '../interfaces/workspace-invitati
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
-import { pinned } from '../utils/settle'
+import { checked, pinned } from '../utils/settle'
 import { isStoredWorkspaceName } from '../utils/workspace-name'
 
 /** A pending invitation with the key it is stored under and the seconds it has left. */
@@ -84,7 +84,7 @@ export class WorkspaceInvitationStore {
    * @returns The record, or `null` when absent, expired, or not a record this library wrote.
    */
   async readByHash(tokenHash: string): Promise<StoredWorkspaceInvitation | null> {
-    return this.readKey(invitationKeyOfHash(tokenHash))
+    return await pinned(this.readKey(invitationKeyOfHash(tokenHash)))
   }
 
   /**
@@ -100,7 +100,7 @@ export class WorkspaceInvitationStore {
     email: string
   ): Promise<{ key: string; record: StoredWorkspaceInvitation | null } | null> {
     const key = await pinned(this.redis.get(this.indexKey(ref, email)))
-    return key === null ? null : { key, record: await pinned(this.readKey(key)) }
+    return checked(key === null ? null : { key, record: await pinned(this.readKey(key)) })
   }
 
   /**
@@ -177,7 +177,7 @@ export class WorkspaceInvitationStore {
       else live.push({ key, record, ttlSeconds: await pinned(this.redis.ttl(key)) })
     }
     await pinned(this.redis.pruneDeadMembers(set, dead))
-    return live
+    return checked(live)
   }
 
   private indexKey(ref: WorkspaceRef, email: string): string {
@@ -192,7 +192,7 @@ export class WorkspaceInvitationStore {
     const raw = await pinned(this.redis.get(key))
     if (raw === null) return null
     try {
-      return parseRecord(parseJson(raw))
+      return checked(parseRecord(parseJson(raw)))
     } catch {
       return null
     }

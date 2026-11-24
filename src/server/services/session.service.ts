@@ -25,7 +25,7 @@ import { hostEntityOf } from '../utils/host-read'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { runDetached } from '../utils/run-detached'
 import { parseUserAgent } from '../utils/session-detail'
-import { allOf, awaiting, pinned, PinnedMethods } from '../utils/settle'
+import { PinnedMethods, allOf, awaiting, checked, pinned } from '../utils/settle'
 import { raiseFirst } from '../utils/settle-writes'
 
 // ---------------------------------------------------------------------------
@@ -456,7 +456,7 @@ export class SessionService {
     // view that lies by omission, since the caller cannot revoke what they cannot see.
     raiseFirst(failures)
 
-    return newestFirst(results)
+    return checked(newestFirst(results))
   }
 
   /**
@@ -480,13 +480,13 @@ export class SessionService {
       // still sees the member as a candidate, and only this line says which one happened, so a
       // Redis outage does not read as a tidy-up.
       logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_detail_read', error)
-      return { kind: 'failed', member, error }
+      return checked({ kind: 'failed', member, error })
     }
 
     const detail = raw === null ? null : parseStoredDetail(raw)
-    if (detail === null) return { kind: 'stale', member }
+    if (detail === null) return checked({ kind: 'stale', member })
 
-    return {
+    return checked({
       kind: 'session',
       info: {
         id: hash.slice(0, 8),
@@ -500,7 +500,7 @@ export class SessionService {
         createdAt: detail.createdAt,
         lastActivityAt: detail.lastActivityAt
       }
-    }
+    })
   }
 
   /**
@@ -607,9 +607,11 @@ export class SessionService {
     this.assertTenant(tenantId)
     this.assertValidSessionHash(sessionHash, 'sessionHash')
 
-    return this.resolveLiveMember(
-      await pinned(this.redis.smembers(this.indexKey(userId, tenantId))),
-      sessionHash
+    return await pinned(
+      this.resolveLiveMember(
+        await pinned(this.redis.smembers(this.indexKey(userId, tenantId))),
+        sessionHash
+      )
     )
   }
 
@@ -1077,7 +1079,7 @@ export class SessionService {
     )
     const ages = (await awaiting(read)).value
     assertRootIsStandard()
-    return ages
+    return checked(ages)
   }
 }
 

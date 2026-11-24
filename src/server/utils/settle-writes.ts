@@ -8,7 +8,7 @@
  * work and then raise the first.
  */
 
-import { pinned } from './settle'
+import { checked, pinned } from './settle'
 
 /**
  * Attempts every write in order and returns the errors the failing ones raised.
@@ -30,7 +30,7 @@ export async function settleWrites(
       failures.push(err)
     }
   }
-  return failures
+  return checked(failures)
 }
 
 /**

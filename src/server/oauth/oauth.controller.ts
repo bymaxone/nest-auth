@@ -66,6 +66,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 import { resolveClientAddress } from '../utils/client-address'
 import { cookieOptions } from '../utils/dependency-options'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
+import { Pinned, pinned } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -204,6 +205,7 @@ export class OAuthController {
   @Throttle(AUTH_THROTTLE_CONFIGS.oauthInitiate)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.oauthInitiate)
   @Get(':provider')
+  @Pinned()
   async initiate(
     @Param('provider') provider: string,
     @Query() query: OAuthInitiateQueryDto,
@@ -211,12 +213,8 @@ export class OAuthController {
     @Res({ passthrough: true }) res: Response
   ): Promise<void> {
     assertRootIsStandard()
-    await this.oauthService.initiateOAuth(
-      provider,
-      query.tenantId,
-      req,
-      res,
-      query.workspaceInvitation
+    await pinned(
+      this.oauthService.initiateOAuth(provider, query.tenantId, req, res, query.workspaceInvitation)
     )
   }
 
@@ -263,6 +261,7 @@ export class OAuthController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.oauthCallback)
   @HttpCode(HttpStatus.OK)
   @Get(':provider/callback')
+  @Pinned()
   async callback(
     @Param('provider') provider: string,
     @Query() query: OAuthCallbackQueryDto,
@@ -324,14 +323,8 @@ export class OAuthController {
 
     let result: AuthResult | OAuthMfaChallengeResult
     try {
-      result = await this.oauthService.handleCallback(
-        provider,
-        query.code,
-        query.state,
-        stateCookie,
-        ip,
-        userAgent,
-        req.headers as Record<string, string | string[] | undefined>
+      result = await pinned(
+        this.exchange(provider, query.code, query.state, stateCookie, ip, userAgent, req)
       )
     } catch (err) {
       return this.handleCallbackFailure(res, err)
@@ -369,6 +362,27 @@ export class OAuthController {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /** The exchange of the callback: the service call, pinned, so the handler awaits it with the language's own constructor. */
+  private exchange(
+    provider: string,
+    code: string,
+    state: string,
+    stateCookie: string | undefined,
+    ip: string,
+    userAgent: string,
+    req: Request
+  ): Promise<AuthResult | OAuthMfaChallengeResult> {
+    return this.oauthService.handleCallback(
+      provider,
+      code,
+      state,
+      stateCookie,
+      ip,
+      userAgent,
+      req.headers as Record<string, string | string[] | undefined>
+    )
+  }
 
   /**
    * Routes a failed callback to the configured error redirect, or rethrows.

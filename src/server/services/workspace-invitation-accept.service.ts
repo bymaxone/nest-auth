@@ -49,6 +49,7 @@ import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
+import { checked, pinned } from '../utils/settle'
 
 /** What a signed-in acceptance answers: where the caller now belongs, and as what. */
 export interface AcceptedInvitation {
@@ -148,7 +149,7 @@ export class WorkspaceInvitationAcceptService {
     if (user.tenantId !== loaded.record.tenantId) throw invalidToken()
     assertAddress(loaded.record, user.email, user.emailVerified)
     await this.assertStillGrantable(loaded.record)
-    return this.finish(loaded, user, context)
+    return await pinned(this.finish(loaded, user, context))
   }
 
   /**
@@ -172,7 +173,7 @@ export class WorkspaceInvitationAcceptService {
     if (loaded.record.tenantId !== tenantId) throw invalidToken()
     assertAddress(loaded.record, profile.email, profile.emailVerified)
     await this.assertStillGrantable(loaded.record)
-    return loaded
+    return checked(loaded)
   }
 
   /**
@@ -213,7 +214,7 @@ export class WorkspaceInvitationAcceptService {
         'afterInvitationAccepted'
       )
     }
-    return accepted
+    return checked(accepted)
   }
 
   /**
@@ -249,7 +250,7 @@ export class WorkspaceInvitationAcceptService {
       sanitizedHeaders: sanitizeHeaders(request.headers)
     }
     const accepted = await this.finish(loaded, created, context)
-    return { result: await this.signIn(toSafeUser(created), request, context), accepted }
+    return checked({ result: await this.signIn(toSafeUser(created), request, context), accepted })
   }
 
   /**
@@ -264,13 +265,15 @@ export class WorkspaceInvitationAcceptService {
     const passwordHash = await this.passwords.hash(dto.password)
     try {
       // The invitation reached this address, which is what verification proves.
-      return await this.users.create({
-        email,
-        name: dto.name,
-        passwordHash,
-        tenantId,
-        emailVerified: true
-      })
+      return checked(
+        await this.users.create({
+          email,
+          name: dto.name,
+          passwordHash,
+          tenantId,
+          emailVerified: true
+        })
+      )
     } catch (error: unknown) {
       if ((await this.users.findByEmail({ email, tenantId })) !== null) {
         throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
@@ -281,14 +284,14 @@ export class WorkspaceInvitationAcceptService {
 
   /** Reads the record a token names, or refuses a token that names nothing usable. */
   private async load(token: string): Promise<LoadedInvitation> {
-    return this.loadByHash(sha256(token))
+    return await pinned(this.loadByHash(sha256(token)))
   }
 
   /** Reads the record a token's hash names, or refuses a hash that names nothing usable. */
   private async loadByHash(tokenHash: string): Promise<LoadedInvitation> {
     const record = await this.store.readByHash(tokenHash)
     if (record === null || !this.grantsAKnownRole(record)) throw invalidToken()
-    return { tokenHash, key: `winv:${tokenHash}`, record }
+    return checked({ tokenHash, key: `winv:${tokenHash}`, record })
   }
 
   /** A member record grants a role of the hierarchy; a bootstrap record grants the owner role. */
@@ -363,7 +366,7 @@ export class WorkspaceInvitationAcceptService {
       },
       context
     )
-    return { workspaceId: record.workspaceId, role }
+    return checked({ workspaceId: record.workspaceId, role })
   }
 
   /**
@@ -378,7 +381,8 @@ export class WorkspaceInvitationAcceptService {
   ): Promise<string> {
     const ref = refOf(record)
     const at = new Date(Date.now()).toISOString()
-    if (record.kind === 'bootstrap') return this.createOwned(record, user, at, context)
+    if (record.kind === 'bootstrap')
+      return await pinned(this.createOwned(record, user, at, context))
     const created = await this.memberships.create({
       ...ref,
       userId: user.id,
@@ -500,7 +504,7 @@ export class WorkspaceInvitationAcceptService {
       () => this.hooks.afterInvitationAccepted?.(user, context),
       'afterInvitationAccepted'
     )
-    return result
+    return checked(result)
   }
 }
 

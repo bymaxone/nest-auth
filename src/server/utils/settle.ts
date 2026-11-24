@@ -27,8 +27,7 @@ import {
   applyFunction,
   createObject,
   defineKey,
-  getDescriptor,
-  intrinsicThen
+  getDescriptor
 } from './captured-builtins'
 import { assertRootIsStandard } from './object-prototype-guard'
 
@@ -47,16 +46,15 @@ const isNativePromise = types.isPromise
  */
 export function pinned<P>(promise: P): P {
   if (isNativePromise(promise)) {
-    try {
-      // A descriptor with no prototype: defining a property reads `get` and `set` through it.
-      const own = createObject(null) as PropertyDescriptor
-      own.value = CapturedPromise
-      own.writable = true
-      own.configurable = true
-      defineKey(promise, 'constructor', own)
-    } catch {
-      // A frozen promise keeps the constructor it has; the root check refuses one that is replaced.
-    }
+    // A descriptor with no prototype: defining a property reads `get` and `set` through it. Neither configurable nor writable, so
+    // code that holds the promise cannot put another constructor back before the `await` reads it.
+    const own = createObject(null) as PropertyDescriptor
+    own.value = CapturedPromise
+    own.writable = false
+    own.configurable = false
+    // A promise that cannot take the constructor (frozen, or with another own one that cannot change) throws here: the caller is
+    // one that is about to wait, so the wait fails and is never answered by a constructor the library did not choose.
+    defineKey(promise, 'constructor', own)
   }
   return promise
 }
@@ -67,12 +65,20 @@ export function pinned<P>(promise: P): P {
  * not a native promise has nothing to mark.
  */
 export function markHandled(work: unknown): void {
-  pinned(work)
   try {
-    applyFunction(intrinsicThen, work, [ignore, ignore])
+    pinned(work)
   } catch {
-    // Not a native promise: nothing was started that can reject unhandled.
+    // A promise that cannot take the constructor is refused where it is awaited; here it only has to have a handler.
   }
+  if (!isNativePromise(work)) return
+  // `await` of a pinned native promise attaches its handler without reading `then` or the species of the constructor.
+  void (async (): Promise<void> => {
+    try {
+      await work
+    } catch {
+      // Only marks the rejection as handled.
+    }
+  })()
 }
 
 /** An answer in a box with no prototype, so that no `then` is looked up on it. */
@@ -111,6 +117,20 @@ function failed<T>(reason: unknown): Settled<T> {
 export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
   assertRootIsStandard()
   return pinned(pending)
+}
+
+/**
+ * Checks the root and hands the value back for the `return` that follows on the same line. An async function that returns an
+ * object resolves its own promise from it, which asks the object for `then`; a `then` planted on the prototype it inherits from
+ * while the function waited would answer for it. Nothing runs between this check and that read.
+ *
+ * @param value - What the function is about to return.
+ * @returns The same value.
+ * @throws {AuthException} `auth.internal` while the root or a built-in is not the runtime's own.
+ */
+export function checked<T>(value: T): T {
+  assertRootIsStandard()
+  return value
 }
 
 /**
@@ -202,19 +222,16 @@ export async function allOf<T>(calls: readonly (PromiseLike<T> | T)[]): Promise<
         let remaining = pending.length
         if (remaining === 0) resolve(box(values))
         for (let index = 0; index < pending.length; index += 1) {
-          applyFunction(intrinsicThen, pending[index], [
-            (answer: Settled<T>): void => {
-              try {
-                values[index] = answer.value
-              } catch (error: unknown) {
-                resolve(failed(error))
-                return
-              }
-              remaining -= 1
-              if (remaining === 0) resolve(box(values))
-            },
-            ignore
-          ])
+          void (async (): Promise<void> => {
+            try {
+              values[index] = (await (pending[index] as Promise<Settled<T>>)).value
+            } catch (error: unknown) {
+              resolve(failed(error))
+              return
+            }
+            remaining -= 1
+            if (remaining === 0) resolve(box(values))
+          })()
         }
       })
     )

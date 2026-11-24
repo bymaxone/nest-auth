@@ -34,6 +34,7 @@ import { refusedOr } from '../utils/object-prototype-guard'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { serializeSession } from '../utils/serialize-session'
 import { dashboardSessionDetail, platformSessionExtra } from '../utils/session-detail'
+import { checked, pinned } from '../utils/settle'
 import { readStampedEpoch } from '../utils/stamped-epoch'
 import { signerOf, verifyWithRotation } from '../utils/verify-with-rotation'
 
@@ -267,7 +268,7 @@ export class TokenManagerService {
       extras: this.dashboardExtras(user, familyId, tokenHash, ttl, ip, userAgent, proved)
     })
 
-    return { user, accessToken, rawRefreshToken }
+    return checked({ user, accessToken, rawRefreshToken })
   }
 
   /**
@@ -359,7 +360,7 @@ export class TokenManagerService {
       extras: [platformSessionExtra(tokenHash, ip, userAgent, ttl)]
     })
 
-    return { admin, accessToken, rawRefreshToken }
+    return checked({ admin, accessToken, rawRefreshToken })
   }
 
   /**
@@ -458,10 +459,10 @@ export class TokenManagerService {
     })
 
     if (outcome.kind === 'rotated') {
-      return this.rotateFromPrimary(newSession, newRawRefresh)
+      return await pinned(this.rotateFromPrimary(newSession, newRawRefresh))
     }
     if (outcome.kind === 'grace') {
-      return this.rotateFromGrace(outcome.sessionJson, ip, userAgent, refreshTtl)
+      return await pinned(this.rotateFromGrace(outcome.sessionJson, ip, userAgent, refreshTtl))
     }
     if (outcome.kind === 'reused') {
       // The strongest compromise signal the library produces: a token that was already exchanged has
@@ -621,9 +622,9 @@ export class TokenManagerService {
     if (json === null) {
       // Empty identity, MFA left enforcing, and no family — a placeholder must never be able
       // to plant family bookkeeping or mint a token that clears the MFA gate.
-      return this.buildSession('', '', '', ip, userAgent, false, '')
+      return checked(this.buildSession('', '', '', ip, userAgent, false, ''))
     }
-    return this.parseSession(json)
+    return checked(this.parseSession(json))
   }
 
   /**
@@ -641,7 +642,7 @@ export class TokenManagerService {
     newSession: RefreshSession,
     newRawRefresh: string
   ): Promise<RotatedTokenResult> {
-    return await this.buildRotatedResult(newSession, newRawRefresh)
+    return checked(await this.buildRotatedResult(newSession, newRawRefresh))
   }
 
   /**
@@ -715,7 +716,7 @@ export class TokenManagerService {
       // the revocation the sweep performed is what the caller must now obey.
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
-    return await this.buildRotatedResult(anotherSession, anotherNewRefresh)
+    return checked(await this.buildRotatedResult(anotherSession, anotherNewRefresh))
   }
 
   /**
@@ -883,11 +884,11 @@ export class TokenManagerService {
       epoch
     })
 
-    return {
+    return checked({
       session: { userId: session.userId, tenantId: session.tenantId, role: session.role },
       accessToken,
       rawRefreshToken
-    }
+    })
   }
 
   // ---------------------------------------------------------------------------
@@ -913,10 +914,8 @@ export class TokenManagerService {
     const oldHash = sha256(oldRefresh)
     const newRawRefresh = generateSecureToken()
     const newHash = sha256(newRawRefresh)
-
     const refreshTtl = this.options.jwt.refreshExpiresInDays * 86_400
     const graceTtl = this.options.jwt.refreshGraceWindowSeconds
-
     const seed = await this.readSeedSession(`prt:${oldHash}`, ip, userAgent)
     this.assertWithinAbsoluteLifetime(seed)
     const newSession = this.buildSession(
@@ -930,7 +929,6 @@ export class TokenManagerService {
       seed.familyCreatedAt,
       seed.mfaVerified === true
     )
-
     const outcome = await this.redis.rotateRefreshSession({
       kind: 'platform',
       tenantId: undefined,
@@ -944,18 +942,22 @@ export class TokenManagerService {
     })
 
     if (outcome.kind === 'rotated') {
-      return this.rotatePlatformFromPrimary(
-        oldHash,
-        newHash,
-        newSession,
-        ip,
-        userAgent,
-        newRawRefresh,
-        refreshTtl
+      return await pinned(
+        this.rotatePlatformFromPrimary(
+          oldHash,
+          newHash,
+          newSession,
+          ip,
+          userAgent,
+          newRawRefresh,
+          refreshTtl
+        )
       )
     }
     if (outcome.kind === 'grace') {
-      return this.rotatePlatformFromGrace(outcome.sessionJson, oldHash, ip, userAgent, refreshTtl)
+      return await pinned(
+        this.rotatePlatformFromGrace(outcome.sessionJson, oldHash, ip, userAgent, refreshTtl)
+      )
     }
     if (outcome.kind === 'reused') {
       // #38 deferred platform reuse detection entirely; the family design closes that gap on
@@ -976,7 +978,6 @@ export class TokenManagerService {
       this.emitReuseDetected('platform', ownerId, outcome.familyId, ip, userAgent)
       throw observed('reuse_detected', new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID))
     }
-
     logEvent(this.logger, 'AUTH_REFRESH_REFUSED', { plane: 'platform' })
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
   }
@@ -1005,7 +1006,7 @@ export class TokenManagerService {
     await this.redis.del(`psd:${oldHash}`)
     await this.writePlatformSessionDetail(newHash, ip, userAgent, refreshTtl)
 
-    return await this.buildPlatformRotatedResult(newSession, newRawRefresh)
+    return checked(await this.buildPlatformRotatedResult(newSession, newRawRefresh))
   }
 
   /**
@@ -1070,7 +1071,7 @@ export class TokenManagerService {
     await this.redis.del(`psd:${oldHash}`)
     await this.writePlatformSessionDetail(anotherNewHash, ip, userAgent, refreshTtl)
 
-    return await this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh)
+    return checked(await this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh))
   }
 
   /**
@@ -1094,11 +1095,11 @@ export class TokenManagerService {
       epoch
     })
 
-    return {
+    return checked({
       session: { userId: session.userId, tenantId: '', role: session.role },
       accessToken,
       rawRefreshToken
-    }
+    })
   }
 
   /**
@@ -1291,18 +1292,20 @@ export class TokenManagerService {
 
     // Everything below runs for a token whose signature held, so the plane it names is a trusted claim and
     // every refusal carries it: the shared challenge route counts a refusal on the plane of its token.
-    return markingPlane(payload.context, async () => {
-      this.assertMfaTempTokenBinding(payload)
-      await this.assertMfaTempTokenLive(payload)
-      return {
-        userId: payload.sub,
-        context: payload.context,
-        jti: payload.jti,
-        // Absent on a platform token, which has no tenant. A dashboard token without one was
-        // refused above, so a dashboard result always carries it.
-        ...(payload.tenantId !== undefined ? { tenantId: payload.tenantId } : {})
-      }
-    })
+    return await pinned(
+      markingPlane(payload.context, async () => {
+        this.assertMfaTempTokenBinding(payload)
+        await this.assertMfaTempTokenLive(payload)
+        return checked({
+          userId: payload.sub,
+          context: payload.context,
+          jti: payload.jti,
+          // Absent on a platform token, which has no tenant. A dashboard token without one was
+          // refused above, so a dashboard result always carries it.
+          ...(payload.tenantId !== undefined ? { tenantId: payload.tenantId } : {})
+        })
+      })
+    )
   }
 
   /**

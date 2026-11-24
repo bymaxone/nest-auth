@@ -49,7 +49,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
-import { awaiting, started, pinned, PinnedMethods } from '../utils/settle'
+import { PinnedMethods, awaiting, checked, pinned, started } from '../utils/settle'
 import { pageInvitations } from '../utils/workspace-invitation-page'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
 import { normalizeWorkspaceName } from '../utils/workspace-name'
@@ -222,7 +222,7 @@ export class WorkspaceInvitationService {
     ref: WorkspaceRef,
     page: { cursor?: string; limit?: number }
   ): Promise<InvitationPage> {
-    return pageInvitations(await pinned(this.store.pending(ref)), page, Date.now())
+    return checked(pageInvitations(await pinned(this.store.pending(ref)), page, Date.now()))
   }
 
   /**
@@ -267,7 +267,7 @@ export class WorkspaceInvitationService {
         ...answer
       } as const
       assertRootIsStandard()
-      return bootstrap
+      return checked(bootstrap)
     }
     if (workspace?.status !== 'active' || inviter === null) throw invalidToken()
     const preview = {
@@ -277,7 +277,7 @@ export class WorkspaceInvitationService {
       ...answer
     } as const
     assertRootIsStandard()
-    return preview
+    return checked(preview)
   }
 
   /**
@@ -340,7 +340,7 @@ export class WorkspaceInvitationService {
       },
       context
     )
-    return { workspaceId: ref.workspaceId }
+    return checked({ workspaceId: ref.workspaceId })
   }
 
   /**
@@ -400,7 +400,7 @@ export class WorkspaceInvitationService {
     const member = await pinned(this.memberships.find({ ...ref, userId: account.id }))
     // A suspended member is still a member: an invitation cannot reinstate one.
     if (member !== null) throw new AuthException(AUTH_ERROR_CODES.ALREADY_MEMBER)
-    return account
+    return checked(account)
   }
 
   /** Mints a token, stores its record, retires the one it replaces, and mails it. */
@@ -488,7 +488,7 @@ export class WorkspaceInvitationService {
     if (workspace?.status !== 'active') {
       throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     }
-    return workspace
+    return checked(workspace)
   }
 }
 
