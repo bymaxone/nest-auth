@@ -30,7 +30,7 @@ const constructorSlot = Object.getOwnPropertyDescriptor(intrinsicPromisePrototyp
 
 // Read by its descriptor, not by value: a `get` a host planted on the slot would run here and answer, and what a plain read returns
 // is whatever that getter chose. Only a data property is the language's own.
-if (constructorSlot === undefined || !('value' in constructorSlot))
+if (constructorSlot === undefined || !hasOwn(constructorSlot, 'value'))
   throw new Error(
     "[BymaxAuthModule] the constructor of Promise is an accessor; the module does not start while the runtime's promises are not its own."
   )

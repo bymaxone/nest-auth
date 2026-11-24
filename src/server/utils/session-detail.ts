@@ -9,7 +9,7 @@
  * @layer Utils
  */
 
-import { stringifyJson } from './captured-builtins'
+import { parseJson, stringifyJson } from './captured-builtins'
 import type { SessionExtra } from '../redis/create-session-script'
 
 /** The longest IP, and on the platform plane the longest device text, kept in a detail record. */
@@ -114,5 +114,43 @@ export function platformSessionExtra(
     key: `psd:${tokenHash}`,
     value: platformSessionDetail(ip, userAgent, Date.now()),
     ttl
+  }
+}
+
+/** Internal detail record persisted in Redis under `sd:{hash}`. */
+export interface StoredSessionDetail {
+  device: string
+  ip: string
+  createdAt: number
+  lastActivityAt: number
+}
+
+/**
+ * Parses a stored session detail record.
+ *
+ * @param raw - The `sd:{hash}` value.
+ * @returns The record, or `null` when it is not valid JSON or lacks a field the listing shows.
+ */
+export function parseStoredDetail(raw: string): StoredSessionDetail | null {
+  try {
+    const parsed: unknown = parseJson(raw)
+    const p = parsed as Record<string, unknown>
+    if (
+      // Stryker disable next-line ConditionalExpression,LogicalOperator: `parsed === null` is subsumed by the adjacent `typeof parsed !== 'object'` clause (typeof null is 'object' but the field reads below reject it identically)
+      parsed === null ||
+      // Stryker disable next-line ConditionalExpression: equivalent — a non-object
+      // parsed value reaches the field reads below as `undefined` on every property,
+      // which reject it with the identical outcome
+      typeof parsed !== 'object' ||
+      typeof p['device'] !== 'string' ||
+      typeof p['ip'] !== 'string' ||
+      typeof p['createdAt'] !== 'number' ||
+      typeof p['lastActivityAt'] !== 'number'
+    ) {
+      return null
+    }
+    return parsed as StoredSessionDetail
+  } catch {
+    return null
   }
 }

@@ -360,8 +360,8 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
   // A client whose command fails after the root was compromised: the proxy refuses, and the command's rejection must stay handled.
   const client = mappingOutages({
     get: (): Promise<never> => failingRead()
-  } as never) as unknown as { get: () => Promise<unknown> }
-  settle(client.get(), () => 'answered')
+  } as never)
+  settle(client.get('key'), () => 'answered')
 } else if (scenario === 'bare-redis') {
   // The client of the store plants a `then` that answers an absent value while it makes the promise the library returns. A promise
   // returned bare is resolved through that `then`: a revoked marker read as no marker. Expected: the value the store holds.
@@ -423,16 +423,13 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
     {} as never,
     {} as never
   )
-  const check = (challenge as unknown as { checkCode: (...args: unknown[]) => Promise<unknown> })
-    .checkCode
   settle(
-    check.call(
-      challenge,
-      {},
+    challenge['checkCode'](
+      {} as never,
       { userId: 'u', context: 'dashboard', tenantId: 't1' },
       'SECRET',
       '123456',
-      { totpWindow: 1 }
+      { totpWindow: 1 } as never
     ),
     (answer) => `valid:${String((answer as { valid: boolean }).valid)}`
   )
@@ -447,10 +444,10 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
   })
   const client = mappingOutages({
     get: (): Promise<never> => failingRead()
-  } as never) as unknown as { get: () => Promise<unknown> }
+  } as never)
   void (async (): Promise<void> => {
     try {
-      await client.get()
+      await client.get('key')
       report('answered')
     } catch (error: unknown) {
       report(`refused:${codeOf(error)}`)
@@ -469,9 +466,9 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
       })
       return failing
     }
-  } as never) as unknown as { get: () => unknown }
+  } as never)
   try {
-    client.get()
+    client.get('key')
     report('answered')
   } catch (error: unknown) {
     report(`threw:${(error as Error).message}`)
@@ -539,13 +536,13 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
   // the platform login does. Expected: a refusal, never the account the accessors answer.
   const guarded = guardRepository(
     {
-      lookup: (): Promise<unknown> => {
+      lookup: (): Promise<{ id: string }> => {
         selfRestoring({ id: 'FORGED' })
         return Promise.resolve({ id: 'real' })
       }
     },
     {} as never
-  ) as unknown as { lookup: () => Promise<{ id: string }> }
+  )
   void (async (): Promise<void> => {
     try {
       report(`account:${(await guarded.lookup()).id}`)

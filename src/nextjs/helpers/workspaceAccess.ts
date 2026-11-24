@@ -106,7 +106,13 @@ export function createWorkspaceAccessReader(
         response.status
       )
     }
-    const body: unknown = await response.json().catch(() => undefined)
+    // A try around the await, not a `.catch` chain: a chain asks the promise for `then` and builds another through its species.
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      body = undefined
+    }
     if (!isAccess(body)) {
       throw new AuthClientError('Workspace access answer has an unexpected shape', response.status)
     }

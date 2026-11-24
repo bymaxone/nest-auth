@@ -27,7 +27,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
-import { applyFunction } from './captured-builtins'
+import { applyFunction, hasOwn } from './captured-builtins'
 import { readOwnOrClass } from './own-or-class'
 import {
   API_KEY_REPOSITORY_CONTRACT,
@@ -363,7 +363,8 @@ function copyRecord(value: object, contract: RecordContract, run: Read): unknown
   for (const key of keys) {
     if (Object.hasOwn(contract.fields, key)) continue
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
-    if (descriptor !== undefined && 'value' in descriptor) define(copy, key, descriptor.value, true)
+    if (descriptor !== undefined && hasOwn(descriptor, 'value'))
+      define(copy, key, descriptor.value, true)
   }
   const own = new Set(keys)
   for (const [field, spec] of Object.entries(contract.fields)) {

@@ -29,6 +29,7 @@ import {
   defineKey,
   freezeObject,
   getDescriptor,
+  hasOwn,
   intrinsicThen,
   ownKeys
 } from './captured-builtins'
@@ -75,17 +76,20 @@ export function markHandled(work: unknown): void {
   try {
     pinned(work)
   } catch {
-    // A promise that cannot take the constructor is refused where it is awaited. Here it only has to have a handler, and an `await`
-    // of it would read the constructor it refused, so the rejection is heard through the `then` taken at load instead. That read
-    // can still throw, from an own getter nothing can replace; no handler can be attached then, and the awaiter refuses it too.
-    try {
-      applyFunction(intrinsicThen, work, [ignore, ignore])
-    } catch {
-      // Nothing more can be done for a promise that refuses every read.
+    // A promise that cannot take the constructor is refused where it is awaited. Here it only has to have a handler. One that holds
+    // a constructor of its own (permanent, and not the language's) would send an `await` through the `then` it also holds, so the
+    // language's `then` is used; it reads the species of that constructor, which belongs to the promise. One that holds none (a
+    // frozen promise) is awaited: that reads neither `then` nor the species of the live `Promise`, which `then` would.
+    if (getDescriptor(work, 'constructor') !== undefined) {
+      try {
+        applyFunction(intrinsicThen, work, [ignore, ignore])
+      } catch {
+        // A constructor that throws when read cannot take a handler; the awaiter refuses it too.
+      }
+      return
     }
-    return
   }
-  // `await` of a pinned native promise attaches its handler without reading `then` or the species of the constructor.
+  // `await` of a native promise attaches its handler without asking it for `then`, and without reading the species of the constructor.
   void (async (): Promise<void> => {
     try {
       await work
@@ -267,7 +271,8 @@ export function PinnedAll(): ClassDecorator {
     for (let index = 0; index < keys.length; index += 1) {
       const name = keys[index] as string | symbol
       const own = getDescriptor(target.prototype, name) as PropertyDescriptor
-      if (name === 'constructor' || typeof own.value !== 'function') continue
+      if (name === 'constructor' || !hasOwn(own, 'value') || typeof own.value !== 'function')
+        continue
       const method = own.value as (...args: never[]) => unknown
       own.value = named(function pinnedMethod(this: unknown, ...args: never[]): unknown {
         return pinned(applyFunction(method, this, args))

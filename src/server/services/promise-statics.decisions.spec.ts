@@ -30,8 +30,6 @@ async function unbox<T>(pending: Promise<{ readonly value: T }>): Promise<T> {
   return (await pending).value
 }
 
-type Statics = Record<'all' | 'race' | 'allSettled' | 'any', unknown>
-const promiseStatics = Promise as unknown as Statics
 const held = {
   all: Promise.all,
   race: Promise.race,
@@ -41,12 +39,13 @@ const held = {
 
 /** Replaces the four statics after load by functions that answer `forged`, as a host's flaw could. */
 function forge(forged: unknown): void {
-  for (const name of Object.keys(held) as (keyof Statics)[])
-    promiseStatics[name] = () => held.all.call(Promise, [forged]).then(([value]) => value)
+  for (const name of Object.keys(held) as (keyof typeof held)[])
+    Reflect.set(Promise, name, () => held.all.call(Promise, [forged]).then(([value]) => value))
 }
 
 afterEach(() => {
-  for (const name of Object.keys(held) as (keyof Statics)[]) promiseStatics[name] = held[name]
+  for (const name of Object.keys(held) as (keyof typeof held)[])
+    Reflect.set(Promise, name, held[name])
   jest.useRealTimers()
   jest.restoreAllMocks()
 })
@@ -177,9 +176,7 @@ describe('the statics of Promise replaced after the library loaded', () => {
       { member: `rt:${fresh}`, memberHash: fresh, createdAt: 3 }
     ])
 
-    await (
-      service as unknown as { enforceSessionLimit: (...args: unknown[]) => Promise<void> }
-    ).enforceSessionLimit('u', 't', fresh, 'ip', 'ua')
+    await service['enforceSessionLimit']('u', 't', fresh, 'ip', 'ua')
 
     expect(redis.del.mock.calls.map(([key]) => key)).toEqual([`rt:${oldest}`, `sd:${oldest}`])
   })

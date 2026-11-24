@@ -23,18 +23,16 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
-import type {
-  AuthUser,
-  IUserRepository,
-  SafeAuthUser
-} from '../interfaces/user-repository.interface'
+import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logDelivery } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { answerResetRequest } from '../utils/answer-reset-request'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { classifyResetProof } from '../utils/classify-reset-proof'
 import { describeChannelStatus } from '../utils/describe-error'
+import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
+import type { ResetContext } from '../utils/reset-context'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
@@ -74,27 +72,6 @@ const RESEND_COOLDOWN_SECONDS = 60
 // ---------------------------------------------------------------------------
 // Private types
 // ---------------------------------------------------------------------------
-
-/** Stored context for a password-reset token or verifiedToken. */
-interface ResetContext {
-  userId: string
-  email: string
-  tenantId: string
-  /**
-   * A digest of the password hash this token was issued against, binding it to that password.
-   *
-   * Each `forgot-password` writes its own `pw_reset:` key, so several can be alive at once —
-   * the 60-second cooldown against a 600-second TTL allows up to ten. Completing a reset with
-   * one used to leave the others valid, which is the wrong end state precisely when it matters:
-   * a victim who resets because an attacker read a link from their mailbox has not closed the
-   * link the attacker read. Binding each token to the password in force when it was minted
-   * means the first completed reset — or an authenticated change — invalidates every one of
-   * them at once, with no per-user index to keep in step.
-   *
-   * Empty for an account that had no password (OAuth-only) at issue time.
-   */
-  passwordFingerprint: string
-}
 
 // ---------------------------------------------------------------------------
 // PasswordResetService
@@ -960,22 +937,4 @@ export class PasswordResetService {
       passwordFingerprint: typeof fingerprint === 'string' ? fingerprint : ''
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// Projection helper
-// ---------------------------------------------------------------------------
-
-/**
- * Projects a full {@link AuthUser} to a {@link SafeAuthUser} by excluding
- * credential and secret fields that must never leave the service layer.
- */
-function toSafeUser(user: AuthUser): SafeAuthUser {
-  const {
-    passwordHash: _passwordHash,
-    mfaSecret: _mfaSecret,
-    mfaRecoveryCodes: _mfaRecoveryCodes,
-    ...safe
-  } = user
-  return safe
 }

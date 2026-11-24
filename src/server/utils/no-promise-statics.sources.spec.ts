@@ -38,12 +38,15 @@ function anchorOf(node: ts.Node, read: string): string {
   return `${holderOf(node)}: ${read}`
 }
 
-/** The `.ts` sources of the server that are not tests. */
-function sourceFiles(dir = join(__dirname, '..')): string[] {
+/** Every source under `src`, not only the server: the client, the hooks and the Next.js helpers run beside host code too. */
+const SRC_ROOT = join(__dirname, '..', '..')
+
+/** The `.ts`/`.tsx` sources under `src` that are not tests. */
+function sourceFiles(dir = SRC_ROOT): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sourceFiles(path)
-    return /\.ts$/.test(entry.name) && !/\.(spec|test)\.ts$/.test(entry.name) ? [path] : []
+    return /\.tsx?$/.test(entry.name) && !/\.(spec|test)\.ts$/.test(entry.name) ? [path] : []
   })
 }
 
@@ -125,18 +128,67 @@ interface Exemption {
  */
 const EXEMPT_METHODS: Exemption[] = [
   {
-    file: 'redis/redis-outage.ts',
+    file: 'server/redis/redis-outage.ts',
     site: 'isThenable: .then',
     count: 1,
     reason:
       'The read of `then` that tells a promise-like from a plain value; the wait itself uses await.'
   },
   {
-    file: 'utils/captured-builtins.ts',
+    file: 'server/utils/captured-builtins.ts',
     site: 'intrinsicThen: .then',
     count: 1,
     reason:
       "Takes the then of the language's own promises once, at load; nothing is awaited through it."
+  },
+  {
+    file: 'client/createAuthClient.ts',
+    site: 'expectNoContent: .catch',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
+  },
+  {
+    file: 'client/createAuthFetch.ts',
+    site: 'attempt: .finally',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
+  },
+  {
+    file: 'client/createAuthFetch.ts',
+    site: 'body: .catch',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
+  },
+  {
+    file: 'client/createAuthFetch.ts',
+    site: 'createAuthFetch: .catch',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
+  },
+  {
+    file: 'client/createAuthFetch.ts',
+    site: 'performRefresh: .catch',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
+  },
+  {
+    file: 'react/workspaceState.ts',
+    site: 'useBroadcastReload: .catch',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
+  },
+  {
+    file: 'react/workspaceState.ts',
+    site: 'useBroadcastReload: .then',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
   }
 ]
 
@@ -145,14 +197,43 @@ const EXEMPT_METHODS: Exemption[] = [
  * failure. Each one is fire-and-forget, nothing waits for the promise or reads its answer, so a replaced `resolve` cannot answer
  * a decision.
  */
-const EXEMPT_STATICS: Exemption[] = []
+const EXEMPT_STATICS: Exemption[] = [
+  {
+    file: 'client/createAuthFetch.ts',
+    site: 'body: Promise.race',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
+  },
+  {
+    file: 'client/createAuthFetch.ts',
+    site: 'createAuthFetch: Promise.resolve',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
+  },
+  {
+    file: 'react/useWorkspaces.ts',
+    site: 'DISABLED: Promise.reject',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
+  },
+  {
+    file: 'react/useWorkspaces.ts',
+    site: 'DISABLED: Promise.resolve',
+    count: 1,
+    reason:
+      "Browser code: no server-side decision rests on it. The library's guards and services run in the NestJS process; this runs in the page, whose own scripts already share its realm, so a replaced prototype there is not a boundary the library defends."
+  }
+]
 
 /** The sites a scan found, as the table that argues them: `file :: site` to the count. */
 function tally(scan: (text: string) => string[]): Record<string, number> {
   const counted: Record<string, number> = {}
   for (const file of sourceFiles()) {
     for (const site of scan(readFileSync(file, 'utf8'))) {
-      const key = `${file.slice(join(__dirname, '..').length + 1)} :: ${site}`
+      const key = `${file.slice(SRC_ROOT.length + 1)} :: ${site}`
       counted[key] = (counted[key] ?? 0) + 1
     }
   }
@@ -226,7 +307,11 @@ describe('the statics of Promise in the sources of the server', () => {
       'wait: new Promise'
     ])
     expect(constructed('new IntrinsicPromise((r) => r(1))')).toEqual([])
-    expect(tally(constructed)).toEqual({})
+    // The browser-side code (`client`, `react`) builds a timer promise for a read of a response; it has the browser's realm, argued above.
+    const outsideBrowser = Object.entries(tally(constructed)).filter(
+      ([site]) => !site.startsWith('client/') && !site.startsWith('react/')
+    )
+    expect(outsideBrowser).toEqual([])
   })
 
   // Scenario: each way to read a method of a promise in a snippet. Expected: found, including through `call` and an element.

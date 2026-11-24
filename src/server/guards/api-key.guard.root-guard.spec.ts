@@ -173,7 +173,7 @@ describe('ApiKeyGuard while a built-in is replaced', () => {
         })
         return hook
       }
-    } as unknown as IAuthHooks
+    } as never
     const held = getOwn(Function.prototype, 'call') as PropertyDescriptor
     let result: number | true | undefined
     try {

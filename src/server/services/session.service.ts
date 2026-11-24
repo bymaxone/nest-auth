@@ -12,19 +12,20 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { SessionAlertInfo } from '../interfaces/email-provider.interface'
-import type {
-  AuthUser,
-  IUserRepository,
-  SafeAuthUser
-} from '../interfaces/user-repository.interface'
+import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logHook, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { hostEntityOf } from '../utils/host-read'
+import { toSafeUser } from '../utils/mfa-safe-user'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { runDetached } from '../utils/run-detached'
-import { parseUserAgent } from '../utils/session-detail'
+import {
+  parseStoredDetail,
+  parseUserAgent,
+  type StoredSessionDetail
+} from '../utils/session-detail'
 import { allOf, awaiting, checked, detached, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst } from '../utils/settle-writes'
 
@@ -115,14 +116,6 @@ export interface SessionInfo {
 // Private types
 // ---------------------------------------------------------------------------
 
-/** Internal detail record persisted in Redis under `sd:{hash}`. */
-interface StoredSessionDetail {
-  device: string
-  ip: string
-  createdAt: number
-  lastActivityAt: number
-}
-
 /**
  * What reading one index member's session detail came to.
  *
@@ -134,49 +127,6 @@ type MemberRead =
   | { kind: 'session'; info: SessionInfo }
   | { kind: 'stale'; member: string }
   | { kind: 'failed'; member: string; error: unknown }
-
-/**
- * Parses a stored session detail record.
- *
- * @param raw - The `sd:{hash}` value.
- * @returns The record, or `null` when it is not valid JSON or lacks a field the listing shows.
- */
-function parseStoredDetail(raw: string): StoredSessionDetail | null {
-  try {
-    const parsed: unknown = parseJson(raw)
-    const p = parsed as Record<string, unknown>
-    if (
-      // Stryker disable next-line ConditionalExpression,LogicalOperator: `parsed === null` is subsumed by the adjacent `typeof parsed !== 'object'` clause (typeof null is 'object' but the field reads below reject it identically)
-      parsed === null ||
-      // Stryker disable next-line ConditionalExpression: equivalent — a non-object
-      // parsed value reaches the field reads below as `undefined` on every property,
-      // which reject it with the identical outcome
-      typeof parsed !== 'object' ||
-      typeof p['device'] !== 'string' ||
-      typeof p['ip'] !== 'string' ||
-      typeof p['createdAt'] !== 'number' ||
-      typeof p['lastActivityAt'] !== 'number'
-    ) {
-      return null
-    }
-    return parsed as StoredSessionDetail
-  } catch {
-    return null
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Projection helper
-// ---------------------------------------------------------------------------
-
-/**
- * Projects a full {@link AuthUser} to a {@link SafeAuthUser} by excluding
- * credential and secret fields.
- */
-function toSafeUser(user: AuthUser): SafeAuthUser {
-  const { passwordHash: _p, mfaSecret: _s, mfaRecoveryCodes: _r, ...safe } = user
-  return safe
-}
 
 // ---------------------------------------------------------------------------
 // SessionService

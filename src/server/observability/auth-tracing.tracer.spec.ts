@@ -9,7 +9,6 @@
 import { isRefusal } from '../utils/object-prototype-guard'
 import { AuthTracing } from './auth-tracing'
 
-const proto = Promise.prototype as unknown as Record<string, unknown>
 const ownConstructor = Object.getOwnPropertyDescriptor(
   Promise.prototype,
   'constructor'
@@ -22,11 +21,11 @@ function plant(forgedValue: unknown): void {
     configurable: true,
     get() {
       Object.defineProperty(Promise.prototype, 'constructor', ownConstructor)
-      Object.defineProperty(proto, 'then', {
+      Object.defineProperty(Promise.prototype, 'then', {
         configurable: true,
         writable: true,
         value(this: Promise<unknown>, resolve: (value: unknown) => void) {
-          Object.defineProperty(proto, 'then', {
+          Object.defineProperty(Promise.prototype, 'then', {
             configurable: true,
             writable: true,
             value: ownThen

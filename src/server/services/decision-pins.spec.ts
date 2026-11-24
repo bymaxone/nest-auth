@@ -53,10 +53,7 @@ const CONTEXT = { plane: 'dashboard' } as HookContext
 
 describe('the lockout read of the MFA-adjacent flows', () => {
   function lockout(bruteForce: Partial<Record<keyof BruteForceService, jest.Mock>>) {
-    return new MfaFlowLockoutService(
-      { hmacKey: 'k' } as ResolvedOptions,
-      bruteForce as unknown as BruteForceService
-    )
+    return new MfaFlowLockoutService({ hmacKey: 'k' } as ResolvedOptions, bruteForce as never)
   }
 
   // Scenario: the counter is at its limit and the answer carries a `then` that says it is not. Expected: the account stays locked.
@@ -112,9 +109,9 @@ describe('the steps of the workspace actions', () => {
       reauthenticate: over.reauthenticate ?? jest.fn().mockResolvedValue(undefined)
     }
     const service = new WorkspaceActionsService(
-      workspaces as unknown as WorkspaceService,
-      memberships as unknown as MembershipService,
-      callers as unknown as WorkspaceCallerService
+      workspaces as never,
+      memberships as never,
+      callers as never
     )
     return { service, workspaces, memberships }
   }

@@ -35,6 +35,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { resolveClientAddress } from '../utils/client-address'
 import { describeChannelStatus } from '../utils/describe-error'
+import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
 import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
@@ -1435,22 +1436,4 @@ export class AuthService {
     })()
     return true
   }
-}
-
-// ---------------------------------------------------------------------------
-// Projection helper
-// ---------------------------------------------------------------------------
-
-/**
- * Projects a full {@link AuthUser} to a {@link SafeAuthUser} by excluding
- * credential and secret fields that must never leave the service layer.
- */
-function toSafeUser(user: AuthUser): SafeAuthUser {
-  const {
-    passwordHash: _passwordHash,
-    mfaSecret: _mfaSecret,
-    mfaRecoveryCodes: _mfaRecoveryCodes,
-    ...safe
-  } = user
-  return safe
 }

@@ -20,8 +20,9 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthMetricsTally } from '../observability/auth-metrics-tally'
 import { AuthTracing } from '../observability/auth-tracing'
 import { AuthObservabilityInterceptor, ObserveAuth } from '../observability/observe-auth'
+import { copyHostRecord } from '../utils/host-read'
 import { isRefusal } from '../utils/object-prototype-guard'
-import { checked, pinned } from '../utils/settle'
+import { checked, markHandled, pinned } from '../utils/settle'
 import { resolveOptions } from '../config/resolved-options'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { BruteForceService } from './brute-force.service'
@@ -30,7 +31,6 @@ import { PasswordService } from './password.service'
 import { ReauthenticationService } from './reauthentication.service'
 import { WsTicketService } from './ws-ticket.service'
 
-const proto = Promise.prototype as unknown as Record<string, unknown>
 const ownConstructor = Object.getOwnPropertyDescriptor(
   Promise.prototype,
   'constructor'
@@ -55,11 +55,11 @@ function plant(forgedValue: unknown): void {
     configurable: true,
     get() {
       Object.defineProperty(Promise.prototype, 'constructor', ownConstructor)
-      Object.defineProperty(proto, 'then', {
+      Object.defineProperty(Promise.prototype, 'then', {
         configurable: true,
         writable: true,
         value(this: Promise<unknown>, resolve: (value: unknown) => void) {
-          Object.defineProperty(proto, 'then', {
+          Object.defineProperty(Promise.prototype, 'then', {
             configurable: true,
             writable: true,
             value: ownThen
@@ -174,6 +174,45 @@ describe('the host awaits what an exported service returns', () => {
   })
 })
 
+/** A session service whose repository, behind the guard, throws the species once and then rejects the lookup. */
+async function sessionOverRejectingLookup(): Promise<
+  InstanceType<typeof import('./session.service').SessionService>
+> {
+  const { SessionService } = await import('./session.service')
+  const { guardRepository } = await import('../utils/host-read')
+  const { USER_REPOSITORY_CONTRACT } = await import('../utils/repository-contracts')
+  const users = guardRepository(
+    {
+      findById: () => {
+        throwSpeciesOnce()
+        return Promise.reject(new Error('db down'))
+      }
+    } as never,
+    USER_REPOSITORY_CONTRACT
+  )
+  const options = {
+    hmacKey: 'k',
+    jwt: { secret: 's', refreshExpiresInDays: 7 },
+    sessions: { enabled: false, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
+  }
+  const redis = {
+    eval: jest.fn().mockResolvedValue(0),
+    set: jest.fn().mockResolvedValue('OK'),
+    get: jest.fn().mockResolvedValue(null),
+    sadd: jest.fn().mockResolvedValue(1),
+    smembers: jest.fn().mockResolvedValue([]),
+    expire: jest.fn().mockResolvedValue(1),
+    pruneExpiredGraceMembers: jest.fn().mockResolvedValue(0),
+    pruneDeadMembers: jest.fn().mockResolvedValue(0)
+  }
+  return new SessionService(
+    options as never,
+    users as never,
+    { onNewSession: () => undefined } as never,
+    redis as never
+  )
+}
+
 describe('detached work under a throwing species', () => {
   // Scenario: the species getter throws once while a session is created, and the repository rejects. Expected: the answer of
   // `createSession` is the one it would have given, and nothing is left unhandled. Why: a `.then` chain read the species itself
@@ -186,39 +225,7 @@ describe('detached work under a throwing species', () => {
       unhandled.push(reason)
     }
     process.on('unhandledRejection', listener)
-    const { SessionService } = await import('./session.service')
-    const { guardRepository } = await import('../utils/host-read')
-    const { USER_REPOSITORY_CONTRACT } = await import('../utils/repository-contracts')
-    const users = guardRepository(
-      {
-        findById: () => {
-          throwSpeciesOnce()
-          return Promise.reject(new Error('db down'))
-        }
-      } as never,
-      USER_REPOSITORY_CONTRACT
-    )
-    const options = {
-      hmacKey: 'k',
-      jwt: { secret: 's', refreshExpiresInDays: 7 },
-      sessions: { enabled: false, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
-    }
-    const redis = {
-      eval: jest.fn().mockResolvedValue(0),
-      set: jest.fn().mockResolvedValue('OK'),
-      get: jest.fn().mockResolvedValue(null),
-      sadd: jest.fn().mockResolvedValue(1),
-      smembers: jest.fn().mockResolvedValue([]),
-      expire: jest.fn().mockResolvedValue(1),
-      pruneExpiredGraceMembers: jest.fn().mockResolvedValue(0),
-      pruneDeadMembers: jest.fn().mockResolvedValue(0)
-    }
-    const service = new SessionService(
-      options as never,
-      users as never,
-      { onNewSession: () => undefined } as never,
-      redis as never
-    )
+    const service = await sessionOverRejectingLookup()
 
     let outcome: unknown
     try {
@@ -337,13 +344,95 @@ describe('the constructor of Promise, read by its descriptor', () => {
   })
 })
 
+describe('a descriptor is read for its own fields only', () => {
+  afterEach(() => {
+    delete (Object.prototype as Record<string, unknown>)['value']
+  })
+
+  // Scenario: `Object.prototype.value` planted to the language's constructor and the slot turned into an accessor. Expected: the
+  // module refuses to load, as it does for an accessor with nothing planted, and the getter does not run (16b.17(e)).
+  it('refuses to load over an accessor while Object.prototype.value is planted', () => {
+    let ran = false
+    // Defined first: `defineProperty` reads its own argument through the root, so a planted `value` would break it.
+    Object.defineProperty(Promise.prototype, 'constructor', {
+      configurable: true,
+      get() {
+        ran = true
+        return ownConstructor.value
+      }
+    })
+    ;(Object.prototype as Record<string, unknown>)['value'] = ownConstructor.value
+
+    expect(() => {
+      jest.isolateModules(() => {
+        require('../utils/captured-builtins')
+      })
+    }).toThrow()
+    expect(ran).toBe(false)
+  })
+
+  // Scenario: a property of a host's answer is an accessor while `Object.prototype.value` is planted. Expected: the copy of the
+  // answer does not carry what was planted.
+  it('does not copy a planted value for an accessor of an answer', () => {
+    const answer = { a: 'x' }
+    Object.defineProperty(answer, 'extra', { enumerable: true, get: () => 'own' })
+    ;(Object.prototype as Record<string, unknown>)['value'] = 'PLANTED'
+
+    let copy: unknown
+    try {
+      copy = copyHostRecord(answer, { fields: { a: 'string' } } as never)
+    } catch (error) {
+      expect(isRefusal(error) || error instanceof AuthException).toBe(true)
+      return
+    }
+
+    expect(Object.values(copy as object)).not.toContain('PLANTED')
+  })
+})
+
+describe('a frozen promise whose species throws', () => {
+  // Scenario: a frozen host promise that rejects later, while `Promise[Symbol.species]` throws when read. Expected: the rejection has a
+  // handler, so nothing is reported as unhandled (16b.17(c)). Why: a derived promise from the language's `then` reads the species.
+  it('has its rejection heard without a derived promise', async () => {
+    const unhandled: unknown[] = []
+    const listener = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', listener)
+    const species = Object.getOwnPropertyDescriptor(Promise, Symbol.species) as PropertyDescriptor
+    let reject!: (error: Error) => void
+    const host = Object.freeze(
+      new Promise<never>((_resolve, fail) => {
+        reject = fail
+      })
+    )
+    Object.defineProperty(Promise, Symbol.species, {
+      configurable: true,
+      get() {
+        throw new Error('species')
+      }
+    })
+    // The species throws only while the handler is attached: the awaits of the test itself read it too.
+    try {
+      markHandled(host)
+    } finally {
+      Object.defineProperty(Promise, Symbol.species, species)
+    }
+    reject(new Error('host rejected'))
+    await new Promise((resolve) => setImmediate(resolve))
+    process.off('unhandledRejection', listener)
+
+    expect(unhandled).toEqual([])
+  })
+})
+
 describe('checked looks through the chain of prototypes', () => {
   // Scenario: a `then` on the prototype of a class, and on the prototype of that prototype. Expected: `checked` refuses both, and
   // answers a plain object (C9).
   it('refuses a then held anywhere on the chain', () => {
     class Base {}
     class Dto extends Base {}
-    ;(Base.prototype as unknown as Record<string, unknown>)['then'] = () => undefined
+    Reflect.set(Base.prototype, 'then', () => undefined)
 
     expect(() => checked(new Dto())).toThrow(AuthException)
     expect(checked({ a: 1 })).toEqual({ a: 1 })
