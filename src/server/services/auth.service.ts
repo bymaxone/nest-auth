@@ -101,9 +101,11 @@ export class AuthService {
    * @param tenantId - Its tenant; a repository id is unique only within one.
    */
   private async dropCachedAccountFacts(userId: string, tenantId: string): Promise<void> {
-    await this.accountStatus.invalidate({ userId, tenantId }).catch((err: unknown) => {
-      logStore(this.logger, 'AUTH_STORE_FAILED', 'cache_invalidation', err)
-    })
+    await pinned(
+      this.accountStatus.invalidate({ userId, tenantId }).catch((err: unknown) => {
+        logStore(this.logger, 'AUTH_STORE_FAILED', 'cache_invalidation', err)
+      })
+    )
   }
   /**
    * Whether the tenant-mismatch misconfiguration has already been reported.
@@ -169,18 +171,18 @@ export class AuthService {
     verifiedHash: string
   ): Promise<void> {
     try {
-      const upgraded = await this.passwordService.hash(plain)
+      const upgraded = await pinned(this.passwordService.hash(plain))
       // Tenant-scoped, because `IUserRepository.findById` takes the argument precisely so a
       // store whose ids are not globally unique cannot answer with another tenant's row. This
       // is not an admin flow — it is a read on behalf of one account — and an unscoped answer
       // would have the guard comparing the verified hash against a DIFFERENT row, which either
       // drops a legitimate upgrade or admits a write the guard exists to refuse.
-      const current = await this.userRepo.findById({ id: userId, tenantId })
+      const current = await pinned(this.userRepo.findById({ id: userId, tenantId }))
       if (current?.passwordHash !== verifiedHash) {
         logEvent(this.logger, 'AUTH_REHASH_SKIPPED')
         return
       }
-      await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash: upgraded })
+      await pinned(this.userRepo.updatePassword({ id: userId, tenantId, passwordHash: upgraded }))
     } catch (err: unknown) {
       logStore(this.logger, 'AUTH_STORE_FAILED', 'rehash_on_verify', err)
     }
@@ -210,7 +212,7 @@ export class AuthService {
       throw new AuthException(AUTH_ERROR_CODES.REGISTRATION_CLOSED)
     }
 
-    const tenantId = await this.resolveTenantId(dto.tenantId, req)
+    const tenantId = await pinned(this.resolveTenantId(dto.tenantId, req))
     const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
 
@@ -232,9 +234,8 @@ export class AuthService {
 
     // beforeRegister hook — only hook that can block the flow.
     if (this.hooks?.beforeRegister) {
-      const hookResult = await this.hooks.beforeRegister(
-        { email: dto.email, name: dto.name, tenantId },
-        context
+      const hookResult = await pinned(
+        this.hooks.beforeRegister({ email: dto.email, name: dto.name, tenantId }, context)
       )
       if (!hookResult.allowed) {
         throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
@@ -257,49 +258,40 @@ export class AuthService {
     //
     // The dummy derivation is the same one the login path spends on an unknown address, so this
     // adds no amplification a login could not already be used for.
-    const existing = await this.userRepo.findByEmail({ email: dto.email, tenantId })
+    const existing = await pinned(this.userRepo.findByEmail({ email: dto.email, tenantId }))
     if (existing) {
-      await this.passwordService.compareDummy(dto.password)
+      await pinned(this.passwordService.compareDummy(dto.password))
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
 
-    await this.passwordService.assertAcceptable(dto.password, 'password')
-    const passwordHash = await this.passwordService.hash(dto.password)
+    await pinned(this.passwordService.assertAcceptable(dto.password, 'password'))
+    const passwordHash = await pinned(this.passwordService.hash(dto.password))
 
     // Read from `hookOverrides`, never from `dto`: a caller-supplied `role` or `status` is inert
     // here no matter how this service is invoked. See the declaration for why that matters.
-    const newUser = await this.userRepo.create({
-      email: dto.email,
-      name: dto.name,
-      passwordHash,
-      tenantId,
-      ...(typeof hookOverrides.role === 'string' && { role: hookOverrides.role }),
-      ...(typeof hookOverrides.status === 'string' && { status: hookOverrides.status }),
-      ...(this.options.emailVerification.required
-        ? { emailVerified: false }
-        : typeof hookOverrides.emailVerified === 'boolean'
-          ? { emailVerified: hookOverrides.emailVerified }
-          : {})
-    })
+    const newUser = await pinned(
+      this.userRepo.create({
+        email: dto.email,
+        name: dto.name,
+        passwordHash,
+        tenantId,
+        ...(typeof hookOverrides.role === 'string' && { role: hookOverrides.role }),
+        ...(typeof hookOverrides.status === 'string' && { status: hookOverrides.status }),
+        ...(this.options.emailVerification.required
+          ? { emailVerified: false }
+          : typeof hookOverrides.emailVerified === 'boolean'
+            ? { emailVerified: hookOverrides.emailVerified }
+            : {})
+      })
+    )
 
     // Send email verification OTP if required.
     if (this.options.emailVerification.required) {
-      await this.sendVerificationOtp(tenantId, dto.email)
+      await pinned(this.sendVerificationOtp(tenantId, dto.email))
     }
 
     const safeUser = toSafeUser(newUser)
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, CREDENTIAL_PROVED)
-
-    // Track the session when sessions are enabled (enforces concurrent session limit).
-    if (this.options.sessions.enabled) {
-      await this.sessionService.createSession({
-        userId: safeUser.id,
-        tenantId: safeUser.tenantId,
-        rawRefreshToken: result.rawRefreshToken,
-        ip,
-        userAgent
-      })
-    }
+    const result = await pinned(this.openSession(safeUser, ip, userAgent, CREDENTIAL_PROVED))
 
     logEvent(this.logger, 'AUTH_USER_REGISTERED', { userId: newUser.id, tenantId, via: 'password' })
 
@@ -332,7 +324,7 @@ export class AuthService {
     dto: { email: string; password: string; tenantId?: string },
     req: Request
   ): Promise<AuthResult | MfaChallengeResult> {
-    const tenantId = await this.resolveTenantId(dto.tenantId, req)
+    const tenantId = await pinned(this.resolveTenantId(dto.tenantId, req))
     const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
 
@@ -350,10 +342,12 @@ export class AuthService {
 
     const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
 
-    const locked = await this.bruteForce.isLockedOut(bfIdentifier)
+    const locked = await pinned(this.bruteForce.isLockedOut(bfIdentifier))
     if (locked) {
       logEvent(this.logger, 'AUTH_LOGIN_LOCKED', { plane: 'dashboard' })
-      const remainingSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
+      const remainingSeconds = await pinned(
+        this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
+      )
       this.emitLoginFailed({ email: dto.email, tenantId, reason: 'locked_out' }, context)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, {
         retryAfterSeconds: remainingSeconds
@@ -361,10 +355,10 @@ export class AuthService {
     }
 
     if (this.hooks?.beforeLogin) {
-      await this.hooks.beforeLogin(dto.email, tenantId, context)
+      await pinned(this.hooks.beforeLogin(dto.email, tenantId, context))
     }
 
-    const user = await this.userRepo.findByEmail({ email: dto.email, tenantId })
+    const user = await pinned(this.userRepo.findByEmail({ email: dto.email, tenantId }))
 
     // User-not-found path: run a dummy scrypt derivation before failing so that an
     // unknown e-mail takes the same wall-clock time as a known e-mail with a wrong
@@ -395,8 +389,8 @@ export class AuthService {
       logEvent(this.logger, 'AUTH_TENANT_SCOPE_VIOLATED')
     }
     if (!user || !user.passwordHash || tenantMismatch) {
-      await this.passwordService.compareDummy(dto.password)
-      await this.recordLoginFailure(bfIdentifier, { email: dto.email, tenantId }, context)
+      await pinned(this.passwordService.compareDummy(dto.password))
+      await pinned(this.recordLoginFailure(bfIdentifier, { email: dto.email, tenantId }, context))
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
@@ -412,13 +406,17 @@ export class AuthService {
     //
     // Proving the password first costs one derivation on a blocked account and buys the
     // property that matters: every answer an attacker can reach is the same answer.
-    const passwordMatch = await this.passwordService.compare(dto.password, user.passwordHash)
+    const passwordMatch = await pinned(
+      this.passwordService.compare(dto.password, user.passwordHash)
+    )
     if (!passwordMatch) {
       logEvent(this.logger, 'AUTH_LOGIN_INVALID_CREDENTIALS', { plane: 'dashboard' })
-      await this.recordLoginFailure(
-        bfIdentifier,
-        { email: dto.email, tenantId, userId: user.id },
-        context
+      await pinned(
+        this.recordLoginFailure(
+          bfIdentifier,
+          { email: dto.email, tenantId, userId: user.id },
+          context
+        )
       )
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
@@ -445,7 +443,7 @@ export class AuthService {
     }
 
     // Reset brute-force counter on success.
-    await this.bruteForce.resetFailures(bfIdentifier)
+    await pinned(this.bruteForce.resetFailures(bfIdentifier))
 
     // Transparent upgrade: the password has just been proven, so a hash written under weaker
     // parameters can be re-derived at the current cost and stored, without the user doing
@@ -461,28 +459,15 @@ export class AuthService {
     if (user.mfaEnabled) {
       // Bind the tenant into the challenge token so the challenge resolves this account
       // tenant-scoped rather than by `sub` alone.
-      const mfaTempToken = await this.tokenManager.issueMfaTempToken(
-        user.id,
-        'dashboard',
-        user.tenantId
+      const mfaTempToken = await pinned(
+        this.tokenManager.issueMfaTempToken(user.id, 'dashboard', user.tenantId)
       )
       this.logLogin('AUTH_LOGIN_MFA_CHALLENGED', user.id, tenantId)
       return checked({ mfaRequired: true, mfaTempToken })
     }
 
     const safeUser = toSafeUser(user)
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, CREDENTIAL_PROVED)
-
-    // Track the session when sessions are enabled (enforces concurrent session limit).
-    if (this.options.sessions.enabled) {
-      await this.sessionService.createSession({
-        userId: safeUser.id,
-        tenantId: safeUser.tenantId,
-        rawRefreshToken: result.rawRefreshToken,
-        ip,
-        userAgent
-      })
-    }
+    const result = await pinned(this.openSession(safeUser, ip, userAgent, CREDENTIAL_PROVED))
 
     this.logLogin('AUTH_LOGIN_SUCCEEDED', safeUser.id, tenantId)
 
@@ -495,6 +480,28 @@ export class AuthService {
       runDetached(this.logger, () => afterLogin(safeUser, context), 'afterLogin')
     }
 
+    return checked(result)
+  }
+
+  /** Issues the tokens of a signed-in user and, when sessions are enabled, records the session that holds them. */
+  private async openSession(
+    safeUser: SafeAuthUser,
+    ip: string,
+    userAgent: string,
+    proof?: Parameters<TokenManagerService['issueTokens']>[3]
+  ): Promise<AuthResult> {
+    const result = await pinned(this.tokenManager.issueTokens(safeUser, ip, userAgent, proof))
+    if (this.options.sessions.enabled) {
+      await pinned(
+        this.sessionService.createSession({
+          userId: safeUser.id,
+          tenantId: safeUser.tenantId,
+          rawRefreshToken: result.rawRefreshToken,
+          ip,
+          userAgent
+        })
+      )
+    }
     return checked(result)
   }
 
@@ -534,48 +541,45 @@ export class AuthService {
     // this library wrote from the session record, never from a token's claims.
     const sessionHash = sha256(rawRefreshToken)
     const markerKey = logoutPendingKey('dashboard', sessionHash)
-    const live = await this.redis.readSessionOwner(`rt:${sessionHash}`)
+    const live = await pinned(this.redis.readSessionOwner(`rt:${sessionHash}`))
     const fromSession = live.userId !== ''
-    const { userId, tenantId } = fromSession ? live : await this.redis.readSessionOwner(markerKey)
+    const { userId, tenantId } = fromSession
+      ? live
+      : await pinned(this.redis.readSessionOwner(markerKey))
     logEvent(this.logger, 'AUTH_LOGOUT', { plane: 'dashboard', ...(userId ? { userId } : {}) })
 
     // Every revocation write is attempted whatever the earlier ones did, and the first failure is
     // raised once all have run. A token presented here may have rotated and still sit inside its
     // grace window, where a grace hit mints a fresh session, so the `rp:` pointer goes too.
-    const failures = await settleWrites([
-      ...this.blacklistWrites(accessToken),
-      (): Promise<unknown> => this.redis.del(`rt:${sessionHash}`),
-      (): Promise<unknown> => this.redis.del(`rp:${sessionHash}`)
-    ])
-    await this.revokeSessionMetadata(userId, tenantId, sessionHash)
+    const failures = await pinned(
+      settleWrites([
+        ...this.blacklistWrites(accessToken),
+        (): Promise<unknown> => this.redis.del(`rt:${sessionHash}`),
+        (): Promise<unknown> => this.redis.del(`rp:${sessionHash}`)
+      ])
+    )
+    await pinned(this.revokeSessionMetadata(userId, tenantId, sessionHash))
 
     // A refused revocation write is not a completed logout: no hook, and the caller is told so.
     // The session record is already gone, so the owner is kept for the retry that will finish it.
     const markerTtl = logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn)
+    const owner = { userId, tenantId }
     if (failures.length > 0 && fromSession) {
-      await rememberPendingLogout(
-        this.redis,
-        markerKey,
-        { userId, tenantId },
-        markerTtl,
-        this.logger
-      )
+      await pinned(rememberPendingLogout(this.redis, markerKey, owner, markerTtl, this.logger))
     }
     raiseFirst(failures)
 
     // The hook names the user who was signed out, so it only fires when the session or the marker
     // told us who that was. A logout for an already-gone session has nobody to name.
-    if (
-      userId !== '' &&
-      (await settlePendingLogout(
-        this.redis,
-        markerKey,
-        fromSession,
-        { userId, tenantId },
-        markerTtl,
-        this.logger
-      ))
-    ) {
+    const settle = settlePendingLogout(
+      this.redis,
+      markerKey,
+      fromSession,
+      owner,
+      markerTtl,
+      this.logger
+    )
+    if (userId !== '' && (await pinned(settle))) {
       this.emitLogout(userId, tenantId)
     }
 
@@ -631,9 +635,8 @@ export class AuthService {
     sessionHash: string
   ): Promise<void> {
     if (!this.options.sessions.enabled || !userId || tenantId === undefined) return
-    await this.sessionService
-      .revokeSession({ userId, tenantId, sessionHash })
-      .catch((err: unknown) => {
+    await pinned(
+      this.sessionService.revokeSession({ userId, tenantId, sessionHash }).catch((err: unknown) => {
         const errCode =
           err instanceof AuthException
             ? (err.getResponse() as { error: { code: string } }).error.code
@@ -645,6 +648,7 @@ export class AuthService {
           logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_cleanup', err)
         }
       })
+    )
   }
 
   /**
@@ -711,7 +715,7 @@ export class AuthService {
     ip: string,
     userAgent: string
   ): Promise<DashboardRefreshResult> {
-    const result = await this.tokenManager.reissueTokens(oldRefreshToken, ip, userAgent)
+    const result = await pinned(this.tokenManager.reissueTokens(oldRefreshToken, ip, userAgent))
 
     // Re-read the account and re-apply the status gate. Rotation works entirely from the Redis
     // record, so nothing else on this path ever looks at the user again: without this a
@@ -731,17 +735,12 @@ export class AuthService {
     // status of a homonym in another tenant and, on the re-stamp path below, sign that account's
     // tenant and role into the caller's token. The session record already carries the tenant the
     // login resolved, which is the one this token is for.
-    const user = await this.userRepo.findById({
-      id: result.session.userId,
-      tenantId: result.session.tenantId
-    })
+    const { userId, tenantId } = result.session
+    const user = await pinned(this.userRepo.findById({ id: userId, tenantId }))
     if (!user) {
       // The account is gone. The session record outlived it, so end it rather than hand back
       // a token for a user nobody can look up.
-      await this.revokeAllSessions({
-        userId: result.session.userId,
-        tenantId: result.session.tenantId
-      })
+      await pinned(this.revokeAllSessions({ userId, tenantId }))
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     try {
@@ -751,10 +750,7 @@ export class AuthService {
       // `assertUserNotBlocked` rather than testing `blockedStatuses` inline so there is one
       // definition of "blocked" — the inline version would have to re-implement the
       // case-insensitive comparison, and a second implementation is a second thing to drift.
-      await this.revokeAllSessions({
-        userId: result.session.userId,
-        tenantId: result.session.tenantId
-      })
+      await pinned(this.revokeAllSessions({ userId, tenantId }))
       throw err
     }
 
@@ -821,7 +817,7 @@ export class AuthService {
         // Carried across from the token the rotation just produced: a second factor already
         // cleared on this session stays cleared, and re-stamping must not demand it again.
         mfaVerified: rotated.mfaVerified,
-        epoch: await this.redis.getUserTokenEpoch(user.id, user.tenantId, 'dashboard')
+        epoch: await pinned(this.redis.getUserTokenEpoch(user.id, user.tenantId, 'dashboard'))
       })
     }
 
@@ -881,8 +877,8 @@ export class AuthService {
         { field: 'tenantId', message: "tenantId is required to revoke a user's sessions" }
       ])
     }
-    await this.redis.invalidateUserSessions(userId, tenantId, 'dashboard')
-    await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
+    await pinned(this.redis.invalidateUserSessions(userId, tenantId, 'dashboard'))
+    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
   }
 
   // ---------------------------------------------------------------------------
@@ -899,7 +895,7 @@ export class AuthService {
    * @throws {@link AuthException} with `TOKEN_INVALID` if the user no longer exists.
    */
   async getMe(userId: string, tenantId: string): Promise<SafeAuthUser> {
-    const user = await this.userRepo.findById({ id: userId, tenantId })
+    const user = await pinned(this.userRepo.findById({ id: userId, tenantId }))
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -960,7 +956,7 @@ export class AuthService {
     ip: string,
     userAgent: string
   ): Promise<AuthResult> {
-    const user = await this.userRepo.findById({ id: userId, tenantId })
+    const user = await pinned(this.userRepo.findById({ id: userId, tenantId }))
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -979,17 +975,7 @@ export class AuthService {
     }
 
     const safeUser = toSafeUser(user)
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
-
-    if (this.options.sessions.enabled) {
-      await this.sessionService.createSession({
-        userId: safeUser.id,
-        tenantId: safeUser.tenantId,
-        rawRefreshToken: result.rawRefreshToken,
-        ip,
-        userAgent
-      })
-    }
+    const result = await pinned(this.openSession(safeUser, ip, userAgent))
 
     logEvent(this.logger, 'AUTH_TOKENS_ISSUED', { userId: user.id, tenantId: user.tenantId })
 
@@ -1046,24 +1032,29 @@ export class AuthService {
     // not to be trusted. Without this, a caller could name any tenant and probe for accounts
     // in it — and a verification issued under the resolved tenant could never be completed,
     // because the OTP identifier here would be derived from a different one.
-    tenantId = await this.resolveTenantId(tenantId, req)
+    tenantId = await pinned(this.resolveTenantId(tenantId, req))
     // Canonicalized here, not merely at the door that issued the OTP: the record, its
     // five-attempt ceiling and the resend cooldown all hang off `hmac(tenantId:email)`, so a
     // caller who varied the case of the address keyed a different record and drew a fresh
     // budget of guesses at the same six-digit code.
     email = normalizeEmail(email)
-    await this.otpService.verify('email_verification', this.otpIdentifier(tenantId, email), otp)
+    await pinned(
+      this.otpService.verify('email_verification', this.otpIdentifier(tenantId, email), otp)
+    )
 
-    const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
+    const user = tenantScoped(
+      await pinned(this.userRepo.findByEmail({ email, tenantId })),
+      tenantId
+    )
     if (!user) {
       // Treat as OTP_INVALID rather than USER_NOT_FOUND to avoid a timing oracle
       // for callers probing email existence after a brute-forced OTP.
       throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }
 
-    await this.userRepo.updateEmailVerified({ id: user.id, tenantId, verified: true })
+    await pinned(this.userRepo.updateEmailVerified({ id: user.id, tenantId, verified: true }))
 
-    await this.dropCachedAccountFacts(user.id, tenantId)
+    await pinned(this.dropCachedAccountFacts(user.id, tenantId))
 
     logEvent(this.logger, 'AUTH_EMAIL_VERIFIED', { userId: user.id, tenantId })
 
@@ -1094,7 +1085,7 @@ export class AuthService {
     req: Request
   ): Promise<void> {
     // See `verifyEmail`: the resolver decides the tenant whenever one is configured.
-    tenantId = await this.resolveTenantId(tenantId, req)
+    tenantId = await pinned(this.resolveTenantId(tenantId, req))
     // See `verifyEmail`: raw, a change of case is a change of cooldown key, and the one-send-
     // per-minute limit that key exists to enforce becomes one send per spelling.
     email = normalizeEmail(email)
@@ -1102,20 +1093,25 @@ export class AuthService {
     const cooldownKey = `resend:email_verification:${this.otpIdentifier(tenantId, email)}`
 
     // Atomic NX: only one send allowed per 60 seconds. SET NX EX is atomic — no TOCTOU race.
-    const wasSet = await this.redis.setnx(cooldownKey, 60)
+    const wasSet = await pinned(this.redis.setnx(cooldownKey, 60))
     if (!wasSet) {
-      await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
+      await pinned(sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start))))
       return // Already sent recently — silently succeed.
     }
 
-    await releasingCooldownOnFailure(this.redis, this.logger, cooldownKey, async () => {
-      const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
-      return await pinned(
-        user && !user.emailVerified ? this.sendVerificationOtp(tenantId, email) : undefined
-      )
-    })
+    await pinned(
+      releasingCooldownOnFailure(this.redis, this.logger, cooldownKey, async () => {
+        const user = tenantScoped(
+          await pinned(this.userRepo.findByEmail({ email, tenantId })),
+          tenantId
+        )
+        return await pinned(
+          user && !user.emailVerified ? this.sendVerificationOtp(tenantId, email) : undefined
+        )
+      })
+    )
 
-    await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
+    await pinned(sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start))))
   }
 
   // ---------------------------------------------------------------------------
@@ -1146,7 +1142,7 @@ export class AuthService {
    */
   async unlockAccount(email: string, tenantId: string): Promise<void> {
     const identifier = this.lockoutIdentifier(tenantId, normalizeEmail(email))
-    await this.bruteForce.resetFailures(identifier)
+    await pinned(this.bruteForce.resetFailures(identifier))
     logEvent(this.logger, 'AUTH_ACCOUNT_UNLOCKED', { tenantId })
   }
 
@@ -1184,8 +1180,8 @@ export class AuthService {
    * @returns `true` while the account is locked out.
    */
   async isAccountLockedOut(email: string, tenantId: string): Promise<boolean> {
-    return await this.bruteForce.isLockedOut(
-      this.lockoutIdentifier(tenantId, normalizeEmail(email))
+    return await pinned(
+      this.bruteForce.isLockedOut(this.lockoutIdentifier(tenantId, normalizeEmail(email)))
     )
   }
 
@@ -1211,8 +1207,8 @@ export class AuthService {
    */
   async getAccountLockoutSeconds(email: string, tenantId: string): Promise<number> {
     const identifier = this.lockoutIdentifier(tenantId, normalizeEmail(email))
-    if (!(await this.bruteForce.isLockedOut(identifier))) return 0
-    return await this.bruteForce.getRemainingLockoutSeconds(identifier)
+    if (!(await pinned(this.bruteForce.isLockedOut(identifier)))) return 0
+    return await pinned(this.bruteForce.getRemainingLockoutSeconds(identifier))
   }
 
   // ---------------------------------------------------------------------------
@@ -1263,7 +1259,7 @@ export class AuthService {
   }
 
   private async resolveTenantId(dtoTenantId: string | undefined, req: Request): Promise<string> {
-    return await resolveTenantId(dtoTenantId, req, this.options.tenantIdResolver)
+    return await pinned(resolveTenantId(dtoTenantId, req, this.options.tenantIdResolver))
   }
 
   private buildHookContext(opts: {
@@ -1308,10 +1304,10 @@ export class AuthService {
     who: { email: string; tenantId: string; userId?: string },
     context: HookContext
   ): Promise<void> {
-    await this.bruteForce.recordFailure(bfIdentifier)
+    await pinned(this.bruteForce.recordFailure(bfIdentifier))
     this.emitLoginFailed({ ...who, reason: 'invalid_credentials' }, context)
 
-    await this.fireLockoutIfCrossed(bfIdentifier, who, context)
+    await pinned(this.fireLockoutIfCrossed(bfIdentifier, who, context))
   }
 
   /**
@@ -1336,8 +1332,9 @@ export class AuthService {
     let locked = false
     let retryAfterSeconds = this.options.bruteForce.windowSeconds
     try {
-      locked = await this.bruteForce.isLockedOut(bfIdentifier)
-      if (locked) retryAfterSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
+      locked = await pinned(this.bruteForce.isLockedOut(bfIdentifier))
+      if (locked)
+        retryAfterSeconds = await pinned(this.bruteForce.getRemainingLockoutSeconds(bfIdentifier))
     } catch (err: unknown) {
       // The library's own description of the failure: a store error's message can carry the host or the key.
       logEvent(this.logger, 'AUTH_LOCKOUT_STATE_UNREADABLE', { detail: describeChannelStatus(err) })
@@ -1396,7 +1393,7 @@ export class AuthService {
     const identifier = this.otpIdentifier(tenantId, email)
     const otp = this.otpService.generate(6) // emailVerification has no otpLength: fixed 6 digits
     const { otpTtlSeconds: ttl } = this.options.emailVerification
-    if (!(await storeVerificationCode(this.otpService, this.logger, identifier, otp, ttl)))
+    if (!(await pinned(storeVerificationCode(this.otpService, this.logger, identifier, otp, ttl))))
       return false
 
     // Captured out of the field: the narrowing of `this.emailProvider` above does not survive into the handler below.
@@ -1411,7 +1408,7 @@ export class AuthService {
     // buys nothing. Inside the IIFE the call is made synchronously and the `try` still catches it.
     void (async (): Promise<void> => {
       try {
-        await provider.sendEmailVerificationOtp(tenantId, email, otp)
+        await pinned(provider.sendEmailVerificationOtp(tenantId, email, otp))
       } catch (err: unknown) {
         // The error is NOT passed through, and nothing it carried reaches this line:
         // `describeChannelStatus` publishes nothing the channel wrote, because a relay that

@@ -125,7 +125,7 @@ export class WorkspaceAccessService {
    * @throws {TypeError} When any part of the key is blank.
    */
   async resolveMembership(ref: MembershipRef): Promise<ResolvedWorkspaceMember | null> {
-    const access = await pinned(this.resolveAccess(ref))
+    const access = await this.resolveAccess(ref)
     return checked(access.kind === 'member' ? access.member : null)
   }
 

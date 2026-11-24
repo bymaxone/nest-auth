@@ -52,6 +52,9 @@ export const assign = Object.assign
 /** `Object.defineProperty` as it was when the module loaded: defines own data, never through a setter on the prototype. */
 export const defineKey = Object.defineProperty
 
+/** `Object.freeze` as it was when the module loaded: seals an object nothing may change after it is shared. */
+export const freezeObject = Object.freeze
+
 /** The `Error` constructor as it was when the module loaded. */
 export const ErrorOf = Error
 

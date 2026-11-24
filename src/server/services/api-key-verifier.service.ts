@@ -25,7 +25,7 @@ import {
 import type { AuthApiKey, IApiKeyRepository } from '../interfaces/api-key-repository.interface'
 import type { ApiKeyDenyReason } from '../interfaces/auth-hooks.interface'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
-import { checked } from '../utils/settle'
+import { checked, pinned } from '../utils/settle'
 
 /** Why a key was not accepted. */
 export type ApiKeyRejection = Extract<
@@ -76,7 +76,7 @@ export class ApiKeyVerifierService {
     const secret = parsed?.secret ?? API_KEY_DUMMY_SECRET
 
     // 3. Always read a row.
-    const row = await this.repository.findById(keyId)
+    const row = await pinned(this.repository.findById(keyId))
 
     // 4-5. Always digest, always compare two 32-byte buffers.
     const computed = apiKeyDigest(secret, this.options.apiKeys.pepper)

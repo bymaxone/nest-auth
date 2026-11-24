@@ -320,13 +320,13 @@ export class OAuthService {
     this.assertMaySignIn(authUser)
 
     if (authUser.mfaEnabled) {
-      return await pinned(this.issueMfaChallenge(authUser))
+      return checked(await pinned(this.issueMfaChallenge(authUser)))
     }
 
     const created = hookResult.action === 'create'
     await pinned(invitation?.complete(authUser, created, { ...hookContext, userId: authUser.id }))
-    return await pinned(
-      this.openSession(authUser, provider, hookResult, hookContext, ip, userAgent)
+    return checked(
+      await pinned(this.openSession(authUser, provider, hookResult, hookContext, ip, userAgent))
     )
   }
 
@@ -717,9 +717,9 @@ export class OAuthService {
         if (invitation === null && this.options.registration === 'invitation-only') {
           throw new AuthException(AUTH_ERROR_CODES.REGISTRATION_CLOSED)
         }
-        return await pinned(this.createAccount(provider, tenantId, profile))
+        return checked(await pinned(this.createAccount(provider, tenantId, profile)))
       case 'link':
-        return await pinned(this.linkAccount(provider, profile, existingAuthUser))
+        return checked(await pinned(this.linkAccount(provider, profile, existingAuthUser)))
       case 'reject':
       default:
         throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)

@@ -404,24 +404,22 @@ export class AuthTokenVerifierService {
         })
       )
       assertRootIsStandard()
+      const { roles, allowPending } = check
       const decide = (): CurrentWorkspaceContext =>
-        assertWorkspaceAccess(
-          resolved,
-          check.roles,
-          group.roles.hierarchy,
-          check.allowPending === true
-        )
-      return denied === null
-        ? decide()
-        : denied.admit(
-            {
-              tenantId: payload.tenantId,
-              userId: payload.sub,
-              workspaceId,
-              surface: 'verifier'
-            },
-            decide
-          )
+        assertWorkspaceAccess(resolved, roles, group.roles.hierarchy, allowPending === true)
+      return checked(
+        denied === null
+          ? decide()
+          : denied.admit(
+              {
+                tenantId: payload.tenantId,
+                userId: payload.sub,
+                workspaceId,
+                surface: 'verifier'
+              },
+              decide
+            )
+      )
     }
   }
 

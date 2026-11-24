@@ -37,7 +37,15 @@ const DECISION_FILES = [
   'redis/redis-outage.ts',
   'redis/auth-redis.service.ts',
   'services/workspace-invitation.store.ts',
-  'utils/settle-writes.ts'
+  'utils/settle-writes.ts',
+  'services/mfa-challenge.service.ts',
+  'services/mfa-record.service.ts',
+  'services/brute-force.service.ts',
+  'services/token-manager.service.ts',
+  'services/api-key-verifier.service.ts',
+  'services/auth.service.ts',
+  'services/workspace-invitation-accept.service.ts',
+  'oauth/oauth.controller.ts'
 ]
 
 /** The methods whose returned promise is the decision itself, by file: each carries `@Pinned()`. */
@@ -49,11 +57,26 @@ const PINNED_METHODS: Record<string, string[]> = {
   'services/auth-revocation.service.ts': ['isAccessTokenRevoked'],
   'services/auth-token-verifier.service.ts': ['verifyAccessToken'],
   'services/session.service.ts': ['listSessions'],
+  'services/mfa-challenge.service.ts': ['admitChallenge'],
+  'services/token-manager.service.ts': [
+    'readSeedSession',
+    'rotateFromPrimary',
+    'rotateFromGrace',
+    'buildRotatedResult',
+    'rotatePlatformFromPrimary',
+    'rotatePlatformFromGrace',
+    'buildPlatformRotatedResult',
+    'writePlatformSessionDetail'
+  ],
   'services/workspace-access.service.ts': ['resolveAccess', 'assertStillAuthorized'],
   'services/workspace-invitation.service.ts': ['preview']
 }
 
-/** The awaits whose operand is neither `pinned(...)`, `awaiting(...)` nor a call of a method the class pins itself. */
+/**
+ * The awaits whose operand is neither `pinned(...)`, `awaiting(...)` nor a call of a method the class pins itself. The pin of a
+ * method covers the promise it returns and not the awaits and returns inside its body, so the body is held to the same rules: every
+ * async function of the file is scanned on its own, the pinned ones included.
+ */
 function unpinnedAwaits(text: string): string[] {
   const found: string[] = []
   const ownPinned = pinnedNames(text)
@@ -95,32 +118,132 @@ function pinnedNames(text: string): Set<string> {
   return found
 }
 
+const WRAPPERS = ['pinned', 'awaiting', 'checked']
+
+/** A program over the decision files, so the type of every returned expression is the compiler's and not a guess from its text. */
+function programOf(files: string[]): { program: ts.Program; checker: ts.TypeChecker } {
+  const root = join(SERVER, '..', '..')
+  const config = ts.readConfigFile(join(root, 'tsconfig.json'), ts.sys.readFile)
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root)
+  const program = ts.createProgram(
+    files.map((file) => join(SERVER, file)),
+    parsed.options
+  )
+  return { program, checker: program.getTypeChecker() }
+}
+
+function partsOf(type: ts.Type): ts.Type[] {
+  return type.isUnion() ? type.types : [type]
+}
+
+/** Whether a value of this type answers `then`: a promise, or anything that declares one. */
+function isPromiseLike(type: ts.Type): boolean {
+  return partsOf(type).some((part) => part.getProperty('then') !== undefined)
+}
+
+/** Whether a value of this type is an object, which resolving an async function with it asks for `then`. */
+function isObjectLike(type: ts.Type): boolean {
+  return partsOf(type).some(
+    (part) => (part.flags & (ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !== 0
+  )
+}
+
 /**
- * The `return` statements of an async method that hand back a call of a collaborator without `await`. Returning a promise from an
- * async function resolves the outer promise from it, which reads its `then`; `return await pinned(...)` reads the pinned constructor
- * instead. The `deliver*` methods of the token delivery are synchronous and answer a plain object, so they are not promises.
+ * Whether the expression is an object literal with `__proto__: null`, or an identifier bound to one: such an object inherits from
+ * nothing, so resolving a promise with it asks no `then` of the root.
  */
-function bareReturns(text: string): string[] {
-  const found: string[] = []
-  const source = ts.createSourceFile('x.ts', text, ts.ScriptTarget.Latest, true)
-  const visit = (node: ts.Node, inAsync: boolean): void => {
-    const isAsync =
-      ts.isMethodDeclaration(node) &&
-      (ts.getModifiers(node) ?? []).some((m) => m.getText(source) === 'async')
-    const here = ts.isFunctionLike(node) ? isAsync : inAsync
-    if (here && ts.isReturnStatement(node) && node.expression !== undefined) {
-      const operand = node.expression
-      if (ts.isCallExpression(operand)) {
-        const callee = operand.expression.getText(source)
-        if (callee.startsWith('this.') && !/\.deliver\w*$/.test(callee))
-          found.push(
-            `${callee} (line ${source.getLineAndCharacterOfPosition(operand.getStart(source)).line + 1})`
-          )
-      }
-    }
-    ts.forEachChild(node, (child) => visit(child, here))
+function nullPrototypeBox(expression: ts.Expression, checker: ts.TypeChecker): boolean {
+  let literal: ts.Node | undefined = expression
+  if (ts.isIdentifier(expression)) {
+    const declaration = checker.getSymbolAtLocation(expression)?.valueDeclaration
+    literal =
+      declaration !== undefined && ts.isVariableDeclaration(declaration)
+        ? declaration.initializer
+        : undefined
   }
-  visit(source, false)
+  return (
+    literal !== undefined &&
+    ts.isObjectLiteralExpression(literal) &&
+    literal.properties.some(
+      (property) =>
+        ts.isPropertyAssignment(property) &&
+        property.name.getText() === '__proto__' &&
+        property.initializer.kind === ts.SyntaxKind.NullKeyword
+    )
+  )
+}
+
+/** Whether the expression is a call of one of the wrappers that pin or check what is returned. */
+function wrapperOf(node: ts.Expression): boolean {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    WRAPPERS.includes(node.expression.text)
+  )
+}
+
+interface Returns {
+  bare: string[]
+  unrooted: string[]
+}
+
+/**
+ * The returns of every async function in a file that settle the function's promise from a value that has not been checked:
+ *
+ * - `bare`: a promise returned without `await`. Resolving the outer promise from it reads its `then` (16b.13).
+ * - `unrooted`: an object returned from a function that waited, with no `checked(...)` around it. Resolving the function's promise
+ *   from an object asks it for `then`, and a `then` planted on a prototype while the function waited answers for it (16b.11), so the
+ *   root is asserted by the last statement. A controller is exempt: Nest and Express read what it returns after it has returned, which
+ *   no statement of the library can precede (a known limit of the release).
+ */
+function scanReturns(source: ts.SourceFile, checker: ts.TypeChecker, controller: boolean): Returns {
+  const found: Returns = { bare: [], unrooted: [] }
+  const where = (node: ts.Node): string =>
+    `${node.getText(source).slice(0, 60)} (line ${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1})`
+  const judge = (expression: ts.Expression, waited: boolean): void => {
+    if (ts.isParenthesizedExpression(expression)) return judge(expression.expression, waited)
+    if (ts.isConditionalExpression(expression)) {
+      judge(expression.whenTrue, waited)
+      judge(expression.whenFalse, waited)
+      return
+    }
+    if (wrapperOf(expression)) return
+    if (nullPrototypeBox(expression, checker)) return
+    const type = checker.getTypeAtLocation(expression)
+    if (ts.isAwaitExpression(expression)) {
+      if (waited && !controller && isObjectLike(type) && !isPromiseLike(type))
+        found.unrooted.push(where(expression))
+      return
+    }
+    if (isPromiseLike(type)) found.bare.push(where(expression))
+    else if (waited && !controller && isObjectLike(type)) found.unrooted.push(where(expression))
+  }
+  const visitFunction = (fn: ts.FunctionLikeDeclaration): void => {
+    const isAsync = (ts.getModifiers(fn) ?? []).some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+    const returns: ts.Expression[] = []
+    let waited = false
+    const walk = (node: ts.Node): void => {
+      if (ts.isAwaitExpression(node)) waited = true
+      if (ts.isReturnStatement(node) && node.expression !== undefined) returns.push(node.expression)
+      if (node !== fn && ts.isFunctionLike(node)) {
+        visitFunction(node as ts.FunctionLikeDeclaration)
+        return
+      }
+      ts.forEachChild(node, walk)
+    }
+    ts.forEachChild(fn, walk)
+    if (!isAsync || fn.body === undefined) return
+    if (!ts.isBlock(fn.body)) judge(fn.body, waited)
+    for (const expression of returns) judge(expression, waited)
+  }
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) && node.kind !== ts.SyntaxKind.Constructor) {
+      visitFunction(node as ts.FunctionLikeDeclaration)
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
   return found
 }
 
@@ -187,15 +310,48 @@ describe('the promises of a decision path carry the language constructor', () =>
     }
   )
 
-  // Scenario: every async handler of a controller. Expected: none returns the call of a collaborator without `await pinned(...)`.
-  // Why: a bare `return service.x()` resolves the handler's own promise from the service's, and that reads its `then`, which a
-  // replaced `then` decides, so the pin on the outer promise would not be the last word.
-  it.each(DECISION_FILES.filter((file) => file.startsWith('controllers/')))(
-    '%s returns no promise it has not awaited',
-    (file) => {
-      expect(bareReturns(readFileSync(join(SERVER, file), 'utf8'))).toEqual([])
-    }
-  )
+  // Scenario: every async function of the decision files. Expected: none returns a promise it has not awaited through `pinned`, and
+  // none returns an object after waiting without `checked(...)` around it.
+  // Why: a bare `return p` resolves the function's own promise from `p`, which reads `p.then`; an object returned after an await is
+  // read for `then` too, and a `then` planted while the function waited forges it (a revoked token accepted, a non-member made owner).
+  describe('returns', () => {
+    let scanned: Map<string, Returns>
+
+    beforeAll(() => {
+      const { program, checker } = programOf(DECISION_FILES)
+      scanned = new Map(
+        DECISION_FILES.map((file) => {
+          const source = program.getSourceFile(join(SERVER, file)) as ts.SourceFile
+          return [
+            file,
+            scanReturns(
+              source,
+              checker,
+              file.startsWith('controllers/') || file.endsWith('.controller.ts')
+            )
+          ]
+        })
+      )
+    }, 180_000)
+
+    it.each(DECISION_FILES)('%s returns no promise it has not awaited', (file) => {
+      expect(scanned.get(file)?.bare).toEqual([])
+    })
+
+    it.each(DECISION_FILES)(
+      '%s checks the root last on an object it returns after an await',
+      (file) => {
+        expect(scanned.get(file)?.unrooted).toEqual([])
+      }
+    )
+  })
+
+  // Scenario: a method listed in `@PinnedMethods` that does not exist. Expected: reported, so a rename cannot leave a name that pins nothing.
+  it.each(Object.entries(PINNED_METHODS))('%s lists only methods that exist', (file, names) => {
+    const text = readFileSync(join(SERVER, file), 'utf8')
+    const missing = undecorated(text, names).filter((entry) => entry.endsWith('(not found)'))
+    expect(missing).toEqual([])
+  })
 
   // Scenario: the scanners on text that breaks each rule. Expected: both report it, so a green scan is not a scanner that finds nothing.
   it('reports an await that is not pinned and a decision that is not decorated', () => {
@@ -213,17 +369,50 @@ describe('the promises of a decision path carry the language constructor', () =>
       'missing (not found)'
     ])
   })
-  // Scenario: a handler that returns a service call bare, one that awaits it pinned, a synchronous delivery and a nested function.
-  // Expected: only the bare return is reported, with its line.
-  it('reports a bare return of a promise in an async handler', () => {
-    const broken = `class A {
-      async bare() { return this.service.run() }
-      async fine() { return await pinned(this.service.run()) }
-      async plain() { return this.tokenDelivery.deliverAuthResponse() }
-      sync() { return this.service.run() }
-      async nested() { const f = () => { return this.service.run() }; return await pinned(f()) }
+  // Scenario: a method that awaits a method the class pins itself. Expected: accepted at the call, and the body of that method is
+  // scanned on its own, so an unpinned await inside it is reported there.
+  it('scans the body of a method the class pins, though a call of it needs no wrapper', () => {
+    const own = `@PinnedMethods('inner')
+    class A {
+      async outer() { return await this.inner() }
+      async inner() { return await this.read() }
     }`
 
-    expect(bareReturns(broken)).toEqual(['this.service.run (line 2)'])
+    expect(unpinnedAwaits(own)).toEqual(['this.read()'])
+  })
+
+  // Scenario: functions that return a promise bare, an object after an await with no check, and the safe forms.
+  // Expected: only the first two are reported, with the line.
+  it('reports a bare promise return and an unchecked object return after an await', () => {
+    const text = `declare function pinned<T>(v: T): T
+    declare function checked<T>(v: T): T
+    declare function read(): Promise<{ a: number }>
+    export class A {
+      async bare() { return read() }
+      async fine() { return checked(await pinned(read())) }
+      async object() { const x = await pinned(read()); return x }
+      async rooted() { const x = await pinned(read()); return checked(x) }
+      async noWait() { return { a: 1 } }
+      async arrow() { const f = async () => read(); return checked(await pinned(f())) }
+    }`
+    const host = ts.createCompilerHost({})
+    const read = host.getSourceFile.bind(host)
+    host.getSourceFile = (name, ...rest) =>
+      name === 'x.ts'
+        ? ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true)
+        : read(name, ...rest)
+    const program = ts.createProgram(
+      ['x.ts'],
+      { strict: true, target: ts.ScriptTarget.ES2022 },
+      host
+    )
+    const found = scanReturns(
+      program.getSourceFile('x.ts') as ts.SourceFile,
+      program.getTypeChecker(),
+      false
+    )
+
+    expect(found.bare.map((entry) => entry.replace(/ \(line.*/, ''))).toEqual(['read()', 'read()'])
+    expect(found.unrooted.map((entry) => entry.replace(/ \(line.*/, ''))).toEqual(['x'])
   })
 })

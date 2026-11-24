@@ -75,7 +75,7 @@ export class ApiKeyGuard implements CanActivate {
     // Route configuration first, and before any credential work.
     if (required === null) {
       logEvent(this.logger, 'AUTH_API_KEY_REFUSED', { reason: 'unscoped_route' })
-      return await this.refuse(request, base, 'route_undeclared', null)
+      return await pinned(this.refuse(request, base, 'route_undeclared', null))
     }
 
     let verdict: Awaited<ReturnType<ApiKeyVerifierService['verify']>>
@@ -84,21 +84,23 @@ export class ApiKeyGuard implements CanActivate {
     } catch (err: unknown) {
       rethrowRefusal(err)
       logStore(this.logger, 'AUTH_STORE_FAILED', 'api_key_lookup', err)
-      await this.audit(request, { ...base, outcome: 'denied', reason: 'store_error' })
+      await pinned(this.audit(request, { ...base, outcome: 'denied', reason: 'store_error' }))
       throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
     }
 
     assertRootIsStandard()
     if (!verdict.ok) {
-      return await this.refuse(request, base, verdict.reason, verdict.key)
+      return await pinned(this.refuse(request, base, verdict.reason, verdict.key))
     }
 
     const { key } = verdict
     if (!required.every((scope) => key.scopes.includes(scope))) {
-      return await this.refuse(request, base, 'scope_insufficient', key)
+      return await pinned(this.refuse(request, base, 'scope_insufficient', key))
     }
 
-    const delivered = await this.audit(request, { ...base, outcome: 'allowed', reason: null }, key)
+    const delivered = await pinned(
+      this.audit(request, { ...base, outcome: 'allowed', reason: null }, key)
+    )
     assertRootIsStandard()
     // `required` audit mode: a request whose audit row could not be written is not admitted.
     if (!delivered) throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
@@ -138,7 +140,7 @@ export class ApiKeyGuard implements CanActivate {
     reason: ApiKeyDenyReason,
     key: AuthApiKey | null
   ): Promise<never> {
-    await this.audit(request, { ...base, outcome: 'denied', reason }, key)
+    await pinned(this.audit(request, { ...base, outcome: 'denied', reason }, key))
     throw new AuthException(
       reason === 'route_undeclared'
         ? AUTH_ERROR_CODES.FORBIDDEN

@@ -118,7 +118,7 @@ export function callFactory<T>(
   factory: (...args: never[]) => T | Promise<T>,
   args: unknown[]
 ): Promise<{ readonly value: T }> {
-  return readHostOptionsAsync(async () => factory(...(args as never[])))
+  return readHostOptionsAsync(async () => await pinned(factory(...(args as never[]))))
 }
 
 /** Whether the host's object holds the key, the read being inside the boundary of {@link readHostOptions}. */

@@ -84,7 +84,7 @@ export class WorkspaceInvitationStore {
    * @returns The record, or `null` when absent, expired, or not a record this library wrote.
    */
   async readByHash(tokenHash: string): Promise<StoredWorkspaceInvitation | null> {
-    return await pinned(this.readKey(invitationKeyOfHash(tokenHash)))
+    return checked(await pinned(this.readKey(invitationKeyOfHash(tokenHash))))
   }
 
   /**

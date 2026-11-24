@@ -4,7 +4,7 @@ import type { Request } from 'express'
 
 import { JwtAuthGuard } from './jwt-auth.guard'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
-import { PinnedMethods } from '../utils/settle'
+import { PinnedMethods, pinned } from '../utils/settle'
 
 /**
  * Authentication guard that allows unauthenticated access while still
@@ -45,6 +45,6 @@ export class OptionalAuthGuard extends JwtAuthGuard {
     }
 
     // Token is present: delegate fully to JwtAuthGuard (validates, checks revocation, sets user).
-    return super.canActivate(context)
+    return await pinned(super.canActivate(context))
   }
 }

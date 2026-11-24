@@ -353,7 +353,7 @@ export class AuthRedisService {
    * @returns The stored string, or `null` if the key does not exist.
    */
   async get(key: string): Promise<string | null> {
-    return await pinned(this.#redis.get(this.prefix(key)))
+    return checked(await pinned(this.#redis.get(this.prefix(key))))
   }
 
   /**
@@ -413,7 +413,7 @@ export class AuthRedisService {
    * @returns The value of the key after the increment.
    */
   async incr(key: string): Promise<number> {
-    return await pinned(this.#redis.incr(this.prefix(key)))
+    return checked(await pinned(this.#redis.incr(this.prefix(key))))
   }
 
   /**
@@ -434,7 +434,7 @@ export class AuthRedisService {
    *   does not exist.
    */
   async ttl(key: string): Promise<number> {
-    return await pinned(this.#redis.ttl(this.prefix(key)))
+    return checked(await pinned(this.#redis.ttl(this.prefix(key))))
   }
 
   // ---------------------------------------------------------------------------
@@ -449,7 +449,7 @@ export class AuthRedisService {
    * @returns `1` if the member was added, `0` if it already existed.
    */
   async sadd(setKey: string, member: string): Promise<number> {
-    return await pinned(this.#redis.sadd(this.prefix(setKey), member))
+    return checked(await pinned(this.#redis.sadd(this.prefix(setKey), member)))
   }
 
   /**
@@ -460,7 +460,7 @@ export class AuthRedisService {
    * @returns `1` if the member was removed, `0` if it did not exist.
    */
   async srem(setKey: string, member: string): Promise<number> {
-    return await pinned(this.#redis.srem(this.prefix(setKey), member))
+    return checked(await pinned(this.#redis.srem(this.prefix(setKey), member)))
   }
 
   /**
@@ -470,7 +470,7 @@ export class AuthRedisService {
    * @returns Array of member strings (empty array if the key does not exist).
    */
   async smembers(setKey: string): Promise<string[]> {
-    return await pinned(this.#redis.smembers(this.prefix(setKey)))
+    return checked(await pinned(this.#redis.smembers(this.prefix(setKey))))
   }
 
   /**
@@ -505,7 +505,9 @@ export class AuthRedisService {
    */
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const prefixedKeys = keys.map((k) => this.prefix(k))
-    return await pinned(this.#redis.eval(script, prefixedKeys.length, ...prefixedKeys, ...args))
+    return checked(
+      await pinned(this.#redis.eval(script, prefixedKeys.length, ...prefixedKeys, ...args))
+    )
   }
 
   // ---------------------------------------------------------------------------

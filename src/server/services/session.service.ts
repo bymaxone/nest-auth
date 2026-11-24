@@ -1070,12 +1070,14 @@ export class SessionService {
     members: string[]
   ): Promise<{ member: string; memberHash: string; createdAt: number }[]> {
     const read = allOf(
-      members.map(async (member) => ({
-        member,
-        // member is "rt:{hash}" — extract just the hash portion.
-        memberHash: member.slice(3),
-        createdAt: await pinned(this.readCreatedAt(member.slice(3)))
-      }))
+      members.map(async (member) =>
+        checked({
+          member,
+          // member is "rt:{hash}" — extract just the hash portion.
+          memberHash: member.slice(3),
+          createdAt: await pinned(this.readCreatedAt(member.slice(3)))
+        })
+      )
     )
     const ages = (await awaiting(read)).value
     assertRootIsStandard()

@@ -27,6 +27,7 @@ import {
   applyFunction,
   createObject,
   defineKey,
+  freezeObject,
   getDescriptor
 } from './captured-builtins'
 import { assertRootIsStandard } from './object-prototype-guard'
@@ -90,7 +91,8 @@ export interface Settled<T> {
 function box<T>(value: T): Settled<T> {
   // An object literal with `__proto__: null` is syntax: it calls no built-in that could have been replaced.
   const boxed = { __proto__: null, value }
-  return boxed
+  // Frozen: the box is handed to code of the host, which could otherwise put another answer in it before it is read.
+  return freezeObject(boxed)
 }
 
 /**
@@ -104,7 +106,7 @@ function failed<T>(reason: unknown): Settled<T> {
       throw reason
     }
   }
-  return boxed
+  return freezeObject(boxed)
 }
 
 /**
