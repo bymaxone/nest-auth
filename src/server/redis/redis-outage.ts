@@ -14,7 +14,7 @@ import type { Redis } from 'ioredis'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
-import { markHandled } from '../utils/settle'
+import { markHandled, pinned } from '../utils/settle'
 
 /**
  * Why Redis did not answer.
@@ -129,7 +129,7 @@ async function mappingOutage(result: PromiseLike<unknown>): Promise<unknown> {
   markHandled(result)
   try {
     assertRootIsStandard()
-    const answer = await result
+    const answer = await pinned(result)
     // The answer is read for `then` when this function returns it, so the root is checked again as the last statement.
     assertRootIsStandard()
     return answer

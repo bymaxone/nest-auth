@@ -27,6 +27,7 @@ import {
   applyFunction,
   createObject,
   defineKey,
+  getDescriptor,
   intrinsicThen
 } from './captured-builtins'
 import { assertRootIsStandard } from './object-prototype-guard'
@@ -44,7 +45,7 @@ const isNativePromise = types.isPromise
  * without an own one that is a read of `Promise.prototype.constructor`, which a host can replace with a getter that throws or
  * a function that answers: a throw there happens before `then` attaches a handler, so the rejection stays unhandled.
  */
-function pin<P>(promise: P): P {
+export function pinned<P>(promise: P): P {
   if (isNativePromise(promise)) {
     try {
       // A descriptor with no prototype: defining a property reads `get` and `set` through it.
@@ -66,7 +67,7 @@ function pin<P>(promise: P): P {
  * not a native promise has nothing to mark.
  */
 export function markHandled(work: unknown): void {
-  pin(work)
+  pinned(work)
   try {
     applyFunction(intrinsicThen, work, [ignore, ignore])
   } catch {
@@ -109,7 +110,30 @@ function failed<T>(reason: unknown): Settled<T> {
  */
 export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
   assertRootIsStandard()
-  return pending
+  return pinned(pending)
+}
+
+/**
+ * Makes the promise each named async method of a class returns one whose own `constructor` is the language's. The caller of a
+ * decision (a guard's caller, a controller awaiting a service, a host awaiting the API) reads `constructor` of that promise after
+ * the library's last check, and a replaced `Promise.prototype.constructor` decides what that `await` yields, a refusal included.
+ * The methods are called with the `this` and the arguments they were given. It decorates the class, not each method, so a method
+ * does not grow by the line of its decorator.
+ *
+ * @param names - The methods of the class, each declared on it.
+ * @returns A class decorator.
+ */
+export function PinnedMethods(...names: string[]): ClassDecorator {
+  return (target) => {
+    for (const name of names) {
+      const own = getDescriptor(target.prototype, name) as PropertyDescriptor
+      const method = own.value as (...args: never[]) => unknown
+      own.value = function pinnedMethod(this: unknown, ...args: never[]): unknown {
+        return pinned(applyFunction(method, this, args))
+      }
+      defineKey(target.prototype, name, own)
+    }
+  }
 }
 
 /**
@@ -129,7 +153,7 @@ export function started<T>(work: PromiseLike<T> | T): Promise<Settled<T>> {
       return failed(error)
     }
   })()
-  return pin(answer)
+  return pinned(answer)
 }
 
 /**
@@ -144,7 +168,7 @@ export async function allOf<T>(calls: readonly (PromiseLike<T> | T)[]): Promise<
   try {
     const pending: Promise<Settled<T>>[] = []
     for (let index = 0; index < calls.length; index += 1) pending.push(started(calls[index] as T))
-    const everyone = pin(
+    const everyone = pinned(
       new CapturedPromise<Settled<T[]>>((resolve) => {
         const values: T[] = []
         let remaining = pending.length
@@ -189,7 +213,7 @@ export async function withDeadline<T>(
   message: string
 ): Promise<Settled<T>> {
   let timer: NodeJS.Timeout | undefined
-  const settled = pin(
+  const settled = pinned(
     new CapturedPromise<Settled<T>>((resolve) => {
       timer = setTimeout(() => {
         resolve(failed(new Error(message)))

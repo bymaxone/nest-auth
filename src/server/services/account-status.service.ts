@@ -21,6 +21,7 @@ import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { pinned, PinnedMethods } from '../utils/settle'
 
 /**
  * The two cache keys naming one dashboard account.
@@ -74,6 +75,7 @@ function cacheKeysFor(
  * @layer Service
  */
 @Injectable()
+@PinnedMethods('assertDashboardAccountUsable', 'assertPlatformAccountUsable')
 export class AccountStatusService {
   private readonly logger = new Logger(AccountStatusService.name)
 
@@ -143,8 +145,8 @@ export class AccountStatusService {
     // merely costs a repository read. A stale `uev` of `0` locks a just-verified account out of
     // every protected route until it expires, and `verifyEmail` reaches here after the OTP is
     // spent and the flag is committed, so there is nothing for the user to retry.
-    await this.redis.del(verifiedKey)
-    await this.redis.del(statusKey)
+    await pinned(this.redis.del(verifiedKey))
+    await pinned(this.redis.del(statusKey))
   }
 
   /**
@@ -167,23 +169,23 @@ export class AccountStatusService {
     const cacheTtl = this.options.userStatusCacheTtlSeconds
     const requireVerified = this.options.emailVerification.required
 
-    let status = await this.redis.get(statusKey)
+    let status = await pinned(this.redis.get(statusKey))
     // Only consulted when verification is enforced; left null otherwise so the cost is a single
     // `get` for the common case.
-    let verified = requireVerified ? await this.redis.get(verifiedKey) : null
+    let verified = requireVerified ? await pinned(this.redis.get(verifiedKey)) : null
 
     if (status === null || (requireVerified && verified === null)) {
       // A miss on either fact resolves both from one repository read, scoped to the tenant.
-      const userRecord = await this.userRepo.findById({ id: userId, tenantId })
+      const userRecord = await pinned(this.userRepo.findById({ id: userId, tenantId }))
       if (!userRecord) {
         // The account is gone; the token outlived it.
         throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       }
       status = userRecord.status
-      await this.fillCache(statusKey, status, cacheTtl)
+      await pinned(this.fillCache(statusKey, status, cacheTtl))
       if (requireVerified) {
         verified = userRecord.emailVerified ? '1' : '0'
-        await this.fillCache(verifiedKey, verified, cacheTtl)
+        await pinned(this.fillCache(verifiedKey, verified, cacheTtl))
       }
     }
 
@@ -214,7 +216,7 @@ export class AccountStatusService {
    */
   private async fillCache(key: string, value: string, ttl: number): Promise<void> {
     try {
-      await this.redis.set(key, value, ttl)
+      await pinned(this.redis.set(key, value, ttl))
     } catch (err: unknown) {
       logStore(this.logger, 'AUTH_STORE_DEGRADED', 'account_status_cache_write', err)
     }
@@ -236,7 +238,7 @@ export class AccountStatusService {
     readonly userId: string
     readonly tenantId: string
   }): Promise<void> {
-    const user = await this.userRepo.findById({ id: ref.userId, tenantId: ref.tenantId })
+    const user = await pinned(this.userRepo.findById({ id: ref.userId, tenantId: ref.tenantId }))
     if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     assertNotBlocked(user.status, this.options.blockedStatuses)
     if (this.options.emailVerification.required && !user.emailVerified) {
@@ -268,7 +270,7 @@ export class AccountStatusService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    const admin = await this.platformUserRepo.findById(userId)
+    const admin = await pinned(this.platformUserRepo.findById(userId))
     if (!admin) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }

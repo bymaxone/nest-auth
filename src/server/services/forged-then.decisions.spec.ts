@@ -91,6 +91,21 @@ describe('a decision made while a host forges what a promise answers', () => {
     expect(run('late-job', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
   })
 
+  // Scenario: the constructor of promises is replaced and a then planted before the call, and a plain async caller awaits what the
+  // service returns. Expected: the refusal, not the owner the then answers. Why: the caller's await is the last hop of a decision.
+  it('refuses at the outermost caller that awaits a decision', () => {
+    expect(run('hop', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
+  })
+
+  // Scenario: the host's code, called by the library, plants while it makes the promise the library awaits next, for a token that is
+  // revoked. Expected: never verified. Why: the await of a dependency's promise reads the constructor after the host's code ran.
+  it('does not verify a revoked token for a constructor planted by the code it awaits', () => {
+    expect(run('sync-revoked', file)).toEqual({
+      outcome: 'refused:auth.token_invalid',
+      unhandled: 0
+    })
+  })
+
   // Scenario: a `then` on the root object, or on functions, before the call. Expected: refused at the entry.
   it.each(['object', 'function'])('refuses a then planted on %s before the call', (scenario) => {
     expect(run(scenario, file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })

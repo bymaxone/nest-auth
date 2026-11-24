@@ -15,6 +15,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertValidJti, assertValidSub } from './utils/assert-token-type'
 import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard'
+import { pinned, PinnedMethods } from '../utils/settle'
 
 /**
  * Authentication guard for platform administrator routes.
@@ -45,6 +46,7 @@ import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard
  * @layer Guard
  */
 @Injectable()
+@PinnedMethods('canActivate')
 export class JwtPlatformGuard implements CanActivate {
   constructor(
     @Inject(JwtService) private readonly jwtService: JwtService,
@@ -99,7 +101,7 @@ export class JwtPlatformGuard implements CanActivate {
     // Passing `'platform'` selects that epoch namespace; the check is otherwise the one
     // JwtAuthGuard runs, so a platform revocation kills outstanding access tokens and not only
     // the refresh sessions. Surfaced as TOKEN_INVALID for the same no-oracle reason.
-    if (await this.revocation.isAccessTokenRevoked(payload, 'platform')) {
+    if (await pinned(this.revocation.isAccessTokenRevoked(payload, 'platform'))) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 

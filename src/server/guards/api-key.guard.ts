@@ -27,6 +27,7 @@ import { applyFunction } from '../utils/captured-builtins'
 import { resolveClientAddress } from '../utils/client-address'
 import { assertRootIsStandard, rethrowRefusal } from '../utils/object-prototype-guard'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
+import { pinned, PinnedMethods } from '../utils/settle'
 
 /** A request after this guard admitted it. */
 type ApiKeyRequest = Request & { apiKey?: ApiKeyPrincipal }
@@ -51,6 +52,7 @@ type ApiKeyRequest = Request & { apiKey?: ApiKeyPrincipal }
  * ```
  */
 @Injectable()
+@PinnedMethods('canActivate', 'refuse', 'audit')
 export class ApiKeyGuard implements CanActivate {
   private readonly logger = new Logger(ApiKeyGuard.name)
 
@@ -73,13 +75,12 @@ export class ApiKeyGuard implements CanActivate {
     // Route configuration first, and before any credential work.
     if (required === null) {
       logEvent(this.logger, 'AUTH_API_KEY_REFUSED', { reason: 'unscoped_route' })
-      await this.audit(request, { ...base, outcome: 'denied', reason: 'route_undeclared' })
-      throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
+      return await this.refuse(request, base, 'route_undeclared', null)
     }
 
     let verdict: Awaited<ReturnType<ApiKeyVerifierService['verify']>>
     try {
-      verdict = await this.verifier.verify(request.headers[this.options.apiKeys.header])
+      verdict = await pinned(this.verifier.verify(request.headers[this.options.apiKeys.header]))
     } catch (err: unknown) {
       rethrowRefusal(err)
       logStore(this.logger, 'AUTH_STORE_FAILED', 'api_key_lookup', err)
@@ -89,14 +90,12 @@ export class ApiKeyGuard implements CanActivate {
 
     assertRootIsStandard()
     if (!verdict.ok) {
-      await this.audit(request, { ...base, outcome: 'denied', reason: verdict.reason }, verdict.key)
-      throw new AuthException(AUTH_ERROR_CODES.API_KEY_INVALID)
+      return await this.refuse(request, base, verdict.reason, verdict.key)
     }
 
     const { key } = verdict
     if (!required.every((scope) => key.scopes.includes(scope))) {
-      await this.audit(request, { ...base, outcome: 'denied', reason: 'scope_insufficient' }, key)
-      throw new AuthException(AUTH_ERROR_CODES.API_KEY_SCOPE_INSUFFICIENT)
+      return await this.refuse(request, base, 'scope_insufficient', key)
     }
 
     const delivered = await this.audit(request, { ...base, outcome: 'allowed', reason: null }, key)
@@ -130,6 +129,23 @@ export class ApiKeyGuard implements CanActivate {
       return null
     }
     return declared as string[]
+  }
+
+  /** Audits a denial and refuses with the code of its reason; never returns. */
+  private async refuse(
+    request: ApiKeyRequest,
+    base: { method: string; route: string; requiredScopes: readonly string[] },
+    reason: ApiKeyDenyReason,
+    key: AuthApiKey | null
+  ): Promise<never> {
+    await this.audit(request, { ...base, outcome: 'denied', reason }, key)
+    throw new AuthException(
+      reason === 'route_undeclared'
+        ? AUTH_ERROR_CODES.FORBIDDEN
+        : reason === 'scope_insufficient'
+          ? AUTH_ERROR_CODES.API_KEY_SCOPE_INSUFFICIENT
+          : AUTH_ERROR_CODES.API_KEY_INVALID
+    )
   }
 
   /**
@@ -168,7 +184,7 @@ export class ApiKeyGuard implements CanActivate {
 
     if (this.options.apiKeys.auditMode === 'required') {
       try {
-        await run()
+        await pinned(run())
         return true
       } catch {
         logHook(this.logger, 'onApiKeyRequest', 'threw')

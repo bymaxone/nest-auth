@@ -40,6 +40,7 @@ import {
   type ErasedContract,
   type ErasedRepositoryContract
 } from './repository-contracts'
+import { pinned } from './settle'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 
@@ -99,7 +100,7 @@ export async function readHostOptionsAsync<T>(
   read: () => Promise<T>
 ): Promise<{ readonly value: T }> {
   try {
-    return { value: await read() }
+    return { value: await pinned(read()) }
   } catch (error: unknown) {
     throw configurationError(error)
   }
@@ -482,7 +483,9 @@ export function guardRepository<T extends object>(host: T, contract: ErasedRepos
       return async (...args: unknown[]): Promise<unknown> => {
         let answer: unknown
         try {
-          answer = await applyFunction(member as (...parameters: unknown[]) => unknown, host, args)
+          answer = await pinned(
+            applyFunction(member as (...parameters: unknown[]) => unknown, host, args)
+          )
         } catch (error: unknown) {
           // A typed error the host chose to throw (a unique-key conflict it maps to `AuthException`) goes out as it is.
           if (isTypedError(error)) throw error

@@ -49,7 +49,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
-import { awaiting, started } from '../utils/settle'
+import { awaiting, started, pinned, PinnedMethods } from '../utils/settle'
 import { pageInvitations } from '../utils/workspace-invitation-page'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
 import { normalizeWorkspaceName } from '../utils/workspace-name'
@@ -71,6 +71,7 @@ interface LiveInvitation {
  * nothing about it.
  */
 @Injectable()
+@PinnedMethods('preview')
 export class WorkspaceInvitationService {
   private readonly group: ResolvedWorkspaceOptions
 
@@ -131,14 +132,16 @@ export class WorkspaceInvitationService {
   ): Promise<void> {
     this.members.assertMayGrant(actor.role, role)
     const email = normalizeEmail(rawEmail)
-    await this.takeInviterSlot(ref.tenantId, actor.userId)
-    const indexed = await this.store.readByEmail(ref, email)
+    await pinned(this.takeInviterSlot(ref.tenantId, actor.userId))
+    const indexed = await pinned(this.store.readByEmail(ref, email))
     const live = indexed?.record == null ? null : { key: indexed.key, record: indexed.record }
     if (live !== null) this.assertMayReissue(actor, live.record)
-    const account = await this.assertNotMember(ref, email)
-    await this.issue(
-      { ref, actor, email, role, expected: indexed?.key ?? null, live, account },
-      context
+    const account = await pinned(this.assertNotMember(ref, email))
+    await pinned(
+      this.issue(
+        { ref, actor, email, role, expected: indexed?.key ?? null, live, account },
+        context
+      )
     )
   }
 
@@ -162,15 +165,17 @@ export class WorkspaceInvitationService {
     context: HookContext
   ): Promise<void> {
     const email = normalizeEmail(rawEmail)
-    const indexed = await this.store.readByEmail(ref, email)
+    const indexed = await pinned(this.store.readByEmail(ref, email))
     const live = indexed?.record == null ? null : { key: indexed.key, record: indexed.record }
     if (live === null || !this.members.mayActOn(actor.role, live.record.role)) return
     this.assertMayReissue(actor, live.record)
-    await this.takeInviterSlot(ref.tenantId, actor.userId)
-    const account = await this.users.findByEmail({ email, tenantId: ref.tenantId })
-    await this.issue(
-      { ref, actor, email, role: live.record.role, expected: live.key, live, account },
-      context
+    await pinned(this.takeInviterSlot(ref.tenantId, actor.userId))
+    const account = await pinned(this.users.findByEmail({ email, tenantId: ref.tenantId }))
+    await pinned(
+      this.issue(
+        { ref, actor, email, role: live.record.role, expected: live.key, live, account },
+        context
+      )
     )
   }
 
@@ -190,9 +195,9 @@ export class WorkspaceInvitationService {
     context: HookContext
   ): Promise<void> {
     const email = normalizeEmail(rawEmail)
-    const indexed = await this.store.readByEmail(ref, email)
+    const indexed = await pinned(this.store.readByEmail(ref, email))
     if (indexed?.record == null || !this.members.mayActOn(actor.role, indexed.record.role)) return
-    await this.store.remove(ref, email, indexed.key)
+    await pinned(this.store.remove(ref, email, indexed.key))
     this.events.emit(
       {
         type: 'invitation.revoked',
@@ -217,7 +222,7 @@ export class WorkspaceInvitationService {
     ref: WorkspaceRef,
     page: { cursor?: string; limit?: number }
   ): Promise<InvitationPage> {
-    return pageInvitations(await this.store.pending(ref), page, Date.now())
+    return pageInvitations(await pinned(this.store.pending(ref)), page, Date.now())
   }
 
   /**
@@ -233,7 +238,7 @@ export class WorkspaceInvitationService {
    * @throws {AuthException} `auth.invalid_invitation_token` for any token that cannot be previewed.
    */
   async preview(token: string): Promise<WorkspaceInvitationPreview> {
-    const record = await this.store.readByHash(sha256(token))
+    const record = await pinned(this.store.readByHash(sha256(token)))
     const probe = lookupOf(record)
     const workspaceRead = started(
       this.workspaces.findById({ tenantId: probe.tenantId, workspaceId: probe.workspaceId })
@@ -306,19 +311,23 @@ export class WorkspaceInvitationService {
       resendCount: 0,
       workspaceName
     }
-    const outcome = await this.store.publish(ref, email, invitationKey(token), record, ttl, 0, null)
+    const outcome = await pinned(
+      this.store.publish(ref, email, invitationKey(token), record, ttl, 0, null)
+    )
     // The id is fresh, so nothing can already hold its index.
     if (outcome !== 'published') throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
-    const account = await this.users.findByEmail({ email, tenantId: ref.tenantId })
-    await this.deliver(
-      ref,
-      email,
-      workspaceName,
-      params.inviterName,
-      record,
-      token,
-      account !== null,
-      ttl
+    const account = await pinned(this.users.findByEmail({ email, tenantId: ref.tenantId }))
+    await pinned(
+      this.deliver(
+        ref,
+        email,
+        workspaceName,
+        params.inviterName,
+        record,
+        token,
+        account !== null,
+        ttl
+      )
     )
     this.events.emit(
       {
@@ -344,9 +353,9 @@ export class WorkspaceInvitationService {
    */
   async revokeAsPlatform(ref: WorkspaceRef, rawEmail: string, context: HookContext): Promise<void> {
     const email = normalizeEmail(rawEmail)
-    const indexed = await this.store.readByEmail(ref, email)
+    const indexed = await pinned(this.store.readByEmail(ref, email))
     if (indexed?.record?.kind !== 'bootstrap') return
-    await this.store.remove(ref, email, indexed.key)
+    await pinned(this.store.remove(ref, email, indexed.key))
     this.events.emit(
       {
         type: 'invitation.revoked',
@@ -362,9 +371,11 @@ export class WorkspaceInvitationService {
 
   /** Counts one invitation against the inviter's hour, refusing the twenty-first. */
   private async takeInviterSlot(tenantId: string, userId: string): Promise<void> {
-    const used = await this.redis.incrWithFixedTtl(
-      inviterRateKey(tenantId, userId, this.hmacKey),
-      INVITER_WINDOW_SECONDS
+    const used = await pinned(
+      this.redis.incrWithFixedTtl(
+        inviterRateKey(tenantId, userId, this.hmacKey),
+        INVITER_WINDOW_SECONDS
+      )
     )
     if (used > INVITATIONS_PER_INVITER_PER_HOUR) {
       throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
@@ -384,9 +395,9 @@ export class WorkspaceInvitationService {
 
   /** Refuses an address that already has a membership of the workspace; returns its account. */
   private async assertNotMember(ref: WorkspaceRef, email: string): Promise<AuthUser | null> {
-    const account = await this.users.findByEmail({ email, tenantId: ref.tenantId })
+    const account = await pinned(this.users.findByEmail({ email, tenantId: ref.tenantId }))
     if (account === null) return null
-    const member = await this.memberships.find({ ...ref, userId: account.id })
+    const member = await pinned(this.memberships.find({ ...ref, userId: account.id }))
     // A suspended member is still a member: an invitation cannot reinstate one.
     if (member !== null) throw new AuthException(AUTH_ERROR_CODES.ALREADY_MEMBER)
     return account
@@ -395,8 +406,8 @@ export class WorkspaceInvitationService {
   /** Mints a token, stores its record, retires the one it replaces, and mails it. */
   private async issue(plan: IssuePlan, context: HookContext): Promise<void> {
     const { ref, actor, email, role, live } = plan
-    const workspace = await this.activeWorkspace(ref)
-    const inviter = await this.users.findById({ id: actor.userId, tenantId: ref.tenantId })
+    const workspace = await pinned(this.activeWorkspace(ref))
+    const inviter = await pinned(this.users.findById({ id: actor.userId, tenantId: ref.tenantId }))
     if (inviter === null) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
 
     const token = generateSecureToken(32)
@@ -414,18 +425,22 @@ export class WorkspaceInvitationService {
     }
     // A replacement takes the place of the record it retires, so only a first invitation is capped.
     const limit = live === null ? this.group.maxPendingInvitationsPerWorkspace : 0
-    const outcome = await this.store.publish(ref, email, key, record, ttl, limit, plan.expected)
+    const outcome = await pinned(
+      this.store.publish(ref, email, key, record, ttl, limit, plan.expected)
+    )
     if (outcome !== 'published') throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
 
-    await this.deliver(
-      ref,
-      email,
-      workspace.name,
-      inviter.name,
-      record,
-      token,
-      plan.account !== null,
-      ttl
+    await pinned(
+      this.deliver(
+        ref,
+        email,
+        workspace.name,
+        inviter.name,
+        record,
+        token,
+        plan.account !== null,
+        ttl
+      )
     )
     this.events.emit(
       {
@@ -452,22 +467,24 @@ export class WorkspaceInvitationService {
     ttl: number
   ): Promise<void> {
     try {
-      await this.email.sendWorkspaceInvitation?.(ref.tenantId, email, {
-        inviterName,
-        workspaceName,
-        role: record.role,
-        inviteToken: token,
-        expiresAt: new Date(Date.parse(record.createdAt) + ttl * 1_000),
-        accountExists,
-        kind: record.kind
-      })
+      await pinned(
+        this.email.sendWorkspaceInvitation?.(ref.tenantId, email, {
+          inviterName,
+          workspaceName,
+          role: record.role,
+          inviteToken: token,
+          expiresAt: new Date(Date.parse(record.createdAt) + ttl * 1_000),
+          accountExists,
+          kind: record.kind
+        })
+      )
     } catch (err: unknown) {
       throw new Error(describeChannelStatus(err))
     }
   }
 
   private async activeWorkspace(ref: WorkspaceRef): Promise<AuthWorkspace> {
-    const workspace = await this.workspaces.findById(ref)
+    const workspace = await pinned(this.workspaces.findById(ref))
     if (workspace?.status !== 'active') {
       throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     }

@@ -184,13 +184,26 @@ const identity = {
 const platformIdentity = { ...identity, sub: 'admin-1', type: 'platform', tenantId: undefined }
 
 /** A verifier whose account status check is the host code that plants the then, and that answers the token's own payload. */
-function verifier(payload: object, stall: () => Promise<void>): AuthTokenVerifierService {
+function verifier(
+  payload: object,
+  stall: () => Promise<void>,
+  revoked: () => Promise<boolean> = () => Promise.resolve(false)
+): AuthTokenVerifierService {
   return new AuthTokenVerifierService(
     { verify: () => ({ ...payload }) } as never,
     { jwt: { algorithm: 'HS256', issuer: 'iss', audience: 'aud', previousSecrets: [] } } as never,
-    { isAccessTokenRevoked: () => Promise.resolve(false) } as never,
+    { isAccessTokenRevoked: revoked } as never,
     { assertDashboardAccountUsable: stall, assertPlatformAccountUsable: stall } as never
   )
+}
+
+/** Replaces the constructor of promises and plants a then that answers `value` once and puts everything back. */
+function replaceConstructorAndForge(value: unknown): void {
+  Object.defineProperty(Promise.prototype, 'constructor', {
+    ...ownConstructor,
+    value: function Other() {}
+  })
+  Promise.prototype.then = erasingThen(value) as typeof ownThen
 }
 
 const service = new WorkspaceAccessService(
@@ -232,6 +245,22 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
     ]),
     (answer) => `member:${(answer as { role: string }).role}`
   )
+} else if (scenario === 'hop') {
+  // The outermost caller: a plain async function awaits what the service returned, after the service's own last check refused.
+  replaceConstructorAndForge({ kind: 'member', member: { ...ref, role: 'owner' } })
+  const outer = async (): Promise<unknown> => await service.resolveAccess(ref)
+  settle(outer(), showAccess)
+} else if (scenario === 'sync-revoked') {
+  // Host code that is called by the library plants while it makes the promise the library then awaits.
+  const subject = verifier(
+    identity,
+    () => Promise.resolve(),
+    () => {
+      replaceConstructorAndForge(false)
+      return Promise.resolve(true)
+    }
+  )
+  settle(subject.verifyAccessToken('token', { plane: 'dashboard' }), showToken)
 } else if (scenario === 'revoked-token') {
   const revocation = new AuthRevocationService({
     get: () => Promise.resolve('1'),

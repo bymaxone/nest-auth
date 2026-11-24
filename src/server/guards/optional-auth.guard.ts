@@ -4,6 +4,7 @@ import type { Request } from 'express'
 
 import { JwtAuthGuard } from './jwt-auth.guard'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import { PinnedMethods } from '../utils/settle'
 
 /**
  * Authentication guard that allows unauthenticated access while still
@@ -28,6 +29,7 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
  * @layer Guard
  */
 @Injectable()
+@PinnedMethods('canActivate')
 export class OptionalAuthGuard extends JwtAuthGuard {
   override async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context

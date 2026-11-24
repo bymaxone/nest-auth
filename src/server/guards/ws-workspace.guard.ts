@@ -19,6 +19,7 @@ import { WorkspaceDeniedEventsService } from '../services/workspace-denied-event
 import { admitsPendingWorkspace, declaredWorkspaceRoles } from '../utils/declared-workspace-roles'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { assertWorkspaceId, assertWorkspaceMessage } from '../utils/resolve-request-workspace'
+import { pinned, PinnedMethods } from '../utils/settle'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 import { rememberMessageWorkspace } from '../utils/ws-message-workspace'
 
@@ -56,6 +57,7 @@ interface WsWorkspaceClient {
  * is refused on the next one.
  */
 @Injectable()
+@PinnedMethods('canActivate')
 export class WsWorkspaceGuard implements CanActivate {
   private readonly group: ResolvedWorkspaceOptions
 
@@ -82,11 +84,13 @@ export class WsWorkspaceGuard implements CanActivate {
 
     const message = assertWorkspaceMessage(ws.getData<unknown>())
     const workspaceId = assertWorkspaceId(this.named(message))
-    const access = await this.access.resolveAccess({
-      tenantId: user.tenantId,
-      workspaceId,
-      userId: user.sub
-    })
+    const access = await pinned(
+      this.access.resolveAccess({
+        tenantId: user.tenantId,
+        workspaceId,
+        userId: user.sub
+      })
+    )
     assertRootIsStandard()
     const member = this.denied.admit(
       { tenantId: user.tenantId, userId: user.sub, workspaceId, surface: 'ws' },
