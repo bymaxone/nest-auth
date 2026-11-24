@@ -469,7 +469,7 @@ function addedProtocolSymbols(): number {
 export function rebaselinePolyfills(): void {
   // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not `Reflect`, so the pass continues
   for (let index = 0; index < holders.length; index += 1) {
-    if (holders[index] !== Reflect || keys[index] !== 'getMetadata') continue
+    if (keys[index] !== 'getMetadata') continue
     const descriptor = getDescriptor(holders[index] as object, keys[index] as PropertyKey)
     if (descriptor !== undefined && hasOwn(descriptor, fields[index] as string))
       originals[index] = getKey(descriptor, fields[index] as string)
