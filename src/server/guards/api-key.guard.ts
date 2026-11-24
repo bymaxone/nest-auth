@@ -23,6 +23,7 @@ import type {
 } from '../interfaces/auth-hooks.interface'
 import { logEvent, logHook, logStore } from '../observability/log-event'
 import { ApiKeyVerifierService } from '../services/api-key-verifier.service'
+import { applyFunction } from '../utils/captured-builtins'
 import { resolveClientAddress } from '../utils/client-address'
 import { assertRootIsStandard, rethrowRefusal } from '../utils/object-prototype-guard'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
@@ -162,7 +163,8 @@ export class ApiKeyGuard implements CanActivate {
       ip: resolveClientAddress(request)
     }
     const context = this.hookContext(request)
-    const run = (): Promise<void> | void => hook.call(this.hooks, event, context)
+    const run = (): Promise<void> | void =>
+      applyFunction(hook, this.hooks, [event, context]) as Promise<void> | void
 
     if (this.options.apiKeys.auditMode === 'required') {
       try {
