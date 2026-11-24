@@ -28,6 +28,12 @@ export const intrinsicPromisePrototype: Promise<unknown> = prototypeOf(
 /** The constructor of that prototype, which `await` compares with the promise it is given. */
 export const IntrinsicPromise = intrinsicPromisePrototype.constructor as PromiseConstructor
 
+/** The `then` of the language's own promises, taken once: a host that replaces `Promise.prototype.then` later does not change it. */
+export const intrinsicThen = intrinsicPromisePrototype.then
+
+/** `Reflect.apply` as it was when the module loaded, so a function is called without reading `call` or `apply` off it. */
+export const applyFunction = Reflect.apply
+
 /** `Reflect.get` as it was when the module loaded: a read of a key that honours the receiver, taken once. */
 export const getKey = Reflect.get
 

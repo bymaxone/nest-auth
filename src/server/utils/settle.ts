@@ -20,11 +20,27 @@
  * @layer Utility
  */
 
-import { IntrinsicPromise } from './captured-builtins'
+import { IntrinsicPromise, applyFunction, intrinsicThen } from './captured-builtins'
 import { assertRootIsStandard } from './object-prototype-guard'
 
 /** The language's own constructor, so neither a replaced global nor a library bound to it before load chooses what the deadline builds. */
 const CapturedPromise = IntrinsicPromise
+
+/** Takes no action: it only marks a rejection as handled. */
+function ignore(): void {}
+
+/**
+ * Marks a promise's rejection as handled, through the `then` taken at load, before anything else can refuse. A call the root check
+ * refuses would otherwise leave a rejecting `work` with no handler, and an unhandled rejection ends the process. A value that is
+ * not a native promise has nothing to mark.
+ */
+function quiet(work: unknown): void {
+  try {
+    applyFunction(intrinsicThen, work, [ignore, ignore])
+  } catch {
+    // Not a native promise: nothing was started that can reject unhandled.
+  }
+}
 
 /** An answer in a box with no prototype, so that no `then` is looked up on it. */
 export interface Settled<T> {
@@ -73,6 +89,7 @@ export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
  */
 export function started<T>(work: PromiseLike<T> | T): Promise<Settled<T>> {
   return (async (): Promise<Settled<T>> => {
+    quiet(work)
     try {
       assertRootIsStandard()
       return box(await work)
@@ -127,6 +144,7 @@ export async function withDeadline<T>(
     const run = async (): Promise<void> => {
       try {
         const answer = work()
+        quiet(answer)
         assertRootIsStandard()
         resolve(box(await answer))
       } catch (error: unknown) {

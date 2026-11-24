@@ -9,6 +9,7 @@ import type { OnApplicationBootstrap } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import { IntrinsicPromise } from '../utils/captured-builtins'
 import { awaiting, withDeadline } from '../utils/settle'
 
 /** How long boot keeps trying to PING Redis, in milliseconds. */
@@ -108,9 +109,15 @@ export class RedisReadinessService implements OnApplicationBootstrap {
     const { status } = this.redis
     if (status === 'end') {
       // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
-      return Promise.reject(new Error('the client is closed'))
+      return new IntrinsicPromise<void>((_resolve, reject) => {
+        reject(new Error('the client is closed'))
+      })
     }
-    if (!CONNECTING_STATES.includes(status)) return Promise.resolve()
+    if (!CONNECTING_STATES.includes(status)) {
+      return new IntrinsicPromise<void>((resolve) => {
+        resolve()
+      })
+    }
     return new Promise((resolve, reject) => {
       const settle = (done: () => void): void => {
         clearTimeout(timer)

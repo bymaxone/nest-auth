@@ -373,15 +373,14 @@ export class AuthTokenVerifierService {
     const group = this.options.workspaces
     const denied = this.deniedEvents
     if (access === null || group === undefined) {
-      return () =>
-        Promise.reject(
-          new AuthException(AUTH_ERROR_CODES.VALIDATION, [
-            {
-              field: 'workspaceId',
-              message: 'workspaceId is not accepted: workspaces are not enabled for this deployment'
-            }
-          ])
-        )
+      return async () => {
+        throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+          {
+            field: 'workspaceId',
+            message: 'workspaceId is not accepted: workspaces are not enabled for this deployment'
+          }
+        ])
+      }
     }
     return async (payload, check) => {
       const workspaceId = assertWorkspaceId(check.workspaceId)

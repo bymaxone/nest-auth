@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import ts from 'typescript'
 
 /** The statics that combine or race promises. */
-const BANNED = ['all', 'allSettled', 'any', 'race', 'try', 'withResolvers']
+const BANNED = ['all', 'allSettled', 'any', 'race', 'reject', 'resolve', 'try', 'withResolvers']
 
 /** The `.ts` sources of the server that are not tests. */
 function sourceFiles(dir = join(__dirname, '..')): string[] {
@@ -132,11 +132,29 @@ const EXEMPT_METHODS: Record<string, { count: number; reason: string }> = {
     reason:
       'A detached reuse-detection hook whose rejection is logged; the refresh was decided already.'
   },
+  'utils/captured-builtins.ts': {
+    count: 1,
+    reason:
+      "Takes the then of the language's own promises once, at load; nothing is awaited through it here."
+  },
   'utils/run-detached.ts': {
     count: 1,
     reason:
       'The helper that detaches a hook and logs its rejection; nothing waits for or reads its answer.'
   }
+}
+
+/**
+ * The sources that wrap a call in `Promise.resolve(...)` to detach a hook and log its failure, by file and count. Each one is
+ * fire-and-forget: nothing waits for the promise or reads its answer, so a replaced `resolve` cannot answer a decision.
+ */
+const EXEMPT_STATICS: Record<string, number> = {
+  'guards/api-key.guard.ts': 1,
+  'observability/auth-tracing.ts': 1,
+  'services/auth.service.ts': 2,
+  'services/platform-auth.service.ts': 1,
+  'services/token-manager.service.ts': 1,
+  'utils/run-detached.ts': 1
 }
 
 describe('the statics of Promise in the sources of the server', () => {
@@ -148,16 +166,16 @@ describe('the statics of Promise in the sources of the server', () => {
     ['Promise.any(list)', ['any']],
     ["Promise['all'](list)", ['all']],
     ['Promise[name](list)', ['[computed]']],
+    ['Promise.resolve(x)', ['resolve']],
+    ['await Promise.reject(e)', ['reject']],
     ['const { all } = Promise', ['[destructured]']]
   ])('finds %s', (text, expected) => {
     expect(staticsRead(text)).toEqual(expected)
   })
 
-  // Scenario: what the sources may do with `Promise`. Expected: not found. Why: a constructor, `resolve` and `reject` combine nothing.
+  // Scenario: what the sources may do with `Promise`. Expected: not found. Why: a constructor combines nothing.
   it.each([
     'new Promise((resolve) => resolve(1))',
-    'Promise.resolve(run()).catch(() => undefined)',
-    'Promise.reject(new Error("x"))',
     'const all = [a, b]; all.map(f)',
     'items.all(f)',
     '// Promise.all(list)'
@@ -165,15 +183,18 @@ describe('the statics of Promise in the sources of the server', () => {
     expect(staticsRead(text)).toEqual([])
   })
 
-  // Scenario: every source of the server read as syntax. Expected: none reads one of the statics. Why: see the file header.
-  it('reads none of them in any source', () => {
+  // Scenario: every source of the server read as syntax. Expected: the statics read are exactly the argued ones, and none combines
+  // or races. Why: see the file header.
+  it('reads a static only where it is argued not to be a decision', () => {
     const files = sourceFiles()
-    const reads = files.flatMap((file) =>
-      staticsRead(readFileSync(file, 'utf8')).map((name) => `${file}: Promise.${name}`)
-    )
+    const counted: Record<string, number> = {}
+    for (const file of files) {
+      const count = staticsRead(readFileSync(file, 'utf8')).length
+      if (count > 0) counted[file.slice(join(__dirname, '..').length + 1)] = count
+    }
 
     expect(files.length).toBeGreaterThan(100)
-    expect(reads).toEqual([])
+    expect(counted).toEqual(EXEMPT_STATICS)
   })
 
   // Scenario: each way to read a method of a promise in a snippet. Expected: found, including through `call` and an element.
