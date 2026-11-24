@@ -22,6 +22,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { hostEntityOf } from '../utils/host-read'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { runDetached } from '../utils/run-detached'
 import { parseUserAgent } from '../utils/session-detail'
 import { allOf, awaiting } from '../utils/settle'
@@ -454,9 +455,7 @@ export class SessionService {
     // view that lies by omission, since the caller cannot revoke what they cannot see.
     raiseFirst(failures)
 
-    results.sort((a, b) => b.createdAt - a.createdAt)
-
-    return results
+    return newestFirst(results)
   }
 
   /**
@@ -1062,6 +1061,15 @@ export class SessionService {
         createdAt: await this.readCreatedAt(member.slice(3))
       }))
     )
-    return (await awaiting(read)).value
+    const ages = (await awaiting(read)).value
+    assertRootIsStandard()
+    return ages
   }
+}
+
+/** Orders the sessions newest first. The list is read for `then` when it is returned, so the root is checked as the last statement. */
+function newestFirst(results: SessionInfo[]): SessionInfo[] {
+  results.sort((a, b) => b.createdAt - a.createdAt)
+  assertRootIsStandard()
+  return results
 }

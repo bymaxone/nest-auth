@@ -30,12 +30,14 @@ import { NO_CONTROL_CHARACTERS } from '../dto/no-control-characters'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type {
+  AuthMembership,
   IMembershipRepository,
   MembershipRef
 } from '../interfaces/membership-repository.interface'
 import type { WorkspaceJobContext } from '../interfaces/workspace-job-context.interface'
 import type { WorkspaceRoleList } from '../interfaces/workspace-options.interface'
 import type {
+  AuthWorkspace,
   IWorkspaceRepository,
   WorkspaceRef
 } from '../interfaces/workspace-repository.interface'
@@ -139,17 +141,24 @@ export class WorkspaceAccessService {
     assertRootIsStandard()
     assertKey(ref)
     const ttl = this.group.membershipCacheTtlSeconds
-    if (ttl === 0) return this.readRepositories(ref)
+    if (ttl === 0) {
+      const read = await this.readRepositories(ref)
+      assertRootIsStandard()
+      return read
+    }
 
     const cached = await this.readCache(ref)
     if (cached !== null && cached.role !== null) {
-      return { kind: 'member', member: { ...ref, role: cached.role } }
+      const member = { kind: 'member', member: { ...ref, role: cached.role } } as const
+      assertRootIsStandard()
+      return member
     }
 
     const access = await this.readRepositories(ref)
     if (cached !== null && access.kind === 'member') {
       await this.fillCache(ref, cached, access.member.role, ttl)
     }
+    assertRootIsStandard()
     return access
   }
 
@@ -196,13 +205,14 @@ export class WorkspaceAccessService {
       tenantId: ref.tenantId
     })
     const access = await this.readRepositories(ref)
-    assertRootIsStandard()
-    return assertWorkspaceAccess(
+    const member = assertWorkspaceAccess(
       access,
       roles,
       this.group.roles.hierarchy,
       options.allowPending === true
     )
+    assertRootIsStandard()
+    return member
   }
 
   /**
@@ -301,6 +311,17 @@ export class WorkspaceAccessService {
     const membershipRead = started(this.membershipRepo.find(ref))
     const workspace = (await awaiting(workspaceRead)).value
     const membership = (await awaiting(membershipRead)).value
+    const access = this.accessFrom(ref, workspace, membership)
+    // The answer is read for `then` when it is returned, so the root is checked as the last statement before the return.
+    assertRootIsStandard()
+    return access
+  }
+
+  private accessFrom(
+    ref: MembershipRef,
+    workspace: AuthWorkspace | null,
+    membership: AuthMembership | null
+  ): WorkspaceAccess {
     if (membership?.status !== 'active' || workspace === null) return { kind: 'denied' }
     // What the repository answered must be the row that was asked about, in the tenant, the workspace and for the user:
     // the key it was given is not a proof of the row it returned, and another row is never access.

@@ -129,7 +129,10 @@ async function mappingOutage(result: PromiseLike<unknown>): Promise<unknown> {
   markHandled(result)
   try {
     assertRootIsStandard()
-    return await result
+    const answer = await result
+    // The answer is read for `then` when this function returns it, so the root is checked again as the last statement.
+    assertRootIsStandard()
+    return answer
   } catch (error: unknown) {
     return rethrowAsOutage(error)
   }

@@ -58,6 +58,7 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { cookieOptions } from '../utils/dependency-options'
 import { describeChannelStatus } from '../utils/describe-error'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
@@ -561,7 +562,7 @@ export class OAuthService {
     codeVerifier: string
   ): Promise<OAuthProfile> {
     try {
-      return (
+      const profile = (
         await awaiting(
           withDeadline(async () => {
             const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
@@ -569,6 +570,8 @@ export class OAuthService {
           }, pluginDeadlineMs(plugin))
         )
       ).value
+      assertRootIsStandard()
+      return profile
     } catch (err: unknown) {
       // Nothing the plugin wrote is published. This path holds a LIVE ACCESS TOKEN: the plugin
       // received `code`, `codeVerifier` and `accessToken`, and an HTTP client attaching its

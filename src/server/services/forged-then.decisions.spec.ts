@@ -69,6 +69,13 @@ describe('a decision made while a host forges what a promise answers', () => {
     expect(run('mid-read', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
   })
 
+  // Scenario: the membership read answers none after a while, and a `then` on `Object.prototype` that erases itself is planted while
+  // the library waits for it. Expected: refused with auth.internal, not the owner the then answers. Why: an async function that
+  // returns an object makes the engine ask it for `then`, and nothing guarded that read once the last wait was over.
+  it('refuses an answer read for a then planted after the last wait began', () => {
+    expect(run('late', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
+  })
+
   // Scenario: a `then` on the root object, or on functions, before the call. Expected: refused at the entry.
   it.each(['object', 'function'])('refuses a then planted on %s before the call', (scenario) => {
     expect(run(scenario, file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })

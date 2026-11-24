@@ -28,6 +28,7 @@ import {
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
 import { applyFunction } from './captured-builtins'
+import { assertRootIsStandard } from './object-prototype-guard'
 import { readOwnOrClass } from './own-or-class'
 import {
   API_KEY_REPOSITORY_CONTRACT,
@@ -490,7 +491,10 @@ export function guardRepository<T extends object>(host: T, contract: ErasedRepos
         // A method the interface does not have is not one the library calls: its answer goes out as the host gave it.
         const promised =
           typeof key === 'string' && Object.hasOwn(contract, key) ? contract[key] : undefined
-        return promised === undefined ? answer : copyHostRecord(answer, promised)
+        const copied = promised === undefined ? answer : copyHostRecord(answer, promised)
+        // The copy is read for `then` when it is returned, so the root is checked as the last statement.
+        assertRootIsStandard()
+        return copied
       }
     }
   })

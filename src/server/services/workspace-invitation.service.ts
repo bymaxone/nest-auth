@@ -48,6 +48,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { awaiting, started } from '../utils/settle'
 import { pageInvitations } from '../utils/workspace-invitation-page'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
@@ -255,10 +256,23 @@ export class WorkspaceInvitationService {
     if (record.kind === 'bootstrap') {
       // Its workspace does not exist yet; one that exists and is not active names nothing usable.
       if (workspace !== null && workspace.status !== 'active') throw invalidToken()
-      return { kind: 'bootstrap', workspaceName: record.workspaceName, ...answer }
+      const bootstrap = {
+        kind: 'bootstrap',
+        workspaceName: record.workspaceName,
+        ...answer
+      } as const
+      assertRootIsStandard()
+      return bootstrap
     }
     if (workspace?.status !== 'active' || inviter === null) throw invalidToken()
-    return { kind: 'member', workspaceName: workspace.name, inviterName: inviter.name, ...answer }
+    const preview = {
+      kind: 'member',
+      workspaceName: workspace.name,
+      inviterName: inviter.name,
+      ...answer
+    } as const
+    assertRootIsStandard()
+    return preview
   }
 
   /**

@@ -350,7 +350,9 @@ export class AuthTokenVerifierService {
 
     if (requireMfa) this.assertMfaVerified(payload)
 
-    return { plane: 'dashboard', payload }
+    const verified = { plane: 'dashboard', payload } as const
+    assertRootIsStandard()
+    return verified
   }
 
   /**
@@ -469,7 +471,9 @@ export class AuthTokenVerifierService {
 
     if (requireMfa) this.assertMfaVerified(payload)
 
-    return { plane: 'platform', payload }
+    const verified = { plane: 'platform', payload } as const
+    assertRootIsStandard()
+    return verified
   }
 
   /**

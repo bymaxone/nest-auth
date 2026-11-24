@@ -17,9 +17,15 @@ describe('a repository method of the host while Function.prototype.apply is repl
   // Scenario: `apply` is replaced by a function that answers a forged record for the repository's method and puts the original back.
   // Expected: the answer is the one the repository gave. Why: the replacement erased itself, so no later root check can see it.
   it('answers what the repository returned', async () => {
-    const repository = { find: async (): Promise<unknown> => ({ id: 'stored' }) }
-    const guarded = guardRepository(repository, ANSWERS)
     const held = getOwn(Function.prototype, 'apply') as PropertyDescriptor
+    // The repository puts `apply` back as it answers, so the guard at the return sees a root that is clean again.
+    const repository = {
+      find: async (): Promise<unknown> => {
+        define(Function.prototype, 'apply', held)
+        return { id: 'stored' }
+      }
+    }
+    const guarded = guardRepository(repository, ANSWERS)
     define(Function.prototype, 'apply', {
       ...held,
       value: function forge(this: unknown, ...args: unknown[]): unknown {

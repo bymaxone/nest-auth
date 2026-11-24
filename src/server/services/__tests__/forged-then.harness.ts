@@ -110,9 +110,11 @@ const members = {
   find: (): Promise<null> =>
     scenario === 'mid-read'
       ? midRead()
-      : scenario === 'unhandled'
-        ? failingRead()
-        : Promise.resolve(null)
+      : scenario === 'late'
+        ? lateRead()
+        : scenario === 'unhandled'
+          ? failingRead()
+          : Promise.resolve(null)
 }
 const workspaces = { findById: (): Promise<typeof workspace> => Promise.resolve(workspace) }
 
@@ -120,6 +122,17 @@ const workspaces = { findById: (): Promise<typeof workspace> => Promise.resolve(
 function midRead(): Promise<null> {
   plantOn(Object.prototype, forgedPair)
   return Promise.resolve(null)
+}
+
+/**
+ * A read that answers no membership after a while, with host code running in between: it plants a then that erases itself while the
+ * library waits, after the last check before the wait and before the answer is returned.
+ */
+function lateRead(): Promise<null> {
+  setTimeout(() => {
+    plantOn(Object.prototype, { kind: 'member', member: { ...ref, role: 'owner' } })
+  }, 10)
+  return new Promise((resolve) => setTimeout(() => resolve(null), 30))
 }
 
 /** A read that fails, issued by host code that has also left a key on the root object, so the library refuses what it started. */
@@ -189,7 +202,7 @@ if (scenario === 'revoked-token') {
     get: (): Promise<never> => failingRead()
   } as never) as unknown as { get: () => Promise<unknown> }
   settle(client.get(), () => 'answered')
-} else if (scenario === 'mid-read' || scenario === 'unhandled') {
+} else if (scenario === 'mid-read' || scenario === 'late' || scenario === 'unhandled') {
   settle(service.resolveAccess(ref), showAccess)
 } else {
   settle(service.resolveAccess(ref), showAccess)
