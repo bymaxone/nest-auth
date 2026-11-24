@@ -114,6 +114,18 @@ export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
 }
 
 /**
+ * Gives the wrapper of a method the name of the method. Tools that read a route's metadata look it up by `method.name` (the document
+ * builder of `@nestjs/swagger` reads the parameter types of a handler that way), and a wrapper named after itself finds none.
+ */
+function named<F extends (...args: never[]) => unknown>(wrapper: F, method: F): F {
+  const own = createObject(null) as PropertyDescriptor
+  own.value = (method as { name: string }).name
+  own.configurable = true
+  defineKey(wrapper, 'name', own)
+  return wrapper
+}
+
+/**
  * Makes the promise of one async method one whose own `constructor` is the language's, for a route handler: applied as the
  * decorator nearest the method, it runs before the route decorators attach their metadata to what it returns.
  *
@@ -122,9 +134,9 @@ export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
 export function Pinned(): MethodDecorator {
   return (_target, _key, descriptor) => {
     const method = descriptor.value as (...args: never[]) => unknown
-    descriptor.value = function pinnedMethod(this: unknown, ...args: never[]): unknown {
+    descriptor.value = named(function pinnedMethod(this: unknown, ...args: never[]): unknown {
       return pinned(applyFunction(method, this, args))
-    } as never
+    }, method) as never
   }
 }
 
@@ -143,9 +155,9 @@ export function PinnedMethods(...names: string[]): ClassDecorator {
     for (const name of names) {
       const own = getDescriptor(target.prototype, name) as PropertyDescriptor
       const method = own.value as (...args: never[]) => unknown
-      const wrapper = function pinnedMethod(this: unknown, ...args: never[]): unknown {
+      const wrapper = named(function pinnedMethod(this: unknown, ...args: never[]): unknown {
         return pinned(applyFunction(method, this, args))
-      }
+      }, method)
       own.value = wrapper
       defineKey(target.prototype, name, own)
     }

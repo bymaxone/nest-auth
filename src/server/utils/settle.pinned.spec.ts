@@ -157,4 +157,9 @@ describe('@Pinned() on a route handler', () => {
     expect(Object.getOwnPropertyDescriptor(promise, 'constructor')?.value).toBe(Promise)
     await expect(promise).resolves.toBe('a:2:true')
   })
+  // Scenario: the wrapper a route handler becomes. Expected: it is named like the method. Why: the document builder of
+  // `@nestjs/swagger` finds the parameter types of a handler by `method.name`, and without them registers no schema for a DTO.
+  it('is named like the method it wraps', () => {
+    expect(Handler.prototype.handle.name).toBe('handle')
+  })
 })
