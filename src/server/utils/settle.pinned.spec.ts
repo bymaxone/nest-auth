@@ -121,7 +121,24 @@ describe('pinned', () => {
     })
 
     expect(() => pinned(promise)).toThrow(AuthException)
-    expect(reads).toBeLessThanOrEqual(1)
+    expect(reads).toBe(1)
+  })
+
+  // Scenario: the permanent own constructor is an accessor that throws, on a promise that rejects. Expected: the refusal is the
+  // library's and the host's error does not leave the pin. Why: attaching the handler reads the species once, after the decision to
+  // refuse, so what that read does cannot change the outcome. A promise whose constructor throws cannot take a handler at all, so its
+  // rejection stays the host's own.
+  it('refuses with its own error when the accessor constructor throws on the handler read', async () => {
+    const promise = Promise.reject(new Error('rejected'))
+    promise.catch(() => undefined)
+    Object.defineProperty(promise, 'constructor', {
+      get: () => {
+        throw new Error('planted')
+      }
+    })
+
+    expect(() => pinned(promise)).toThrow(AuthException)
+    await new Promise((done) => setImmediate(done))
   })
 
   // Scenario: the host's own constructor can still be changed. Expected: the pin replaces it with the language's and locks it.
