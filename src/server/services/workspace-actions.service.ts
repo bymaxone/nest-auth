@@ -15,6 +15,7 @@ import type { HookContext } from '../interfaces/auth-hooks.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { AuthMembership } from '../interfaces/membership-repository.interface'
 import type { AuthWorkspace, WorkspaceRef } from '../interfaces/workspace-repository.interface'
+import { checked, pinned } from '../utils/settle'
 
 /** The verified token of the caller: who they are and the tenant they belong to. */
 type Caller = Pick<DashboardJwtPayload, 'sub' | 'tenantId' | 'sid'>
@@ -54,7 +55,10 @@ export class WorkspaceActionsService {
    *   {@link WorkspaceService.create} refuses.
    */
   async create(caller: Caller, name: string, context: HookContext): Promise<AuthWorkspace> {
-    return this.workspaces.create(await this.callers.load(caller), { name }, context)
+    const created = await pinned(
+      this.workspaces.create(await pinned(this.callers.load(caller)), { name }, context)
+    )
+    return checked(created)
   }
 
   /**
@@ -72,8 +76,9 @@ export class WorkspaceActionsService {
     name: string,
     context: HookContext
   ): Promise<AuthWorkspace> {
-    await this.workspaces.rename(ref, name, actor, context)
-    return (await this.workspaces.getAccess(ref, actor.userId)).workspace
+    await pinned(this.workspaces.rename(ref, name, actor, context))
+    const access = await pinned(this.workspaces.getAccess(ref, actor.userId))
+    return checked(access.workspace)
   }
 
   /**
@@ -97,8 +102,8 @@ export class WorkspaceActionsService {
     password: string | undefined,
     context: HookContext
   ): Promise<void> {
-    await this.callers.reauthenticate(caller, password)
-    await this.workspaces.scheduleDeletion(ref, actor, context)
+    await pinned(this.callers.reauthenticate(caller, password))
+    await pinned(this.workspaces.scheduleDeletion(ref, actor, context))
   }
 
   /**
@@ -118,8 +123,8 @@ export class WorkspaceActionsService {
     actor: WorkspaceActor,
     context: HookContext
   ): Promise<AuthMembership> {
-    await this.memberships.changeRole(ref, userId, role, actor, context)
-    return this.memberships.getMember(ref, userId)
+    await pinned(this.memberships.changeRole(ref, userId, role, actor, context))
+    return checked(await pinned(this.memberships.getMember(ref, userId)))
   }
 
   /**
@@ -145,8 +150,10 @@ export class WorkspaceActionsService {
     context: HookContext
   ): Promise<void> {
     this.memberships.assertMayTransfer(actor, handOver.toUserId, handOver.keeps)
-    await this.memberships.assertTransferTarget(ref, handOver.toUserId)
-    await this.callers.reauthenticate(caller, handOver.password)
-    await this.memberships.transferOwnership(ref, actor, handOver.toUserId, handOver.keeps, context)
+    await pinned(this.memberships.assertTransferTarget(ref, handOver.toUserId))
+    await pinned(this.callers.reauthenticate(caller, handOver.password))
+    await pinned(
+      this.memberships.transferOwnership(ref, actor, handOver.toUserId, handOver.keeps, context)
+    )
   }
 }

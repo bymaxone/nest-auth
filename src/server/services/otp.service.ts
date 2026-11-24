@@ -9,6 +9,7 @@ import { AuthException } from '../errors/auth-exception'
 import { logEvent, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
+import { pinned } from '../utils/settle'
 import { sleep } from '../utils/sleep'
 
 /**
@@ -22,17 +23,17 @@ export async function releasingCooldownOnFailure(
   cooldownKey: string,
   work: () => Promise<boolean | undefined>
 ): Promise<void> {
-  const release = (): Promise<void> =>
-    redis.del(cooldownKey).then(
-      () => undefined,
-      (err: unknown) => {
-        logStore(logger, 'AUTH_STORE_FAILED', 'resend_cooldown_release', err)
-      }
-    )
+  const release = async (): Promise<void> => {
+    try {
+      await pinned(redis.del(cooldownKey))
+    } catch (err: unknown) {
+      logStore(logger, 'AUTH_STORE_FAILED', 'resend_cooldown_release', err)
+    }
+  }
   try {
-    if ((await work()) === false) await release()
+    if ((await pinned(work())) === false) await pinned(release())
   } catch (error: unknown) {
-    await release()
+    await pinned(release())
     throw error
   }
 }
@@ -42,6 +43,20 @@ const MAX_ATTEMPTS = 5
 
 /** Minimum duration in milliseconds for all OTP verify paths (timing normalization). */
 const MIN_VERIFY_MS = 100
+
+/** Holds a verify path until the minimum duration has passed since it started. */
+function padTo(start: number): Promise<void> {
+  return sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
+}
+
+/** Runs the attempt-counting verify script against the stored fingerprint. */
+function verifyScript(
+  redis: Pick<AuthRedisService, 'eval'>,
+  key: string,
+  fingerprint: string
+): Promise<unknown> {
+  return redis.eval(OTP_VERIFY_LUA, [key], [fingerprint, String(MAX_ATTEMPTS)])
+}
 
 /**
  * OTP record stored in Redis as JSON.
@@ -267,10 +282,12 @@ export class OtpService {
     // through one script so the record never exists without its expiry — a `HSET` followed by
     // a separate `EXPIRE` leaves a window where a crash strands an OTP with no TTL, and every
     // key in this keyspace is required to carry one.
-    await this.redis.eval(
-      OTP_STORE_LUA,
-      [`otp:${purpose}:${identifier}`],
-      [this.fingerprint(identifier, code), String(ttlSeconds)]
+    await pinned(
+      this.redis.eval(
+        OTP_STORE_LUA,
+        [`otp:${purpose}:${identifier}`],
+        [this.fingerprint(identifier, code), String(ttlSeconds)]
+      )
     )
   }
 
@@ -310,7 +327,7 @@ export class OtpService {
     // Lua then matches fingerprint against fingerprint exactly as it used to match code against
     // code, and the stored value the script returns is a fingerprint the caller re-compares.
     const fingerprint = this.fingerprint(identifier, code)
-    const raw = await this.redis.eval(OTP_VERIFY_LUA, [key], [fingerprint, String(MAX_ATTEMPTS)])
+    const raw = await pinned(verifyScript(this.redis, key, fingerprint))
     const [tag, storedCode] = parseOtpVerifyReply(raw)
 
     // Every failure below answers `OTP_INVALID`, in the same time, whatever went wrong.
@@ -334,7 +351,7 @@ export class OtpService {
     if (tag === 'EXPIRED') {
       // Also the corrupted-record answer: the script's `cjson.decode` throws, the eval fails,
       // and the caller cannot distinguish corruption from natural expiry — which is the point.
-      await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
+      await pinned(padTo(start))
       throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }
 
@@ -343,7 +360,7 @@ export class OtpService {
     // emptying it (=> {}) is unobservable. The `tag !== 'MAX'` equality mutant beside it stays killable.
     // Stryker disable next-line ConditionalExpression,BlockStatement: MAX arm is unobservable — the comparison below answers the same OTP_INVALID (see the comment above)
     if (tag === 'MAX') {
-      await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
+      await pinned(padTo(start))
       throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }
 
@@ -351,12 +368,12 @@ export class OtpService {
     // one, constant-time over the fingerprints. Both sides are fixed-length hex HMAC digests, so
     // the buffer sizes always match and no RangeError branch is needed ahead of the compare.
     if (!timingSafeCompare(fingerprint, storedCode)) {
-      await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
+      await pinned(padTo(start))
       throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }
 
     // Success — the script already consumed the record.
-    await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
+    await pinned(padTo(start))
   }
 }
 
@@ -384,7 +401,7 @@ export async function storeVerificationCode(
   ttlSeconds: number
 ): Promise<boolean> {
   try {
-    await otpService.store('email_verification', identifier, otp, ttlSeconds)
+    await pinned(otpService.store('email_verification', identifier, otp, ttlSeconds))
     return true
   } catch (err: unknown) {
     logEvent(logger, 'AUTH_OTP_STORE_FAILED', { detail: describeChannelStatus(err) })

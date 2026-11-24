@@ -13,6 +13,7 @@ import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { userSubject } from '../constants/user-subject'
 import { hmacSha256 } from '../crypto/secure-token'
+import { pinned } from '../utils/settle'
 
 /** The flows that keep a failure counter of their own. */
 export type MfaFlow = 'challenge' | 'disable' | 'reauth'
@@ -51,7 +52,9 @@ export class MfaFlowLockoutService {
     userId: string,
     tenantId: string | undefined
   ): Promise<boolean> {
-    return this.bruteForce.isLockedOut(this.counterId(flow, context, userId, tenantId))
+    return await pinned(
+      this.bruteForce.isLockedOut(this.counterId(flow, context, userId, tenantId))
+    )
   }
 
   /** Records a failed attempt against the account's counter for this flow. */
@@ -61,7 +64,7 @@ export class MfaFlowLockoutService {
     userId: string,
     tenantId: string | undefined
   ): Promise<void> {
-    await this.bruteForce.recordFailure(this.counterId(flow, context, userId, tenantId))
+    await pinned(this.bruteForce.recordFailure(this.counterId(flow, context, userId, tenantId)))
   }
 
   /** Clears the account's counter for this flow, on a success. */
@@ -71,6 +74,6 @@ export class MfaFlowLockoutService {
     userId: string,
     tenantId: string | undefined
   ): Promise<void> {
-    await this.bruteForce.resetFailures(this.counterId(flow, context, userId, tenantId))
+    await pinned(this.bruteForce.resetFailures(this.counterId(flow, context, userId, tenantId)))
   }
 }

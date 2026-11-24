@@ -18,46 +18,71 @@ import ts from 'typescript'
 
 const SERVER = join(__dirname, '..')
 
-/** The sources whose awaits are on a decision path: the guards, the services that make a verdict and the reads they wait for. */
-const DECISION_FILES = [
-  ...readdirSync(join(SERVER, 'guards')).flatMap((name) =>
-    /\.ts$/.test(name) && !/\.(spec|test)\.ts$/.test(name) ? [`guards/${name}`] : []
-  ),
-  ...readdirSync(join(SERVER, 'controllers')).flatMap((name) =>
-    /\.controller\.ts$/.test(name) ? [`controllers/${name}`] : []
-  ),
-  'services/account-status.service.ts',
-  'services/auth-revocation.service.ts',
-  'services/auth-token-verifier.service.ts',
-  'services/session.service.ts',
-  'services/workspace-access.service.ts',
-  'services/workspace-invitation.service.ts',
-  'oauth/oauth.service.ts',
-  'utils/host-read.ts',
-  'redis/redis-outage.ts',
-  'redis/auth-redis.service.ts',
-  'services/workspace-invitation.store.ts',
-  'utils/settle-writes.ts',
-  'services/mfa-challenge.service.ts',
-  'services/mfa-record.service.ts',
-  'services/brute-force.service.ts',
-  'services/token-manager.service.ts',
-  'services/api-key-verifier.service.ts',
-  'services/auth.service.ts',
-  'services/workspace-invitation-accept.service.ts',
-  'oauth/oauth.controller.ts',
-  'services/platform-auth.service.ts',
-  'services/password-reset.service.ts',
-  'services/mfa.service.ts',
-  'services/mfa-management.service.ts',
-  'services/reauthentication.service.ts',
-  'services/ws-ticket.service.ts',
-  'services/email-change.service.ts',
-  'services/invitation.service.ts',
-  'services/membership.service.ts',
-  'services/workspace-caller.service.ts',
-  'services/workspace.service.ts'
-]
+/**
+ * The server sources that are not scanned, each with the reason. Every other source under `src/server` is held to the rules below,
+ * so a file added later is scanned without anyone remembering to list it: the list names what is left out, never what is checked.
+ */
+const EXEMPT: Record<string, string> = {
+  'utils/settle.ts':
+    'the primitive itself: it waits only on promises it started and pinned, and answers only boxes with no prototype',
+  'utils/run-detached.ts': 'runs work whose answer is thrown away: nothing decides on it',
+  'redis/redis-readiness.service.ts':
+    'startup only, before any request exists: it decides whether the app starts, never what a request is told',
+  'services/api-key-last-used.service.ts':
+    'a background flush of a usage counter: no request waits on it and no decision reads it',
+  'observability/auth-health-probe.ts': 'a health probe: it reports, it never admits or refuses',
+  'observability/auth-tracing.ts': 'tracing wraps a call and hands back what the call answered',
+  'observability/observe-auth.ts': 'observation of an outcome that is already decided',
+  'observability/observed-outcome.ts': 'observation of an outcome that is already decided'
+}
+
+/**
+ * The server sources that keep a `.then`, `.catch` or `.finally` chain, each with the reason. A chain reads `then` of the promise it
+ * is called on and builds another through its species, so on a decision path it is held to the same rule as an `await`. The ones
+ * listed here are detached: their result is discarded and nothing reads what the chain returns.
+ */
+const CHAINS: Record<string, string> = {
+  'guards/api-key.guard.ts': 'a detached hook call whose failure is swallowed',
+  'services/auth.service.ts': 'detached best-effort writes and hooks after the answer is decided',
+  'services/invitation.service.ts': 'a detached cleanup of a token key',
+  'services/password-reset.service.ts': 'a detached cleanup of a token key',
+  'services/session.service.ts':
+    'detached tidy-ups and a hook after the listing or the new session is decided',
+  'services/token-manager.service.ts': 'a detached hook after reuse is already refused',
+  'services/platform-auth.service.ts': 'detached best-effort writes and hooks after the answer'
+}
+
+/** The `.then`, `.catch` and `.finally` calls of a source. */
+function chains(text: string): string[] {
+  const found: string[] = []
+  const source = ts.createSourceFile('x.ts', text, ts.ScriptTarget.Latest, true)
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ['then', 'catch', 'finally'].includes(node.expression.name.text)
+    )
+      found.push(
+        `.${node.expression.name.text}() chain on ${node.expression.expression.getText(source)}`
+      )
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return found
+}
+
+/** Every server source, as a path under `src/server`, that is not a test, a test helper or a declaration. */
+function serverSources(): string[] {
+  return (readdirSync(SERVER, { recursive: true }) as string[])
+    .filter(
+      (name) =>
+        /\.ts$/.test(name) && !/\.(spec|test|d)\.ts$/.test(name) && !/(^|\/)__tests__\//.test(name)
+    )
+    .map((name) => name.split('\\').join('/'))
+    .sort()
+}
+
+const DECISION_FILES = serverSources().filter((file) => EXEMPT[file] === undefined)
 
 /** The methods whose returned promise is the decision itself, by file: each carries `@Pinned()`. */
 const PINNED_METHODS: Record<string, string[]> = {
@@ -93,6 +118,8 @@ function unpinnedAwaits(text: string): string[] {
   const ownPinned = pinnedNames(text)
   const source = ts.createSourceFile('x.ts', text, ts.ScriptTarget.Latest, true)
   const visit = (node: ts.Node): void => {
+    if (ts.isForOfStatement(node) && node.awaitModifier !== undefined)
+      found.push(`for await (${node.expression.getText(source)})`)
     if (ts.isAwaitExpression(node)) {
       const operand = node.expression
       const callee = ts.isCallExpression(operand) ? operand.expression : undefined
@@ -293,6 +320,26 @@ describe('the promises of a decision path carry the language constructor', () =>
   // Why: the call that makes the promise can run host code, which can replace the constructor before the await reads it.
   it.each(DECISION_FILES)('%s awaits only pinned promises', (file) => {
     expect(unpinnedAwaits(readFileSync(join(SERVER, file), 'utf8'))).toEqual([])
+  })
+
+  // Scenario: every server source. Expected: a `.then`, `.catch` or `.finally` chain only where the file is listed as detached.
+  // Why: a chain reads `then` of the promise it is called on, which a plant on the prototype answers for.
+  it.each(DECISION_FILES)('%s keeps no chain on a promise unless it is detached', (file) => {
+    const found = chains(readFileSync(join(SERVER, file), 'utf8'))
+    expect(CHAINS[file] === undefined ? found : []).toEqual([])
+  })
+
+  // Scenario: an exemption or a detached chain that names a file that is gone or has nothing to exempt. Expected: reported, so the
+  // lists cannot grow stale and keep excusing what is no longer there.
+  it('lists only sources that exist, each with a reason', () => {
+    const all = serverSources()
+    const named = [...Object.entries(EXEMPT), ...Object.entries(CHAINS)]
+    expect(named.filter(([file]) => !all.includes(file))).toEqual([])
+    expect(named.filter(([, reason]) => reason.length < 20)).toEqual([])
+    const idle = Object.keys(CHAINS).filter(
+      (file) => chains(readFileSync(join(SERVER, file), 'utf8')).length === 0
+    )
+    expect(idle).toEqual([])
   })
 
   // Scenario: the decisions that return a promise. Expected: each is decorated, so its caller's await reads the pinned constructor.

@@ -14,6 +14,7 @@
 import type { Logger } from '@nestjs/common'
 
 import { stringifyJson } from './captured-builtins'
+import { pinned } from './settle'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { logStore } from '../observability/log-event'
@@ -49,10 +50,8 @@ export async function rememberPendingLogout(
   try {
     // `JSON.stringify` omits an undefined `tenantId`, which is how a record with no tenant is
     // written: the field is absent, never the string `undefined`.
-    await redis.set(
-      key,
-      stringifyJson({ userId: owner.userId, tenantId: owner.tenantId }),
-      ttlSeconds
+    await pinned(
+      redis.set(key, stringifyJson({ userId: owner.userId, tenantId: owner.tenantId }), ttlSeconds)
     )
   } catch (err: unknown) {
     logStore(logger, 'AUTH_STORE_DEGRADED', 'logout_owner_keep', err)
@@ -95,7 +94,7 @@ export async function settlePendingLogout(
   logger: Logger
 ): Promise<boolean> {
   try {
-    const removed = await redis.del(key)
+    const removed = await pinned(redis.del(key))
     return fromSession || removed
   } catch (err: unknown) {
     logStore(logger, 'AUTH_STORE_DEGRADED', 'logout_marker_clear', err)
@@ -103,7 +102,7 @@ export async function settlePendingLogout(
     // retrying, and the marker that is left is what lets the retry announce once.
     if (!fromSession)
       throw isServiceUnavailable(err) ? err : new AuthException(AUTH_ERROR_CODES.INTERNAL)
-    return confirmNoStaleMarker(redis, key, owner, ttlSeconds, logger)
+    return await pinned(confirmNoStaleMarker(redis, key, owner, ttlSeconds, logger))
   }
 }
 
@@ -122,9 +121,9 @@ async function confirmNoStaleMarker(
   logger: Logger
 ): Promise<boolean> {
   try {
-    if ((await redis.get(key)) === null) return true
+    if ((await pinned(redis.get(key))) === null) return true
   } catch (err: unknown) {
-    await rememberPendingLogout(redis, key, owner, ttlSeconds, logger)
+    await pinned(rememberPendingLogout(redis, key, owner, ttlSeconds, logger))
     // A store that cannot answer is a 503 the client retries, not a failure to report as internal.
     if (isServiceUnavailable(err)) throw err
   }

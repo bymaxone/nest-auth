@@ -8,6 +8,7 @@ import { Injectable, Logger } from '@nestjs/common'
 import { createHash } from '../crypto/captured-crypto'
 import type { IPasswordBreachChecker } from '../interfaces/password-breach-checker.interface'
 import { logEvent } from '../observability/log-event'
+import { pinned } from '../utils/settle'
 
 /** The range endpoint. The digest prefix is appended to it, so the request is `/range/{prefix}`. */
 const HIBP_RANGE_URL = 'https://api.pwnedpasswords.com/range/'
@@ -69,7 +70,7 @@ export class HibpBreachChecker implements IPasswordBreachChecker {
     const prefix = digest.slice(0, PREFIX_LENGTH)
     const suffix = digest.slice(PREFIX_LENGTH)
 
-    const body = await this.fetchRange(prefix)
+    const body = await pinned(this.fetchRange(prefix))
     if (body === null) return false
 
     // Each line is `SUFFIX:COUNT`. A match at all means the password is in the corpus; the
@@ -97,15 +98,17 @@ export class HibpBreachChecker implements IPasswordBreachChecker {
   private async fetchRange(prefix: string): Promise<string | null> {
     const abort = AbortSignal.timeout(this.timeoutMs)
     try {
-      const response = await fetch(`${HIBP_RANGE_URL}${prefix}`, {
-        headers: { 'Add-Padding': 'true' },
-        signal: abort
-      })
+      const response = await pinned(
+        fetch(`${HIBP_RANGE_URL}${prefix}`, {
+          headers: { 'Add-Padding': 'true' },
+          signal: abort
+        })
+      )
       if (!response.ok) {
         logEvent(this.logger, 'AUTH_BREACH_CHECK_UNAVAILABLE', { reason: 'unavailable' })
         return null
       }
-      return await response.text()
+      return await pinned(response.text())
     } catch {
       // Timeout, DNS failure, TLS failure, offline — all the same decision. The message
       // carries no password material, only that the check did not happen.

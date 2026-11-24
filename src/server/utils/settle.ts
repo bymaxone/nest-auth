@@ -28,7 +28,8 @@ import {
   createObject,
   defineKey,
   freezeObject,
-  getDescriptor
+  getDescriptor,
+  intrinsicThen
 } from './captured-builtins'
 import { assertRootIsStandard } from './object-prototype-guard'
 
@@ -63,12 +64,20 @@ export function pinned<P>(promise: P): P {
  * not a native promise has nothing to mark.
  */
 export function markHandled(work: unknown): void {
+  if (!isNativePromise(work)) return
   try {
     pinned(work)
   } catch {
-    // A promise that cannot take the constructor is refused where it is awaited; here it only has to have a handler.
+    // A promise that cannot take the constructor is refused where it is awaited. Here it only has to have a handler, and an `await`
+    // of it would read the constructor it refused, so the rejection is heard through the `then` taken at load instead. That read
+    // can still throw, from an own getter nothing can replace; no handler can be attached then, and the awaiter refuses it too.
+    try {
+      applyFunction(intrinsicThen, work, [ignore, ignore])
+    } catch {
+      // Nothing more can be done for a promise that refuses every read.
+    }
+    return
   }
-  if (!isNativePromise(work)) return
   // `await` of a pinned native promise attaches its handler without reading `then` or the species of the constructor.
   void (async (): Promise<void> => {
     try {
@@ -78,6 +87,9 @@ export function markHandled(work: unknown): void {
     }
   })()
 }
+
+/** A handler that only marks a rejection as handled. */
+function ignore(): void {}
 
 /** An answer in a box with no prototype, so that no `then` is looked up on it. */
 export interface Settled<T> {

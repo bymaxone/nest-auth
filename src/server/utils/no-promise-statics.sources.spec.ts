@@ -213,12 +213,6 @@ const EXEMPT_METHODS: Exemption[] = [
       'Withdraws a written record after a failure; the failure is logged and nothing is decided.'
   },
   {
-    file: 'services/otp.service.ts',
-    site: 'release: .then',
-    count: 1,
-    reason: 'Releases a resend cooldown after a failed send; a failed release is logged only.'
-  },
-  {
     file: 'services/password-reset.service.ts',
     site: 'sendToken: .catch',
     count: 1,

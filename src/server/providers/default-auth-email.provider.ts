@@ -48,6 +48,7 @@ import type {
   WorkspaceInviteData
 } from '../interfaces/email-provider.interface'
 import { logDelivery } from '../observability/log-event'
+import { pinned } from '../utils/settle'
 
 /**
  * The delivery channel {@link DefaultAuthEmailProvider} sends through.
@@ -523,11 +524,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     token: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.passwordResetToken({ tenantId, email, token, locale }),
-      'passwordResetToken'
+    await pinned(
+      this.deliver(
+        tenantId,
+        email,
+        this.messages.passwordResetToken({ tenantId, email, token, locale }),
+        'passwordResetToken'
+      )
     )
   }
 
@@ -538,11 +541,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     otp: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.passwordResetOtp({ tenantId, email, otp, locale }),
-      'passwordResetOtp'
+    await pinned(
+      this.deliver(
+        tenantId,
+        email,
+        this.messages.passwordResetOtp({ tenantId, email, otp, locale }),
+        'passwordResetOtp'
+      )
     )
   }
 
@@ -553,11 +558,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     otp: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.emailVerificationOtp({ tenantId, email, otp, locale }),
-      'emailVerificationOtp'
+    await pinned(
+      this.deliver(
+        tenantId,
+        email,
+        this.messages.emailVerificationOtp({ tenantId, email, otp, locale }),
+        'emailVerificationOtp'
+      )
     )
   }
 
@@ -567,11 +574,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.passwordChanged({ tenantId, email, locale }),
-      'passwordChanged'
+    await pinned(
+      this.deliver(
+        tenantId,
+        email,
+        this.messages.passwordChanged({ tenantId, email, locale }),
+        'passwordChanged'
+      )
     )
   }
 
@@ -582,11 +591,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     token: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      newEmail,
-      this.messages.emailChangeVerification({ tenantId, email: newEmail, token, locale }),
-      'emailChangeVerification'
+    await pinned(
+      this.deliver(
+        tenantId,
+        newEmail,
+        this.messages.emailChangeVerification({ tenantId, email: newEmail, token, locale }),
+        'emailChangeVerification'
+      )
     )
   }
 
@@ -605,11 +616,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     // is to quote a reset code's, and redaction sees through neither. An address is not a
     // credential, but "not a credential" was never the standard — it is personal data, and which
     // message failed for which tenant is still what an operator acts on.
-    await this.deliver(
-      tenantId,
-      oldEmail,
-      this.messages.emailChanged({ tenantId, email: oldEmail, oldEmail, newEmail, locale }),
-      'emailChanged'
+    await pinned(
+      this.deliver(
+        tenantId,
+        oldEmail,
+        this.messages.emailChanged({ tenantId, email: oldEmail, oldEmail, newEmail, locale }),
+        'emailChanged'
+      )
     )
   }
 
@@ -619,11 +632,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.mfaEnabled({ tenantId, email, locale }),
-      'mfaEnabled'
+    await pinned(
+      this.deliver(
+        tenantId,
+        email,
+        this.messages.mfaEnabled({ tenantId, email, locale }),
+        'mfaEnabled'
+      )
     )
   }
 
@@ -633,11 +648,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.mfaDisabled({ tenantId, email, locale }),
-      'mfaDisabled'
+    await pinned(
+      this.deliver(
+        tenantId,
+        email,
+        this.messages.mfaDisabled({ tenantId, email, locale }),
+        'mfaDisabled'
+      )
     )
   }
 
@@ -652,11 +669,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     // three, and a re-encoded one carries them past redaction. An IP and a device string identify
     // a person as surely as an address does, which is the whole reason they are named — so the
     // free text goes for the same reason it goes on a credential path.
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.newSessionAlert({ tenantId, email, sessionInfo, locale }),
-      'newSessionAlert'
+    await pinned(
+      this.deliver(
+        tenantId,
+        email,
+        this.messages.newSessionAlert({ tenantId, email, sessionInfo, locale }),
+        'newSessionAlert'
+      )
     )
   }
 
@@ -667,11 +686,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     inviteData: InviteData,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.invitation({ tenantId, email, invite: inviteData, locale }),
-      'invitation'
+    await pinned(
+      this.deliver(
+        tenantId,
+        email,
+        this.messages.invitation({ tenantId, email, invite: inviteData, locale }),
+        'invitation'
+      )
     )
   }
 
@@ -681,11 +702,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     data: WorkspaceInviteData,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.workspaceInvitation({ tenantId, email, invite: data, locale }),
-      'workspaceInvitation'
+    await pinned(
+      this.deliver(
+        tenantId,
+        email,
+        this.messages.workspaceInvitation({ tenantId, email, invite: data, locale }),
+        'workspaceInvitation'
+      )
     )
   }
 
@@ -716,16 +739,15 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     const subject = sanitizeSubject(message.subject)
 
     try {
-      await this.sink.send({
+      const sent = this.sink.send({
         tenantId,
         to,
         subject,
         html: message.html ?? toHtml(message.text),
         text: message.text,
         kind: label,
-        // Stated at the only moment a sink could act on it. Whether it DOES is the sink's to
-        // answer — see the field's own documentation for why this is a statement of fact rather
-        // than a control, and why it is a flag rather than a list of values to redact.
+        // Stated at the only moment a sink could act on it. Whether it DOES is the sink's to answer:
+        // the field's own documentation says why it is a statement of fact, and a flag, not a list.
         //
         // OR-ed rather than taken from either side alone, and the direction matters. The kind is
         // the baseline a renderer cannot weaken, so an override returning `false` on
@@ -736,6 +758,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
         containsCredential:
           CREDENTIAL_BEARING_KINDS.has(label) || message.containsCredential === true
       })
+      await pinned(sent)
     } catch (error: unknown) {
       // Every part of this line is text THIS FILE wrote: a constant, the message's own label, and
       // one `<error>` stand-in per link of the cause chain. The error object is not passed to the
