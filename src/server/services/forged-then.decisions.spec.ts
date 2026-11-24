@@ -135,4 +135,33 @@ describe('a decision made while a host forges what a promise answers', () => {
   it('leaves no rejection unhandled when the outage proxy refuses a command that failed', () => {
     expect(run('redis', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
   })
+  // Scenario: the species of promises throws while a command of the store fails and the root is compromised. Expected: refused, and
+  // no unhandled rejection. Why: marking a rejection handled with `then` or `catch` reads the species first, and that throw left the
+  // rejection with no handler.
+  it('leaves no rejection unhandled when the species of promises throws', () => {
+    expect(run('species', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
+  })
+
+  // Scenario: a command answers a rejecting promise whose `then` is an accessor that throws. Expected: the read throws to the caller
+  // and the rejection is still handled. Why: `isThenable` reads `then`, and marking the rejection handled came after that read.
+  it('leaves no rejection unhandled when reading then of the answer throws', () => {
+    expect(run('then-throws', file)).toEqual({ outcome: 'threw:then read', unhandled: 0 })
+  })
+  // Scenario: the client of the store plants a `then` that answers an absent value while it makes the promise the library returns, for
+  // a key that holds a revoked marker. Expected: the marker, never the absence. Why: a promise returned bare is resolved through its `then`.
+  it('answers the value the store holds for a promise the client forged a then on', () => {
+    expect(run('bare-redis', file)).toEqual({ outcome: 'value:1', unhandled: 0 })
+  })
+
+  // Scenario: a membership cache whose store read is waited for while host code plants a `then` answering an owner's entry. Expected:
+  // refused with auth.internal, not an owner. Why: the parsed read is an object returned after a wait, and nothing read the root last.
+  it('refuses a membership parsed from a cache read for a then planted during the wait', () => {
+    expect(run('parse-read', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
+  })
+
+  // Scenario: the verification of a TOTP code says the code is wrong while host code plants a `then` answering a valid one. Expected:
+  // refused with auth.internal, never `valid: true`. Why: that answer is an MFA challenge passed with a wrong code.
+  it('does not pass a wrong code for a then planted while the code is verified', () => {
+    expect(run('mfa-valid', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
+  })
 })

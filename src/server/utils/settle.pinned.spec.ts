@@ -92,6 +92,41 @@ describe('pinned', () => {
     }).toThrow(TypeError)
   })
 
+  // Scenario: the host got there first and gave the promise its own constructor that it can never change. Expected: the pin
+  // refuses, and the wait that follows rejects, so the host's constructor is never the one the await reads.
+  it('refuses a promise whose own constructor the host made permanent', async () => {
+    const promise = Promise.resolve(1)
+    Object.defineProperty(promise, 'constructor', { value: Array, writable: false })
+
+    expect(() => pinned(promise)).toThrow(TypeError)
+    expect(promise.constructor).toBe(Array)
+    await expect((async (): Promise<number> => await pinned(promise))()).rejects.toThrow(TypeError)
+  })
+
+  // Scenario: the host's permanent own constructor is an accessor. Expected: the pin refuses and the getter is never run.
+  it('refuses a promise whose own constructor is a permanent accessor', () => {
+    const promise = Promise.resolve(1)
+    let reads = 0
+    Object.defineProperty(promise, 'constructor', {
+      get: () => {
+        reads += 1
+        return Array
+      }
+    })
+
+    expect(() => pinned(promise)).toThrow(TypeError)
+    expect(reads).toBe(0)
+  })
+
+  // Scenario: the host's own constructor can still be changed. Expected: the pin replaces it with the language's and locks it.
+  it('replaces an own constructor the host left changeable', () => {
+    const promise = Promise.resolve(1)
+    Object.defineProperty(promise, 'constructor', { value: Array, configurable: true })
+
+    expect(pinned(promise).constructor).toBe(Promise)
+    expect(() => Object.defineProperty(promise, 'constructor', { value: Array })).toThrow(TypeError)
+  })
+
   // Scenario: the constructor of promises watched while a pinned promise is awaited. Expected: it is never read for that promise.
   // Why: the read is what a replaced constructor answers; the own property is found first.
   it('is awaited without reading the constructor of promises', async () => {

@@ -6,14 +6,20 @@
  * @layer Test
  */
 
+import { Logger } from '@nestjs/common'
+
 import { resolveOptions } from '../../config/resolved-options'
 import { PlatformAuthController } from '../../controllers/platform-auth.controller'
+import { AuthRedisService } from '../../redis/auth-redis.service'
 import { mappingOutages } from '../../redis/redis-outage'
 import { AuthRevocationService } from '../auth-revocation.service'
 import { AuthTokenVerifierService } from '../auth-token-verifier.service'
+import { MfaChallengeService } from '../mfa-challenge.service'
 import { WorkspaceAccessService } from '../workspace-access.service'
 
 const scenario = process.env['SCENARIO'] ?? ''
+// The outcome is the only thing printed: a degraded-store log line would be read as part of it.
+Logger.overrideLogger(false)
 const ownThen = Promise.prototype.then
 const ownConstructor = Object.getOwnPropertyDescriptor(
   Promise.prototype,
@@ -326,6 +332,120 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
     get: (): Promise<never> => failingRead()
   } as never) as unknown as { get: () => Promise<unknown> }
   settle(client.get(), () => 'answered')
+} else if (scenario === 'bare-redis') {
+  // The client of the store plants a `then` that answers an absent value while it makes the promise the library returns. A promise
+  // returned bare is resolved through that `then`: a revoked marker read as no marker. Expected: the value the store holds.
+  const redis = new AuthRedisService(
+    {
+      get: (): Promise<string> => {
+        Promise.prototype.then = erasingThen(null) as typeof ownThen
+        return Promise.resolve('1')
+      }
+    } as never,
+    options
+  )
+  settle(redis.get('revoked'), (answer) => `value:${String(answer)}`)
+} else if (scenario === 'parse-read') {
+  // The cache read of a membership: the reply of the store is read by the library after its last check, and an entry of it is host
+  // code (an accessor) that plants a `then` on the root object, answering an owner's read, which erases itself when asked. The parsed
+  // read is an object returned after the wait, so the engine asks it for `then` unless the root is checked last.
+  const reply = ['v1', 'v2', '']
+  const owner = { workspaceVersion: 'v1', membershipVersion: 'v2', role: 'owner' }
+  Object.defineProperty(reply, '2', {
+    get(): string {
+      plantOn(Object.prototype, owner)
+      return ''
+    }
+  })
+  const cached = new WorkspaceAccessService(
+    { eval: (): Promise<unknown> => Promise.resolve(reply) } as never,
+    workspaces as never,
+    members as never,
+    resolveOptions({
+      jwt: { secret: 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B' },
+      roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+      rateLimit: { clientIpSource: 'peer' },
+      workspaces: {
+        enabled: true,
+        roles: { hierarchy: { owner: ['editor'], editor: [] }, ownerRole: 'owner' },
+        membershipCacheTtlSeconds: 60
+      }
+    })
+  )
+  settle(cached.resolveAccess(ref), showAccess)
+} else if (scenario === 'mfa-valid') {
+  // The check of a TOTP code: host code plants a `then` on the root object that answers a valid code while the library waits for the
+  // verification, which said the code is wrong. Expected: refused, never `valid: true`.
+  const challenge = new MfaChallengeService(
+    {} as never,
+    {} as never,
+    null,
+    {} as never,
+    {} as never,
+    {
+      verifyTotpWithAntiReplay: (): Promise<boolean> => {
+        setTimeout(() => {
+          plantOn(Object.prototype, { valid: true, recoveryIndex: -1 })
+        }, 10)
+        return new Promise((resolve) => setTimeout(() => resolve(false), 30))
+      }
+    } as never,
+    {} as never,
+    {} as never
+  )
+  const check = (challenge as unknown as { checkCode: (...args: unknown[]) => Promise<unknown> })
+    .checkCode
+  settle(
+    check.call(
+      challenge,
+      {},
+      { userId: 'u', context: 'dashboard', tenantId: 't1' },
+      'SECRET',
+      '123456',
+      { totpWindow: 1 }
+    ),
+    (answer) => `valid:${String((answer as { valid: boolean }).valid)}`
+  )
+} else if (scenario === 'species') {
+  // The species of promises throws, and a command of the store fails while the root is compromised. The library marks the rejection
+  // handled with a native await, which never asks for the species; a `then` or `catch` would, and the rejection would be left alone.
+  Object.defineProperty(Promise, Symbol.species, {
+    get(): never {
+      throw new Error('species read')
+    },
+    configurable: true
+  })
+  const client = mappingOutages({
+    get: (): Promise<never> => failingRead()
+  } as never) as unknown as { get: () => Promise<unknown> }
+  void (async (): Promise<void> => {
+    try {
+      await client.get()
+      report('answered')
+    } catch (error: unknown) {
+      report(`refused:${codeOf(error)}`)
+    }
+  })()
+} else if (scenario === 'then-throws') {
+  // A command answers a rejecting promise whose own `then` is an accessor that throws. Reading it is what `isThenable` does, so the
+  // rejection has to be marked handled before that read, or the process ends on it.
+  const client = mappingOutages({
+    get: (): Promise<never> => {
+      const failing = Promise.reject(new Error('the store failed'))
+      Object.defineProperty(failing, 'then', {
+        get(): never {
+          throw new Error('then read')
+        }
+      })
+      return failing
+    }
+  } as never) as unknown as { get: () => unknown }
+  try {
+    client.get()
+    report('answered')
+  } catch (error: unknown) {
+    report(`threw:${(error as Error).message}`)
+  }
 } else if (scenario === 'mid-read' || scenario === 'late' || scenario === 'unhandled') {
   settle(service.resolveAccess(ref), showAccess)
 } else {

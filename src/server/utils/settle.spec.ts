@@ -218,3 +218,20 @@ describe('withDeadline', () => {
     await jest.advanceTimersByTimeAsync(0)
   })
 })
+
+describe('the boxes the helpers hand out', () => {
+  // Scenario: the host gets the box of an answer and tries to put another one in it. Expected: it cannot, for an answer or a failure.
+  it('are frozen', async () => {
+    const answer = await started(Promise.resolve('real'))
+    const failure = await started(Promise.reject(new Error('real failure')))
+
+    expect(Object.isFrozen(answer)).toBe(true)
+    expect(Object.isFrozen(failure)).toBe(true)
+    expect(Object.isFrozen(await allOf([1]))).toBe(true)
+    expect(() => {
+      ;(answer as { value: unknown }).value = 'forged'
+    }).toThrow(TypeError)
+    expect(answer.value).toBe('real')
+    expect(() => failure.value).toThrow('real failure')
+  })
+})
