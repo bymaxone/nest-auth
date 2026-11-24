@@ -24,6 +24,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { hostEntityOf } from '../utils/host-read'
 import { runDetached } from '../utils/run-detached'
 import { parseUserAgent } from '../utils/session-detail'
+import { allOf } from '../utils/settle'
 import { raiseFirst } from '../utils/settle-writes'
 
 // ---------------------------------------------------------------------------
@@ -420,7 +421,7 @@ export class SessionService {
 
     const members = await this.redis.smembers(this.indexKey(userId, tenantId))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
-    const reads = await Promise.all(
+    const reads = await allOf(
       rtMembers.map((member) => this.readSession(member, currentSessionHash))
     )
 
@@ -927,7 +928,7 @@ export class SessionService {
     // Every read finishes before the first eviction, which is what makes the skip all-or-nothing.
     let withTimestamps: { member: string; memberHash: string; createdAt: number }[]
     try {
-      withTimestamps = await Promise.all(
+      withTimestamps = await allOf(
         rtMembers.map(async (member) => ({
           member,
           // member is "rt:{hash}" — extract just the hash portion.

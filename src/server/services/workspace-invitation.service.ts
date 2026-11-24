@@ -48,6 +48,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
+import { started } from '../utils/settle'
 import { pageInvitations } from '../utils/workspace-invitation-page'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
 import { normalizeWorkspaceName } from '../utils/workspace-name'
@@ -233,11 +234,18 @@ export class WorkspaceInvitationService {
   async preview(token: string): Promise<WorkspaceInvitationPreview> {
     const record = await this.store.readByHash(sha256(token))
     const probe = lookupOf(record)
-    const [workspace, inviter, account] = await Promise.all([
-      this.workspaces.findById({ tenantId: probe.tenantId, workspaceId: probe.workspaceId }),
-      this.users.findById({ id: probe.inviterUserId, tenantId: probe.tenantId }),
+    const workspaceRead = started(
+      this.workspaces.findById({ tenantId: probe.tenantId, workspaceId: probe.workspaceId })
+    )
+    const inviterRead = started(
+      this.users.findById({ id: probe.inviterUserId, tenantId: probe.tenantId })
+    )
+    const accountRead = started(
       this.users.findByEmail({ email: probe.email, tenantId: probe.tenantId })
-    ])
+    )
+    const workspace = await workspaceRead
+    const inviter = await inviterRead
+    const account = await accountRead
     if (record === null) throw invalidToken()
     const answer = {
       role: record.role,

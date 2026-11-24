@@ -14,8 +14,10 @@
  * monitor of the host patches and no source calls is therefore never compared. What the library serialises and parses
  * (`JSON`) and what it hashes and compares secrets with (`node:crypto`) is not compared but captured, in
  * `captured-builtins` and `captured-crypto`, so no replacement reaches it. The clock source (the `Date` binding, `Date.now`
- * and `Date.parse`), `Promise` and `Intl` are not compared: the test doubles of a host replace them (a fake clock replaces
- * `Date` and `Intl` together). The methods of the dates themselves (`getTime`, `toISOString`), which the expiry of a key and the
+ * and `Date.parse`) and `Intl` are not compared: the test doubles of a host replace them (a fake clock replaces `Date` and
+ * `Intl` together). Of `Promise` only `Promise.prototype.constructor` is compared, because `await` reads it; the statics
+ * (`all`, `race`) and `then` are not, since the monitors of a host wrap them, so no decision of the library reads one: they
+ * wait with `await` alone (`utils/settle`) and a spec fails on a static of `Promise` in the sources. The methods of the dates themselves (`getTime`, `toISOString`), which the expiry of a key and the
  * reading of a cursor are decided with, are compared.
  *
  * @layer Utility
@@ -428,6 +430,8 @@ for (let index = 0; index < SPECIES_CONSTRUCTORS.length; index += 1) {
 }
 record(Buffer.prototype, 'constructor')
 record(Uint8Array.prototype, 'constructor')
+// `await` reads `constructor` of a promise to decide whether it is a native one; the statics of `Promise` are not read anywhere.
+record(Promise.prototype, 'constructor')
 for (const [namespace, list] of Object.entries(BASELINED_STATICS))
   // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which names no property, so `record` finds no descriptor and returns
   for (let at = 0; at < list.length; at += 1) record(world[namespace] as object, list[at] as string)

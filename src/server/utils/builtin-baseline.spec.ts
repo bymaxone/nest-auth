@@ -435,6 +435,48 @@ describe('the constructor the buffers name', () => {
   })
 })
 
+describe('the constructor a promise names', () => {
+  // Scenario: the `constructor` property of `Promise.prototype` replaced. Expected: counted once, and none once restored.
+  // Why: `await` reads `constructor` of a promise to decide whether it is native, so a replaced one chooses what every wait yields.
+  it('counts Promise.prototype.constructor when it is replaced', () => {
+    let counted = -1
+    changed(
+      Promise.prototype,
+      'constructor',
+      { value: function Other() {}, writable: true },
+      () => {
+        counted = replacedBuiltins()
+      }
+    )
+
+    expect(counted).toBe(1)
+    expect(replacedBuiltins()).toBe(0)
+  })
+
+  // Scenario: the statics and `then` of `Promise` replaced, as the monitors and the test doubles of a host do. Expected: none
+  // counted. Why: no source reads them (the sources wait with `await` alone), so the guard must not refuse for them.
+  it.each(['all', 'race', 'allSettled', 'any', 'resolve', 'reject'])(
+    'does not count Promise.%s when it is replaced',
+    (name) => {
+      let counted = -1
+      changed(Promise, name, { value: function Other() {}, writable: true }, () => {
+        counted = replacedBuiltins()
+      })
+
+      expect(counted).toBe(0)
+    }
+  )
+
+  it('does not count Promise.prototype.then when it is replaced', () => {
+    let counted = -1
+    changed(Promise.prototype, 'then', { value: Promise.prototype.then, writable: true }, () => {
+      counted = replacedBuiltins()
+    })
+
+    expect(counted).toBe(0)
+  })
+})
+
 describe('the species of the constructors', () => {
   // Scenario: the `Symbol.species` accessor of each constructor given another getter, then put back. Expected: counted once, and
   // none once restored. Why: `[a, b].filter(...).map(...)` reads `Array[Symbol.species]` to choose what it builds, so a replaced

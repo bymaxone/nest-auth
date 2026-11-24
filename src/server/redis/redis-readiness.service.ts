@@ -9,6 +9,7 @@ import type { OnApplicationBootstrap } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import { withDeadline } from '../utils/settle'
 
 /** How long boot keeps trying to PING Redis, in milliseconds. */
 const STARTUP_PING_TIMEOUT_MS = 5000
@@ -145,18 +146,15 @@ export class RedisReadinessService implements OnApplicationBootstrap {
    * @throws {Error} When the client is closed, the command fails or the time runs out.
    */
   private async attempt(timeoutMs: number): Promise<void> {
-    let timer: NodeJS.Timeout | undefined
-    const expiry = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
-        reject(new Error('the PING did not complete in time'))
-      }, timeoutMs)
-    })
-    try {
-      await Promise.race([this.whenReachable(timeoutMs).then(() => this.redis.ping()), expiry])
-    } finally {
-      clearTimeout(timer)
-    }
+    // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
+    await withDeadline(
+      async () => {
+        await this.whenReachable(timeoutMs)
+        await this.redis.ping()
+      },
+      timeoutMs,
+      'the PING did not complete in time'
+    )
   }
 
   /**

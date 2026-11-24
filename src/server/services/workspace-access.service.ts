@@ -45,6 +45,7 @@ import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { exceedsCodePoints } from '../utils/code-points'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
+import { started } from '../utils/settle'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
 /** An active member of an active workspace, as the access check resolves it. */
@@ -293,10 +294,13 @@ export class WorkspaceAccessService {
    * answer for an owner is decided from these same two rows.
    */
   private async readRepositories(ref: MembershipRef): Promise<WorkspaceAccess> {
-    const [workspace, membership] = await Promise.all([
-      this.workspaceRepo.findById({ tenantId: ref.tenantId, workspaceId: ref.workspaceId }),
-      this.membershipRepo.find(ref)
-    ])
+    // Both reads start before either is awaited; the answers are never combined by a static of `Promise`.
+    const workspaceRead = started(
+      this.workspaceRepo.findById({ tenantId: ref.tenantId, workspaceId: ref.workspaceId })
+    )
+    const membershipRead = started(this.membershipRepo.find(ref))
+    const workspace = await workspaceRead
+    const membership = await membershipRead
     if (membership?.status !== 'active' || workspace === null) return { kind: 'denied' }
     // What the repository answered must be the row that was asked about, in the tenant, the workspace and for the user:
     // the key it was given is not a proof of the row it returned, and another row is never access.
