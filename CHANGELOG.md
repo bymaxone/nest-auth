@@ -34,7 +34,6 @@ A patch release.
 - A host that replaces exports of `jsonwebtoken`, `jws` or `jwa` after load is outside what the library checks: that is code targeting a dependency. The set is exact for the versions the library is tested with.
 - A monitor, polyfill or test double that replaces a recorded function after the library loaded makes the library refuse until it is put back, including a spy on `JSON.parse` or `JSON.stringify`. The README says how to load such a patch before the library.
 - `express`'s `clearCookie` deletes `maxAge` from its own copy; the guard stays the closer for `keyid` and `notBefore`.
-- Pre-existing and deferred: `workspaces.roles` reads every own key.
 
 ## [1.5.15] - 2026-11-22
 
