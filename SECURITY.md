@@ -69,6 +69,11 @@ These are not vulnerabilities in `@bymax-one/nest-auth` itself:
 - Issues in optional peer dependencies (`ioredis`, `next`, `react`) when the upstream maintainer has already accepted them or when the dependency is not exercised by the library
 - Self-XSS, social engineering, denial of service via legitimate authenticated load
 - Theoretical attacks without a practical demonstration (e.g., quantum-break of HS256)
+- Attacks that need code already running in the process (see [Threat model: same-process code](#threat-model-same-process-code))
+
+## Threat model: same-process code
+
+Code that runs in the same process as the library (your application, its dependencies, a monitor or a polyfill) is trusted, as it is in Node itself. The guards that refuse a replaced built-in, a planted `then` or a polluted prototype (`auth.internal`) are best-effort hardening against accidents and some injection flaws, not a security boundary: code that can run in the process can also read the keys, call the repositories and patch what the library has not yet captured. Known limits are listed in the CHANGELOG (1.5.16).
 
 ## Security best practices for consumers
 
