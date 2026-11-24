@@ -5,6 +5,7 @@
  * @layer Test
  */
 
+import { AuthException } from '../errors/auth-exception'
 import { Pinned, PinnedMethods, pinned } from './settle'
 
 const prototypeConstructor = Object.getOwnPropertyDescriptor(
@@ -77,9 +78,11 @@ describe('pinned', () => {
   it('throws for a frozen promise, and an async caller rejects', async () => {
     const promise = Object.freeze(Promise.resolve(1))
 
-    expect(() => pinned(promise)).toThrow(TypeError)
+    expect(() => pinned(promise)).toThrow(AuthException)
     expect(Object.hasOwn(promise, 'constructor')).toBe(false)
-    await expect((async (): Promise<number> => await pinned(promise))()).rejects.toThrow(TypeError)
+    await expect((async (): Promise<number> => await pinned(promise))()).rejects.toThrow(
+      AuthException
+    )
   })
 
   // Scenario: the constructor of a pinned promise is replaced afterwards. Expected: it cannot be, so the await keeps the language's.
@@ -98,9 +101,11 @@ describe('pinned', () => {
     const promise = Promise.resolve(1)
     Object.defineProperty(promise, 'constructor', { value: Array, writable: false })
 
-    expect(() => pinned(promise)).toThrow(TypeError)
+    expect(() => pinned(promise)).toThrow(AuthException)
     expect(promise.constructor).toBe(Array)
-    await expect((async (): Promise<number> => await pinned(promise))()).rejects.toThrow(TypeError)
+    await expect((async (): Promise<number> => await pinned(promise))()).rejects.toThrow(
+      AuthException
+    )
   })
 
   // Scenario: the host's permanent own constructor is an accessor. Expected: the pin refuses and the getter is never run.
@@ -114,7 +119,7 @@ describe('pinned', () => {
       }
     })
 
-    expect(() => pinned(promise)).toThrow(TypeError)
+    expect(() => pinned(promise)).toThrow(AuthException)
     expect(reads).toBe(0)
   })
 

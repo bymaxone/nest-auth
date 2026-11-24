@@ -23,7 +23,7 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
-import { pinned } from '../utils/settle'
+import { pinned, PinnedAll } from '../utils/settle'
 
 /** Bytes of entropy in an address-change token before hex encoding (256-bit, 64 hex chars). */
 const EMAIL_CHANGE_TOKEN_BYTES = 32
@@ -94,6 +94,7 @@ function isEmailChangeContext(value: unknown): value is EmailChangeContext {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class EmailChangeService implements OnModuleInit {
   private readonly logger = new Logger(EmailChangeService.name)

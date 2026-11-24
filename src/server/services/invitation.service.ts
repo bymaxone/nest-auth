@@ -28,7 +28,7 @@ import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { hasRole } from '../utils/roles.util'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /**
  * Stored payload for a pending invitation, kept in Redis.
@@ -102,6 +102,7 @@ const SUPERSEDE_ATTEMPTS = 3
  * @layer Service
  */
 
+@PinnedAll()
 @Injectable()
 export class InvitationService {
   private readonly logger = new Logger(InvitationService.name)
@@ -423,11 +424,11 @@ export class InvitationService {
    * @param tokenKey - The Redis key of the record written by this call.
    */
   private async withdrawRecord(tokenKey: string): Promise<void> {
-    await pinned(
-      this.redis.del(tokenKey).catch((err: unknown) => {
-        logStore(this.logger, 'AUTH_STORE_DEGRADED', 'invitation_withdraw', err)
-      })
-    )
+    try {
+      await pinned(this.redis.del(tokenKey))
+    } catch (err: unknown) {
+      logStore(this.logger, 'AUTH_STORE_DEGRADED', 'invitation_withdraw', err)
+    }
   }
 
   /**

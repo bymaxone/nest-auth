@@ -35,7 +35,7 @@ import { DEFAULT_RECOVERY_CODE_COUNT, generateRecoveryCodes } from '../utils/mfa
 import { committedSafeUser, platformUserAsSafeUser, toSafeUser } from '../utils/mfa-safe-user'
 import { decryptMfaSecret } from '../utils/mfa-secret-cipher'
 import { runDetached } from '../utils/run-detached'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** The plane, account and tenant an MFA change applies to. */
 interface AccountScope {
@@ -45,6 +45,7 @@ interface AccountScope {
 }
 
 /** Turns an enrolment off, removes it administratively, or replaces its recovery codes. */
+@PinnedAll()
 @Injectable()
 export class MfaManagementService {
   private readonly logger = new Logger(MFA_LOG_CONTEXT)

@@ -25,7 +25,7 @@ import {
 import type { AuthApiKey, IApiKeyRepository } from '../interfaces/api-key-repository.interface'
 import type { ApiKeyDenyReason } from '../interfaces/auth-hooks.interface'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** Why a key was not accepted. */
 export type ApiKeyRejection = Extract<
@@ -52,6 +52,7 @@ export type ApiKeyVerdict =
  * row, and no library can remove that. Pre-verification flood protection is a per-address
  * throttle in front of the guard, documented in the README.
  */
+@PinnedAll()
 @Injectable()
 export class ApiKeyVerifierService {
   constructor(

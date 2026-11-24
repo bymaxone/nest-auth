@@ -18,7 +18,7 @@ import { logEvent } from '../observability/log-event'
 import { isShorterThanCodePoints } from '../utils/code-points'
 import { SCRYPT_SHADOWS } from '../utils/dependency-options'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
-import { pinned } from '../utils/settle'
+import { pinned, PinnedAll } from '../utils/settle'
 
 // promisify picks the 3-arg overload (no options); cast to the 4-arg form we need.
 const scrypt = promisify(nodeScrypt) as (
@@ -274,6 +274,7 @@ function parseStoredHash(hash: string): ParsedHash | null {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class PasswordService {
   private readonly logger = new Logger(PasswordService.name)

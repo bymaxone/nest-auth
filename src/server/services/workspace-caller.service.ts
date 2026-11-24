@@ -18,9 +18,10 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { toSafeUser } from '../utils/mfa-safe-user'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** Loads the account behind a verified dashboard token, and re-proves it before a destructive change. */
+@PinnedAll()
 @Injectable()
 export class WorkspaceCallerService {
   constructor(

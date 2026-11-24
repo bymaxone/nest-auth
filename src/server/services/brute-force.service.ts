@@ -7,7 +7,7 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthMetricsTally } from '../observability/auth-metrics-tally'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { pinned } from '../utils/settle'
+import { pinned, PinnedAll } from '../utils/settle'
 
 /**
  * Redis key prefix for brute-force lockout counters.
@@ -45,6 +45,7 @@ const MAX_IDENTIFIER_LENGTH = 512
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class BruteForceService {
   private readonly logger = new Logger(BruteForceService.name)

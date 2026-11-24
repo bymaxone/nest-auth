@@ -23,7 +23,7 @@ import type {
   IApiKeyRepository
 } from '../interfaces/api-key-repository.interface'
 import { exceedsCodePoints } from '../utils/code-points'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** Longest label accepted, in characters. A label names a machine caller, it is not a payload. */
 export const API_KEY_MAX_LABEL_LENGTH = 128
@@ -78,6 +78,7 @@ export interface RotateApiKeyInput {
  * Rotation is not special-cased: it issues a second key with the same label and scopes, and
  * retires the first after the overlap. Several active keys sharing a label is the ordinary state.
  */
+@PinnedAll()
 @Injectable()
 export class ApiKeyService {
   constructor(

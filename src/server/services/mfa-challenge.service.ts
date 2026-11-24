@@ -34,7 +34,7 @@ import { verifyRecoveryCode } from '../utils/mfa-recovery-codes'
 import { platformUserAsSafeUser, toSafePlatformUser, toSafeUser } from '../utils/mfa-safe-user'
 import { decryptWithRotation, encryptMfaSecret, holdsSecret } from '../utils/mfa-secret-cipher'
 import { runDetached } from '../utils/run-detached'
-import { PinnedMethods, checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** The resolved MFA configuration group, present whenever the MFA services are registered. */
 export type MfaConfig = Required<NonNullable<ResolvedOptions['mfa']>>
@@ -98,7 +98,7 @@ function spliceSpentCode(
 }
 
 /** Completes an MFA challenge: verifies the code, spends the temp token and issues the session. */
-@PinnedMethods('admitChallenge')
+@PinnedAll()
 @Injectable()
 export class MfaChallengeService {
   private readonly logger = new Logger(MFA_LOG_CONTEXT)

@@ -25,7 +25,7 @@ import { hostEntityOf } from '../utils/host-read'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { runDetached } from '../utils/run-detached'
 import { parseUserAgent } from '../utils/session-detail'
-import { PinnedMethods, allOf, awaiting, checked, pinned } from '../utils/settle'
+import { allOf, awaiting, checked, detached, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst } from '../utils/settle-writes'
 
 // ---------------------------------------------------------------------------
@@ -275,8 +275,8 @@ export interface RevokeAllExceptCurrentParams {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
-@PinnedMethods('listSessions')
 export class SessionService {
   private readonly logger = new Logger(SessionService.name)
 
@@ -367,19 +367,20 @@ export class SessionService {
         sanitizedHeaders: {}
       }
 
-      void this.userRepo
-        .findById({ id: userId, tenantId })
-        .then((user) => {
+      detached(
+        async () => {
+          const user = await pinned(this.userRepo.findById({ id: userId, tenantId }))
           if (!user) return
           runDetached(
             this.logger,
             () => onNewSession(toSafeUser(user), minimalSessionInfo, context),
             'onNewSession'
           )
-        })
-        .catch((err: unknown) => {
+        },
+        (_how, err) => {
           logStore(this.logger, 'AUTH_STORE_FAILED', 'new_session_user_lookup', err)
-        })
+        }
+      )
     }
 
     return hash
@@ -415,11 +416,7 @@ export class SessionService {
     // that refreshes and never signs out again accumulates them without bound — and this
     // method ships the whole set. Fire-and-forget: a failed prune is a tidy-up that did not
     // happen, not a listing that should fail. See `pruneExpiredGraceMembers`.
-    void this.redis
-      .pruneExpiredGraceMembers(this.indexKey(userId, tenantId), 'rp:')
-      .catch((err: unknown) => {
-        logStore(this.logger, 'AUTH_STORE_DEGRADED', 'grace_pointer_prune', err)
-      })
+    this.pruneGracePointers(userId, tenantId)
 
     const members = await pinned(this.redis.smembers(this.indexKey(userId, tenantId)))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
@@ -445,11 +442,7 @@ export class SessionService {
     // that name nothing, because a member dropped while its `rt:` lives is invisible to
     // `invalidateUserSessions` — the session would then survive "sign out everywhere" and keep
     // rotating, and merely opening this listing would be what orphaned it.
-    void this.redis
-      .pruneDeadMembers(this.indexKey(userId, tenantId), staleKeys)
-      .catch((err: unknown) => {
-        logStore(this.logger, 'AUTH_STORE_FAILED', 'dead_member_prune', err)
-      })
+    this.pruneDeadPointers(userId, tenantId, staleKeys)
 
     // After the cleanup has been dispatched, not before: a read fault costs the caller the listing
     // and costs the index nothing. A listing that left out a session it could not read would be a
@@ -877,6 +870,26 @@ export class SessionService {
     if (separator < 0) return undefined
     const successor = pointer.slice(0, separator)
     return SESSION_HASH_RE.test(successor) ? successor : undefined
+  }
+
+  /** Drops the grace pointers that have expired from the index, without making the listing wait for it. */
+  private pruneGracePointers(userId: string, tenantId: string): void {
+    detached(
+      () => this.redis.pruneExpiredGraceMembers(this.indexKey(userId, tenantId), 'rp:'),
+      (_how, err) => {
+        logStore(this.logger, 'AUTH_STORE_DEGRADED', 'grace_pointer_prune', err)
+      }
+    )
+  }
+
+  /** Drops the members of the index that name nothing, without making the listing wait for it. */
+  private pruneDeadPointers(userId: string, tenantId: string, staleKeys: string[]): void {
+    detached(
+      () => this.redis.pruneDeadMembers(this.indexKey(userId, tenantId), staleKeys),
+      (_how, err) => {
+        logStore(this.logger, 'AUTH_STORE_FAILED', 'dead_member_prune', err)
+      }
+    )
   }
 
   /**

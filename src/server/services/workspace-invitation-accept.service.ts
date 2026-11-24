@@ -49,7 +49,7 @@ import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** What a signed-in acceptance answers: where the caller now belongs, and as what. */
 export interface AcceptedInvitation {
@@ -96,6 +96,7 @@ export interface LoadedInvitation {
  * membership, which counts as success, so the invitee is never left without the invitation they
  * were promised and the token cannot be used twice by anyone but the one address it names.
  */
+@PinnedAll()
 @Injectable()
 export class WorkspaceInvitationAcceptService {
   private readonly logger = new Logger(WorkspaceInvitationAcceptService.name)

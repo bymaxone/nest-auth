@@ -13,7 +13,7 @@ import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { userSubject } from '../constants/user-subject'
 import { hmacSha256 } from '../crypto/secure-token'
-import { pinned } from '../utils/settle'
+import { pinned, PinnedAll } from '../utils/settle'
 
 /** The flows that keep a failure counter of their own. */
 export type MfaFlow = 'challenge' | 'disable' | 'reauth'
@@ -22,6 +22,7 @@ export type MfaFlow = 'challenge' | 'disable' | 'reauth'
 export type MfaFlowPlane = 'dashboard' | 'platform'
 
 /** Failure counters for the MFA flows, keyed by flow, plane, account and tenant. */
+@PinnedAll()
 @Injectable()
 export class MfaFlowLockoutService {
   constructor(

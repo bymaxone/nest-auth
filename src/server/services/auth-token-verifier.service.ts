@@ -28,7 +28,7 @@ import { assertTenantBinding, tenantBindingEnforced } from '../utils/assert-tena
 import type { HandshakeLike } from '../utils/handshake-request'
 import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
-import { PinnedMethods, checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
@@ -216,8 +216,8 @@ export interface VerifyAccessTokenOptions {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
-@PinnedMethods('verifyAccessToken')
 export class AuthTokenVerifierService {
   private readonly logger = new Logger(AuthTokenVerifierService.name)
 

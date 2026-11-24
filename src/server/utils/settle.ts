@@ -29,9 +29,11 @@ import {
   defineKey,
   freezeObject,
   getDescriptor,
-  intrinsicThen
+  intrinsicThen,
+  ownKeys
 } from './captured-builtins'
-import { assertRootIsStandard } from './object-prototype-guard'
+import { assertNoThenOnChain, assertRootIsStandard, refusedOr } from './object-prototype-guard'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 
 /** The language's own constructor, so neither a replaced global nor a library bound to it before load chooses what the deadline builds. */
 const CapturedPromise = IntrinsicPromise
@@ -53,7 +55,12 @@ export function pinned<P>(promise: P): P {
     own.configurable = false
     // A promise that cannot take the constructor (frozen, or with another own one that cannot change) throws here: the caller is
     // one that is about to wait, so the wait fails and is never answered by a constructor the library did not choose.
-    defineKey(promise, 'constructor', own)
+    try {
+      defineKey(promise, 'constructor', own)
+    } catch (error: unknown) {
+      // The engine's own TypeError is not what a caller is told: a promise that refuses the pin is refused as `auth.internal`.
+      throw refusedOr(error, AUTH_ERROR_CODES.INTERNAL)
+    }
   }
   return promise
 }
@@ -88,6 +95,49 @@ export function markHandled(work: unknown): void {
   })()
 }
 
+/**
+ * Starts work whose answer nothing reads and reports how it failed, without a `.then` or `.catch` chain: a chain asks the promise
+ * for `then` and builds another through its species, so a throwing species would make the chain itself throw and leave the failure
+ * of the work unhandled. The work is awaited pinned, inside a `try`, so every failure of it, of the pin and of the root check ends
+ * in `onFailure`, and a handler that throws is swallowed too. The call of `run` happens before this returns.
+ *
+ * @param run - The work, called at once; it may answer a promise, a value, or throw.
+ * @param onFailure - Told `threw` for a synchronous throw and `rejected` for a failed wait, with what was thrown.
+ */
+export function detached(
+  run: () => unknown,
+  onFailure: (how: 'rejected' | 'threw', error: unknown) => void
+): void {
+  void (async (): Promise<void> => {
+    let work: unknown
+    try {
+      work = run()
+    } catch (error: unknown) {
+      report(onFailure, 'threw', error)
+      return
+    }
+    try {
+      markHandled(work)
+      await awaiting(work as PromiseLike<unknown>)
+    } catch (error: unknown) {
+      report(onFailure, 'rejected', error)
+    }
+  })()
+}
+
+/** Calls the failure handler of a detached call; one that throws changes nothing. */
+function report(
+  onFailure: (how: 'rejected' | 'threw', error: unknown) => void,
+  how: 'rejected' | 'threw',
+  error: unknown
+): void {
+  try {
+    onFailure(how, error)
+  } catch {
+    // Nothing is waiting for the handler.
+  }
+}
+
 /** A handler that only marks a rejection as handled. */
 function ignore(): void {}
 
@@ -97,7 +147,7 @@ export interface Settled<T> {
 }
 
 /** Boxes a value for a promise to resolve with. */
-function box<T>(value: T): Settled<T> {
+export function box<T>(value: T): Settled<T> {
   // An object literal with `__proto__: null` is syntax: it calls no built-in that could have been replaced.
   const boxed = { __proto__: null, value }
   // Frozen: the box is handed to code of the host, which could otherwise put another answer in it before it is read.
@@ -123,17 +173,24 @@ function failed<T>(reason: unknown): Settled<T> {
  *
  * @param pending - The promise about to be awaited.
  * @returns The same promise.
- * @throws {AuthException} `auth.internal` while the root or a built-in is not the runtime's own.
+ * @throws {AuthException} `auth.internal` while the root or a built-in is not the runtime's own; the promise is marked handled first.
  */
 export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
-  assertRootIsStandard()
+  try {
+    assertRootIsStandard()
+  } catch (error) {
+    // The promise was made before the root was checked and is not awaited now: its rejection must still be heard, or it is
+    // reported as unhandled while the caller is told the refusal.
+    markHandled(pending)
+    throw error
+  }
   return pinned(pending)
 }
 
 /**
  * Checks the root and hands the value back for the `return` that follows on the same line. An async function that returns an
  * object resolves its own promise from it, which asks the object for `then`; a `then` planted on the prototype it inherits from
- * while the function waited would answer for it. Nothing runs between this check and that read.
+ * while the function waited would answer for it, so the whole chain of prototypes is searched too. Nothing runs between this check and that read.
  *
  * @param value - What the function is about to return.
  * @returns The same value.
@@ -141,6 +198,7 @@ export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
  */
 export function checked<T>(value: T): T {
   assertRootIsStandard()
+  assertNoThenOnChain(value)
   return value
 }
 
@@ -190,6 +248,30 @@ export function PinnedMethods(...names: string[]): ClassDecorator {
         return pinned(applyFunction(method, this, args))
       }, method)
       own.value = wrapper
+      defineKey(target.prototype, name, own)
+    }
+  }
+}
+
+/**
+ * Makes the promise each method a class declares return one whose own `constructor` is the language's, whatever the method is
+ * named: a service whose methods the host awaits (or whose answer a guard awaits) would otherwise be read for `constructor` after the
+ * library's last check, by a `Promise.prototype.constructor` the host's own store call planted while the method waited. A method
+ * that answers no promise is passed through unchanged, so the decorator is safe on a class of sync and async methods alike.
+ *
+ * @returns A class decorator.
+ */
+export function PinnedAll(): ClassDecorator {
+  return (target) => {
+    const keys = ownKeys(target.prototype)
+    for (let index = 0; index < keys.length; index += 1) {
+      const name = keys[index] as string | symbol
+      const own = getDescriptor(target.prototype, name) as PropertyDescriptor
+      if (name === 'constructor' || typeof own.value !== 'function') continue
+      const method = own.value as (...args: never[]) => unknown
+      own.value = named(function pinnedMethod(this: unknown, ...args: never[]): unknown {
+        return pinned(applyFunction(method, this, args))
+      }, method)
       defineKey(target.prototype, name, own)
     }
   }

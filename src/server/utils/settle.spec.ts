@@ -4,6 +4,7 @@
  * @layer Test
  */
 
+import { AuthException } from '../errors/auth-exception'
 import { allOf, started, withDeadline } from './settle'
 
 /** Reads the answer of a helper: a failure is thrown by `.value`, not by the promise. */
@@ -254,13 +255,13 @@ describe('a promise that cannot take the pinned constructor', () => {
   it('is refused by started, not answered by its then', async () => {
     const answer = await started(hostile())
 
-    expect(() => answer.value).toThrow(TypeError)
+    expect(() => answer.value).toThrow(AuthException)
   })
 
   // Scenario: the work of `withDeadline` answers with such a promise. Expected: the same refusal.
   it('is refused by withDeadline, not answered by its then', async () => {
     const answer = await withDeadline(() => hostile(), 1000, 'late')
 
-    expect(() => answer.value).toThrow(TypeError)
+    expect(() => answer.value).toThrow(AuthException)
   })
 })

@@ -125,38 +125,6 @@ interface Exemption {
  */
 const EXEMPT_METHODS: Exemption[] = [
   {
-    file: 'guards/api-key.guard.ts',
-    site: 'audit: .catch',
-    count: 1,
-    reason: 'The detached audit hook: its failure is logged and the guard has decided already.'
-  },
-  {
-    file: 'observability/auth-health-probe.ts',
-    site: '#ask: .then',
-    count: 1,
-    reason:
-      'The health probe shares one PING between callers; it reports status and decides no access.'
-  },
-  {
-    file: 'observability/auth-health-probe.ts',
-    site: 'within: .finally',
-    count: 1,
-    reason: "Clears the probe's deadline timer; it reports status and decides no access."
-  },
-  {
-    file: 'observability/auth-health-probe.ts',
-    site: 'within: .then',
-    count: 1,
-    reason: "Bounds the probe's PING with a deadline; it reports status and decides no access."
-  },
-  {
-    file: 'observability/auth-tracing.ts',
-    site: 'attempt: .catch',
-    count: 1,
-    reason:
-      'A tracing call that is fire-and-forget with its failure swallowed; nothing is decided on it.'
-  },
-  {
     file: 'redis/redis-outage.ts',
     site: 'isThenable: .then',
     count: 1,
@@ -164,108 +132,11 @@ const EXEMPT_METHODS: Exemption[] = [
       'The read of `then` that tells a promise-like from a plain value; the wait itself uses await.'
   },
   {
-    file: 'services/auth.service.ts',
-    site: 'dropCachedAccountFacts: .catch',
-    count: 1,
-    reason: 'A cache invalidation after the decision; its failure is logged.'
-  },
-  {
-    file: 'services/auth.service.ts',
-    site: 'emitLogout: .catch',
-    count: 1,
-    reason: 'The detached logout hook; its failure is logged and the logout is done.'
-  },
-  {
-    file: 'services/auth.service.ts',
-    site: 'fireAndForget: .catch',
-    count: 1,
-    reason: 'The helper that detaches a hook and logs its failure; nothing reads its answer.'
-  },
-  {
-    file: 'services/auth.service.ts',
-    site: 'issueTokensForUserId: .catch',
-    count: 1,
-    reason: 'A last-login write detached from the token issue; its failure is logged.'
-  },
-  {
-    file: 'services/auth.service.ts',
-    site: 'login: .catch',
-    count: 1,
-    reason: 'A last-login write detached from the login; the login was decided before it.'
-  },
-  {
-    file: 'services/auth.service.ts',
-    site: 'refresh: .catch',
-    count: 1,
-    reason: 'A detached session-detail rotation; its failure is logged and the refresh is decided.'
-  },
-  {
-    file: 'services/auth.service.ts',
-    site: 'revokeSessionMetadata: .catch',
-    count: 1,
-    reason: 'A detached revocation of session detail; its failure is logged.'
-  },
-  {
-    file: 'services/invitation.service.ts',
-    site: 'withdrawRecord: .catch',
-    count: 1,
-    reason:
-      'Withdraws a written record after a failure; the failure is logged and nothing is decided.'
-  },
-  {
-    file: 'services/password-reset.service.ts',
-    site: 'sendToken: .catch',
-    count: 1,
-    reason: 'A best-effort delete of a spent token whose failure is logged; the reset was decided.'
-  },
-  {
-    file: 'services/platform-auth.service.ts',
-    site: 'emitPlatformLogout: .catch',
-    count: 1,
-    reason: 'The detached logout hook; its failure is logged and the logout is done.'
-  },
-  {
-    file: 'services/platform-auth.service.ts',
-    site: 'login: .catch',
-    count: 1,
-    reason: 'A last-login write detached from the login; the login was decided before it.'
-  },
-  {
-    file: 'services/session.service.ts',
-    site: 'createSession: .catch',
-    count: 1,
-    reason: 'The detached new-session notification; its failure is logged.'
-  },
-  {
-    file: 'services/session.service.ts',
-    site: 'createSession: .then',
-    count: 1,
-    reason: 'Adapts the user read for the notification; no access is decided on it.'
-  },
-  {
-    file: 'services/session.service.ts',
-    site: 'listSessions: .catch',
-    count: 2,
-    reason: 'Detached prunes of the index; each only logs a failure and decides nothing.'
-  },
-  {
-    file: 'services/token-manager.service.ts',
-    site: 'emitReuseDetected: .catch',
-    count: 1,
-    reason: 'A detached reuse-detection hook whose rejection is logged; the refresh was decided.'
-  },
-  {
     file: 'utils/captured-builtins.ts',
     site: 'intrinsicThen: .then',
     count: 1,
     reason:
       "Takes the then of the language's own promises once, at load; nothing is awaited through it."
-  },
-  {
-    file: 'utils/run-detached.ts',
-    site: 'runDetached: .catch',
-    count: 1,
-    reason: 'Detaches a hook and logs its rejection; nothing waits for or reads its answer.'
   }
 ]
 
@@ -274,50 +145,7 @@ const EXEMPT_METHODS: Exemption[] = [
  * failure. Each one is fire-and-forget, nothing waits for the promise or reads its answer, so a replaced `resolve` cannot answer
  * a decision.
  */
-const EXEMPT_STATICS: Exemption[] = [
-  {
-    file: 'guards/api-key.guard.ts',
-    site: 'audit: Promise.resolve',
-    count: 1,
-    reason: 'Wraps the detached audit hook so its failure can be logged; nothing waits for it.'
-  },
-  {
-    file: 'observability/auth-tracing.ts',
-    site: 'attempt: Promise.resolve',
-    count: 1,
-    reason: 'Wraps a fire-and-forget tracing call; nothing waits for it or reads its answer.'
-  },
-  {
-    file: 'services/auth.service.ts',
-    site: 'emitLogout: Promise.resolve',
-    count: 1,
-    reason: 'Wraps the detached logout hook; nothing waits for it or reads its answer.'
-  },
-  {
-    file: 'services/auth.service.ts',
-    site: 'fireAndForget: Promise.resolve',
-    count: 1,
-    reason: 'Wraps a detached hook; nothing waits for it or reads its answer.'
-  },
-  {
-    file: 'services/platform-auth.service.ts',
-    site: 'emitPlatformLogout: Promise.resolve',
-    count: 1,
-    reason: 'Wraps the detached logout hook; nothing waits for it or reads its answer.'
-  },
-  {
-    file: 'services/token-manager.service.ts',
-    site: 'emitReuseDetected: Promise.resolve',
-    count: 1,
-    reason: 'Wraps the detached reuse hook; nothing waits for it or reads its answer.'
-  },
-  {
-    file: 'utils/run-detached.ts',
-    site: 'runDetached: Promise.resolve',
-    count: 1,
-    reason: 'Wraps the detached hook; nothing waits for it or reads its answer.'
-  }
-]
+const EXEMPT_STATICS: Exemption[] = []
 
 /** The sites a scan found, as the table that argues them: `file :: site` to the count. */
 function tally(scan: (text: string) => string[]): Record<string, number> {

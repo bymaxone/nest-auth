@@ -28,7 +28,7 @@ import type { WorkspaceAuditEvent } from '../interfaces/workspace-audit.interfac
 import type { AuthWorkspace, WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { hasRole } from '../utils/roles.util'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** The most rows one page may hold. */
 export const MAX_PAGE_SIZE = 100
@@ -102,6 +102,7 @@ export class MembershipBumpFailedError extends Error {
  * access ends when `workspaces.membershipCacheTtlSeconds` elapses, or at once through
  * `WorkspaceAccessService.invalidateMembership`.
  */
+@PinnedAll()
 @Injectable()
 export class MembershipService {
   private readonly group: ResolvedWorkspaceOptions

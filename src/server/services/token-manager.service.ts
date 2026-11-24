@@ -31,10 +31,11 @@ import type { SessionExtra } from '../redis/create-session-script'
 import { parseJson } from '../utils/captured-builtins'
 import { jwtSignOptions } from '../utils/dependency-options'
 import { refusedOr } from '../utils/object-prototype-guard'
+import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { dashboardSessionDetail, platformSessionExtra } from '../utils/session-detail'
 import { newSessionRecord, recoveredRecord, rotationRecord } from '../utils/session-records'
-import { PinnedMethods, checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 import { readStampedEpoch } from '../utils/stamped-epoch'
 import { signerOf, verifyWithRotation } from '../utils/verify-with-rotation'
 
@@ -118,16 +119,7 @@ export const CREDENTIAL_PROVED = { credentialProved: true } as const
  *
  * @layer Service
  */
-@PinnedMethods(
-  'readSeedSession',
-  'rotateFromPrimary',
-  'rotateFromGrace',
-  'buildRotatedResult',
-  'rotatePlatformFromPrimary',
-  'rotatePlatformFromGrace',
-  'buildPlatformRotatedResult',
-  'writePlatformSessionDetail'
-)
+@PinnedAll()
 @Injectable()
 export class TokenManagerService {
   private readonly logger = new Logger(TokenManagerService.name)
@@ -513,18 +505,12 @@ export class TokenManagerService {
     userAgent: string
   ): void {
     if (!this.hooks?.onRefreshTokenReuseDetected || userId === '') return
-    try {
-      void Promise.resolve(
-        this.hooks.onRefreshTokenReuseDetected(
-          { userId, familyId },
-          { ...createEmptyHookContext(), plane, ip, userAgent }
-        )
-      ).catch(() => {
-        logHook(this.logger, 'onRefreshTokenReuseDetected', 'rejected')
-      })
-    } catch {
-      logHook(this.logger, 'onRefreshTokenReuseDetected', 'threw')
-    }
+    const onReuse = this.hooks.onRefreshTokenReuseDetected.bind(this.hooks)
+    runDetached(
+      this.logger,
+      () => onReuse({ userId, familyId }, { ...createEmptyHookContext(), plane, ip, userAgent }),
+      'onRefreshTokenReuseDetected'
+    )
   }
 
   /**

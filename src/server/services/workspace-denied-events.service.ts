@@ -16,7 +16,7 @@ import { WorkspaceAccessRefusal } from '../errors/workspace-access-refusal'
 import type { WorkspaceAuditEvent } from '../interfaces/workspace-audit.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { runDetached } from '../utils/run-detached'
-import { pinned } from '../utils/settle'
+import { pinned, PinnedAll } from '../utils/settle'
 
 /** How long a suppressed count is kept: it must outlive any window, which is capped at one hour. */
 const SUPPRESSED_COUNT_TTL_SECONDS = 86_400
@@ -50,6 +50,7 @@ export interface DeniedAccess {
  * increment can only under-count. When Redis fails nothing is emitted, never an unlimited stream,
  * and one warning per window per process says so.
  */
+@PinnedAll()
 @Injectable()
 export class WorkspaceDeniedEventsService {
   private readonly logger = new Logger(WorkspaceDeniedEventsService.name)

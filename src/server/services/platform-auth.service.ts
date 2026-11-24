@@ -31,8 +31,9 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { normalizeEmail } from '../utils/normalize-email'
 import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
+import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
 
 /** What the two login events of the platform plane have in common. */
@@ -56,6 +57,7 @@ const PASSWORD_LOGIN = { plane: 'platform', via: 'password' } as const
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class PlatformAuthService {
   private readonly logger = new Logger(PlatformAuthService.name)
@@ -169,11 +171,14 @@ export class PlatformAuthService {
     logEvent(this.logger, 'AUTH_LOGIN_SUCCEEDED', { ...PASSWORD_LOGIN, userId: admin.id })
 
     // Fire-and-forget: a slow or failing DB update must not block the auth response.
-    void this.platformUserRepo.updateLastLogin(admin.id).catch(() => {
-      logHook(this.logger, 'updateLastLogin', 'rejected')
-    })
+    this.touchLastLogin(admin.id)
 
     return checked(result)
+  }
+
+  /** Records the time of a login without making the login wait for it; a failure is logged, never raised. */
+  private touchLastLogin(id: string): void {
+    runDetached(this.logger, () => this.platformUserRepo.updateLastLogin(id), 'updateLastLogin')
   }
 
   // ---------------------------------------------------------------------------
@@ -292,19 +297,12 @@ export class PlatformAuthService {
     if (!this.hooks?.afterPlatformLogout || !userId) return
     const context: HookContext = { ...createEmptyHookContext(), plane: 'platform', userId }
 
-    // The invocation sits INSIDE the try, not just the promise it returns. `afterPlatformLogout`
-    // may be declared `void`, so a consumer implementation is free to throw synchronously — and a
-    // synchronous throw happens before `Promise.resolve` exists to wrap it, so `.catch` never sees
-    // it and the exception escapes into `logout`, whose Redis writes have already completed. The
-    // caller would then be told a finished logout failed, and might retry it. Same shape and same
-    // remedy as `TokenManagerService.emitReuseDetected`.
-    try {
-      void Promise.resolve(this.hooks.afterPlatformLogout(userId, context)).catch(() => {
-        logHook(this.logger, 'afterPlatformLogout', 'rejected')
-      })
-    } catch {
-      logHook(this.logger, 'afterPlatformLogout', 'threw')
-    }
+    // `runDetached` makes the call inside its own `try`. `afterPlatformLogout` may be declared `void`, so a
+    // consumer implementation is free to throw synchronously, and that must be logged, not escape into
+    // `logout`, whose Redis writes have already completed: the caller would be told a finished logout
+    // failed, and might retry it. Same shape and same remedy as `TokenManagerService.emitReuseDetected`.
+    const afterPlatformLogout = this.hooks.afterPlatformLogout.bind(this.hooks)
+    runDetached(this.logger, () => afterPlatformLogout(userId, context), 'afterPlatformLogout')
   }
 
   // ---------------------------------------------------------------------------

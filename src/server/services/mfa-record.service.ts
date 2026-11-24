@@ -32,7 +32,7 @@ import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { assertDashboardTenant } from '../utils/mfa-plane-tenant'
 import { encryptMfaSecret, holdsSecret, type MfaSecretKeys } from '../utils/mfa-secret-cipher'
 import { rethrowRefusal } from '../utils/object-prototype-guard'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /**
  * TTL in seconds for the single-use claim on a recovery code (5 minutes).
@@ -110,6 +110,7 @@ end
 return 0`
 
 /** Reads and writes the MFA state of one account, serializing every write per account and plane. */
+@PinnedAll()
 @Injectable()
 export class MfaRecordService {
   private readonly logger = new Logger(MFA_LOG_CONTEXT)

@@ -26,7 +26,16 @@ export const intrinsicPromisePrototype: Promise<unknown> = prototypeOf(
 )
 
 /** The constructor of that prototype, which `await` compares with the promise it is given. */
-export const IntrinsicPromise = intrinsicPromisePrototype.constructor as PromiseConstructor
+const constructorSlot = Object.getOwnPropertyDescriptor(intrinsicPromisePrototype, 'constructor')
+
+// Read by its descriptor, not by value: a `get` a host planted on the slot would run here and answer, and what a plain read returns
+// is whatever that getter chose. Only a data property is the language's own.
+if (constructorSlot === undefined || !('value' in constructorSlot))
+  throw new Error(
+    "[BymaxAuthModule] the constructor of Promise is an accessor; the module does not start while the runtime's promises are not its own."
+  )
+
+export const IntrinsicPromise = constructorSlot.value as PromiseConstructor
 
 // The constructor is read from a slot a host can have replaced before this module loaded. The language's own constructor and its prototype
 // point at each other, so a slot that holds another function is caught here and the load fails, instead of every pin and every wait

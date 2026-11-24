@@ -21,7 +21,7 @@ import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { pinned, PinnedMethods } from '../utils/settle'
+import { pinned, PinnedAll } from '../utils/settle'
 
 /**
  * The two cache keys naming one dashboard account.
@@ -74,8 +74,8 @@ function cacheKeysFor(
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
-@PinnedMethods('assertDashboardAccountUsable', 'assertPlatformAccountUsable')
 export class AccountStatusService {
   private readonly logger = new Logger(AccountStatusService.name)
 

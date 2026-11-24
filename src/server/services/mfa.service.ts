@@ -36,7 +36,7 @@ import { committedSafeUser } from '../utils/mfa-safe-user'
 import { decryptMfaSecret, encryptMfaSecret } from '../utils/mfa-secret-cipher'
 import { parsePlainRecoveryCodes, parseSetupData, type MfaSetupData } from '../utils/mfa-setup-data'
 import { runDetached } from '../utils/run-detached'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -95,6 +95,7 @@ function enabling(data: MfaSetupData): {
   return { mfaEnabled: true, mfaSecret: data.encryptedSecret, mfaRecoveryCodes: data.hashedCodes }
 }
 
+@PinnedAll()
 @Injectable()
 export class MfaService {
   private readonly logger = new Logger(MfaService.name)

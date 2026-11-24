@@ -31,7 +31,7 @@ import type {
   UpdateWorkspaceStatusResult,
   WorkspaceRef
 } from '../interfaces/workspace-repository.interface'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 import { normalizeWorkspaceName } from '../utils/workspace-name'
 
 const DAY_MS = 86_400_000
@@ -69,6 +69,7 @@ export interface WorkspaceAccessView {
  * records a preference, and a stale pointer is harmless because the guard re-checks membership on
  * every request).
  */
+@PinnedAll()
 @Injectable()
 export class WorkspaceService {
   private readonly group: ResolvedWorkspaceOptions

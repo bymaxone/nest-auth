@@ -9,7 +9,7 @@ import { AuthException } from '../errors/auth-exception'
 import { logEvent, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
-import { pinned } from '../utils/settle'
+import { pinned, PinnedAll } from '../utils/settle'
 import { sleep } from '../utils/sleep'
 
 /**
@@ -218,6 +218,7 @@ function maxed(): ['MAX', string] {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class OtpService {
   constructor(

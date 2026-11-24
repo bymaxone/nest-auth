@@ -26,6 +26,7 @@ import { ApiKeyVerifierService } from '../services/api-key-verifier.service'
 import { applyFunction } from '../utils/captured-builtins'
 import { resolveClientAddress } from '../utils/client-address'
 import { assertRootIsStandard, rethrowRefusal } from '../utils/object-prototype-guard'
+import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 import { pinned, PinnedMethods } from '../utils/settle'
 
@@ -193,13 +194,7 @@ export class ApiKeyGuard implements CanActivate {
         return false
       }
     }
-    try {
-      void Promise.resolve(run()).catch(() => {
-        logHook(this.logger, 'onApiKeyRequest', 'rejected')
-      })
-    } catch {
-      logHook(this.logger, 'onApiKeyRequest', 'threw')
-    }
+    runDetached(this.logger, run, 'onApiKeyRequest')
     return true
   }
 

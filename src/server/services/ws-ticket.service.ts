@@ -30,7 +30,7 @@ import { readStampedEpoch } from '../utils'
 import { AuthRevocationService } from './auth-revocation.service'
 import { logEvent } from '../observability/log-event'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /**
  * Seconds a ticket is kept short of the access token's expiry, to cover the time between reading
@@ -38,6 +38,7 @@ import { checked, pinned } from '../utils/settle'
  */
 const EXPIRY_MARGIN_SECONDS = 1
 
+@PinnedAll()
 @Injectable()
 export class WsTicketService {
   private readonly logger = new Logger(WsTicketService.name)

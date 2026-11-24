@@ -31,7 +31,12 @@ const MAX_SLEEP_MS = 10_000
  * ```typescript
  * const MIN_RESPONSE_MS = 300
  * const start = Date.now()
- * const user = await userRepo.findByEmail(dto.email).catch(() => null)
+ * let user = null
+ * try {
+ *   user = await userRepo.findByEmail(dto.email)
+ * } catch {
+ *   // an unknown account and a failed lookup take the same time
+ * }
  * const elapsed = Date.now() - start
  * await sleep(Math.max(0, MIN_RESPONSE_MS - elapsed)) // always >= 300 ms total
  * ```

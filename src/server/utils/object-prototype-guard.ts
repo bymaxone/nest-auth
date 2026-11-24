@@ -24,6 +24,7 @@ import {
   getDescriptor,
   getKey,
   hasOwn,
+  prototypeOf,
   ownKeys
 } from './captured-builtins'
 import {
@@ -209,6 +210,25 @@ function refusalOf(reason: string): RootNotStandardException {
   defineKey(refusal, REFUSAL, dataOf(true))
   captureStack(refusal, refusalOf)
   return refusal
+}
+
+/**
+ * Refuses an object, or an object it inherits from, that holds a `then`. Resolving a promise with an object asks it for `then`,
+ * and the root guard compares only `Object.prototype`: a `then` planted on the prototype of a class (a DTO built by
+ * `plainToInstance`, a record a repository answered) would be read, and called, there.
+ *
+ * @param value - What is about to be handed to a promise to resolve with.
+ * @throws {AuthException} `auth.internal` when the value or a prototype of it holds an own `then`.
+ */
+export function assertNoThenOnChain(value: unknown): void {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return
+  let level: object | null = value
+  // A chain is short; the bound only keeps a cycle a host built from looping.
+  for (let depth = 0; level !== null && depth < 256; depth += 1) {
+    if (hasOwn(level, 'then'))
+      throw refusalOf('an answer, or a prototype it inherits from, holds a then')
+    level = prototypeOf(level) as object | null
+  }
 }
 
 /** Whether `error` is the refusal of the guard. */

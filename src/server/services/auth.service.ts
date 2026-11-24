@@ -41,7 +41,7 @@ import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-log
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
-import { checked, pinned } from '../utils/settle'
+import { detached, checked, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst, settleWrites } from '../utils/settle-writes'
 import { sleep } from '../utils/sleep'
 import { tenantScoped } from '../utils/tenant-scoped'
@@ -79,6 +79,7 @@ export interface RevokeAllSessionsParams {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name)
@@ -101,11 +102,11 @@ export class AuthService {
    * @param tenantId - Its tenant; a repository id is unique only within one.
    */
   private async dropCachedAccountFacts(userId: string, tenantId: string): Promise<void> {
-    await pinned(
-      this.accountStatus.invalidate({ userId, tenantId }).catch((err: unknown) => {
-        logStore(this.logger, 'AUTH_STORE_FAILED', 'cache_invalidation', err)
-      })
-    )
+    try {
+      await pinned(this.accountStatus.invalidate({ userId, tenantId }))
+    } catch (err: unknown) {
+      logStore(this.logger, 'AUTH_STORE_FAILED', 'cache_invalidation', err)
+    }
   }
   /**
    * Whether the tenant-mismatch misconfiguration has already been reported.
@@ -472,9 +473,7 @@ export class AuthService {
     this.logLogin('AUTH_LOGIN_SUCCEEDED', safeUser.id, tenantId)
 
     // Non-blocking side effects.
-    void this.userRepo.updateLastLogin({ id: user.id, tenantId }).catch(() => {
-      logHook(this.logger, 'updateLastLogin', 'rejected')
-    })
+    this.touchLastLogin(user.id, tenantId)
     if (this.hooks?.afterLogin) {
       const afterLogin = this.hooks.afterLogin.bind(this.hooks)
       runDetached(this.logger, () => afterLogin(safeUser, context), 'afterLogin')
@@ -636,20 +635,20 @@ export class AuthService {
     sessionHash: string
   ): Promise<void> {
     if (!this.options.sessions.enabled || !userId || tenantId === undefined) return
-    await pinned(
-      this.sessionService.revokeSession({ userId, tenantId, sessionHash }).catch((err: unknown) => {
-        const errCode =
-          err instanceof AuthException
-            ? (err.getResponse() as { error: { code: string } }).error.code
-            : undefined
-        if (errCode !== AUTH_ERROR_CODES.SESSION_NOT_FOUND) {
-          // `describeChannelStatus`, not `String(err)`: the rejection comes from Redis, and
-          // `String()` strips nothing — a value carrying CR/LF would close the log record and open
-          // a forged one, and this one names the failing KEY, which embeds the consumer's user id.
-          logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_cleanup', err)
-        }
-      })
-    )
+    try {
+      await pinned(this.sessionService.revokeSession({ userId, tenantId, sessionHash }))
+    } catch (err: unknown) {
+      const errCode =
+        err instanceof AuthException
+          ? (err.getResponse() as { error: { code: string } }).error.code
+          : undefined
+      if (errCode !== AUTH_ERROR_CODES.SESSION_NOT_FOUND) {
+        // `describeChannelStatus`, not `String(err)`: the rejection comes from Redis, and
+        // `String()` strips nothing — a value carrying CR/LF would close the log record and open
+        // a forged one, and this one names the failing KEY, which embeds the consumer's user id.
+        logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_cleanup', err)
+      }
+    }
   }
 
   /**
@@ -683,16 +682,10 @@ export class AuthService {
       context.tenantId = tenantId
     }
 
-    // The invocation sits inside the try, not just the promise it returns: `afterLogout` may be
-    // declared `void`, and a synchronous throw happens before `Promise.resolve` exists to wrap it,
-    // so `.catch` never sees it and the exception escapes into a `logout` whose Redis writes have completed.
-    try {
-      void Promise.resolve(this.hooks.afterLogout(userId, context)).catch(() => {
-        logHook(this.logger, 'afterLogout', 'rejected')
-      })
-    } catch {
-      logHook(this.logger, 'afterLogout', 'threw')
-    }
+    // `runDetached` calls the hook inside its own `try`: `afterLogout` may be declared `void`, and a
+    // synchronous throw must be logged, not escape into a `logout` whose Redis writes have completed.
+    const afterLogout = this.hooks.afterLogout.bind(this.hooks)
+    runDetached(this.logger, () => afterLogout(userId, context), 'afterLogout')
   }
 
   // ---------------------------------------------------------------------------
@@ -832,12 +825,12 @@ export class AuthService {
     // and it would then survive a revoke-all while still rotating. Keep the two facts together:
     // this call may fail silently precisely because nothing treats `sd:` as proof of a session.
     if (this.options.sessions.enabled) {
-      void this.sessionService
-        .rotateSession(sha256(oldRefreshToken), sha256(result.rawRefreshToken), ip, userAgent)
-        .catch((err: unknown) => {
-          // Same reasoning as the logout path above: bounded, control-character-free, and no secret in flight to name.
-          logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_detail_rotation', err)
-        })
+      this.rotateSessionDetail(
+        sha256(oldRefreshToken),
+        sha256(result.rawRefreshToken),
+        ip,
+        userAgent
+      )
     }
 
     return checked({ ...result, accessToken: authoritative, user: toSafeUser(user) })
@@ -980,9 +973,7 @@ export class AuthService {
 
     logEvent(this.logger, 'AUTH_TOKENS_ISSUED', { userId: user.id, tenantId: user.tenantId })
 
-    void this.userRepo.updateLastLogin({ id: user.id, tenantId: safeUser.tenantId }).catch(() => {
-      logHook(this.logger, 'updateLastLogin', 'rejected')
-    })
+    this.touchLastLogin(user.id, safeUser.tenantId)
     if (this.hooks?.afterLogin) {
       const afterLogin = this.hooks.afterLogin.bind(this.hooks)
       runDetached(
@@ -1363,13 +1354,34 @@ export class AuthService {
    * refused login into a different refusal, nor a successful one into a failure.
    */
   private fireAndForget(run: () => Promise<void> | void, hook: keyof IAuthHooks): void {
-    try {
-      void Promise.resolve(run()).catch(() => {
-        logEvent(this.logger, 'AUTH_HOOK_FAILED', { hook, how: 'rejected' })
-      })
-    } catch {
-      logEvent(this.logger, 'AUTH_HOOK_FAILED', { hook, how: 'threw' })
-    }
+    detached(run, (how) => {
+      logEvent(this.logger, 'AUTH_HOOK_FAILED', { hook, how })
+    })
+  }
+
+  /** Records the time of a login without making the login wait for it; a failure is logged, never raised. */
+  private touchLastLogin(id: string, tenantId: string): void {
+    runDetached(
+      this.logger,
+      () => this.userRepo.updateLastLogin({ id, tenantId }),
+      'updateLastLogin'
+    )
+  }
+
+  /** Moves the detail of a session to its rotated token without making the refresh wait for it. */
+  private rotateSessionDetail(
+    oldHash: string,
+    newHash: string,
+    ip: string,
+    userAgent: string
+  ): void {
+    detached(
+      () => this.sessionService.rotateSession(oldHash, newHash, ip, userAgent),
+      (_how, err) => {
+        // Same reasoning as the logout path above: bounded, control-character-free, and no secret in flight to name.
+        logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_detail_rotation', err)
+      }
+    )
   }
 
   /** Writes the event of a password login that reached its end: tokens issued, or an MFA challenge. */

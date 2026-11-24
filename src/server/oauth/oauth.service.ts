@@ -62,7 +62,7 @@ import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
-import { awaiting, checked, pinned } from '../utils/settle'
+import { awaiting, checked, pinned, PinnedAll } from '../utils/settle'
 
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
 const OAUTH_STATE_TTL_SECONDS = 600
@@ -96,6 +96,7 @@ function toSafeUser(user: AuthUser): SafeAuthUser {
  * service resolves the correct plugin by name and delegates the provider-specific
  * operations (authorize URL, code exchange, profile fetch) to the plugin.
  */
+@PinnedAll()
 @Injectable()
 export class OAuthService {
   private readonly logger = new Logger(OAuthService.name)

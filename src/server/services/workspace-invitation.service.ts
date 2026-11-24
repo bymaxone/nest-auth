@@ -49,7 +49,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
-import { PinnedMethods, awaiting, checked, pinned, started } from '../utils/settle'
+import { awaiting, checked, pinned, PinnedAll, started } from '../utils/settle'
 import { pageInvitations } from '../utils/workspace-invitation-page'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
 import { normalizeWorkspaceName } from '../utils/workspace-name'
@@ -70,8 +70,8 @@ interface LiveInvitation {
  * such roles. An invitation the actor may not act on reads as absent, so the routes confirm
  * nothing about it.
  */
+@PinnedAll()
 @Injectable()
-@PinnedMethods('preview')
 export class WorkspaceInvitationService {
   private readonly group: ResolvedWorkspaceOptions
 

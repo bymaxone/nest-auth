@@ -15,7 +15,7 @@ import type { HookContext } from '../interfaces/auth-hooks.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { AuthMembership } from '../interfaces/membership-repository.interface'
 import type { AuthWorkspace, WorkspaceRef } from '../interfaces/workspace-repository.interface'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** The verified token of the caller: who they are and the tenant they belong to. */
 type Caller = Pick<DashboardJwtPayload, 'sub' | 'tenantId' | 'sid'>
@@ -36,6 +36,7 @@ export interface HandOver {
  * Each method fixes the order of its steps, which is part of what it guarantees: a caller is
  * re-proved only after the guard has decided they may act, and before the write.
  */
+@PinnedAll()
 @Injectable()
 export class WorkspaceActionsService {
   constructor(

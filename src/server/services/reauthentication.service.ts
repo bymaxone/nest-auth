@@ -18,9 +18,10 @@ import { AuthException } from '../errors/auth-exception'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
-import { pinned } from '../utils/settle'
+import { pinned, PinnedAll } from '../utils/settle'
 
 /** Re-authentication for the callers that change a credential or a membership. */
+@PinnedAll()
 @Injectable()
 export class ReauthenticationService {
   private readonly logger = new Logger(MFA_LOG_CONTEXT)

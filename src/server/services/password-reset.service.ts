@@ -38,7 +38,7 @@ import { normalizeEmail } from '../utils/normalize-email'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 import { tenantScoped } from '../utils/tenant-scoped'
 
 // ---------------------------------------------------------------------------
@@ -130,6 +130,7 @@ interface ErrorBody {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class PasswordResetService {
   private readonly logger = new Logger(PasswordResetService.name)
@@ -820,20 +821,27 @@ export class PasswordResetService {
         // relay that rejects by quoting the body puts `rawToken` into the error, and this token is a
         // working password reset until its TTL expires, so nothing the channel wrote comes through.
         logDelivery(this.logger, 'password_reset_token', err)
-        void this.redis.del(tokenKey).catch((delErr: unknown) => {
-          // `delErr` comes from `redis.del` on a key that is a SHA-256 of the token, so no
-          // quoted-body path can put a credential into it. That argument is still true and it is
-          // no longer sufficient: the SAME argument was made for the session-cleanup handlers in
-          // `AuthService`, which were also Redis and also stringified the rejection raw. What
-          // decides it is not whether a credential can be there but whether the text is this
-          // library's to publish — an ioredis rejection is unbounded, carries no guarantee about
-          // control characters, and names the key, which embeds the consumer's user id.
-          logEvent(this.logger, 'AUTH_PASSWORD_RESET_ROLLBACK_FAILED', {
-            detail: describeChannelStatus(delErr)
-          })
-        })
+        await this.dropUnsentToken(tokenKey)
       }
     })()
+  }
+
+  /** Deletes the token of a reset whose delivery failed, so nothing keeps a working reset nobody was sent. */
+  private async dropUnsentToken(tokenKey: string): Promise<void> {
+    try {
+      await pinned(this.redis.del(tokenKey))
+    } catch (delErr: unknown) {
+      // `delErr` comes from `redis.del` on a key that is a SHA-256 of the token, so no
+      // quoted-body path can put a credential into it. That argument is still true and it is
+      // no longer sufficient: the SAME argument was made for the session-cleanup handlers in
+      // `AuthService`, which were also Redis and also stringified the rejection raw. What
+      // decides it is not whether a credential can be there but whether the text is this
+      // library's to publish — an ioredis rejection is unbounded, carries no guarantee about
+      // control characters, and names the key, which embeds the consumer's user id.
+      logEvent(this.logger, 'AUTH_PASSWORD_RESET_ROLLBACK_FAILED', {
+        detail: describeChannelStatus(delErr)
+      })
+    }
   }
 
   /**

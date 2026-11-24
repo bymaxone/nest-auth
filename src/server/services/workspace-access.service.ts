@@ -47,7 +47,7 @@ import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { exceedsCodePoints } from '../utils/code-points'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
-import { PinnedMethods, awaiting, checked, pinned, started } from '../utils/settle'
+import { awaiting, checked, pinned, PinnedAll, started } from '../utils/settle'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
 /** An active member of an active workspace, as the access check resolves it. */
@@ -94,8 +94,8 @@ interface MembershipRead {
  * up to its lifetime, the exposure the token-epoch counters have, so run the store with a
  * no-eviction policy for the auth keyspace.
  */
+@PinnedAll()
 @Injectable()
-@PinnedMethods('resolveAccess', 'assertStillAuthorized')
 export class WorkspaceAccessService {
   private readonly logger = new Logger(WorkspaceAccessService.name)
   private readonly group: ResolvedWorkspaceOptions

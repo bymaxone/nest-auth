@@ -18,7 +18,7 @@ import type { StoredWorkspaceInvitation } from '../interfaces/workspace-invitati
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
-import { checked, pinned } from '../utils/settle'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 import { isStoredWorkspaceName } from '../utils/workspace-name'
 
 /** A pending invitation with the key it is stored under and the seconds it has left. */
@@ -66,6 +66,7 @@ end
 return 0`
 
 /** Reads and writes workspace invitation records; it makes no authorization decision. */
+@PinnedAll()
 @Injectable()
 export class WorkspaceInvitationStore {
   private readonly hmacKey: string

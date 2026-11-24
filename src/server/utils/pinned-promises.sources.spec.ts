@@ -12,7 +12,9 @@
  */
 
 import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
 
 import ts from 'typescript'
 
@@ -25,31 +27,27 @@ const SERVER = join(__dirname, '..')
 const EXEMPT: Record<string, string> = {
   'utils/settle.ts':
     'the primitive itself: it waits only on promises it started and pinned, and answers only boxes with no prototype',
-  'utils/run-detached.ts': 'runs work whose answer is thrown away: nothing decides on it',
   'redis/redis-readiness.service.ts':
     'startup only, before any request exists: it decides whether the app starts, never what a request is told',
   'services/api-key-last-used.service.ts':
-    'a background flush of a usage counter: no request waits on it and no decision reads it',
-  'observability/auth-health-probe.ts': 'a health probe: it reports, it never admits or refuses',
-  'observability/auth-tracing.ts': 'tracing wraps a call and hands back what the call answered',
-  'observability/observe-auth.ts': 'observation of an outcome that is already decided',
-  'observability/observed-outcome.ts': 'observation of an outcome that is already decided'
+    'a background flush of a usage counter: no request waits on it and no decision reads it'
 }
 
 /**
- * The server sources that keep a `.then`, `.catch` or `.finally` chain, each with the reason. A chain reads `then` of the promise it
- * is called on and builds another through its species, so on a decision path it is held to the same rule as an `await`. The ones
- * listed here are detached: their result is discarded and nothing reads what the chain returns.
+ * The sources whose public promise-returning methods are not pinned, each with the reason. A file listed here that no longer needs
+ * it is reported, so the list cannot go stale.
  */
-const CHAINS: Record<string, string> = {
-  'guards/api-key.guard.ts': 'a detached hook call whose failure is swallowed',
-  'services/auth.service.ts': 'detached best-effort writes and hooks after the answer is decided',
-  'services/invitation.service.ts': 'a detached cleanup of a token key',
-  'services/password-reset.service.ts': 'a detached cleanup of a token key',
-  'services/session.service.ts':
-    'detached tidy-ups and a hook after the listing or the new session is decided',
-  'services/token-manager.service.ts': 'a detached hook after reuse is already refused',
-  'services/platform-auth.service.ts': 'detached best-effort writes and hooks after the answer'
+const UNPINNED_PUBLIC: Record<string, string> = {
+  'redis/auth-redis.service.ts':
+    'internal to the library: the host never awaits it, and every caller in the library pins what it awaits from it',
+  'providers/common-password-checker.provider.ts':
+    'a default provider the host replaces: the library pins the call of it at the place it awaits',
+  'providers/hibp-breach-checker.provider.ts':
+    'a default provider the host replaces: the library pins the call of it at the place it awaits',
+  'providers/no-op-email.provider.ts':
+    'a default provider the host replaces: the library pins the call of it at the place it awaits',
+  'guards/ws-jwt.guard.ts':
+    'onModuleInit runs at startup, before any request: Nest awaits it and it decides no request'
 }
 
 /** The `.then`, `.catch` and `.finally` calls of a source. */
@@ -128,7 +126,7 @@ function unpinnedAwaits(text: string): string[] {
         ((ts.isIdentifier(callee) && ['pinned', 'awaiting'].includes(callee.text)) ||
           (ts.isPropertyAccessExpression(callee) &&
             callee.expression.kind === ts.SyntaxKind.ThisKeyword &&
-            ownPinned.has(callee.name.text)))
+            (ownPinned.has(EVERY) || ownPinned.has(callee.name.text))))
       if (!wrapped) found.push(operand.getText(source))
     }
     ts.forEachChild(node, visit)
@@ -137,7 +135,10 @@ function unpinnedAwaits(text: string): string[] {
   return found
 }
 
-/** The names a class lists in `@PinnedMethods(...)`, each as written. */
+/** Marks a class decorated with `@PinnedAll()`: every own method is pinned. */
+const EVERY = '*'
+
+/** The names a class lists in `@PinnedMethods(...)`, each as written, or `EVERY` for `@PinnedAll()`. */
 function pinnedNames(text: string): Set<string> {
   const found = new Set<string>()
   const source = ts.createSourceFile('x.ts', text, ts.ScriptTarget.Latest, true)
@@ -145,6 +146,8 @@ function pinnedNames(text: string): Set<string> {
     if (ts.isClassDeclaration(node)) {
       for (const decorator of ts.getDecorators(node) ?? []) {
         const call = decorator.expression
+        if (ts.isCallExpression(call) && call.expression.getText(source) === 'PinnedAll')
+          found.add(EVERY)
         if (ts.isCallExpression(call) && call.expression.getText(source) === 'PinnedMethods')
           for (const argument of call.arguments)
             if (ts.isStringLiteral(argument)) found.add(argument.text)
@@ -156,15 +159,13 @@ function pinnedNames(text: string): Set<string> {
   return found
 }
 
-const WRAPPERS = ['pinned', 'awaiting', 'checked']
-
 /** A program over the decision files, so the type of every returned expression is the compiler's and not a guess from its text. */
 function programOf(files: string[]): { program: ts.Program; checker: ts.TypeChecker } {
   const root = join(SERVER, '..', '..')
   const config = ts.readConfigFile(join(root, 'tsconfig.json'), ts.sys.readFile)
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root)
   const program = ts.createProgram(
-    files.map((file) => join(SERVER, file)),
+    files.map((file) => (isAbsolute(file) ? file : join(SERVER, file))),
     parsed.options
   )
   return { program, checker: program.getTypeChecker() }
@@ -211,13 +212,12 @@ function nullPrototypeBox(expression: ts.Expression, checker: ts.TypeChecker): b
   )
 }
 
-/** Whether the expression is a call of one of the wrappers that pin or check what is returned. */
-function wrapperOf(node: ts.Expression): boolean {
-  return (
-    ts.isCallExpression(node) &&
-    ts.isIdentifier(node.expression) &&
-    WRAPPERS.includes(node.expression.text)
-  )
+/** Whether the expression is `checked(...)` around something that is not a promise: the only wrapper a `return` may carry. */
+function checkedValue(node: ts.Expression, checker: ts.TypeChecker): boolean {
+  if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return false
+  if (node.expression.text !== 'checked') return false
+  const argument = node.arguments[0]
+  return argument !== undefined && !isPromiseLike(checker.getTypeAtLocation(argument))
 }
 
 interface Returns {
@@ -245,7 +245,7 @@ function scanReturns(source: ts.SourceFile, checker: ts.TypeChecker, controller:
       judge(expression.whenFalse, waited)
       return
     }
-    if (wrapperOf(expression)) return
+    if (checkedValue(expression, checker)) return
     if (nullPrototypeBox(expression, checker)) return
     const type = checker.getTypeAtLocation(expression)
     if (ts.isAwaitExpression(expression)) {
@@ -285,6 +285,40 @@ function scanReturns(source: ts.SourceFile, checker: ts.TypeChecker, controller:
   return found
 }
 
+/**
+ * The public methods of an `@Injectable` class that return a promise (`async`, or declared `Promise<...>`) and that nothing pins:
+ * the class carries no `@PinnedAll()`, does not list the method in `@PinnedMethods(...)` and the method has no `@Pinned()`.
+ * The host awaits what a service returns after the last statement of the service ran, so every such method is held to the pin.
+ */
+function unpinnedPublic(text: string): string[] {
+  const found: string[] = []
+  const source = ts.createSourceFile('x.ts', text, ts.ScriptTarget.Latest, true)
+  const pinnedByClass = pinnedNames(text)
+  const visit = (node: ts.Node): void => {
+    const injectable =
+      ts.isClassDeclaration(node) &&
+      (ts.getDecorators(node) ?? []).some((d) => d.expression.getText(source) === 'Injectable()')
+    if (injectable && !pinnedByClass.has(EVERY)) {
+      for (const member of (node as ts.ClassDeclaration).members) {
+        if (!ts.isMethodDeclaration(member) || member.body === undefined) continue
+        const modifiers = (ts.getModifiers(member) ?? []).map((m) => m.getText(source))
+        if (modifiers.includes('private') || modifiers.includes('protected')) continue
+        if (member.name.getText(source).startsWith('#')) continue
+        const returnsPromise =
+          modifiers.includes('async') || (member.type?.getText(source) ?? '').startsWith('Promise')
+        const name = member.name.getText(source)
+        const own = (ts.getDecorators(member) ?? []).some(
+          (d) => d.expression.getText(source) === 'Pinned()'
+        )
+        if (returnsPromise && !own && !pinnedByClass.has(name)) found.push(name)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return found
+}
+
 /** The async methods named in `names`, or any async `canActivate` when `names` is `canActivate`, that neither the class nor a `@Pinned()` on the method pins. */
 function undecorated(text: string, names: string[] | 'canActivate' | 'async'): string[] {
   const found: string[] = []
@@ -304,7 +338,7 @@ function undecorated(text: string, names: string[] | 'canActivate' | 'async'): s
         const ownDecorator = (ts.getDecorators(node) ?? []).some(
           (decorator) => decorator.expression.getText(source) === 'Pinned()'
         )
-        if (!pinnedByClass.has(name) && !ownDecorator) found.push(name)
+        if (!pinnedByClass.has(EVERY) && !pinnedByClass.has(name) && !ownDecorator) found.push(name)
       }
     }
     ts.forEachChild(node, visit)
@@ -322,24 +356,21 @@ describe('the promises of a decision path carry the language constructor', () =>
     expect(unpinnedAwaits(readFileSync(join(SERVER, file), 'utf8'))).toEqual([])
   })
 
-  // Scenario: every server source. Expected: a `.then`, `.catch` or `.finally` chain only where the file is listed as detached.
-  // Why: a chain reads `then` of the promise it is called on, which a plant on the prototype answers for.
-  it.each(DECISION_FILES)('%s keeps no chain on a promise unless it is detached', (file) => {
-    const found = chains(readFileSync(join(SERVER, file), 'utf8'))
-    expect(CHAINS[file] === undefined ? found : []).toEqual([])
+  // Scenario: every server source. Expected: no `.then`, `.catch` or `.finally` chain, detached work included.
+  // Why: a chain reads `then` of the promise it is called on and builds another through its species, so a throwing species makes the
+  // chain itself throw, and the failure of the work it was meant to swallow is left unhandled. Detached work is an `async` function
+  // with a `try` around a pinned `await` (`detached` in `utils/settle`).
+  it.each(DECISION_FILES)('%s keeps no chain on a promise', (file) => {
+    expect(chains(readFileSync(join(SERVER, file), 'utf8'))).toEqual([])
   })
 
   // Scenario: an exemption or a detached chain that names a file that is gone or has nothing to exempt. Expected: reported, so the
   // lists cannot grow stale and keep excusing what is no longer there.
   it('lists only sources that exist, each with a reason', () => {
     const all = serverSources()
-    const named = [...Object.entries(EXEMPT), ...Object.entries(CHAINS)]
+    const named = Object.entries(EXEMPT)
     expect(named.filter(([file]) => !all.includes(file))).toEqual([])
     expect(named.filter(([, reason]) => reason.length < 20)).toEqual([])
-    const idle = Object.keys(CHAINS).filter(
-      (file) => chains(readFileSync(join(SERVER, file), 'utf8')).length === 0
-    )
-    expect(idle).toEqual([])
   })
 
   // Scenario: the decisions that return a promise. Expected: each is decorated, so its caller's await reads the pinned constructor.
@@ -349,6 +380,30 @@ describe('the promises of a decision path carry the language constructor', () =>
       expect(undecorated(readFileSync(join(SERVER, file), 'utf8'), names)).toEqual([])
     }
   )
+
+  // Scenario: every injectable service. Expected: each public method that returns a promise is pinned for the host that awaits it.
+  // Why: a host store call can plant a one-shot `Promise.prototype.constructor` accessor while the service waits, and the caller's
+  // `await` of what the service returned is the first read of it; a method left unpinned is a decision the plant answers for.
+  it.each(DECISION_FILES.filter((file) => !file.startsWith('controllers/')))(
+    '%s pins every public method that returns a promise',
+    (file) => {
+      const found = unpinnedPublic(readFileSync(join(SERVER, file), 'utf8'))
+      expect(UNPINNED_PUBLIC[file] === undefined ? found : []).toEqual([])
+    }
+  )
+
+  // Scenario: a source listed as unpinned that has nothing left to excuse, or is gone. Expected: reported.
+  it('lists only unpinned sources that exist and still need it', () => {
+    const all = serverSources()
+    const named = Object.entries(UNPINNED_PUBLIC)
+    expect(named.filter(([file]) => !all.includes(file))).toEqual([])
+    expect(named.filter(([, reason]) => reason.length < 20)).toEqual([])
+    expect(
+      Object.keys(UNPINNED_PUBLIC).filter(
+        (file) => unpinnedPublic(readFileSync(join(SERVER, file), 'utf8')).length === 0
+      )
+    ).toEqual([])
+  })
 
   // Scenario: every guard that is async. Expected: its `canActivate` is decorated, whichever guards exist.
   it.each(DECISION_FILES.filter((file) => file.startsWith('guards/')))(
@@ -373,6 +428,37 @@ describe('the promises of a decision path carry the language constructor', () =>
   // Why: a bare `return p` resolves the function's own promise from `p`, which reads `p.then`; an object returned after an await is
   // read for `then` too, and a `then` planted while the function waited forges it (a revoked token accepted, a non-member made owner).
   describe('returns', () => {
+    // Scenario: an async function that returns a pinned, awaited or checked promise without `await`. Expected: each is reported as a
+    // bare return, and the same function with `return await` is not (C8). Why: `return pinned(p)` resolves the function's own promise
+    // from `p`, which reads `p.then`; a wrapper around the promise does not change what the return reads.
+    describe('the rule for a return of a promise', () => {
+      const fixture = [
+        'declare function pinned<T>(p: Promise<T>): Promise<T>',
+        'declare function awaiting<T>(p: Promise<T>): Promise<T>',
+        'declare function checked<T>(v: T): T',
+        'declare const work: Promise<string>',
+        'export async function a(): Promise<string> { return pinned(work) }',
+        'export async function b(): Promise<string> { return awaiting(work) }',
+        'export async function c(): Promise<string> { return checked(work) }',
+        'export async function d(): Promise<string> { return await pinned(work) }'
+      ].join('\n')
+
+      it('reports a wrapper around a promise that is returned without await', () => {
+        const file = join(mkdtempSync(join(tmpdir(), 'scan-')), 'fixture.ts')
+        writeFileSync(file, fixture)
+        const { program, checker } = programOf([file])
+        const source = program.getSourceFile(file) as ts.SourceFile
+
+        const found = scanReturns(source, checker, false).bare
+
+        expect(found).toEqual([
+          'pinned(work) (line 5)',
+          'awaiting(work) (line 6)',
+          'checked(work) (line 7)'
+        ])
+      })
+    })
+
     let scanned: Map<string, Returns>
 
     beforeAll(() => {

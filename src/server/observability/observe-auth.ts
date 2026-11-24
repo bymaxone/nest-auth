@@ -19,8 +19,7 @@ import {
 } from '@nestjs/common'
 import type { CallHandler, ExecutionContext, NestInterceptor } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
-import { from } from 'rxjs'
-import type { Observable } from 'rxjs'
+import { Observable } from 'rxjs'
 
 import { AuthMetricsTally } from './auth-metrics-tally'
 import type { LoginOutcome, MfaOutcome, RefreshOutcome } from './auth-metrics-tally'
@@ -31,6 +30,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { AuthPlane } from '../services/auth-token-verifier.service'
 import { IntrinsicPromise } from '../utils/captured-builtins'
+import { awaiting, box, checked } from '../utils/settle'
 
 /** The operations a route can be observed as. */
 export type ObservedOperation = 'login' | 'refresh' | 'mfa_verify' | 'password_reset'
@@ -126,6 +126,24 @@ function planeOf(
 }
 
 /**
+ * Hands the answer of a promise to a subscriber. Not `from(promise)`: rxjs calls the live `then` of what it is given, so the
+ * promise is waited for with `await` and the answer is delivered after that.
+ */
+function handedOn(start: () => Promise<unknown>): Observable<unknown> {
+  return new Observable((subscriber) => {
+    void (async (): Promise<void> => {
+      try {
+        const answer = await awaiting(start())
+        subscriber.next(answer)
+        subscriber.complete()
+      } catch (error) {
+        subscriber.error(error)
+      }
+    })()
+  })
+}
+
+/**
  * Counts and traces the routes marked with {@link ObserveAuth}.
  *
  * Counting is best effort and never changes what the route answers: a result or an error passes through
@@ -155,22 +173,29 @@ export class AuthObservabilityInterceptor implements NestInterceptor {
       let failure: unknown
       let failed = false
       try {
-        result = await new IntrinsicPromise((resolve, reject) => {
-          next
-            .handle()
-            .subscribe({ next: resolve, error: reject, complete: () => resolve(undefined) })
-        })
+        // The value travels in a box with no prototype: resolving a promise with an object asks it for `then`.
+        const answer = await awaiting(
+          new IntrinsicPromise<{ readonly value: unknown }>((resolve, reject) => {
+            next.handle().subscribe({
+              next: (value) => resolve(box(value)),
+              error: reject,
+              complete: () => resolve(box(undefined))
+            })
+          })
+        )
+        result = answer.value
       } catch (error) {
         failed = true
         failure = error
       }
       this.count(operation, planeOf(plane, result, failure, failed), result, failure, failed)
       if (failed) throw failure
-      return result
+      return checked(result)
     }
     // A route that learns its plane from the token has none to name when the span starts.
     const attributes = plane === 'token' ? {} : { 'bymax.auth.plane': plane }
-    return from(this.tracing.span(SPAN_NAMES[operation], attributes, run))
+    const { tracing } = this
+    return handedOn(() => tracing.span(SPAN_NAMES[operation], attributes, run))
   }
 
   /** Bumps the count for how the operation ended, when that is one of the counted outcomes. */
