@@ -490,7 +490,11 @@ export class AuthService {
     userAgent: string,
     proof?: Parameters<TokenManagerService['issueTokens']>[3]
   ): Promise<AuthResult> {
-    const result = await pinned(this.tokenManager.issueTokens(safeUser, ip, userAgent, proof))
+    const issuing =
+      proof === undefined
+        ? this.tokenManager.issueTokens(safeUser, ip, userAgent)
+        : this.tokenManager.issueTokens(safeUser, ip, userAgent, proof)
+    const result = await pinned(issuing)
     if (this.options.sessions.enabled) {
       await pinned(
         this.sessionService.createSession({
@@ -571,15 +575,12 @@ export class AuthService {
 
     // The hook names the user who was signed out, so it only fires when the session or the marker
     // told us who that was. A logout for an already-gone session has nobody to name.
-    const settle = settlePendingLogout(
-      this.redis,
-      markerKey,
-      fromSession,
-      owner,
-      markerTtl,
-      this.logger
-    )
-    if (userId !== '' && (await pinned(settle))) {
+    if (
+      userId !== '' &&
+      (await pinned(
+        settlePendingLogout(this.redis, markerKey, fromSession, owner, markerTtl, this.logger)
+      ))
+    ) {
       this.emitLogout(userId, tenantId)
     }
 

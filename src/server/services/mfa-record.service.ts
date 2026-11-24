@@ -230,27 +230,47 @@ export class MfaRecordService {
       const current = await pinned(this.loadAccount(context, userId, tenantId))
       const update = mutate(current)
       if (update === null) return false
-      // Narrowed to the repository contract rather than cast to it. `MfaRecordUpdate` widens to
-      // `undefined` because the two planes' record types differ on the read side, but both
-      // `updateMfa` contracts declare `string | null` / `string[] | null` — required, not
-      // optional. A cast let `undefined` through to a consumer repository, where an ORM that
-      // reads it as "leave this column alone" would write `mfaEnabled: false` while keeping
-      // the secret and the recovery digests: MFA reported off, and every stored factor still
-      // able to satisfy a challenge. `?? null` states the clear explicitly, and dropping the
-      // casts means the compiler checks the two contracts from here on.
-      const { mfaEnabled, mfaSecret = null, mfaRecoveryCodes = null } = update
-      const write = { mfaEnabled, mfaSecret, mfaRecoveryCodes }
-      if (context === 'platform' && this.platformUserRepo) {
-        await pinned(this.platformUserRepo.updateMfa(userId, write))
-      } else {
-        // Narrows the tenant for the dashboard write: every dashboard entry point already ran
-        // `assertPlaneTenant`, but only this form is one the type system reads.
-        assertDashboardTenant(tenantId)
-        await pinned(this.userRepo.updateMfa({ id: userId, tenantId, data: write }))
-      }
+      await pinned(this.persist(context, userId, tenantId, update))
       return true
     } finally {
       await pinned(this.releaseLock(lockKey, lockToken))
+    }
+  }
+
+  /**
+   * Writes an update inside the lock, to the repository of the plane the account belongs to.
+   *
+   * @param context - Which identity plane the account belongs to.
+   * @param userId - The account being written.
+   * @param tenantId - The account's tenant, required on the dashboard plane.
+   * @param update - What `mutate` asked to be stored.
+   */
+  private async persist(
+    context: 'dashboard' | 'platform',
+    userId: string,
+    tenantId: string | undefined,
+    update: MfaRecordUpdate
+  ): Promise<void> {
+    // Narrowed to the repository contract rather than cast to it. `MfaRecordUpdate` widens to
+    // `undefined` because the two planes' record types differ on the read side, but both
+    // `updateMfa` contracts declare `string | null` / `string[] | null` — required, not
+    // optional. A cast let `undefined` through to a consumer repository, where an ORM that
+    // reads it as "leave this column alone" would write `mfaEnabled: false` while keeping
+    // the secret and the recovery digests: MFA reported off, and every stored factor still
+    // able to satisfy a challenge. `?? null` states the clear explicitly, and dropping the
+    // casts means the compiler checks the two contracts from here on.
+    const write = {
+      mfaEnabled: update.mfaEnabled,
+      mfaSecret: update.mfaSecret ?? null,
+      mfaRecoveryCodes: update.mfaRecoveryCodes ?? null
+    }
+    if (context === 'platform' && this.platformUserRepo) {
+      await pinned(this.platformUserRepo.updateMfa(userId, write))
+    } else {
+      // Narrows the tenant for the dashboard write: every dashboard entry point already ran
+      // `assertPlaneTenant`, but only this form is one the type system reads.
+      assertDashboardTenant(tenantId)
+      await pinned(this.userRepo.updateMfa({ id: userId, tenantId, data: write }))
     }
   }
 

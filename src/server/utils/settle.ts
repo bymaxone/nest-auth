@@ -35,9 +35,6 @@ import { assertRootIsStandard } from './object-prototype-guard'
 /** The language's own constructor, so neither a replaced global nor a library bound to it before load chooses what the deadline builds. */
 const CapturedPromise = IntrinsicPromise
 
-/** Takes no action: it only marks a rejection as handled. */
-function ignore(): void {}
-
 const isNativePromise = types.isPromise
 
 /**
