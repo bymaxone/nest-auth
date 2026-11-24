@@ -9,6 +9,7 @@
 import { resolveOptions } from '../../config/resolved-options'
 import { mappingOutages } from '../../redis/redis-outage'
 import { AuthRevocationService } from '../auth-revocation.service'
+import { AuthTokenVerifierService } from '../auth-token-verifier.service'
 import { WorkspaceAccessService } from '../workspace-access.service'
 
 const scenario = process.env['SCENARIO'] ?? ''
@@ -141,6 +142,57 @@ function failingRead(): Promise<never> {
   return Promise.reject(new Error('the store failed'))
 }
 
+/** Host code that runs while the library waits: it plants a then that erases itself and answers `value`, and the wait ends after it. */
+function waitWhilePlanting(value: unknown): Promise<void> {
+  setTimeout(() => {
+    plantOn(Object.prototype, value)
+  }, 10)
+  return new Promise((resolve) => setTimeout(resolve, 30))
+}
+
+/**
+ * The membership of an editor, read after host code planted a then answering an owner. The row has no prototype, so resolving the
+ * read with it does not ask it for the `then` that is meant for the library's own return.
+ */
+function lateMembership(): Promise<unknown> {
+  return waitWhilePlanting({ kind: 'member', member: { ...ref, role: 'owner' } }).then(() =>
+    Object.assign(Object.create(null) as object, {
+      ...ref,
+      role: 'editor',
+      status: 'active',
+      invitedByUserId: null,
+      createdAt: new Date(0),
+      updatedAt: new Date(0)
+    })
+  )
+}
+
+const JTI = '3f2504e0-4f89-41d3-9a0c-0305e82c3301'
+const identity = {
+  jti: JTI,
+  sub: 'user-1',
+  tenantId: 't1',
+  role: 'member',
+  type: 'dashboard',
+  status: 'active',
+  mfaEnabled: false,
+  mfaVerified: false,
+  epoch: 1,
+  iat: 1,
+  exp: 2
+}
+const platformIdentity = { ...identity, sub: 'admin-1', type: 'platform', tenantId: undefined }
+
+/** A verifier whose account status check is the host code that plants the then, and that answers the token's own payload. */
+function verifier(payload: object, stall: () => Promise<void>): AuthTokenVerifierService {
+  return new AuthTokenVerifierService(
+    { verify: () => ({ ...payload }) } as never,
+    { jwt: { algorithm: 'HS256', issuer: 'iss', audience: 'aud', previousSecrets: [] } } as never,
+    { isAccessTokenRevoked: () => Promise.resolve(false) } as never,
+    { assertDashboardAccountUsable: stall, assertPlatformAccountUsable: stall } as never
+  )
+}
+
 const service = new WorkspaceAccessService(
   { eval: () => Promise.resolve(null) } as never,
   workspaces as never,
@@ -153,7 +205,34 @@ const showAccess = (answer: unknown): unknown =>
     ? `member:${(answer as { member: { role: string } }).member.role}`
     : (answer as { kind: string }).kind
 
-if (scenario === 'revoked-token') {
+const showToken = (answer: unknown): unknown =>
+  `verified:${(answer as { payload: { sub: string } }).payload.sub}`
+
+if (scenario === 'late-dashboard' || scenario === 'late-platform') {
+  const plane = scenario === 'late-dashboard' ? 'dashboard' : 'platform'
+  const forgedToken = {
+    plane,
+    payload: { ...(plane === 'dashboard' ? identity : platformIdentity), sub: 'attacker' }
+  }
+  const subject = verifier(plane === 'dashboard' ? identity : platformIdentity, () =>
+    waitWhilePlanting(forgedToken)
+  )
+  settle(subject.verifyAccessToken('token', { plane }), showToken)
+} else if (scenario === 'late-job') {
+  const job = new WorkspaceAccessService(
+    { eval: () => Promise.resolve(null) } as never,
+    workspaces as never,
+    { find: () => lateMembership() } as never,
+    options,
+    { assertDashboardAccountUsableNow: () => Promise.resolve() } as never
+  )
+  settle(
+    job.assertStillAuthorized({ tenantId: 't1', workspaceId: 'w1', actorUserId: 'attacker' }, [
+      'editor'
+    ]),
+    (answer) => `member:${(answer as { role: string }).role}`
+  )
+} else if (scenario === 'revoked-token') {
   const revocation = new AuthRevocationService({
     get: () => Promise.resolve('1'),
     getUserTokenEpoch: () => Promise.resolve(0)

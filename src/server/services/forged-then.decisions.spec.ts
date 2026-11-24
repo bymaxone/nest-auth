@@ -76,6 +76,21 @@ describe('a decision made while a host forges what a promise answers', () => {
     expect(run('late', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
   })
 
+  // Scenario: the status check of an account is the host's code, and it plants a then that answers another subject while the library
+  // waits for it. Expected: refused with auth.internal, never the payload of someone else. Why: the verified token is an object.
+  it.each(['late-dashboard', 'late-platform'])(
+    'refuses a verified token read for a then planted during the wait (%s)',
+    (scenario) => {
+      expect(run(scenario, file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
+    }
+  )
+
+  // Scenario: a queued job re-checks its actor and the membership read plants a then that answers an owner. Expected: refused, not
+  // the owner the then answers, for the editor the repository holds.
+  it('refuses the member of a job read for a then planted during the wait', () => {
+    expect(run('late-job', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
+  })
+
   // Scenario: a `then` on the root object, or on functions, before the call. Expected: refused at the entry.
   it.each(['object', 'function'])('refuses a then planted on %s before the call', (scenario) => {
     expect(run(scenario, file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
