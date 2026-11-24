@@ -35,6 +35,7 @@ if (constructorSlot === undefined || !hasOwn(constructorSlot, 'value'))
     "[BymaxAuthModule] the constructor of Promise is an accessor; the module does not start while the runtime's promises are not its own."
   )
 
+/** The language-native `Promise` constructor, captured from the prototype's own data slot, not the replaceable global binding. */
 export const IntrinsicPromise = constructorSlot.value as PromiseConstructor
 
 // The constructor is read from a slot a host can have replaced before this module loaded. The language's own constructor and its prototype
