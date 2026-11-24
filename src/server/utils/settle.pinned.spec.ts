@@ -127,6 +127,55 @@ describe('pinned', () => {
     expect(() => Object.defineProperty(promise, 'constructor', { value: Array })).toThrow(TypeError)
   })
 
+  // Scenario: the host's own constructor is a changeable accessor. Expected: the pin replaces it and its getter never runs.
+  it('replaces an own constructor accessor the host left changeable without running it', () => {
+    const promise = Promise.resolve(1)
+    let reads = 0
+    Object.defineProperty(promise, 'constructor', {
+      get: () => {
+        reads += 1
+        return Array
+      },
+      configurable: true
+    })
+
+    expect(pinned(promise).constructor).toBe(Promise)
+    expect(reads).toBe(0)
+  })
+
+  // Scenario: the host's permanent own constructor already is the language's. Expected: nothing to refuse, the promise is kept.
+  it("keeps a promise whose permanent own constructor is the language's", () => {
+    const promise = Promise.resolve(1)
+    Object.defineProperty(promise, 'constructor', { value: Promise, writable: false })
+
+    expect(pinned(promise)).toBe(promise)
+  })
+
+  // Scenario: the promise carries its own `then`, a function that answers another value and an accessor that throws. Expected: the
+  // awaited answer is the real one and neither is called or read. Why: a native await of a promise whose constructor is the language's
+  // takes its state directly and never asks for `then`.
+  it('is awaited without calling or reading an own then of the host', async () => {
+    let touched = 0
+    const answering = Promise.resolve('real')
+    Object.defineProperty(answering, 'then', {
+      value: (resolve: (value: string) => void): void => {
+        touched += 1
+        resolve('forged')
+      }
+    })
+    const throwing = Promise.resolve('real')
+    Object.defineProperty(throwing, 'then', {
+      get: (): never => {
+        touched += 1
+        throw new Error('then read')
+      }
+    })
+
+    expect(await pinned(answering)).toBe('real')
+    expect(await pinned(throwing)).toBe('real')
+    expect(touched).toBe(0)
+  })
+
   // Scenario: the constructor of promises watched while a pinned promise is awaited. Expected: it is never read for that promise.
   // Why: the read is what a replaced constructor answers; the own property is found first.
   it('is awaited without reading the constructor of promises', async () => {
