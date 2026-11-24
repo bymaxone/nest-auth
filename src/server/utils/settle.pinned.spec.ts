@@ -125,9 +125,9 @@ describe('pinned', () => {
   })
 
   // Scenario: the permanent own constructor is an accessor that throws, on a promise that rejects. Expected: the refusal is the
-  // library's and the host's error does not leave the pin. Why: attaching the handler reads the species once, after the decision to
-  // refuse, so what that read does cannot change the outcome. A promise whose constructor throws cannot take a handler at all, so its
-  // rejection stays the host's own.
+  // library's and the host's error does not leave the pin. This proves only that: the rejection is handled by the test beforehand,
+  // because no code can attach a handler to such a promise (every route reads `constructor` first), so without that line its
+  // rejection would stay unhandled, and it is the host's own.
   it('refuses with its own error when the accessor constructor throws on the handler read', async () => {
     const promise = Promise.reject(new Error('rejected'))
     promise.catch(() => undefined)

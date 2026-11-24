@@ -60,7 +60,7 @@ export function pinned<P>(promise: P): P {
     try {
       defineKey(promise, 'constructor', own)
     } catch (error: unknown) {
-      // The caller is about to refuse this promise and will never await it, so its rejection is heard here, or it is reported as unhandled.
+      // The caller is about to refuse this promise and will never await it, so a handler is attached here when one can be: see `hear`.
       hear(promise)
       // The engine's own TypeError is not what a caller is told: a promise that refuses the pin is refused as `auth.internal`.
       throw refusedOr(error, AUTH_ERROR_CODES.INTERNAL)
@@ -80,6 +80,10 @@ function rootConstructorIsIntact(): boolean {
  * attaches it without reading `then` or the species, but it reads `constructor` first, and a slot that is not the language's own
  * data property (a getter, a replaced value) can plant a `then` in that read, so then the language's `then` is used. A promise that
  * holds a constructor of its own (permanent, and not the language's) goes the same way: `await` would use the `then` it holds.
+ *
+ * Known limit: every route that attaches a handler (`then`, `await`, `Promise.resolve`) reads `constructor` first, so a promise whose
+ * own constructor is a getter that throws cannot take one. The refusal is still the library's own error; that promise's rejection
+ * stays unhandled and is the host's, who made it.
  */
 function hear(work: object): void {
   if (getDescriptor(work, 'constructor') !== undefined || !rootConstructorIsIntact()) {
@@ -107,7 +111,8 @@ function listen(work: object): void {
 /**
  * Marks a promise's rejection as handled, before anything else can refuse. A call the root check refuses would otherwise leave a
  * rejecting `work` with no handler, and an unhandled rejection ends the process. A value that is not a native promise has nothing to
- * mark. A promise the pin refuses has already been given its handler by the pin.
+ * mark. A promise the pin refuses has already been offered its handler by the pin, which cannot attach one to a promise whose own
+ * constructor throws when read: see `hear`.
  */
 export function markHandled(work: unknown): void {
   if (!isNativePromise(work)) return
