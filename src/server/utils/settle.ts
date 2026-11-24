@@ -34,7 +34,7 @@ function ignore(): void {}
  * refuses would otherwise leave a rejecting `work` with no handler, and an unhandled rejection ends the process. A value that is
  * not a native promise has nothing to mark.
  */
-function quiet(work: unknown): void {
+export function markHandled(work: unknown): void {
   try {
     applyFunction(intrinsicThen, work, [ignore, ignore])
   } catch {
@@ -89,7 +89,7 @@ export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
  */
 export function started<T>(work: PromiseLike<T> | T): Promise<Settled<T>> {
   return (async (): Promise<Settled<T>> => {
-    quiet(work)
+    markHandled(work)
     try {
       assertRootIsStandard()
       return box(await work)
@@ -100,21 +100,38 @@ export function started<T>(work: PromiseLike<T> | T): Promise<Settled<T>> {
 }
 
 /**
- * Waits for every call, in order, and answers their values in that order. The calls run together because each one was started
- * before the first is awaited; the first rejection in the order is the one that is thrown, after the calls before it settled.
+ * Waits for every call and answers their values in the order of the list. The calls run together because each one is started
+ * before any is awaited, and the first failure settles the answer at once, as `Promise.all` did: a call that never settles
+ * does not hold back the failure of another.
  *
  * @param calls - The calls, already started.
- * @returns Their values, boxed. The promise never rejects: reading `.value` throws the reason of the first call in the list that
- * rejected, after the calls before it settled.
+ * @returns Their values, boxed. The promise never rejects: reading `.value` throws the reason of the first call that failed.
  */
 export async function allOf<T>(calls: readonly (PromiseLike<T> | T)[]): Promise<Settled<T[]>> {
   try {
     const pending: Promise<Settled<T>>[] = []
     for (let index = 0; index < calls.length; index += 1) pending.push(started(calls[index] as T))
-    const values: T[] = []
-    for (let index = 0; index < pending.length; index += 1)
-      values.push((await awaiting(pending[index] as Promise<Settled<T>>)).value)
-    return box(values)
+    const everyone = new CapturedPromise<Settled<T[]>>((resolve) => {
+      const values: T[] = []
+      let remaining = pending.length
+      if (remaining === 0) resolve(box(values))
+      for (let index = 0; index < pending.length; index += 1) {
+        applyFunction(intrinsicThen, pending[index], [
+          (answer: Settled<T>): void => {
+            try {
+              values[index] = answer.value
+            } catch (error: unknown) {
+              resolve(failed(error))
+              return
+            }
+            remaining -= 1
+            if (remaining === 0) resolve(box(values))
+          },
+          ignore
+        ])
+      }
+    })
+    return await awaiting(everyone)
   } catch (error: unknown) {
     return failed(error)
   }
@@ -144,7 +161,7 @@ export async function withDeadline<T>(
     const run = async (): Promise<void> => {
       try {
         const answer = work()
-        quiet(answer)
+        markHandled(answer)
         assertRootIsStandard()
         resolve(box(await answer))
       } catch (error: unknown) {

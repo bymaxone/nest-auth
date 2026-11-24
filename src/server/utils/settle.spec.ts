@@ -95,26 +95,24 @@ describe('allOf', () => {
     expect((await all).value).toEqual([1, 2])
   })
 
-  // Scenario: the second call rejects before the first settles. Expected: no unhandled rejection, and that rejection once the
-  // first is done.
-  it('keeps a rejection of a later call until its turn', async () => {
+  // Scenario: the second call rejects while the first never settles. Expected: that rejection at once, with no unhandled rejection.
+  // Why: `Promise.all` rejected on the first failure, and a read that hangs must not hold back the failure of another.
+  it('rejects as soon as a call fails, without waiting for an earlier one', async () => {
     const unhandled = jest.fn()
     process.on('unhandledRejection', unhandled)
     try {
       const first = deferred<number>()
       const all = allOf([first.promise, Promise.reject(new Error('second'))])
-      const outcome = expect(unbox(all)).rejects.toThrow('second')
-      await new Promise((done) => setImmediate(done))
-      first.resolve(1)
 
-      await outcome
+      await expect(unbox(all)).rejects.toThrow('second')
+      await new Promise((done) => setImmediate(done))
       expect(unhandled).not.toHaveBeenCalled()
     } finally {
       process.off('unhandledRejection', unhandled)
     }
   })
 
-  // Scenario: two calls that reject. Expected: the first in the list is the one thrown.
+  // Scenario: two calls that reject. Expected: the one that failed first is the one thrown.
   it('throws the first rejection in the order of the list', async () => {
     const all = allOf([Promise.reject(new Error('first')), Promise.reject(new Error('second'))])
 

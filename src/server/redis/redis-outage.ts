@@ -14,6 +14,7 @@ import type { Redis } from 'ioredis'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
+import { markHandled } from '../utils/settle'
 
 /**
  * Why Redis did not answer.
@@ -125,6 +126,7 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  * `then` of the promise it was given: every answer of the store passes here, so a replaced `then` would answer for all of them.
  */
 async function mappingOutage(result: PromiseLike<unknown>): Promise<unknown> {
+  markHandled(result)
   try {
     assertRootIsStandard()
     return await result

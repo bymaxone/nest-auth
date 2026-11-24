@@ -7,6 +7,7 @@
  */
 
 import { resolveOptions } from '../../config/resolved-options'
+import { mappingOutages } from '../../redis/redis-outage'
 import { AuthRevocationService } from '../auth-revocation.service'
 import { WorkspaceAccessService } from '../workspace-access.service'
 
@@ -182,6 +183,12 @@ if (scenario === 'revoked-token') {
         : Function.prototype
   plantOn(holder, forgedPair)
   settle(service.resolveAccess(ref), showAccess)
+} else if (scenario === 'redis') {
+  // A client whose command fails after the root was compromised: the proxy refuses, and the command's rejection must stay handled.
+  const client = mappingOutages({
+    get: (): Promise<never> => failingRead()
+  } as never) as unknown as { get: () => Promise<unknown> }
+  settle(client.get(), () => 'answered')
 } else if (scenario === 'mid-read' || scenario === 'unhandled') {
   settle(service.resolveAccess(ref), showAccess)
 } else {

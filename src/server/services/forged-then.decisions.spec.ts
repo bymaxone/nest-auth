@@ -85,4 +85,10 @@ describe('a decision made while a host forges what a promise answers', () => {
   it('leaves no rejection unhandled when it refuses a read that failed', () => {
     expect(run('unhandled', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
   })
+
+  // Scenario: every command of the store passes through the outage proxy, and one fails while the root is compromised. Expected: refused,
+  // and no unhandled rejection from the command the proxy had already issued.
+  it('leaves no rejection unhandled when the outage proxy refuses a command that failed', () => {
+    expect(run('redis', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
+  })
 })
