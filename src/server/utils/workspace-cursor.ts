@@ -1,3 +1,4 @@
+import { parseJson, stringifyJson } from './captured-builtins'
 /**
  * @fileoverview The keyset cursor codec of the workspace lists: the key a cursor is bound to, the
  * position of a row in a list's order, and the opaque cursor that carries both between pages.
@@ -89,7 +90,7 @@ export function isWorkspaceOwnerRole(role: string): boolean {
  * @returns The unambiguous key.
  */
 export function workspaceQueryKey(...parts: readonly string[]): string {
-  return JSON.stringify(parts)
+  return stringifyJson(parts)
 }
 
 /**
@@ -171,7 +172,7 @@ function whyUnreadable(position: string): string | undefined {
  */
 function keyParts(query: string): { index: number; length: number }[] {
   try {
-    const parsed: unknown = JSON.parse(query)
+    const parsed: unknown = parseJson(query)
     if (!Array.isArray(parsed)) return []
     return parsed.map((part: unknown, index) => ({
       index: index + 1,
@@ -203,7 +204,7 @@ export function encodeWorkspaceCursor(query: string, position: string): string {
         'page, so the cursor could never be followed'
     )
   }
-  const cursor = Buffer.from(JSON.stringify([query, position])).toString('base64url')
+  const cursor = Buffer.from(stringifyJson([query, position])).toString('base64url')
   if (cursor.length > WORKSPACE_CURSOR_MAX_LENGTH) {
     throw new RangeError(
       `workspace cursor is ${cursor.length} characters, over the ${WORKSPACE_CURSOR_MAX_LENGTH} ` +
@@ -235,7 +236,7 @@ export function encodeWorkspaceCursor(query: string, position: string): string {
 export function decodeWorkspaceCursor(cursor: unknown, query: string): string | undefined {
   if (typeof cursor !== 'string' || cursor.length > WORKSPACE_CURSOR_MAX_LENGTH) return undefined
   try {
-    const parsed: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+    const parsed: unknown = parseJson(Buffer.from(cursor, 'base64url').toString('utf8'))
     // Stryker disable next-line ConditionalExpression: equivalent. Each operand only brings the refusal forward: a pair of another shape either fails to destructure, leaves `position` undefined for the string check below, or re-encodes to different bytes in the last step.
     if (!Array.isArray(parsed) || parsed.length !== 2) return undefined
     const [issuedFor, position] = parsed as unknown[]
@@ -244,7 +245,7 @@ export function decodeWorkspaceCursor(cursor: unknown, query: string): string | 
     if (whyUnreadable(position) !== undefined) return undefined
     // Only the encoder's own bytes read: whitespace, escapes, a byte order mark, invalid UTF-8 and
     // any other spelling of the same pair re-encode to something else.
-    return Buffer.from(JSON.stringify([query, position])).toString('base64url') === cursor
+    return Buffer.from(stringifyJson([query, position])).toString('base64url') === cursor
       ? position
       : undefined
   } catch {

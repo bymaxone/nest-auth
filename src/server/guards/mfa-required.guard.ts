@@ -7,6 +7,7 @@ import { SKIP_MFA_KEY } from '../decorators/skip-mfa.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 /**
  * Enforces MFA verification on protected routes.
@@ -54,6 +55,7 @@ export class MfaRequiredGuard implements CanActivate {
   constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    assertRootIsStandard()
     // Check whether the handler or controller is decorated with @SkipMfa().
     // getAllAndOverride checks handler first, then class — handler takes precedence.
     const skipMfa = this.reflector.getAllAndOverride<boolean>(SKIP_MFA_KEY, [

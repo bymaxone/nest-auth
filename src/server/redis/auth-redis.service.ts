@@ -15,6 +15,7 @@ import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
 import { sessionIndexKey, tokenEpochKey } from '../constants/user-keys'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
+import { parseJson, stringifyJson } from '../utils/captured-builtins'
 
 /**
  * Entropy of a freshly-minted WebSocket ticket, in bytes (256-bit, like the opaque refresh
@@ -669,7 +670,7 @@ export class AuthRedisService {
   private async familyIsAlive(sessionJson: string, familyPrefix: string): Promise<boolean> {
     let familyId: unknown
     try {
-      familyId = (JSON.parse(sessionJson) as Record<string, unknown>)['familyId']
+      familyId = (parseJson(sessionJson) as Record<string, unknown>)['familyId']
     } catch {
       // Deliberately swallowed: a malformed record names no family, so there is nothing to
       // check, and it is rejected downstream by the session parser with its own warning.
@@ -756,7 +757,7 @@ export class AuthRedisService {
       if (record === null) continue
       let parsed: Record<string, unknown> | undefined
       try {
-        parsed = JSON.parse(record) as Record<string, unknown>
+        parsed = parseJson(record) as Record<string, unknown>
       } catch {
         // Deliberately swallowed: an unreadable member names no owner, and the next member
         // may still name one. The guard below rejects the undefined that leaves here.
@@ -1044,8 +1045,7 @@ export class AuthRedisService {
     // `Number(null)` is 0, which is exactly the "never bumped" default, so an absent key needs
     // no branch of its own. Anything that is not a whole number — a corrupt value, a float —
     // reads as 0 too: comparing a stamped epoch against NaN is always false, which would
-    // silently disable bulk revocation for that user. A negative value clamps up for the same
-    // reason.
+    // silently disable bulk revocation for that user. A negative value clamps up for the same reason.
     const parsed = Number(raw)
     return Number.isInteger(parsed) ? Math.max(0, parsed) : 0
   }
@@ -1077,7 +1077,7 @@ export class AuthRedisService {
     const raw = await this.get(key)
     if (raw === null) return none
     try {
-      const parsed: unknown = JSON.parse(raw)
+      const parsed: unknown = parseJson(raw)
       // Stryker disable next-line ConditionalExpression,LogicalOperator: defensive shape guard
       // fully masked by what follows — a scalar reads `['userId']` as `undefined` and fails the
       // string test, and `null` throws on the index and is caught below. Every mutant of it
@@ -1166,7 +1166,7 @@ export class AuthRedisService {
    */
   async mintWsTicket(snapshot: WsTicketSnapshot, ttlSeconds: number): Promise<string> {
     const ticket = generateSecureToken(WS_TICKET_ENTROPY_BYTES)
-    await this.set(`wst:${sha256(ticket)}`, JSON.stringify(snapshot), ttlSeconds)
+    await this.set(`wst:${sha256(ticket)}`, stringifyJson(snapshot), ttlSeconds)
     return ticket
   }
 
@@ -1184,7 +1184,7 @@ export class AuthRedisService {
     const raw = await this.getdel(`wst:${sha256(ticket)}`)
     if (raw === null) return null
     try {
-      const parsed: unknown = JSON.parse(raw)
+      const parsed: unknown = parseJson(raw)
       return isWsTicketSnapshot(parsed) ? parsed : null
     } catch {
       // A stored value that will not parse is a corrupted record, not a valid ticket. It has

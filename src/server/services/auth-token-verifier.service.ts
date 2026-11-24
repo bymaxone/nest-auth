@@ -26,6 +26,7 @@ import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-
 import type { WorkspaceRoleList } from '../interfaces/workspace-options.interface'
 import { assertTenantBinding, tenantBindingEnforced } from '../utils/assert-tenant-binding'
 import type { HandshakeLike } from '../utils/handshake-request'
+import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
@@ -389,6 +390,7 @@ export class AuthTokenVerifierService {
         workspaceId,
         userId: payload.sub
       })
+      assertRootIsStandard()
       const decide = (): CurrentWorkspaceContext =>
         assertWorkspaceAccess(
           resolved,
@@ -483,8 +485,8 @@ export class AuthTokenVerifierService {
   private verifySignature<T extends object>(token: string): T {
     try {
       return verifyWithRotation<T>(this.jwtService, this.options, token)
-    } catch {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    } catch (error) {
+      throw refusedOr(error, AUTH_ERROR_CODES.TOKEN_INVALID)
     }
   }
 

@@ -4,6 +4,7 @@
  * @layer Utility
  */
 
+import { assertRootIsStandard } from './object-prototype-guard'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import type { AuthErrorCode } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -49,6 +50,8 @@ const BLOCKED_STATUS_CODES = new Map<string, AuthErrorCode>([
  * @throws {@link AuthException} with the matching status code and HTTP 403.
  */
 export function assertNotBlocked(status: string, blockedStatuses: readonly string[]): void {
+  // Called after the lookup of the account by every flow that gates on its status, so the check sits here and not in each of them.
+  assertRootIsStandard()
   const canonical = status.toLowerCase()
 
   if (!blockedStatuses.some((blocked) => blocked.toLowerCase() === canonical)) {

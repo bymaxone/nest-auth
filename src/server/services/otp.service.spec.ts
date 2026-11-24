@@ -93,7 +93,7 @@ describe('OtpService', () => {
     // Verifies that small random values are left-padded with zeros to maintain the specified length.
     it('should pad with leading zeros when the number is small', () => {
       // Mock randomInt to return 42 → padded to '000042' for length 6
-      jest.spyOn(require('node:crypto'), 'randomInt').mockReturnValueOnce(42)
+      jest.spyOn(require('../crypto/captured-crypto'), 'randomInt').mockReturnValueOnce(42)
       expect(service.generate(6)).toBe('000042')
     })
   })

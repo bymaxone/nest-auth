@@ -23,6 +23,7 @@
 
 import type { Logger } from '@nestjs/common'
 
+import { isRefusal } from './object-prototype-guard'
 import { sleep } from './sleep'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -99,11 +100,27 @@ export async function answerResetRequest(
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
   }
 
+  const issued = await issueQuietly(logger, request, account)
+  if (issued.failed) await releaseCooldown()
+  await holdFloor()
+  // The refusal of the runtime is raised last, after the cooldown was released and the floor was held.
+  if (issued.refusal !== undefined) throw issued.refusal
+}
+
+/**
+ * Issues the reset for an account that may receive one. A failure is logged and reported, never raised: the answer must not depend
+ * on it. The refusal of the runtime is reported apart, because it is raised once the floor has been paid.
+ */
+async function issueQuietly(
+  logger: Logger,
+  request: ResetRequest,
+  account: { id: string; status: string } | null
+): Promise<{ failed: boolean; refusal: unknown }> {
   try {
     if (account && !request.isBlocked(account.status)) await request.issue(account.id)
+    return { failed: false, refusal: undefined }
   } catch (err: unknown) {
-    logStore(logger, 'AUTH_STORE_FAILED', 'reset_issue', err)
-    await releaseCooldown()
+    if (!isRefusal(err)) logStore(logger, 'AUTH_STORE_FAILED', 'reset_issue', err)
+    return { failed: true, refusal: isRefusal(err) ? err : undefined }
   }
-  await holdFloor()
 }

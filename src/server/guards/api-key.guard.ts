@@ -24,6 +24,7 @@ import type {
 import { logEvent, logHook, logStore } from '../observability/log-event'
 import { ApiKeyVerifierService } from '../services/api-key-verifier.service'
 import { resolveClientAddress } from '../utils/client-address'
+import { assertRootIsStandard, rethrowRefusal } from '../utils/object-prototype-guard'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
 /** A request after this guard admitted it. */
@@ -79,11 +80,13 @@ export class ApiKeyGuard implements CanActivate {
     try {
       verdict = await this.verifier.verify(request.headers[this.options.apiKeys.header])
     } catch (err: unknown) {
+      rethrowRefusal(err)
       logStore(this.logger, 'AUTH_STORE_FAILED', 'api_key_lookup', err)
       await this.audit(request, { ...base, outcome: 'denied', reason: 'store_error' })
       throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
     }
 
+    assertRootIsStandard()
     if (!verdict.ok) {
       await this.audit(request, { ...base, outcome: 'denied', reason: verdict.reason }, verdict.key)
       throw new AuthException(AUTH_ERROR_CODES.API_KEY_INVALID)
@@ -96,6 +99,7 @@ export class ApiKeyGuard implements CanActivate {
     }
 
     const delivered = await this.audit(request, { ...base, outcome: 'allowed', reason: null }, key)
+    assertRootIsStandard()
     // `required` audit mode: a request whose audit row could not be written is not admitted.
     if (!delivered) throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
 

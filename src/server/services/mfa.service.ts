@@ -28,6 +28,7 @@ import type { IPlatformUserRepository } from '../interfaces/platform-user-reposi
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { stringifyJson } from '../utils/captured-builtins'
 import { notifyMfaChange } from '../utils/mfa-notify'
 import { assertPlaneTenant } from '../utils/mfa-plane-tenant'
 import { DEFAULT_RECOVERY_CODE_COUNT, generateRecoveryCodes } from '../utils/mfa-recovery-codes'
@@ -220,10 +221,10 @@ export class MfaService {
     const encryptedSecret = encryptMfaSecret(secretBase32, this.mfaOptions)
     const recoveryCount = this.mfaOptions.recoveryCodeCount ?? DEFAULT_RECOVERY_CODE_COUNT
     const { plainCodes, hashedCodes } = generateRecoveryCodes(recoveryCount, this.options.hmacKey)
-    const encryptedPlainCodes = encrypt(JSON.stringify(plainCodes), this.mfaOptions.encryptionKey)
+    const encryptedPlainCodes = encrypt(stringifyJson(plainCodes), this.mfaOptions.encryptionKey)
 
     const setupData: MfaSetupData = { encryptedSecret, hashedCodes, encryptedPlainCodes }
-    const payload = JSON.stringify(setupData)
+    const payload = stringifyJson(setupData)
 
     const wasSet = await this.redis.setIfAbsent(setupKey, payload, MFA_SETUP_TTL_SECONDS)
 

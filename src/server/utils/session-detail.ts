@@ -9,6 +9,7 @@
  * @layer Utils
  */
 
+import { stringifyJson } from './captured-builtins'
 import type { SessionExtra } from '../redis/create-session-script'
 
 /** The longest IP, and on the platform plane the longest device text, kept in a detail record. */
@@ -68,7 +69,7 @@ export function parseUserAgent(ua: string): string {
  * @returns The JSON string stored under `sd:{hash}`.
  */
 export function dashboardSessionDetail(ip: string, userAgent: string, now: number): string {
-  return JSON.stringify({
+  return stringifyJson({
     device: parseUserAgent(userAgent),
     ip: ip.slice(0, MAX_SESSION_FIELD_LENGTH),
     createdAt: now,
@@ -86,7 +87,7 @@ export function dashboardSessionDetail(ip: string, userAgent: string, now: numbe
  * @returns The JSON string stored under `psd:{hash}`.
  */
 export function platformSessionDetail(ip: string, userAgent: string, now: number): string {
-  return JSON.stringify({
+  return stringifyJson({
     device: userAgent.slice(0, MAX_SESSION_FIELD_LENGTH),
     ip: ip.slice(0, MAX_SESSION_FIELD_LENGTH),
     createdAt: now,

@@ -1,3 +1,4 @@
+import { stringifyJson } from './captured-builtins'
 /**
  * @fileoverview Names scoped to a workspace: the keys, rooms and prefixes a host builds for
  * storage, cache, sockets and queues, encoded so two workspaces can never share one.
@@ -100,5 +101,5 @@ function assertPiece(piece: unknown, index: number): void {
 
 /** The error for a name that was not built by {@link workspaceScopedName}. */
 function malformed(name: string): TypeError {
-  return new TypeError(`${JSON.stringify(name)} is not a workspace-scoped name`)
+  return new TypeError(`${stringifyJson(name)} is not a workspace-scoped name`)
 }

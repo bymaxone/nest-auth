@@ -1,4 +1,6 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from './captured-crypto'
+import { stringifyJson } from '../utils/captured-builtins'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 /**
  * TOTP (Time-based One-Time Password) implementation per RFC 6238 / HOTP per RFC 4226.
@@ -102,7 +104,7 @@ export function fromBase32(input: string): Buffer {
     const idx = BASE32_ALPHABET.indexOf(char)
     if (idx === -1) {
       // Use JSON.stringify to safely represent any control character in the error message.
-      throw new Error(`[totp] Invalid Base32 character: ${JSON.stringify(char)}`)
+      throw new Error(`[totp] Invalid Base32 character: ${stringifyJson(char)}`)
     }
     value = (value << 5) | idx
     bits += 5
@@ -220,6 +222,7 @@ export function buildTotpUri(secretBase32: string, accountEmail: string, issuer:
  * @internal Exported for unit testing against RFC 4226 Appendix D vectors only.
  */
 export function generateHotp(secretBase32: string, counter: number): string {
+  assertRootIsStandard()
   const key = fromBase32(secretBase32)
 
   if (key.length < MIN_SECRET_BYTES) {

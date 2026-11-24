@@ -10,7 +10,8 @@ import {
   createHmac,
   randomBytes,
   timingSafeEqual as cryptoTimingSafeEqual
-} from 'node:crypto'
+} from './captured-crypto'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 /**
  * Generates a cryptographically secure random token as a hex string.
@@ -71,6 +72,7 @@ export function generateSecureToken(bytes = 32): string {
  * ```
  */
 export function sha256(input: string): string {
+  assertRootIsStandard()
   return createHash('sha256').update(input, 'utf8').digest('hex')
 }
 
@@ -100,6 +102,7 @@ export function sha256(input: string): string {
  * ```
  */
 export function timingSafeCompare(a: string, b: string): boolean {
+  assertRootIsStandard()
   const bufA = Buffer.from(a, 'utf8')
   const bufB = Buffer.from(b, 'utf8')
   if (bufA.length !== bufB.length) return false
@@ -131,5 +134,6 @@ export function timingSafeCompare(a: string, b: string): boolean {
  * ```
  */
 export function hmacSha256(message: string, secret: string): string {
+  assertRootIsStandard()
   return createHmac('sha256', secret).update(message, 'utf8').digest('hex')
 }

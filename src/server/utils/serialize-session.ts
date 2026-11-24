@@ -1,3 +1,4 @@
+import { stringifyJson } from './captured-builtins'
 /**
  * The stored form of a refresh-session record.
  *
@@ -17,7 +18,7 @@
 export function serializeSession<T extends { familyId: string; familyCreatedAt: string }>(
   session: T
 ): string {
-  if (session.familyId !== '') return JSON.stringify(session)
+  if (session.familyId !== '') return stringifyJson(session)
   const { familyId: _omitted, familyCreatedAt: _alsoOmitted, ...rest } = session
-  return JSON.stringify(rest)
+  return stringifyJson(rest)
 }

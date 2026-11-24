@@ -21,8 +21,10 @@ import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { hasRole } from '../utils/roles.util'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
@@ -232,7 +234,7 @@ export class InvitationService {
     if (supersededHash !== null) {
       await this.redis.del(`inv:${supersededHash}`)
     }
-    await this.redis.set(tokenKey, JSON.stringify(stored), ttl)
+    await this.redis.set(tokenKey, stringifyJson(stored), ttl)
 
     // The claim above and the write just done are two round trips, and a revoke or a later invite
     // can move the index between them. A revoke in that gap reads an index naming a record that is
@@ -553,7 +555,7 @@ export class InvitationService {
   private parseInvitation(raw: string): StoredInvitation | null {
     let parsed: unknown
     try {
-      parsed = JSON.parse(raw)
+      parsed = parseJson(raw)
     } catch {
       // Deliberately swallowed and deliberately NOT an early return: an unparsed value stays
       // `undefined` and fails the guard below on the same line every other malformed record
@@ -578,6 +580,8 @@ export class InvitationService {
     revoker: { role: string; status: string },
     invitation: StoredInvitation
   ): boolean {
+    // Decided after the lookups of the revoker and of the invitation, and the deletion that follows is committed at once.
+    assertRootIsStandard()
     return hasRole(revoker.role, invitation.role, this.options.roles.hierarchy)
   }
 
@@ -681,7 +685,7 @@ export class InvitationService {
     // Validate JSON structure before trusting any field values.
     let parsed: unknown
     try {
-      parsed = JSON.parse(raw)
+      parsed = parseJson(raw)
     } catch {
       // A record that exists but does not parse is corrupted storage, not an expired or
       // forged invitation — the caller cannot tell the two apart (both answer the same code)

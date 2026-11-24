@@ -6,8 +6,6 @@
  * @layer Service
  */
 
-import { randomBytes } from 'node:crypto'
-
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import {
@@ -17,6 +15,7 @@ import {
 } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { userSubject } from '../constants/user-subject'
+import { randomBytes } from '../crypto/captured-crypto'
 import { hmacSha256 } from '../crypto/secure-token'
 import { MAX_VERIFY_WINDOW, TOTP_STEP_SECONDS, verifyTotp } from '../crypto/totp'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -32,6 +31,7 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { assertDashboardTenant } from '../utils/mfa-plane-tenant'
 import { encryptMfaSecret, holdsSecret, type MfaSecretKeys } from '../utils/mfa-secret-cipher'
+import { rethrowRefusal } from '../utils/object-prototype-guard'
 
 /**
  * TTL in seconds for the single-use claim on a recovery code (5 minutes).
@@ -158,6 +158,7 @@ export class MfaRecordService {
         }
       })
     } catch (err: unknown) {
+      rethrowRefusal(err)
       logStore(this.logger, 'AUTH_STORE_FAILED', 'mfa_reencryption', err)
     }
   }

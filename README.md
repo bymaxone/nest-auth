@@ -1563,6 +1563,20 @@ The `tenantId` is always extracted from the validated JWT — never from the req
 
 Access tokens are short-lived (default 15 minutes) and immediately revocable via a Redis JTI blacklist. Refresh tokens rotate on every use with a configurable grace window to handle concurrent requests. This is the industry-standard hybrid approach used by Auth0, Okta, and SuperTokens — combining short lifetimes for low-latency revocation with rotating refresh tokens for session continuity.
 
+### A Process That Changes Its Own Built-ins
+
+Code running in your process can plant a key on `Object.prototype` or replace a built-in after the library loaded (`Array.prototype.some`, `Map.prototype.get`, `crypto.timingSafeEqual`, `Reflect.getMetadata`). A role check, a revocation lookup, a token signature check and an `@Public()` route are all decided with such built-ins, so the library does not decide with a runtime it cannot vouch for.
+
+- The primitives the library calls itself (the comparisons of secrets, the digests, the random bytes, `JSON.parse` and `JSON.stringify`) are taken once, when the module loads.
+- What it cannot copy (the functions the JWT libraries read at each call: `node:crypto` and the `Hash`, `Hmac`, `Sign` and `Verify` objects it hands back, `JSON.parse` and `JSON.stringify`, `Buffer`; `Reflector`; the methods of arrays, strings, maps and sets that the guards and services decide with) is recorded when the module loads and compared whenever a decision is made: at the entry of a verification, a signature, a hash and a cookie, at the start of each guard that decides, and again after each lookup a guard or a service waits for.
+- A call made while one of them differs, or while a key is planted on `Object.prototype`, is refused with `auth.internal` (HTTP 500) and a count, never a name. A refusal is not turned into another answer, so a polluted process answers 500 and does not look like every token being invalid.
+
+The trade-off: a monitoring agent, polyfill or test double that **replaces** one of the recorded functions after the library loaded makes the library refuse until it is put back. Only the functions the library's sources call or read are recorded, so a function nothing calls can be patched freely, and `Promise`, `Date`, `Intl` and the timers (which test doubles replace) are never compared. Load such a patch before the library, or have it wrap without replacing the recorded functions.
+
+The set is the union of what the library's sources call and what the JWT chain (`@nestjs/jwt`, `jsonwebtoken`, `jws`, `jwa` and their dependencies) reads, found by a test that reads the installed packages, so it is exact for the versions the library is tested with; a newer version of those packages that reads another built-in is covered once the list is updated.
+
+The boundary: the library checks the runtime's own built-ins (JavaScript globals and their prototypes, and the `node:*` modules). A host that replaces exports of `jsonwebtoken`, `jws` or `jwa` after load is outside what the library checks: that is code targeting a dependency, the same class as replacing the library itself.
+
 ### Security Checklist
 
 When integrating `@bymax-one/nest-auth` in production, verify each of the following:

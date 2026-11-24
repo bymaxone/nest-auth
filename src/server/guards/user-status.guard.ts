@@ -4,6 +4,7 @@ import type { Request } from 'express'
 
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AccountStatusService } from '../services/account-status.service'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 /**
  * Verifies that the authenticated user's account status is not blocked.
@@ -60,6 +61,7 @@ export class UserStatusGuard implements CanActivate {
       userId: user.sub,
       tenantId: user.tenantId
     })
+    assertRootIsStandard()
 
     return true
   }

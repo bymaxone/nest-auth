@@ -5,8 +5,6 @@
  * @layer Service
  */
 
-import { randomUUID } from 'node:crypto'
-
 import { Inject, Injectable } from '@nestjs/common'
 
 import {
@@ -20,6 +18,7 @@ import type { ResolvedWorkspaceMember } from './workspace-access.service'
 import { WorkspaceEventsService } from './workspace-events.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { ResolvedWorkspaceOptions } from '../config/workspace-options'
+import { randomUUID } from '../crypto/captured-crypto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { ActingMember, WorkspaceActor } from '../interfaces/acting-member.interface'

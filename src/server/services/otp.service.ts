@@ -1,9 +1,8 @@
-import { randomInt } from 'node:crypto'
-
 import { Inject, Injectable, type LoggerService } from '@nestjs/common'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { randomInt } from '../crypto/captured-crypto'
 import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'

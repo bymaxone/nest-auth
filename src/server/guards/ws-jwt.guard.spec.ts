@@ -199,7 +199,13 @@ describe('WsJwtGuard', () => {
     // Verifies that when @nestjs/websockets is not installed onModuleInit throws a
     // descriptive plain Error (not an AuthException).
     it('should throw a generic Error from onModuleInit when @nestjs/websockets is not installed', async () => {
-      // Arrange: replace the module with a throwing factory, then reload the guard fresh.
+      // Arrange: replace the module with a throwing factory, then reload the guard fresh. Reloading the modules loads a
+      // second copy of `reflect-metadata`, which redefines `Reflect.getMetadata`; it is put back afterwards, as the
+      // baseline of the guard under test holds the function the first copy defined.
+      const getMetadata = Object.getOwnPropertyDescriptor(
+        Reflect,
+        'getMetadata'
+      ) as PropertyDescriptor
       jest.resetModules()
       jest.doMock('@nestjs/websockets', () => {
         throw new Error("Cannot find module '@nestjs/websockets'")
@@ -219,6 +225,7 @@ describe('WsJwtGuard', () => {
       )
 
       jest.dontMock('@nestjs/websockets')
+      Object.defineProperty(Reflect, 'getMetadata', getMetadata)
     })
   })
 

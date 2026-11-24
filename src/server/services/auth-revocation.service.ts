@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { readStampedEpoch } from '../utils'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 
 /**
  * The claims a revocation check reads off a verified access token. A caller passes the payload it
@@ -70,6 +71,7 @@ export class AuthRevocationService {
     payload: RevocableTokenPayload,
     kind: 'dashboard' | 'platform' = 'dashboard'
   ): Promise<boolean> {
+    assertRootIsStandard()
     // A dashboard payload without a tenant is treated as REVOKED, not as a lookup to attempt.
     //
     // Checked FIRST, before the blacklist read, because it validates the input rather than
@@ -103,6 +105,7 @@ export class AuthRevocationService {
     }
 
     const epoch = await this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, kind)
+    assertRootIsStandard()
     return readStampedEpoch(payload) < epoch
   }
 }

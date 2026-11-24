@@ -1,4 +1,4 @@
-import { isIPv6 } from 'node:net'
+import { isIPv6 } from './captured-builtins'
 
 /** Groups in a full IPv6 address. */
 const IPV6_GROUPS = 8

@@ -8,6 +8,7 @@ import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common'
 
 import { AuthException } from '../errors/auth-exception'
 import { logUnhandled } from '../observability/log-event'
+import { stringifyJson } from '../utils/captured-builtins'
 
 /**
  * A Socket.IO client: dispatch is an event, and the adapter puts it on the wire.
@@ -138,7 +139,7 @@ export class WsAuthExceptionFilter implements ExceptionFilter {
       // A socket that is closing or closed cannot be told anything; the refusal still happened,
       // and there is nobody to hear it.
       if (client.readyState === WS_OPEN) {
-        client.send(JSON.stringify({ event: 'exception', data: payload }))
+        client.send(stringifyJson({ event: 'exception', data: payload }))
       }
       return
     }

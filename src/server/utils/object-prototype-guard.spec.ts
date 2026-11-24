@@ -18,8 +18,20 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { PasswordService } from '../services/password.service'
 import { cookieOptions, jwtModuleOptions, jwtSignOptions } from './dependency-options'
-import { assertRootIsStandard, plantedOnRoot } from './object-prototype-guard'
+import {
+  RootNotStandardException,
+  assertRootIsStandard,
+  plantedOnRoot,
+  refusedOr
+} from './object-prototype-guard'
 import { verifyWithRotation } from './verify-with-rotation'
+
+// Loading a module in isolation loads another copy of `reflect-metadata`, which redefines `Reflect.getMetadata`; the baseline of
+// the modules under test holds the function the first copy defined, so each case puts it back.
+const GET_METADATA = Object.getOwnPropertyDescriptor(Reflect, 'getMetadata') as PropertyDescriptor
+afterEach(() => {
+  Object.defineProperty(Reflect, 'getMetadata', GET_METADATA)
+})
 
 const SECRET = 'real-secret-real-secret-real-secret-1234'
 
@@ -115,13 +127,14 @@ describe('the root object of the runtime', () => {
     }
   )
 
-  // Scenario: a symbol planted on the root. Expected: it is not counted. Why: the guard judges the string keys that a JSON
-  // flaw can write and an option name can be.
-  it('does not count a symbol key', () => {
+  // Scenario: a symbol planted on the root. Expected: it is counted. Why: the language reads `Symbol.toPrimitive`,
+  // `Symbol.iterator` and `Symbol.toStringTag` for every object, and the runtime defines no symbol on the root, so one that is
+  // there was planted.
+  it('counts a symbol key', () => {
     const symbol = Symbol('planted')
     Object.defineProperty(Object.prototype, symbol, { value: 1, configurable: true })
     try {
-      expect(plantedOnRoot()).toBe(0)
+      expect(plantedOnRoot()).toBe(1)
     } finally {
       Reflect.deleteProperty(Object.prototype, symbol)
     }
@@ -202,6 +215,50 @@ describe('a runtime started with --disable-proto=delete', () => {
     expect(hardened).toBe(0)
     expect(later).toBe(1)
   })
+})
+
+describe('the failure a verification reports', () => {
+  // Scenario: the library's own refusal, and any other error, given to the helper a verification's catch uses. Expected: the
+  // refusal comes back as it is and the other error becomes the code the caller gives. Why: a polluted process must answer 500
+  // and must not look like every token being invalid.
+  it('passes the refusal through and gives any other error the code of a token that did not verify', () => {
+    const refusal = withRoot('sessions', PLANTED, () => failureOf(assertRootIsStandard))
+
+    expect(refusal).toBeInstanceOf(RootNotStandardException)
+    expect(refusedOr(refusal, AUTH_ERROR_CODES.TOKEN_INVALID)).toBe(refusal)
+    expect(
+      refusedOr(new Error('jwt expired'), AUTH_ERROR_CODES.TOKEN_INVALID).getResponse()
+    ).toMatchObject({
+      error: { code: AUTH_ERROR_CODES.TOKEN_INVALID }
+    })
+    expect(
+      refusedOr(
+        new AuthException(AUTH_ERROR_CODES.INTERNAL),
+        AUTH_ERROR_CODES.TOKEN_INVALID
+      ).getResponse()
+    ).toMatchObject({ error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } })
+  })
+})
+
+describe('the refusal of the guard while an accessor is planted under a name an exception assigns', () => {
+  // Scenario: an accessor with no setter planted on the root under each name that building an exception assigns (`response`,
+  // `status`, `options`, `message`, `name`, `cause`), then the guard called and its failure given to the helper a verification's
+  // catch uses. Expected: the failure is the library's refusal and the helper passes it through. Why: a refusal built while the
+  // root is judged would throw a TypeError from the assignment, and a polluted process would answer 401 and not 500.
+  it.each(['response', 'status', 'options', 'message', 'name', 'cause'] as const)(
+    'still refuses, and is still recognised, with an accessor planted as %s',
+    (name) => {
+      const refusal = withRoot(name, { get: (): number => 1 }, () =>
+        failureOf(assertRootIsStandard)
+      )
+
+      expect(refusal).toBeInstanceOf(RootNotStandardException)
+      expect(refusedOr(refusal, AUTH_ERROR_CODES.TOKEN_INVALID)).toBe(refusal)
+      expect(((refusal as AuthException).cause as Error).message).toBe(
+        "Object.prototype holds 1 entries that are not the runtime's own"
+      )
+    }
+  )
 })
 
 describe('what the library refuses to do while the root holds a planted key', () => {
@@ -303,5 +360,49 @@ describe('what the library refuses to do while the root holds a planted key', ()
     )
     expect((refusal as Error).message).toContain('Object.prototype holds 1 entries')
     expect((refusal as Error).message).not.toContain('sessions')
+  })
+})
+
+describe('each refusal of the guard is its own object', () => {
+  /** Plants `key` on the root, runs the guard, takes the root back and returns what the guard threw. */
+  const refusedWith = (...keys: string[]): AuthException => {
+    for (const key of keys)
+      Object.defineProperty(Object.prototype, key, {
+        value: 1,
+        configurable: true,
+        enumerable: true,
+        writable: true
+      })
+    try {
+      return failureOf(assertRootIsStandard) as AuthException
+    } finally {
+      for (const key of keys) Reflect.deleteProperty(Object.prototype, key)
+    }
+  }
+
+  // Scenario: two refusals, one for one planted key and one for two, the first one's fields then changed by the code that caught
+  // it. Expected: two objects, each with its own cause and body, and the second untouched by what was done to the first. Why: a
+  // refusal shared by every request would show one request's cause to another and let one caller change what the next is told.
+  it('does not share the cause or the body between two refusals', () => {
+    const first = refusedWith('sessions')
+    const second = refusedWith('sessions', 'invitations')
+    ;(first.cause as Error).message = 'changed'
+    ;(first.getResponse() as { error: { code: string } }).error.code = 'changed'
+
+    expect(second).not.toBe(first)
+    expect((second.cause as Error).message).toBe(
+      "Object.prototype holds 2 entries that are not the runtime's own"
+    )
+    expect((second.getResponse() as { error: { code: string } }).error.code).toBe('auth.internal')
+  })
+
+  // Scenario: the refusal read as an error. Expected: the status 500, the class, a stack and the mark `refusedOr` passes through.
+  it('is an HTTP exception with a stack of its own', () => {
+    const refusal = refusedWith('sessions')
+
+    expect(refusal).toBeInstanceOf(RootNotStandardException)
+    expect(refusal.getStatus()).toBe(500)
+    expect(typeof refusal.stack).toBe('string')
+    expect(refusedOr(refusal, AUTH_ERROR_CODES.TOKEN_INVALID)).toBe(refusal)
   })
 })

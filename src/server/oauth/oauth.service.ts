@@ -17,8 +17,6 @@
  * @layer Service
  */
 
-import { createHash } from 'node:crypto'
-
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import type { Request, Response } from 'express'
 
@@ -36,6 +34,7 @@ import {
   OAUTH_STATE_COOKIE_NAME,
   OAUTH_STATE_COOKIE_SAME_SITE
 } from '../constants/oauth-state-cookie'
+import { createHash } from '../crypto/captured-crypto'
 import { generateSecureToken, sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -56,6 +55,7 @@ import {
   type LoadedInvitation
 } from '../services/workspace-invitation-accept.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { cookieOptions } from '../utils/dependency-options'
 import { describeChannelStatus } from '../utils/describe-error'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
@@ -178,7 +178,7 @@ export class OAuthService {
       codeVerifier,
       ...(invitation === undefined ? {} : { workspaceInvitation: invitation })
     }
-    await this.redis.set(stateKey, JSON.stringify(stored), OAUTH_STATE_TTL_SECONDS)
+    await this.redis.set(stateKey, stringifyJson(stored), OAUTH_STATE_TTL_SECONDS)
 
     this.bindToBrowser(res, state)
     if (invitation !== undefined) res.setHeader('Referrer-Policy', 'no-referrer')
@@ -525,7 +525,7 @@ export class OAuthService {
 
     let parsedState: unknown
     try {
-      parsedState = JSON.parse(rawState)
+      parsedState = parseJson(rawState)
     } catch {
       // A state key that exists but does not parse is corrupted storage, not a stale or
       // forged callback — the two are indistinguishable to the caller (both answer

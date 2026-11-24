@@ -10,7 +10,12 @@ import { generateKeyPairSync } from 'node:crypto'
 
 import { JwtService } from '@nestjs/jwt'
 import type { JwtSignOptions, JwtVerifyOptions } from '@nestjs/jwt'
-import { JWT_SIGN_SHADOWS, JWT_VERIFY_SHADOWS, jwtModuleOptions } from './dependency-options'
+import {
+  JWT_SIGN_SHADOWS,
+  JWT_VERIFY_SHADOWS,
+  jwtModuleOptions,
+  jwtSignOptions
+} from './dependency-options'
 
 const SECRET = 'real-secret-real-secret-real-secret-1234'
 const ATTACKER = 'attacker-secret-attacker-secret-1234'
@@ -208,6 +213,25 @@ describe('signing with a key planted on Object.prototype', () => {
   const sign = (): string =>
     service.sign({ sub: 'usér €' }, { ...JWT_SIGN_SHADOWS, ...chosen } as JwtSignOptions)
   const claimsOf = (token: string): unknown => service.decode(token, { complete: true })
+
+  // Scenario: `Object.assign` replaced by a function that returns an empty object after the module loaded, then the options of a
+  // signature built. Expected: the library's refusal (500 `auth.internal`) and no options. Why: the guard that runs at the
+  // entry compares the built-ins the library baselines, `Object.assign` among them, so the options are never built from a
+  // replaced one; that the options code calls no live built-in is shown by the sweep of the built-ins.
+  it('refuses to build the options while Object.assign is replaced', () => {
+    const held = Object.getOwnPropertyDescriptor(Object, 'assign') as PropertyDescriptor
+    let refusal: unknown
+    Object.defineProperty(Object, 'assign', { ...held, value: (): object => ({}) })
+    try {
+      jwtSignOptions({ expiresIn: '10m' })
+    } catch (error) {
+      refusal = error
+    } finally {
+      Object.defineProperty(Object, 'assign', held)
+    }
+
+    expect((refusal as { getStatus(): number }).getStatus()).toBe(500)
+  })
 
   // Scenario: a payload object handed to the signature while `mutatePayload` is planted as true. Expected: the object the caller
   // handed in is left as it was, with no `iat` or `exp` written into it. Why: the option makes `jsonwebtoken` write the

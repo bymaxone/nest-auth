@@ -17,6 +17,7 @@ import { AuthException } from '../errors/auth-exception'
 import { WorkspaceAccessService } from '../services/workspace-access.service'
 import { WorkspaceDeniedEventsService } from '../services/workspace-denied-events.service'
 import { admitsPendingWorkspace, declaredWorkspaceRoles } from '../utils/declared-workspace-roles'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { assertWorkspaceId, assertWorkspaceMessage } from '../utils/resolve-request-workspace'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 import { rememberMessageWorkspace } from '../utils/ws-message-workspace'
@@ -86,6 +87,7 @@ export class WsWorkspaceGuard implements CanActivate {
       workspaceId,
       userId: user.sub
     })
+    assertRootIsStandard()
     const member = this.denied.admit(
       { tenantId: user.tenantId, userId: user.sub, workspaceId, surface: 'ws' },
       () =>

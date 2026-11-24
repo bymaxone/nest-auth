@@ -5,8 +5,6 @@
  * @layer Service
  */
 
-import { randomUUID } from 'node:crypto'
-
 import { Inject, Injectable } from '@nestjs/common'
 
 import { MembershipService } from './membership.service'
@@ -28,6 +26,7 @@ import {
   MAX_RESENDS,
   RESEND_COOLDOWN_SECONDS
 } from '../constants/workspace-invitation-limits'
+import { randomUUID } from '../crypto/captured-crypto'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'

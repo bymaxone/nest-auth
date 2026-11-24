@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto'
-
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import type { JwtSignOptions } from '@nestjs/jwt'
@@ -9,6 +7,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { RECENT_AUTH_TTL_SECONDS, recentAuthKey } from '../constants/recent-auth'
 import { sessionId } from '../constants/session-id'
 import { sessionIndexKey } from '../constants/user-keys'
+import { randomUUID } from '../crypto/captured-crypto'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -29,7 +28,9 @@ import { logEvent, logHook } from '../observability/log-event'
 import { markingPlane, observed } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
+import { parseJson } from '../utils/captured-builtins'
 import { jwtSignOptions } from '../utils/dependency-options'
+import { refusedOr } from '../utils/object-prototype-guard'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { serializeSession } from '../utils/serialize-session'
 import { dashboardSessionDetail, platformSessionExtra } from '../utils/session-detail'
@@ -186,8 +187,7 @@ export class TokenManagerService {
     // same value as "do not check". Signing is the side that cares, so this is the side that
     // guards.
     //
-    // `resolveOptions` has already dropped an empty value, so the only question left here is
-    // present-or-absent.
+    // `resolveOptions` has already dropped an empty value, so the only question left here is present-or-absent.
     const { issuer, audience } = this.options.jwt
     return {
       ...(issuer === undefined ? {} : { issuer }),
@@ -730,7 +730,7 @@ export class TokenManagerService {
   private parseSession(json: string): RefreshSession {
     let parsed: unknown
     try {
-      parsed = JSON.parse(json)
+      parsed = parseJson(json)
     } catch {
       logEvent(this.logger, 'AUTH_RECORD_INVALID', { record: 'session_json' })
       // Stryker disable CallExpression: equivalent — the warn above has already been emitted, and
@@ -1279,15 +1279,14 @@ export class TokenManagerService {
     jti: string
     tenantId?: string
   }> {
-    // The verifier's own error is wrapped, never propagated: a malformed token, from the body or from the
-    // cookie an OAuth callback plants, answers 401 `MFA_TEMP_TOKEN_INVALID` like every other failure here, not
-    // a 500, and `MfaController` clears the temp cookie only for an `AuthException`. rust-auth maps the same
-    // failure to `MfaTempTokenInvalid`, so the two backends agree.
+    // The verifier's own error is wrapped, except the library's refusal: a malformed token, from the body or from the
+    // cookie an OAuth callback plants, answers 401 `MFA_TEMP_TOKEN_INVALID`, not a 500, and `MfaController` clears the
+    // temp cookie only for an `AuthException`. rust-auth maps the same failure to `MfaTempTokenInvalid`.
     let payload: MfaTempPayload
     try {
       payload = verifyWithRotation<MfaTempPayload>(this.jwtService, this.options, token)
-    } catch {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    } catch (error) {
+      throw refusedOr(error, AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
 
     // Everything below runs for a token whose signature held, so the plane it names is a trusted claim and

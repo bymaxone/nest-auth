@@ -5,8 +5,7 @@
  * @layer Utility
  */
 
-import { randomBytes } from 'node:crypto'
-
+import { randomBytes } from '../crypto/captured-crypto'
 import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
 
 /** Number of recovery codes generated when none is configured. */

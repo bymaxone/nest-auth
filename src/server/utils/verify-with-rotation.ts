@@ -6,6 +6,7 @@
 
 import type { JwtService } from '@nestjs/jwt'
 
+import { hasOwn } from './captured-builtins'
 import { JWT_VERIFY_SHADOWS } from './dependency-options'
 import { assertRootIsStandard } from './object-prototype-guard'
 import type { ResolvedOptions } from '../config/resolved-options'
@@ -49,9 +50,11 @@ export function verifyWithRotation<T extends object>(
   jwtService: JwtService,
   options: ResolvedOptions,
   token: string,
-  { ignoreExpiration = false }: { ignoreExpiration?: boolean } = {}
+  flags: { ignoreExpiration?: boolean } = {}
 ): T {
   assertRootIsStandard()
+  // Read by own key: the default of a destructured parameter would be read from the root object before the guard ran.
+  const ignoreExpiration = hasOwn(flags, 'ignoreExpiration') && flags.ignoreExpiration === true
   const algorithms = [options.jwt.algorithm]
   // `issuer`/`audience` are REQUIREMENTS here, not hints: `jsonwebtoken` rejects a token whose
   // claim differs — and one that carries none at all. That is the point. A verifier that
@@ -70,9 +73,10 @@ export function verifyWithRotation<T extends object>(
     return jwtService.verify<T>(token, base)
   } catch (currentFailure: unknown) {
     const previous = options.jwt.previousSecrets ?? []
-    for (const secret of previous) {
+    // An indexed loop: `for...of` calls the iterator of the array, a built-in a replacement could answer for.
+    for (let index = 0; index < previous.length; index += 1) {
       try {
-        return jwtService.verify<T>(token, { ...base, secret })
+        return jwtService.verify<T>(token, { ...base, secret: previous[index] as string })
       } catch {
         // Try the next retired secret. A token nobody accepts falls out of the loop and the
         // original failure is rethrown, so the caller sees the same error it always did.

@@ -17,6 +17,7 @@ import {
   workspacePositionOf,
   workspaceQueryKey
 } from './workspace-cursor'
+import * as captured from './captured-builtins'
 
 const AT = new Date('2026-11-13T12:00:00.000Z')
 const POSITION = workspacePositionOf(AT, '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d')
@@ -349,7 +350,7 @@ describe('the length bound', () => {
 
   // Scenario: a cursor of millions of characters. Expected: none, without parsing it.
   it('refuses a huge cursor without parsing it', () => {
-    const parse = jest.spyOn(JSON, 'parse')
+    const parse = jest.spyOn(captured, 'parseJson')
     const huge = Buffer.from(JSON.stringify(['q', 'x'.repeat(5_000_000)])).toString('base64url')
 
     expect(decodeWorkspaceCursor(huge, 'q')).toBeUndefined()

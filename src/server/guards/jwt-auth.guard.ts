@@ -19,6 +19,7 @@ import {
   assertValidSub,
   assertValidTenantId
 } from './utils/assert-token-type'
+import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard'
 
 /**
  * Primary authentication guard for dashboard (tenant) routes.
@@ -54,6 +55,7 @@ export class JwtAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    assertRootIsStandard()
     // Public routes bypass token validation entirely.
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
@@ -72,8 +74,8 @@ export class JwtAuthGuard implements CanActivate {
     let payload: DashboardJwtPayload
     try {
       payload = verifyWithRotation<DashboardJwtPayload>(this.jwtService, this.options, token)
-    } catch {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    } catch (error) {
+      throw refusedOr(error, AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     // Require jti as a well-formed UUID v4 — used for revocation checks (`rv:{jti}`)
@@ -83,8 +85,7 @@ export class JwtAuthGuard implements CanActivate {
 
     // Require sub as a bounded non-empty string — used downstream in Redis keys
     // (the status cache, the session index and the token epoch are all derived from it) and
-    // HMAC-identifier pre-images. Rejecting
-    // empty and pathological shapes keeps the key space well-formed.
+    // HMAC-identifier pre-images. Rejecting empty and pathological shapes keeps the key space well-formed.
     assertValidSub(payload.sub)
 
     // Require tenantId as a bounded non-empty string for the same reason: it is only cast

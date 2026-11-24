@@ -29,6 +29,7 @@ import { logEvent, logHook } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { normalizeEmail } from '../utils/normalize-email'
+import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
@@ -271,7 +272,8 @@ export class PlatformAuthService {
       if (remainingTtl > 0) {
         return [(): Promise<unknown> => this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)]
       }
-    } catch {
+    } catch (error) {
+      rethrowRefusal(error)
       // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
     }
     return []

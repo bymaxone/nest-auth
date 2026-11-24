@@ -13,6 +13,7 @@
 
 import type { Logger } from '@nestjs/common'
 
+import { stringifyJson } from './captured-builtins'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { logStore } from '../observability/log-event'
@@ -50,7 +51,7 @@ export async function rememberPendingLogout(
     // written: the field is absent, never the string `undefined`.
     await redis.set(
       key,
-      JSON.stringify({ userId: owner.userId, tenantId: owner.tenantId }),
+      stringifyJson({ userId: owner.userId, tenantId: owner.tenantId }),
       ttlSeconds
     )
   } catch (err: unknown) {

@@ -5,6 +5,7 @@
  * @layer Utility
  */
 
+import { rethrowRefusal } from './object-prototype-guard'
 import { decrypt, encrypt } from '../crypto/aes-gcm'
 import { timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -35,7 +36,8 @@ export function holdsSecret(
   if (!stored) return false
   try {
     return timingSafeCompare(decryptWithRotation(stored, keys).secret, secretBase32)
-  } catch {
+  } catch (error) {
+    rethrowRefusal(error)
     return false
   }
 }
@@ -85,7 +87,8 @@ export function decryptWithRotation(
 ): { secret: string; stale: boolean } {
   try {
     return { secret: decrypt(encrypted, keys.encryptionKey), stale: false }
-  } catch {
+  } catch (first) {
+    rethrowRefusal(first)
     for (const key of keys.previousEncryptionKeys ?? []) {
       try {
         return { secret: decrypt(encrypted, key), stale: true }
