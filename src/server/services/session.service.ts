@@ -24,7 +24,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { hostEntityOf } from '../utils/host-read'
 import { runDetached } from '../utils/run-detached'
 import { parseUserAgent } from '../utils/session-detail'
-import { allOf } from '../utils/settle'
+import { allOf, awaiting } from '../utils/settle'
 import { raiseFirst } from '../utils/settle-writes'
 
 // ---------------------------------------------------------------------------
@@ -421,8 +421,8 @@ export class SessionService {
 
     const members = await this.redis.smembers(this.indexKey(userId, tenantId))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
-    const reads = await allOf(
-      rtMembers.map((member) => this.readSession(member, currentSessionHash))
+    const { value: reads } = await awaiting(
+      allOf(rtMembers.map((member) => this.readSession(member, currentSessionHash)))
     )
 
     const results: SessionInfo[] = []
@@ -928,14 +928,7 @@ export class SessionService {
     // Every read finishes before the first eviction, which is what makes the skip all-or-nothing.
     let withTimestamps: { member: string; memberHash: string; createdAt: number }[]
     try {
-      withTimestamps = await allOf(
-        rtMembers.map(async (member) => ({
-          member,
-          // member is "rt:{hash}" — extract just the hash portion.
-          memberHash: member.slice(3),
-          createdAt: await this.readCreatedAt(member.slice(3))
-        }))
-      )
+      withTimestamps = await this.readAges(rtMembers)
     } catch (err: unknown) {
       logEvent(this.logger, 'AUTH_SESSION_EVICTION_SKIPPED', { detail: describeChannelStatus(err) })
       return
@@ -1056,5 +1049,19 @@ export class SessionService {
       logHook(this.logger, 'maxSessionsResolver', 'threw')
       return defaultMaxSessions
     }
+  }
+  /** Reads the creation time of every member together; a failed read throws, after the reads before it settled. */
+  private async readAges(
+    members: string[]
+  ): Promise<{ member: string; memberHash: string; createdAt: number }[]> {
+    const read = allOf(
+      members.map(async (member) => ({
+        member,
+        // member is "rt:{hash}" — extract just the hash portion.
+        memberHash: member.slice(3),
+        createdAt: await this.readCreatedAt(member.slice(3))
+      }))
+    )
+    return (await awaiting(read)).value
   }
 }

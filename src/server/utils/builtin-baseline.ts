@@ -26,7 +26,14 @@
 import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 
-import { getDescriptor, getKey, hasOwn, ownKeys, prototypeOf } from './captured-builtins'
+import {
+  getDescriptor,
+  getKey,
+  hasOwn,
+  intrinsicPromisePrototype,
+  ownKeys,
+  prototypeOf
+} from './captured-builtins'
 import { nodeCrypto } from '../crypto/captured-crypto'
 
 /** The name under which the iterator function of a type is listed: the key is the well-known symbol. */
@@ -431,7 +438,7 @@ for (let index = 0; index < SPECIES_CONSTRUCTORS.length; index += 1) {
 record(Buffer.prototype, 'constructor')
 record(Uint8Array.prototype, 'constructor')
 // `await` reads `constructor` of a promise to decide whether it is a native one; the statics of `Promise` are not read anywhere.
-record(Promise.prototype, 'constructor')
+record(intrinsicPromisePrototype, 'constructor')
 for (const [namespace, list] of Object.entries(BASELINED_STATICS))
   // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which names no property, so `record` finds no descriptor and returns
   for (let at = 0; at < list.length; at += 1) record(world[namespace] as object, list[at] as string)
@@ -441,6 +448,24 @@ const globalOriginals: unknown[] = []
 // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and the global named `undefined` is `undefined` when it is stored and when it is compared, so the extra pass counts nothing
 for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)
   globalOriginals[index] = world[BASELINED_GLOBALS[index] as string]
+
+/**
+ * The holders an awaited value can inherit from: a value an `await` or a `resolve` receives is asked for `then` first, so a `then`
+ * planted on one of these prototypes (the root is counted by the root guard) answers for every value that inherits it.
+ */
+const thenHolders: object[] = []
+const holderNames = ownKeys(BASELINED_HOLDERS)
+// Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not a name of the table
+for (let index = 0; index < holderNames.length; index += 1)
+  thenHolders[thenHolders.length] = BASELINED_HOLDERS[holderNames[index] as string] as object
+
+/** Counts the holders that carry an own `then`, which none of them has. */
+function plantedThens(): number {
+  let planted = 0
+  for (let index = 0; index < thenHolders.length; index += 1)
+    if (hasOwn(thenHolders[index] as object, 'then')) planted += 1
+  return planted
+}
 
 /** Counts the symbol keys a protocol holder has now that it did not have when this module loaded. */
 function addedProtocolSymbols(): number {
@@ -501,6 +526,7 @@ export function replacedBuiltins(): number {
       count += 1
   }
   count += addedProtocolSymbols()
+  count += plantedThens()
   // Read by `Reflect.get` and not through a descriptor: the global object of a `vm` context answers a descriptor through a native
   // interceptor that reads the root, and a planted `get` or `value` there aborts the process.
   // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and the global named `undefined` is `undefined` when it is stored and when it is compared, so the extra pass counts nothing

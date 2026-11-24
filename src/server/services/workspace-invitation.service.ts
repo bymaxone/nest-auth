@@ -48,7 +48,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
-import { started } from '../utils/settle'
+import { awaiting, started } from '../utils/settle'
 import { pageInvitations } from '../utils/workspace-invitation-page'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
 import { normalizeWorkspaceName } from '../utils/workspace-name'
@@ -243,9 +243,9 @@ export class WorkspaceInvitationService {
     const accountRead = started(
       this.users.findByEmail({ email: probe.email, tenantId: probe.tenantId })
     )
-    const workspace = await workspaceRead
-    const inviter = await inviterRead
-    const account = await accountRead
+    const workspace = (await awaiting(workspaceRead)).value
+    const inviter = (await awaiting(inviterRead)).value
+    const account = (await awaiting(accountRead)).value
     if (record === null) throw invalidToken()
     const answer = {
       role: record.role,

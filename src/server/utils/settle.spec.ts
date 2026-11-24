@@ -6,6 +6,11 @@
 
 import { allOf, started, withDeadline } from './settle'
 
+/** Reads the answer of a helper: a failure is thrown by `.value`, not by the promise. */
+async function unbox<T>(pending: Promise<{ readonly value: T }>): Promise<T> {
+  return (await pending).value
+}
+
 /** A promise and the functions that settle it. */
 function deferred<T>(): {
   promise: Promise<T>
@@ -32,9 +37,9 @@ describe('started', () => {
       then: (done) => Promise.resolve(done?.(2) as number) as never
     }
 
-    expect(await started(1)).toBe(1)
-    expect(await started(thenable)).toBe(2)
-    expect(await started(Promise.resolve(3))).toBe(3)
+    expect((await started(1)).value).toBe(1)
+    expect((await started(thenable)).value).toBe(2)
+    expect((await started(Promise.resolve(3))).value).toBe(3)
   })
 
   // Scenario: a call that rejects while nobody awaits it yet. Expected: no unhandled rejection, and the rejection when awaited.
@@ -46,7 +51,7 @@ describe('started', () => {
       await new Promise((done) => setImmediate(done))
 
       expect(unhandled).not.toHaveBeenCalled()
-      await expect(call).rejects.toThrow('early')
+      await expect(unbox(call)).rejects.toThrow('early')
     } finally {
       process.off('unhandledRejection', unhandled)
     }
@@ -62,12 +67,12 @@ describe('allOf', () => {
     second.resolve('second')
     first.resolve('first')
 
-    expect(await all).toEqual(['first', 'second'])
+    expect((await all).value).toEqual(['first', 'second'])
   })
 
   // Scenario: an empty list. Expected: an empty answer.
   it('answers an empty list', async () => {
-    expect(await allOf([])).toEqual([])
+    expect((await allOf([])).value).toEqual([])
   })
 
   // Scenario: the calls of the list. Expected: each one is already running when the first is still pending.
@@ -87,7 +92,7 @@ describe('allOf', () => {
 
     expect(calls).toEqual([1, 2])
     first.resolve(1)
-    expect(await all).toEqual([1, 2])
+    expect((await all).value).toEqual([1, 2])
   })
 
   // Scenario: the second call rejects before the first settles. Expected: no unhandled rejection, and that rejection once the
@@ -98,7 +103,7 @@ describe('allOf', () => {
     try {
       const first = deferred<number>()
       const all = allOf([first.promise, Promise.reject(new Error('second'))])
-      const outcome = expect(all).rejects.toThrow('second')
+      const outcome = expect(unbox(all)).rejects.toThrow('second')
       await new Promise((done) => setImmediate(done))
       first.resolve(1)
 
@@ -113,7 +118,7 @@ describe('allOf', () => {
   it('throws the first rejection in the order of the list', async () => {
     const all = allOf([Promise.reject(new Error('first')), Promise.reject(new Error('second'))])
 
-    await expect(all).rejects.toThrow('first')
+    await expect(unbox(all)).rejects.toThrow('first')
   })
 })
 
@@ -122,7 +127,7 @@ describe('withDeadline', () => {
   it('answers what the work answered and leaves no timer', async () => {
     jest.useFakeTimers()
 
-    expect(await withDeadline(() => Promise.resolve('done'), 1000, 'late')).toBe('done')
+    expect((await withDeadline(() => Promise.resolve('done'), 1000, 'late')).value).toBe('done')
     expect(jest.getTimerCount()).toBe(0)
   })
 
@@ -131,7 +136,7 @@ describe('withDeadline', () => {
     jest.useFakeTimers()
 
     await expect(
-      withDeadline(() => Promise.reject(new Error('failed')), 1000, 'late')
+      unbox(withDeadline(() => Promise.reject(new Error('failed')), 1000, 'late'))
     ).rejects.toThrow('failed')
     expect(jest.getTimerCount()).toBe(0)
   })
@@ -139,12 +144,14 @@ describe('withDeadline', () => {
   // Scenario: work that throws before it returns a promise. Expected: the same, as a rejection.
   it('turns a throw of the work into a rejection', async () => {
     await expect(
-      withDeadline(
-        () => {
-          throw new Error('sync')
-        },
-        1000,
-        'late'
+      unbox(
+        withDeadline(
+          () => {
+            throw new Error('sync')
+          },
+          1000,
+          'late'
+        )
       )
     ).rejects.toThrow('sync')
   })
@@ -153,7 +160,7 @@ describe('withDeadline', () => {
   it('rejects at the deadline with the message', async () => {
     jest.useFakeTimers()
     let outcome: unknown = 'waiting'
-    void withDeadline(() => new Promise<never>(() => undefined), 1000, 'too late').catch(
+    void unbox(withDeadline(() => new Promise<never>(() => undefined), 1000, 'too late')).catch(
       (error: unknown) => {
         outcome = error
       }
@@ -171,7 +178,7 @@ describe('withDeadline', () => {
     jest.useFakeTimers()
     const late = deferred<string>()
     const waiting = withDeadline(() => late.promise, 10, 'too late')
-    const outcome = expect(waiting).rejects.toThrow('too late')
+    const outcome = expect(unbox(waiting)).rejects.toThrow('too late')
     await jest.advanceTimersByTimeAsync(10)
     await outcome
 

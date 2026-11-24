@@ -61,6 +61,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
+import { awaiting } from '../utils/settle'
 
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
 const OAUTH_STATE_TTL_SECONDS = 600
@@ -560,10 +561,14 @@ export class OAuthService {
     codeVerifier: string
   ): Promise<OAuthProfile> {
     try {
-      return await withDeadline(async () => {
-        const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
-        return await plugin.fetchProfile(tokenResponse.access_token)
-      }, pluginDeadlineMs(plugin))
+      return (
+        await awaiting(
+          withDeadline(async () => {
+            const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
+            return await plugin.fetchProfile(tokenResponse.access_token)
+          }, pluginDeadlineMs(plugin))
+        )
+      ).value
     } catch (err: unknown) {
       // Nothing the plugin wrote is published. This path holds a LIVE ACCESS TOKEN: the plugin
       // received `code`, `codeVerifier` and `accessToken`, and an HTTP client attaching its

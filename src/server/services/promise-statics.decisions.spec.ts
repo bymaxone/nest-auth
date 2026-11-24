@@ -25,6 +25,11 @@ import { SessionService } from './session.service'
 import { build, OWNER, sent, user } from './__tests__/workspace-invitation-harness'
 import { CONTEXT, WORKSPACE_REF, workspaceRow } from './__tests__/workspace-service-harness'
 
+/** Reads the answer of a helper: a failure is thrown by `.value`, not by the promise. */
+async function unbox<T>(pending: Promise<{ readonly value: T }>): Promise<T> {
+  return (await pending).value
+}
+
 type Statics = Record<'all' | 'race' | 'allSettled' | 'any', unknown>
 const promiseStatics = Promise as unknown as Statics
 const held = {
@@ -53,7 +58,7 @@ describe('the statics of Promise replaced after the library loaded', () => {
     forge('FORGED PROFILE')
 
     await expect(
-      withDeadline(() => Promise.reject(new Error('the exchange failed')), 50)
+      unbox(withDeadline(() => Promise.reject(new Error('the exchange failed')), 50))
     ).rejects.toThrow('the exchange failed')
   })
 
@@ -62,7 +67,9 @@ describe('the statics of Promise replaced after the library loaded', () => {
     jest.useFakeTimers()
     forge('FORGED PROFILE')
     const waiting = withDeadline(() => new Promise<never>(() => undefined), 1000)
-    const outcome = expect(waiting).rejects.toThrow('the plugin did not answer within 1000 ms')
+    const outcome = expect(unbox(waiting)).rejects.toThrow(
+      'the plugin did not answer within 1000 ms'
+    )
 
     await jest.advanceTimersByTimeAsync(1000)
 
@@ -188,9 +195,9 @@ describe('a monitor that wraps then, with fake timers on', () => {
       return (then as (...a: unknown[]) => unknown).apply(this, args)
     } as typeof then
     try {
-      const answered = await withDeadline(() => Promise.resolve('profile'), 1000)
+      const answered = (await withDeadline(() => Promise.resolve('profile'), 1000)).value
       const silent = withDeadline(() => new Promise<never>(() => undefined), 1000)
-      const ended = expect(silent).rejects.toThrow('the plugin did not answer')
+      const ended = expect(unbox(silent)).rejects.toThrow('the plugin did not answer')
       await jest.advanceTimersByTimeAsync(1000)
       await ended
 

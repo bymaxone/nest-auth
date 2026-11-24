@@ -1,33 +1,85 @@
 /**
- * @fileoverview Waiting for several calls, and for a deadline, without reading a static of `Promise`.
+ * @fileoverview Waiting for several calls, and for a deadline, without reading a static of `Promise` and without letting a planted
+ * `then` answer for the value.
  *
  * `Promise.all` and `Promise.race` are properties of a global that anything running in the process can replace after the library
  * loaded, and a replaced one decides what a read of a repository answered: a membership the store never returned, a profile the
- * plugin never fetched, the order in which sessions are evicted. The root guard does not compare them, because the
- * monitors and the test doubles of a host wrap them and the library has no way to tell those from an attack. So no decision of the
- * library goes through one. These helpers wait with `await` alone, which reads `Promise.prototype.constructor` and nothing else,
- * and that is the one property of `Promise` the baseline compares.
+ * plugin never fetched, the order in which sessions are evicted. The root guard does not compare them, because the monitors and
+ * the test doubles of a host wrap them and the library has no way to tell those from an attack. So no decision of the library goes
+ * through one. These helpers wait with `await` alone, which reads `Promise.prototype.constructor` and nothing else, and that is the
+ * one property of `Promise` the baseline compares.
+ *
+ * Two more things close what that leaves. The root guard runs synchronously immediately before every `await` here, with no call a
+ * host could replace in between, so a constructor replaced and put back by a `then` it installed is refused when it is in place at
+ * the `await`, and a `then` planted on a prototype a value inherits from is refused before the value is handed to one. And the
+ * answer travels in a box with no prototype: resolving a promise with an object asks it for `then`, and an object that inherits
+ * from the root would be asked of whatever was planted there. The caller reads `.value`.
+ *
+ * Not covered: a `then` planted and erased again between the check and the resolution, by code that runs in that gap.
  *
  * @layer Utility
  */
 
-/** The constructor as it was when this module loaded, so a replaced global does not choose what the deadline builds. */
-const CapturedPromise = Promise
+import { IntrinsicPromise } from './captured-builtins'
+import { assertRootIsStandard } from './object-prototype-guard'
 
-/** Takes a rejection so that it is never reported as unhandled while another call is being waited for. */
-const ignore = (): void => undefined
+/** The language's own constructor, so neither a replaced global nor a library bound to it before load chooses what the deadline builds. */
+const CapturedPromise = IntrinsicPromise
+
+/** An answer in a box with no prototype, so that no `then` is looked up on it. */
+export interface Settled<T> {
+  readonly value: T
+}
+
+/** Boxes a value for a promise to resolve with. */
+function box<T>(value: T): Settled<T> {
+  // An object literal with `__proto__: null` is syntax: it calls no built-in that could have been replaced.
+  const boxed = { __proto__: null, value }
+  return boxed
+}
+
+/**
+ * Boxes a failure: reading `.value` throws the reason. A promise that carries a failure this way is never rejected, so there is no
+ * rejection to be reported as unhandled while another call is being waited for, and no `catch` or `then` is needed to take one.
+ */
+function failed<T>(reason: unknown): Settled<T> {
+  const boxed = {
+    __proto__: null,
+    get value(): T {
+      throw reason
+    }
+  }
+  return boxed
+}
+
+/**
+ * Checks the root and hands the promise back for the `await` that follows on the same line. Nothing runs between the two.
+ *
+ * @param pending - The promise about to be awaited.
+ * @returns The same promise.
+ * @throws {AuthException} `auth.internal` while the root or a built-in is not the runtime's own.
+ */
+export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
+  assertRootIsStandard()
+  return pending
+}
 
 /**
  * Starts waiting for one call: the answer is a native promise whose rejection is already taken, so it can be awaited later,
  * after another call, with no unhandled rejection in between.
  *
  * @param work - The call, or its value.
- * @returns A promise that settles as the call does.
+ * @returns A promise of the boxed answer: it never rejects, and reading `.value` of a failure throws its reason.
  */
-export function started<T>(work: PromiseLike<T> | T): Promise<T> {
-  const settled = (async (): Promise<T> => await work)()
-  settled.catch(ignore)
-  return settled
+export function started<T>(work: PromiseLike<T> | T): Promise<Settled<T>> {
+  return (async (): Promise<Settled<T>> => {
+    try {
+      assertRootIsStandard()
+      return box(await work)
+    } catch (error: unknown) {
+      return failed(error)
+    }
+  })()
 }
 
 /**
@@ -35,16 +87,20 @@ export function started<T>(work: PromiseLike<T> | T): Promise<T> {
  * before the first is awaited; the first rejection in the order is the one that is thrown, after the calls before it settled.
  *
  * @param calls - The calls, already started.
- * @returns Their values.
- * @throws The reason of the first call in the list that rejected.
+ * @returns Their values, boxed. The promise never rejects: reading `.value` throws the reason of the first call in the list that
+ * rejected, after the calls before it settled.
  */
-export async function allOf<T>(calls: readonly (PromiseLike<T> | T)[]): Promise<T[]> {
-  const pending: Promise<T>[] = []
-  for (let index = 0; index < calls.length; index += 1) pending.push(started(calls[index] as T))
-  const values: T[] = []
-  for (let index = 0; index < pending.length; index += 1)
-    values.push(await (pending[index] as Promise<T>))
-  return values
+export async function allOf<T>(calls: readonly (PromiseLike<T> | T)[]): Promise<Settled<T[]>> {
+  try {
+    const pending: Promise<Settled<T>>[] = []
+    for (let index = 0; index < calls.length; index += 1) pending.push(started(calls[index] as T))
+    const values: T[] = []
+    for (let index = 0; index < pending.length; index += 1)
+      values.push((await awaiting(pending[index] as Promise<Settled<T>>)).value)
+    return box(values)
+  } catch (error: unknown) {
+    return failed(error)
+  }
 }
 
 /**
@@ -55,30 +111,34 @@ export async function allOf<T>(calls: readonly (PromiseLike<T> | T)[]): Promise<
  * @param work - The calls to bound.
  * @param ms - The deadline in milliseconds.
  * @param message - The message of the error thrown when the deadline passes first.
- * @returns What the work resolved to.
- * @throws {Error} The error of the work, or one with `message` when the deadline passes first.
+ * @returns What the work resolved to, boxed. The promise never rejects: reading `.value` throws the error of the work, or one with
+ * `message` when the deadline passes first.
  */
 export async function withDeadline<T>(
   work: () => Promise<T>,
   ms: number,
   message: string
-): Promise<T> {
+): Promise<Settled<T>> {
   let timer: NodeJS.Timeout | undefined
-  const settled = new CapturedPromise<T>((resolve, reject) => {
+  const settled = new CapturedPromise<Settled<T>>((resolve) => {
     timer = setTimeout(() => {
-      reject(new Error(message))
+      resolve(failed(new Error(message)))
     }, ms)
     const run = async (): Promise<void> => {
       try {
-        resolve(await work())
+        const answer = work()
+        assertRootIsStandard()
+        resolve(box(await answer))
       } catch (error: unknown) {
-        reject(error)
+        resolve(failed(error))
       }
     }
     void run()
   })
   try {
-    return await settled
+    return await awaiting(settled)
+  } catch (error: unknown) {
+    return failed(error)
   } finally {
     clearTimeout(timer)
   }

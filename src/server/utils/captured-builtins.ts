@@ -17,6 +17,17 @@ export const hasOwn = Object.hasOwn
 /** `Object.getPrototypeOf` as it was when the module loaded. */
 export const prototypeOf = Object.getPrototypeOf
 
+/**
+ * The promise a native `async` function returns, taken from one: its prototype is the language's own `Promise.prototype`, not
+ * whatever a host library (Bluebird, a zone) bound to the global `Promise` before this module loaded.
+ */
+export const intrinsicPromisePrototype: Promise<unknown> = prototypeOf(
+  (async (): Promise<void> => undefined)()
+)
+
+/** The constructor of that prototype, which `await` compares with the promise it is given. */
+export const IntrinsicPromise = intrinsicPromisePrototype.constructor as PromiseConstructor
+
 /** `Reflect.get` as it was when the module loaded: a read of a key that honours the receiver, taken once. */
 export const getKey = Reflect.get
 
