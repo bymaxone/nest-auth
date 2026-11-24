@@ -5,12 +5,14 @@
  * @layer Test
  */
 
+import { readHostOptionsAsync } from './host-read'
 import { assertNoThenOnChain, isRefusal } from './object-prototype-guard'
 import {
   awaiting,
   checked,
   detached,
   markHandled,
+  pinned,
   PinnedAll,
   PinnedMethods,
   started,
@@ -94,6 +96,30 @@ describe('a rejection nothing awaits, because the pin refused its promise', () =
 
     expect(unhandled).toEqual([])
     expect(() => answer?.value).toThrow()
+  })
+
+  // Scenario: a frozen, rejected promise is pinned and the caller drops it on the refusal. Expected: the refusal is thrown and the
+  // rejection is not reported as unhandled. Why: the pin is the one place every caller passes, and none of them awaits the promise.
+  it('is heard by the pin that refuses it', async () => {
+    const unhandled = await unhandledDuring(() => {
+      expect(() => pinned(frozenRejection('pinned'))).toThrow()
+    })
+
+    expect(unhandled).toEqual([])
+  })
+
+  // Scenario: the host's options factory answers a frozen, rejected promise. Expected: the configuration error, and nothing unhandled.
+  it('is heard by the read of the options of the host', async () => {
+    let refusal: unknown
+
+    const unhandled = await unhandledDuring(async () => {
+      refusal = await readHostOptionsAsync(() => frozenRejection('options')).catch(
+        (error: unknown) => error
+      )
+    })
+
+    expect(unhandled).toEqual([])
+    expect(refusal).toBeInstanceOf(Error)
   })
 
   // Scenario: the root is not standard when `awaiting` is given a promise that rejects. Expected: the refusal is thrown and the

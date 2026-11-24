@@ -60,6 +60,8 @@ export function pinned<P>(promise: P): P {
     try {
       defineKey(promise, 'constructor', own)
     } catch (error: unknown) {
+      // The caller is about to refuse this promise and will never await it, so its rejection is heard here, or it is reported as unhandled.
+      hear(promise)
       // The engine's own TypeError is not what a caller is told: a promise that refuses the pin is refused as `auth.internal`.
       throw refusedOr(error, AUTH_ERROR_CODES.INTERNAL)
     }
@@ -74,29 +76,25 @@ function rootConstructorIsIntact(): boolean {
 }
 
 /**
- * Marks a promise's rejection as handled, through the `then` taken at load, before anything else can refuse. A call the root check
- * refuses would otherwise leave a rejecting `work` with no handler, and an unhandled rejection ends the process. A value that is
- * not a native promise has nothing to mark.
+ * Gives a promise that the pin refused a handler for its rejection, without reading what a host could have planted. A native `await`
+ * attaches it without reading `then` or the species, but it reads `constructor` first, and a slot that is not the language's own
+ * data property (a getter, a replaced value) can plant a `then` in that read, so then the language's `then` is used. A promise that
+ * holds a constructor of its own (permanent, and not the language's) goes the same way: `await` would use the `then` it holds.
  */
-export function markHandled(work: unknown): void {
-  if (!isNativePromise(work)) return
-  try {
-    pinned(work)
-  } catch {
-    // A promise that cannot take the constructor is refused where it is awaited. Here it only has to have a handler. A native `await`
-    // attaches it without reading `then` or the species, but it reads `constructor` first, and a slot that is not the language's own
-    // data property (a getter, a replaced value) can plant a `then` in that read, so then the language's `then` is used. A promise
-    // that holds a constructor of its own (permanent, and not the language's) goes the same way: `await` would use the `then` it holds.
-    if (getDescriptor(work, 'constructor') !== undefined || !rootConstructorIsIntact()) {
-      try {
-        applyFunction(intrinsicThen, work, [ignore, ignore])
-      } catch {
-        // A constructor that throws when read cannot take a handler; the awaiter refuses it too.
-      }
-      return
+function hear(work: object): void {
+  if (getDescriptor(work, 'constructor') !== undefined || !rootConstructorIsIntact()) {
+    try {
+      applyFunction(intrinsicThen, work, [ignore, ignore])
+    } catch {
+      // A constructor that throws when read cannot take a handler; the awaiter refuses it too.
     }
+    return
   }
-  // `await` of a native promise attaches its handler without asking it for `then`, and without reading the species of the constructor.
+  listen(work)
+}
+
+/** Attaches a handler that ignores the rejection: `await` of a native promise asks it for neither `then` nor the species. */
+function listen(work: object): void {
   void (async (): Promise<void> => {
     try {
       await work
@@ -104,6 +102,21 @@ export function markHandled(work: unknown): void {
       // Only marks the rejection as handled.
     }
   })()
+}
+
+/**
+ * Marks a promise's rejection as handled, before anything else can refuse. A call the root check refuses would otherwise leave a
+ * rejecting `work` with no handler, and an unhandled rejection ends the process. A value that is not a native promise has nothing to
+ * mark. A promise the pin refuses has already been given its handler by the pin.
+ */
+export function markHandled(work: unknown): void {
+  if (!isNativePromise(work)) return
+  try {
+    pinned(work)
+  } catch {
+    return
+  }
+  listen(work)
 }
 
 /**
@@ -128,7 +141,6 @@ export function detached(
       return
     }
     try {
-      markHandled(work)
       await awaiting(work as PromiseLike<unknown>)
     } catch (error: unknown) {
       report(onFailure, 'rejected', error)
@@ -298,9 +310,7 @@ export function PinnedAll(): ClassDecorator {
  */
 export function started<T>(work: PromiseLike<T> | T): Promise<Settled<T>> {
   const answer = (async (): Promise<Settled<T>> => {
-    markHandled(work)
     try {
-      // `awaiting` refuses a promise that cannot take the pinned constructor: `markHandled` only had to give it a handler.
       return box(await awaiting(work as PromiseLike<T>))
     } catch (error: unknown) {
       return failed(error)
@@ -371,7 +381,6 @@ export async function withDeadline<T>(
       const run = async (): Promise<void> => {
         try {
           const answer = work()
-          markHandled(answer)
           resolve(box(await awaiting(answer)))
         } catch (error: unknown) {
           resolve(failed(error))
