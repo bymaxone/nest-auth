@@ -194,8 +194,8 @@ export function started<T>(work: PromiseLike<T> | T): Promise<Settled<T>> {
   const answer = (async (): Promise<Settled<T>> => {
     markHandled(work)
     try {
-      assertRootIsStandard()
-      return box(await work)
+      // `awaiting` refuses a promise that cannot take the pinned constructor: `markHandled` only had to give it a handler.
+      return box(await awaiting(work as PromiseLike<T>))
     } catch (error: unknown) {
       return failed(error)
     }
@@ -266,8 +266,7 @@ export async function withDeadline<T>(
         try {
           const answer = work()
           markHandled(answer)
-          assertRootIsStandard()
-          resolve(box(await answer))
+          resolve(box(await awaiting(answer)))
         } catch (error: unknown) {
           resolve(failed(error))
         }

@@ -28,6 +28,14 @@ export const intrinsicPromisePrototype: Promise<unknown> = prototypeOf(
 /** The constructor of that prototype, which `await` compares with the promise it is given. */
 export const IntrinsicPromise = intrinsicPromisePrototype.constructor as PromiseConstructor
 
+// The constructor is read from a slot a host can have replaced before this module loaded. The language's own constructor and its prototype
+// point at each other, so a slot that holds another function is caught here and the load fails, instead of every pin and every wait
+// being made with the host's function.
+if ((IntrinsicPromise as { prototype?: unknown }).prototype !== intrinsicPromisePrototype)
+  throw new Error(
+    "[BymaxAuthModule] the constructor of Promise was replaced before the module loaded; the module does not start while the runtime's promises are not its own."
+  )
+
 /** The `then` of the language's own promises, taken once: a host that replaces `Promise.prototype.then` later does not change it. */
 export const intrinsicThen = intrinsicPromisePrototype.then
 

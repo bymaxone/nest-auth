@@ -235,3 +235,32 @@ describe('the boxes the helpers hand out', () => {
     expect(() => failure.value).toThrow('real failure')
   })
 })
+
+describe('a promise that cannot take the pinned constructor', () => {
+  /** A promise that answers `real` and has an own constructor it made permanent, and an own `then` that answers `forged`. */
+  function hostile(): Promise<string> {
+    const promise = Promise.resolve('real')
+    Object.defineProperty(promise, 'constructor', { value: Array, writable: false })
+    Object.defineProperty(promise, 'then', {
+      value: (resolve: (answer: string) => void): void => {
+        resolve('forged')
+      }
+    })
+    return promise
+  }
+
+  // Scenario: the work given to `started` is such a promise. Expected: the wait is refused, as `awaiting` refuses it, and the host's
+  // `then` is never the one that answers. Why: the pin failed, and a wait that goes on bare is the one the host's constructor answers.
+  it('is refused by started, not answered by its then', async () => {
+    const answer = await started(hostile())
+
+    expect(() => answer.value).toThrow(TypeError)
+  })
+
+  // Scenario: the work of `withDeadline` answers with such a promise. Expected: the same refusal.
+  it('is refused by withDeadline, not answered by its then', async () => {
+    const answer = await withDeadline(() => hostile(), 1000, 'late')
+
+    expect(() => answer.value).toThrow(TypeError)
+  })
+})

@@ -36,6 +36,7 @@ import { committedSafeUser } from '../utils/mfa-safe-user'
 import { decryptMfaSecret, encryptMfaSecret } from '../utils/mfa-secret-cipher'
 import { parsePlainRecoveryCodes, parseSetupData, type MfaSetupData } from '../utils/mfa-setup-data'
 import { runDetached } from '../utils/run-detached'
+import { checked, pinned } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -85,6 +86,15 @@ export interface MfaSetupResult {
  *
  * @layer Service
  */
+/** The fields an account takes when its second factor is switched on. */
+function enabling(data: MfaSetupData): {
+  mfaEnabled: true
+  mfaSecret: string
+  mfaRecoveryCodes: string[]
+} {
+  return { mfaEnabled: true, mfaSecret: data.encryptedSecret, mfaRecoveryCodes: data.hashedCodes }
+}
+
 @Injectable()
 export class MfaService {
   private readonly logger = new Logger(MfaService.name)
@@ -131,6 +141,16 @@ export class MfaService {
   // setup — TOTP secret generation, idempotent key reservation, recovery codes
   // ---------------------------------------------------------------------------
 
+  /** The setup a first request stored, read back for the account's address. */
+  private storedSetup(raw: string, email: string): MfaSetupResult {
+    const data = parseSetupData(raw, this.logger)
+    const secret = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
+    const codesJson = decryptMfaSecret(data.encryptedPlainCodes, this.mfaOptions)
+    const recoveryCodes = parsePlainRecoveryCodes(codesJson, this.logger)
+    const qrCodeUri = buildTotpUri(secret, email, this.mfaOptions.issuer)
+    return { secret, qrCodeUri, recoveryCodes }
+  }
+
   /**
    * Initiates the MFA setup flow for a dashboard user or platform administrator.
    *
@@ -167,7 +187,7 @@ export class MfaService {
       // MFA secret on a tenant user row).
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
     }
-    const user = await this.records.loadAccount(context, userId, tenantId)
+    const user = await pinned(this.records.loadAccount(context, userId, tenantId))
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
     // Re-authenticate before minting a factor. Enabling MFA is a change to how the account
@@ -183,7 +203,7 @@ export class MfaService {
     // An account with no local password (provisioned through OAuth) has nothing to re-authenticate
     // against here, and refusing it would make MFA unreachable for those users. Their credential
     // is the provider's, which this library cannot re-verify inline.
-    await this.reauthentication.assertReauthenticated(
+    const proof = this.reauthentication.assertReauthenticated(
       context,
       userId,
       user.passwordHash,
@@ -191,6 +211,7 @@ export class MfaService {
       tenantId,
       sid
     )
+    await pinned(proof)
 
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.
     const setupKey = `mfa_setup:${hmacSha256(userSubject(context, userId, tenantId), this.options.hmacKey)}`
@@ -203,14 +224,9 @@ export class MfaService {
     // The narrow TOCTOU window between this fast-path GET and the SET-NX below is
     // benign — at worst, two concurrent first-time setups race and one's payload is
     // discarded by SET-NX after wasted work; subsequent requests hit the fast path.
-    const existingFast = await this.redis.get(setupKey)
+    const existingFast = await pinned(this.redis.get(setupKey))
     if (existingFast !== null) {
-      const data = parseSetupData(existingFast, this.logger)
-      const existingSecret = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
-      const decryptedCodesJson = decryptMfaSecret(data.encryptedPlainCodes, this.mfaOptions)
-      const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, this.logger)
-      const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
-      return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
+      return checked(this.storedSetup(existingFast, user.email))
     }
 
     // First-time setup: generate the data, then attempt an atomic SET-NX to claim
@@ -226,29 +242,24 @@ export class MfaService {
     const setupData: MfaSetupData = { encryptedSecret, hashedCodes, encryptedPlainCodes }
     const payload = stringifyJson(setupData)
 
-    const wasSet = await this.redis.setIfAbsent(setupKey, payload, MFA_SETUP_TTL_SECONDS)
+    const wasSet = await pinned(this.redis.setIfAbsent(setupKey, payload, MFA_SETUP_TTL_SECONDS))
 
     if (!wasSet) {
       // Another request already started setup — return their data for idempotency.
-      const existing = await this.redis.get(setupKey)
+      const existing = await pinned(this.redis.get(setupKey))
       if (existing !== null) {
-        const data = parseSetupData(existing, this.logger)
-        const existingSecret = decryptMfaSecret(data.encryptedSecret, this.mfaOptions)
-        const decryptedCodesJson = decryptMfaSecret(data.encryptedPlainCodes, this.mfaOptions)
-        const existingCodes = parsePlainRecoveryCodes(decryptedCodesJson, this.logger)
-        const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
-        return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
+        return checked(this.storedSetup(existing, user.email))
       }
       // Extremely rare: key expired between setIfAbsent and get — store our data.
       // A concurrent verifyAndEnable that completed just before this branch is
       // safe: verifyAndEnable checks mfaEnabled at entry via findById, so a
       // re-enabled account will throw MFA_ALREADY_ENABLED on the next setup call.
-      await this.redis.set(setupKey, payload, MFA_SETUP_TTL_SECONDS)
+      await pinned(this.redis.set(setupKey, payload, MFA_SETUP_TTL_SECONDS))
     }
 
     const qrCodeUri = buildTotpUri(secretBase32, user.email, this.mfaOptions.issuer)
     logEvent(this.logger, 'AUTH_MFA_SETUP_STARTED', { plane: context, userId })
-    return { secret: secretBase32, qrCodeUri, recoveryCodes: plainCodes }
+    return checked({ secret: secretBase32, qrCodeUri, recoveryCodes: plainCodes })
   }
 
   // ---------------------------------------------------------------------------
@@ -290,11 +301,11 @@ export class MfaService {
     }
 
     // Fetch once at entry — used for mfaEnabled guard, email notification, and hook.
-    const user = await this.records.loadAccount(context, userId, tenantId)
+    const user = await pinned(this.records.loadAccount(context, userId, tenantId))
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
     const setupKey = `mfa_setup:${hmacSha256(userSubject(context, userId, tenantId), this.options.hmacKey)}`
-    const raw = await this.redis.get(setupKey)
+    const raw = await pinned(this.redis.get(setupKey))
     if (raw === null) throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
 
     const data = parseSetupData(raw, this.logger)
@@ -303,7 +314,7 @@ export class MfaService {
     const totpWindow = this.mfaOptions.totpWindow
     // Use anti-replay even on MFA enable to prevent a racing/intercepted code
     // from being reused via the challenge endpoint within the acceptance window.
-    const codeValid = await this.records.verifyTotpWithAntiReplay(
+    const verifying = this.records.verifyTotpWithAntiReplay(
       context,
       userId,
       secretBase32,
@@ -311,6 +322,7 @@ export class MfaService {
       totpWindow,
       tenantId
     )
+    const codeValid = await pinned(verifying)
     if (!codeValid) {
       logEvent(this.logger, 'AUTH_MFA_CODE_INVALID', { plane: context, flow: 'enable' })
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
@@ -319,7 +331,7 @@ export class MfaService {
     // Atomic completion gate: GETDEL returns the stored value and deletes the key in one
     // round-trip, so only the first concurrent caller with a valid code proceeds to the DB write
     // and the email; a racing request sees `null` and is treated as MFA_SETUP_REQUIRED.
-    const consumed = await this.redis.getdel(setupKey)
+    const consumed = await pinned(this.redis.getdel(setupKey))
     if (consumed === null) {
       logEvent(this.logger, 'AUTH_MFA_SETUP_KEY_CONSUMED')
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
@@ -327,11 +339,7 @@ export class MfaService {
 
     // Serialized against every other MFA transition: the `getdel` above makes the enable
     // single-shot, and this queues it with `disable` and the challenge splice, which write the same fields.
-    await this.records.transition(context, userId, tenantId, () => ({
-      mfaEnabled: true,
-      mfaSecret: data.encryptedSecret,
-      mfaRecoveryCodes: data.hashedCodes
-    }))
+    await pinned(this.records.transition(context, userId, tenantId, () => enabling(data)))
 
     // Atomically invalidate all existing refresh sessions so the user must re-login
     // with the MFA challenge, then advance the token epoch so outstanding ACCESS tokens die
@@ -341,8 +349,8 @@ export class MfaService {
     // moment the user enabled a second factor because they suspected that theft.
     // Scoped to the caller's own plane: the two id spaces come from different repositories
     // and may collide, so an unscoped revoke would log out the unrelated account sharing it.
-    await this.redis.invalidateUserSessions(userId, tenantId, context)
-    await this.redis.bumpUserTokenEpoch(userId, tenantId, context)
+    await pinned(this.redis.invalidateUserSessions(userId, tenantId, context))
+    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, context))
 
     logEvent(this.logger, 'AUTH_MFA_ENABLED', { plane: context, userId })
     notifyMfaChange(
@@ -399,7 +407,9 @@ export class MfaService {
     ip: string,
     userAgent: string
   ): Promise<AuthResult | PlatformAuthResult> {
-    return this.challengeFlow.challenge(mfaTempToken, code, ip, userAgent, this.mfaOptions)
+    return checked(
+      await pinned(this.challengeFlow.challenge(mfaTempToken, code, ip, userAgent, this.mfaOptions))
+    )
   }
 
   /**
@@ -423,12 +433,10 @@ export class MfaService {
     ip: string,
     userAgent: string
   ): Promise<PlatformAuthResult> {
-    return this.challengeFlow.challengePlatformOnly(
-      mfaTempToken,
-      code,
-      ip,
-      userAgent,
-      this.mfaOptions
+    return checked(
+      await pinned(
+        this.challengeFlow.challengePlatformOnly(mfaTempToken, code, ip, userAgent, this.mfaOptions)
+      )
     )
   }
 
@@ -461,7 +469,9 @@ export class MfaService {
     context: 'dashboard' | 'platform' = 'dashboard',
     tenantId?: string
   ): Promise<void> {
-    return this.management.disable(userId, code, ip, userAgent, context, tenantId, this.mfaOptions)
+    return await pinned(
+      this.management.disable(userId, code, ip, userAgent, context, tenantId, this.mfaOptions)
+    )
   }
 
   /**
@@ -482,7 +492,7 @@ export class MfaService {
     context: 'dashboard' | 'platform' = 'dashboard',
     tenantId?: string
   ): Promise<void> {
-    return this.management.resetMfa(userId, context, tenantId)
+    return await pinned(this.management.resetMfa(userId, context, tenantId))
   }
 
   /**
@@ -513,14 +523,18 @@ export class MfaService {
     context: 'dashboard' | 'platform' = 'dashboard',
     tenantId?: string
   ): Promise<{ recoveryCodes: string[] }> {
-    return this.management.regenerateRecoveryCodes(
-      userId,
-      totpCode,
-      ip,
-      userAgent,
-      context,
-      tenantId,
-      this.mfaOptions
+    return checked(
+      await pinned(
+        this.management.regenerateRecoveryCodes(
+          userId,
+          totpCode,
+          ip,
+          userAgent,
+          context,
+          tenantId,
+          this.mfaOptions
+        )
+      )
     )
   }
 }

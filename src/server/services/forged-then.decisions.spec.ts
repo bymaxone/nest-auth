@@ -20,8 +20,8 @@ interface Outcome {
 }
 
 /** Bundles the harness once and runs one scenario of it in a child process. */
-function run(scenario: string, file: string): Outcome {
-  const out = execFileSync(process.execPath, [file], {
+function run(scenario: string, file: string, preload: string[] = []): Outcome {
+  const out = execFileSync(process.execPath, [...preload, file], {
     encoding: 'utf8',
     env: { ...process.env, SCENARIO: scenario, NODE_PATH: join(process.cwd(), 'node_modules') }
   })
@@ -200,5 +200,31 @@ describe('a decision made while a host forges what a promise answers', () => {
   // Scenario: the store says a recovery code is spent, with the accessors installed that say it was claimed. Expected: not claimed.
   it('does not claim a spent recovery code when accessors restore themselves', () => {
     expect(run('self-restoring-claim', file)).toEqual({ outcome: 'claimed:false', unhandled: 0 })
+  })
+
+  // Scenario: the host's repository installs accessors that restore themselves while it makes its promise, and the caller awaits the
+  // guarded method bare, as the platform login awaits `findByEmail`. Expected: refused. Why: the promise the guard hands back is the
+  // one the caller's `await` reads the constructor of, so it carries the language's own.
+  it('refuses a bare await of a guarded repository answered by accessors that restore themselves', () => {
+    expect(run('guarded-bare', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
+  })
+
+  // Scenario: the constructor slot of `Promise.prototype` already holds another function when the library loads. Expected: the load
+  // fails loudly. Why: the language's constructor is taken from that slot, so a polluted one would make every pin and every wait
+  // run through the host's function, and the decisions below it would answer what the host chose.
+  it('refuses to load when the constructor of promises was replaced before it', () => {
+    const preload = join(directory, 'preload.cjs')
+    writeFileSync(
+      preload,
+      "Object.defineProperty(Promise.prototype, 'constructor', { value: Object, configurable: true, writable: true })"
+    )
+    let failure = ''
+    try {
+      run('baseline', file, ['-r', preload])
+    } catch (error: unknown) {
+      failure = String((error as { stderr?: unknown }).stderr)
+    }
+
+    expect(failure).toContain('constructor of Promise')
   })
 })

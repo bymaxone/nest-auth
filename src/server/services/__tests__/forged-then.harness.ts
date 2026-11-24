@@ -12,6 +12,7 @@ import { resolveOptions } from '../../config/resolved-options'
 import { PlatformAuthController } from '../../controllers/platform-auth.controller'
 import { AuthRedisService } from '../../redis/auth-redis.service'
 import { mappingOutages } from '../../redis/redis-outage'
+import { guardRepository } from '../../utils/host-read'
 import { AuthRevocationService } from '../auth-revocation.service'
 import { AuthTokenVerifierService } from '../auth-token-verifier.service'
 import { MfaChallengeService } from '../mfa-challenge.service'
@@ -533,6 +534,25 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
     record.claimRecoveryCode('dashboard', 'u', '123456', 't1'),
     (answer) => `claimed:${String(answer)}`
   )
+} else if (scenario === 'guarded-bare') {
+  // The repository of the host installs the accessors while it makes its promise, and the caller awaits the guarded method bare, as
+  // the platform login does. Expected: a refusal, never the account the accessors answer.
+  const guarded = guardRepository(
+    {
+      lookup: (): Promise<unknown> => {
+        selfRestoring({ id: 'FORGED' })
+        return Promise.resolve({ id: 'real' })
+      }
+    },
+    {} as never
+  ) as unknown as { lookup: () => Promise<{ id: string }> }
+  void (async (): Promise<void> => {
+    try {
+      report(`account:${(await guarded.lookup()).id}`)
+    } catch (error: unknown) {
+      report(`refused:${codeOf(error)}`)
+    }
+  })()
 } else if (scenario === 'mid-read' || scenario === 'late' || scenario === 'unhandled') {
   settle(service.resolveAccess(ref), showAccess)
 } else {

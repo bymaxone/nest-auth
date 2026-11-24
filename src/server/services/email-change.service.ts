@@ -23,6 +23,7 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
+import { pinned } from '../utils/settle'
 
 /** Bytes of entropy in an address-change token before hex encoding (256-bit, 64 hex chars). */
 const EMAIL_CHANGE_TOKEN_BYTES = 32
@@ -149,7 +150,7 @@ export class EmailChangeService implements OnModuleInit {
   async requestChange(userId: string, tenantId: string, dto: ChangeEmailDto): Promise<void> {
     const newEmail = normalizeEmail(dto.newEmail)
 
-    const user = await this.userRepo.findById({ id: userId, tenantId })
+    const user = await pinned(this.userRepo.findById({ id: userId, tenantId }))
     // A verified token whose subject no longer exists, and an account with no local password,
     // answer identically: the caller cannot prove a credential this account does not have.
     if (!user?.passwordHash) {
@@ -166,21 +167,21 @@ export class EmailChangeService implements OnModuleInit {
     // within a tenant, so two tenants' user `1` need two budgets, or failures against one lock the
     // other out of its own address change without a credential.
     const bfIdentifier = reproofCounterId('email-change', userId, tenantId, this.options.hmacKey)
-    if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+    if (await pinned(this.bruteForce.isLockedOut(bfIdentifier))) {
       logEvent(this.logger, 'AUTH_ACCOUNT_LOCKED', { flow: 'email_change' })
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
-    const matches = await this.passwordService.compare(dto.currentPassword, user.passwordHash)
-    if (!matches) {
-      await this.bruteForce.recordFailure(bfIdentifier)
+    const ok = await pinned(this.passwordService.compare(dto.currentPassword, user.passwordHash))
+    if (!ok) {
+      await pinned(this.bruteForce.recordFailure(bfIdentifier))
       logEvent(this.logger, 'AUTH_PASSWORD_REJECTED', { flow: 'email_change' })
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
-    await this.bruteForce.resetFailures(bfIdentifier)
+    await pinned(this.bruteForce.resetFailures(bfIdentifier))
 
-    await this.assertAddressIsFree(user, newEmail)
+    await pinned(this.assertAddressIsFree(user, newEmail))
 
     const rawToken = generateSecureToken(EMAIL_CHANGE_TOKEN_BYTES)
     const context: EmailChangeContext = {
@@ -192,11 +193,8 @@ export class EmailChangeService implements OnModuleInit {
       // changes their password — which is the first thing a victim does.
       passwordFingerprint: sha256(user.passwordHash)
     }
-    await this.redis.set(
-      `ec:${sha256(rawToken)}`,
-      stringifyJson(context),
-      this.options.emailChange.tokenTtlSeconds
-    )
+    const { tokenTtlSeconds } = this.options.emailChange
+    await pinned(this.redis.set(`ec:${sha256(rawToken)}`, stringifyJson(context), tokenTtlSeconds))
 
     // Non-null by construction: `onModuleInit` refuses to boot without it.
     //
@@ -207,7 +205,9 @@ export class EmailChangeService implements OnModuleInit {
     // publishes the credential through this library's own filter — the caller never gets a chance
     // to contain it, because the caller is this library.
     try {
-      await this.emailProvider.sendEmailChangeVerification?.(user.tenantId, newEmail, rawToken)
+      await pinned(
+        this.emailProvider.sendEmailChangeVerification?.(user.tenantId, newEmail, rawToken)
+      )
     } catch (err: unknown) {
       throw new Error(describeChannelStatus(err))
     }
@@ -229,7 +229,7 @@ export class EmailChangeService implements OnModuleInit {
    */
   async confirmChange(dto: ConfirmEmailChangeDto): Promise<void> {
     // Atomic read-and-delete: a link works exactly once, whatever happens after.
-    const raw = await this.redis.getdel(`ec:${sha256(dto.token)}`)
+    const raw = await pinned(this.redis.getdel(`ec:${sha256(dto.token)}`))
     if (raw === null) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID)
     }
@@ -239,7 +239,9 @@ export class EmailChangeService implements OnModuleInit {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID)
     }
 
-    const user = await this.userRepo.findById({ id: context.userId, tenantId: context.tenantId })
+    const user = await pinned(
+      this.userRepo.findById({ id: context.userId, tenantId: context.tenantId })
+    )
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID)
     }
@@ -253,17 +255,19 @@ export class EmailChangeService implements OnModuleInit {
     assertNotBlocked(user.status, this.options.blockedStatuses)
     // Re-checked here and not only at request time: the two are separated by the whole TTL,
     // and whoever registers the address in between would otherwise lose it to this change.
-    await this.assertAddressIsFree(user, context.newEmail)
+    await pinned(this.assertAddressIsFree(user, context.newEmail))
 
     const oldEmail = user.email
-    await this.userRepo.updateEmail({
-      id: context.userId,
-      tenantId: context.tenantId,
-      email: context.newEmail
-    })
+    await pinned(
+      this.userRepo.updateEmail({
+        id: context.userId,
+        tenantId: context.tenantId,
+        email: context.newEmail
+      })
+    )
     logEvent(this.logger, 'AUTH_EMAIL_CHANGED', { userId: context.userId })
 
-    await this.notifyOldAddress(user.tenantId, oldEmail, context.newEmail)
+    await pinned(this.notifyOldAddress(user.tenantId, oldEmail, context.newEmail))
   }
 
   // ---------------------------------------------------------------------------
@@ -289,7 +293,9 @@ export class EmailChangeService implements OnModuleInit {
     if (normalizeEmail(user.email) === newEmail) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
-    const existing = await this.userRepo.findByEmail({ email: newEmail, tenantId: user.tenantId })
+    const existing = await pinned(
+      this.userRepo.findByEmail({ email: newEmail, tenantId: user.tenantId })
+    )
     if (existing) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
@@ -368,7 +374,7 @@ export class EmailChangeService implements OnModuleInit {
   ): Promise<void> {
     if (!this.emailProvider.sendEmailChangedNotification) return
     try {
-      await this.emailProvider.sendEmailChangedNotification(tenantId, oldEmail, newEmail)
+      await pinned(this.emailProvider.sendEmailChangedNotification(tenantId, oldEmail, newEmail))
     } catch (err: unknown) {
       // The opaque description, matching what the provider does for this same message. The
       // notification RENDERS the new address, so a relay that rejects by quoting the body puts it

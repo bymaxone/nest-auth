@@ -45,7 +45,18 @@ const DECISION_FILES = [
   'services/api-key-verifier.service.ts',
   'services/auth.service.ts',
   'services/workspace-invitation-accept.service.ts',
-  'oauth/oauth.controller.ts'
+  'oauth/oauth.controller.ts',
+  'services/platform-auth.service.ts',
+  'services/password-reset.service.ts',
+  'services/mfa.service.ts',
+  'services/mfa-management.service.ts',
+  'services/reauthentication.service.ts',
+  'services/ws-ticket.service.ts',
+  'services/email-change.service.ts',
+  'services/invitation.service.ts',
+  'services/membership.service.ts',
+  'services/workspace-caller.service.ts',
+  'services/workspace.service.ts'
 ]
 
 /** The methods whose returned promise is the decision itself, by file: each carries `@Pinned()`. */

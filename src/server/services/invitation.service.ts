@@ -28,6 +28,7 @@ import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { hasRole } from '../utils/roles.util'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
+import { checked, pinned } from '../utils/settle'
 
 /**
  * Stored payload for a pending invitation, kept in Redis.
@@ -159,7 +160,7 @@ export class InvitationService {
     }
 
     // Fetch the inviter to validate their role authorization.
-    const inviter = await this.userRepo.findById({ id: inviterUserId, tenantId })
+    const inviter = await pinned(this.userRepo.findById({ id: inviterUserId, tenantId }))
     if (!inviter) {
       // The JWT references a user that no longer exists — treat as an invalid token.
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
@@ -224,17 +225,13 @@ export class InvitationService {
     //
     // Claiming the index first inverts the failure: a crash before the record is written leaves
     // an index naming nothing, so the invitation is simply dead — the safe direction.
-    const supersededHash = await this.supersedeApprovedInvitation(
-      inviter,
-      normalizedEmail,
-      tenantId,
-      tokenHash,
-      ttl
+    const supersededHash = await pinned(
+      this.supersedeApprovedInvitation(inviter, normalizedEmail, tenantId, tokenHash, ttl)
     )
     if (supersededHash !== null) {
-      await this.redis.del(`inv:${supersededHash}`)
+      await pinned(this.redis.del(`inv:${supersededHash}`))
     }
-    await this.redis.set(tokenKey, stringifyJson(stored), ttl)
+    await pinned(this.redis.set(tokenKey, stringifyJson(stored), ttl))
 
     // The claim above and the write just done are two round trips, and a revoke or a later invite
     // can move the index between them. A revoke in that gap reads an index naming a record that is
@@ -252,19 +249,15 @@ export class InvitationService {
     // way the email below is never sent for a record this method could not stand behind.
     let stillNamed: { claimed: boolean }
     try {
-      stillNamed = await this.claimInviteeIndex(
-        normalizedEmail,
-        tenantId,
-        tokenHash,
-        ttl,
-        tokenHash
+      stillNamed = await pinned(
+        this.claimInviteeIndex(normalizedEmail, tenantId, tokenHash, ttl, tokenHash)
       )
     } catch (err: unknown) {
-      await this.withdrawRecord(tokenKey)
+      await pinned(this.withdrawRecord(tokenKey))
       throw err
     }
     if (!stillNamed.claimed) {
-      await this.withdrawRecord(tokenKey)
+      await pinned(this.withdrawRecord(tokenKey))
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
@@ -279,12 +272,14 @@ export class InvitationService {
     // quoting the body puts `rawToken` into the error, and propagating the original would publish
     // the invitation token through this library's own filter.
     try {
-      await this.emailProvider.sendInvitation(tenantId, normalizedEmail, {
-        inviterName: inviter.name,
-        tenantName: displayTenantName,
-        inviteToken: rawToken,
-        expiresAt
-      })
+      await pinned(
+        this.emailProvider.sendInvitation(tenantId, normalizedEmail, {
+          inviterName: inviter.name,
+          tenantName: displayTenantName,
+          inviteToken: rawToken,
+          expiresAt
+        })
+      )
     } catch (err: unknown) {
       throw new Error(describeChannelStatus(err))
     }
@@ -366,9 +361,9 @@ export class InvitationService {
     email: string,
     tenantId: string
   ): Promise<string | null> {
-    const tokenHash = await this.redis.get(this.inviteeKey(email, tenantId))
+    const tokenHash = await pinned(this.redis.get(this.inviteeKey(email, tenantId)))
     if (tokenHash === null) return null
-    const raw = await this.redis.get(`inv:${tokenHash}`)
+    const raw = await pinned(this.redis.get(`inv:${tokenHash}`))
     const pending = raw === null ? null : this.parseInvitation(raw)
     if (pending !== null && !this.mayWithdraw(inviter, pending)) {
       logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'outranked' })
@@ -409,8 +404,8 @@ export class InvitationService {
     ttl: number
   ): Promise<string | null> {
     for (let attempt = 0; attempt < SUPERSEDE_ATTEMPTS; attempt += 1) {
-      const approved = await this.assertMaySupersede(inviter, email, tenantId)
-      const claim = await this.claimInviteeIndex(email, tenantId, tokenHash, ttl, approved)
+      const approved = await pinned(this.assertMaySupersede(inviter, email, tenantId))
+      const claim = await pinned(this.claimInviteeIndex(email, tenantId, tokenHash, ttl, approved))
       if (claim.claimed) return approved
     }
     logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'changed_under_rank_check' })
@@ -428,9 +423,11 @@ export class InvitationService {
    * @param tokenKey - The Redis key of the record written by this call.
    */
   private async withdrawRecord(tokenKey: string): Promise<void> {
-    await this.redis.del(tokenKey).catch((err: unknown) => {
-      logStore(this.logger, 'AUTH_STORE_DEGRADED', 'invitation_withdraw', err)
-    })
+    await pinned(
+      this.redis.del(tokenKey).catch((err: unknown) => {
+        logStore(this.logger, 'AUTH_STORE_DEGRADED', 'invitation_withdraw', err)
+      })
+    )
   }
 
   /**
@@ -457,17 +454,19 @@ export class InvitationService {
   ): Promise<{ claimed: boolean }> {
     // `ARGV[3]` is the empty string for "the index must be absent", which is distinguishable
     // from any real hash because a hash is always 64 hex characters.
-    const claimed = await this.redis.eval(
-      `local old = redis.call('GET', KEYS[1])
+    const claimed = await pinned(
+      this.redis.eval(
+        `local old = redis.call('GET', KEYS[1])
        if (old or '') ~= ARGV[3] then return 0 end
        redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
        return 1`,
-      [this.inviteeKey(email, tenantId)],
-      [tokenHash, String(ttl), expected ?? '']
+        [this.inviteeKey(email, tenantId)],
+        [tokenHash, String(ttl), expected ?? '']
+      )
     )
     // Narrowed rather than compared straight to `1`: `eval` answers `unknown`, and a client
     // that surfaced the Lua integer as a string would read a successful claim as contention.
-    return { claimed: typeof claimed === 'number' ? claimed === 1 : claimed === '1' }
+    return checked({ claimed: typeof claimed === 'number' ? claimed === 1 : claimed === '1' })
   }
 
   // ---------------------------------------------------------------------------
@@ -502,7 +501,7 @@ export class InvitationService {
   async revokeInvitation(revokerUserId: string, email: string, tenantId: string): Promise<boolean> {
     const normalizedEmail = normalizeEmail(email)
 
-    const revoker = await this.userRepo.findById({ id: revokerUserId, tenantId })
+    const revoker = await pinned(this.userRepo.findById({ id: revokerUserId, tenantId }))
     if (!revoker) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -518,14 +517,14 @@ export class InvitationService {
     }
 
     const indexKey = this.inviteeKey(normalizedEmail, tenantId)
-    const tokenHash = await this.redis.get(indexKey)
+    const tokenHash = await pinned(this.redis.get(indexKey))
     if (tokenHash === null) return false
 
     // The role check reads the invitation itself rather than the request: the caller names an
     // address, not a role, so the only way to know what authority is being withdrawn is to
     // look. A record that no longer parses is withdrawn without a role check — it can no
     // longer be accepted either, and leaving it would be worse than removing it.
-    const raw = await this.redis.get(`inv:${tokenHash}`)
+    const raw = await pinned(this.redis.get(`inv:${tokenHash}`))
     const invitation = raw === null ? null : this.parseInvitation(raw)
 
     // A revoker who may not withdraw THIS invitation is answered exactly as one who asked
@@ -540,8 +539,8 @@ export class InvitationService {
       return false
     }
 
-    await this.redis.del(indexKey)
-    const removed = await this.redis.del(`inv:${tokenHash}`)
+    await pinned(this.redis.del(indexKey))
+    const removed = await pinned(this.redis.del(`inv:${tokenHash}`))
     logEvent(this.logger, 'AUTH_INVITATION_REVOKED', { tenantId, actorUserId: revokerUserId })
     return removed
   }
@@ -601,10 +600,12 @@ export class InvitationService {
    *   grant what the invitation grants.
    */
   private async assertInviterStillAuthorised(invitation: StoredInvitation): Promise<void> {
-    const inviter = await this.userRepo.findById({
-      id: invitation.inviterUserId,
-      tenantId: invitation.tenantId
-    })
+    const inviter = await pinned(
+      this.userRepo.findById({
+        id: invitation.inviterUserId,
+        tenantId: invitation.tenantId
+      })
+    )
 
     // One null test, not two. The good-standing check used to carry its own `inviter !== null`
     // and then the conjunction below repeated it — so neither could be removed without the
@@ -673,10 +674,10 @@ export class InvitationService {
     //
     // The duplicate-address guard below cannot move with it: it reads the invitee's address out
     // of the stored record, which only the consume produces.
-    await this.passwordService.assertAcceptable(dto.password, 'password')
+    await pinned(this.passwordService.assertAcceptable(dto.password, 'password'))
 
     // Atomically read and delete — single-use enforcement prevents race conditions.
-    const raw = await this.redis.getdel(tokenKey)
+    const raw = await pinned(this.redis.getdel(tokenKey))
 
     if (!raw) {
       throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
@@ -705,7 +706,7 @@ export class InvitationService {
     // report success over an invitation that was accepted. Both carry the same TTL, so this is
     // tidiness rather than correctness — but a stale pointer is exactly the kind of thing an
     // operator reads as "still pending".
-    await this.redis.del(this.inviteeKey(invitation.email, invitation.tenantId))
+    await pinned(this.redis.del(this.inviteeKey(invitation.email, invitation.tenantId)))
 
     // Re-validate role against the hierarchy to guard against Redis tampering.
     if (!Object.hasOwn(this.options.roles.hierarchy, invitation.role)) {
@@ -719,48 +720,46 @@ export class InvitationService {
     // session. That is a clean way to keep a foothold across the account kill switch, which
     // makes the switch advisory. Re-reading closes it: the inviter must still exist, still be
     // in good standing, still belong to this tenant, and still out-rank the role being granted.
-    await this.assertInviterStillAuthorised(invitation)
+    await pinned(this.assertInviterStillAuthorised(invitation))
 
     // Guard against duplicate registrations within the same tenant.
-    const existing = await this.userRepo.findByEmail({
-      email: invitation.email,
-      tenantId: invitation.tenantId
-    })
+    const { email, tenantId } = invitation
+    const existing = await pinned(this.userRepo.findByEmail({ email, tenantId }))
     if (existing) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
 
     // The breach screen already ran, before the token was spent — see the top of this method.
-    const passwordHash = await this.passwordService.hash(dto.password)
+    const passwordHash = await pinned(this.passwordService.hash(dto.password))
 
-    const authUser = await this.userRepo.create({
-      email: invitation.email,
-      name: dto.name,
-      passwordHash,
-      role: invitation.role,
-      tenantId: invitation.tenantId,
-      // Invitation implies the invitee controls the email address.
-      emailVerified: true
-    })
+    const authUser = await pinned(
+      this.userRepo.create({
+        email: invitation.email,
+        name: dto.name,
+        passwordHash,
+        role: invitation.role,
+        tenantId: invitation.tenantId,
+        // Invitation implies the invitee controls the email address.
+        emailVerified: true
+      })
+    )
 
     // Strip credential fields before token issuance — prevents passwordHash / mfaSecret
     // from flowing into the AuthResult.user field that is serialized in the response.
     // Matches the pattern used in auth.service.ts and oauth.service.ts.
     const { passwordHash: _ph, mfaSecret: _ms, mfaRecoveryCodes: _mrc, ...safeUser } = authUser
 
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, CREDENTIAL_PROVED)
+    const result = await pinned(
+      this.tokenManager.issueTokens(safeUser, ip, userAgent, CREDENTIAL_PROVED)
+    )
 
     // Create a tracked session if session management is enabled.
     // Omitting this would leave the invitation-created account invisible in
     // GET /sessions and unrevokable via DELETE /sessions/:id.
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession({
-        userId: safeUser.id,
-        tenantId: safeUser.tenantId,
-        rawRefreshToken: result.rawRefreshToken,
-        ip,
-        userAgent
-      })
+      const { rawRefreshToken } = result
+      const tracked = { userId: safeUser.id, tenantId: safeUser.tenantId, rawRefreshToken }
+      await pinned(this.sessionService.createSession({ ...tracked, ip, userAgent }))
     }
     logEvent(this.logger, 'AUTH_INVITATION_ACCEPTED', {
       userId: authUser.id,
@@ -781,6 +780,6 @@ export class InvitationService {
       'afterInvitationAccepted'
     )
 
-    return result
+    return checked(result)
   }
 }

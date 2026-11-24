@@ -32,6 +32,7 @@ import { normalizeEmail } from '../utils/normalize-email'
 import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
+import { checked, pinned } from '../utils/settle'
 import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
 
 /** What the two login events of the platform plane have in common. */
@@ -106,16 +107,16 @@ export class PlatformAuthService {
     // resolves the same admin. Merged immutably to avoid mutating the validated DTO.
     dto = { ...dto, email: normalizeEmail(dto.email) }
 
-    const bfIdentifier = this.lockoutIdentifier(dto.email)
+    const bfId = this.lockoutIdentifier(dto.email)
 
-    const locked = await this.bruteForce.isLockedOut(bfIdentifier)
+    const locked = await pinned(this.bruteForce.isLockedOut(bfId))
     if (locked) {
       logEvent(this.logger, 'AUTH_LOGIN_LOCKED', { plane: 'platform' })
-      const retryAfterSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
+      const retryAfterSeconds = await pinned(this.bruteForce.getRemainingLockoutSeconds(bfId))
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, { retryAfterSeconds })
     }
 
-    const admin = await this.platformUserRepo.findByEmail(dto.email)
+    const admin = await pinned(this.platformUserRepo.findByEmail(dto.email))
 
     // Admin-not-found path: run a dummy scrypt derivation before failing so an unknown
     // address costs the same wall-clock time as a known address with a wrong password.
@@ -123,8 +124,8 @@ export class PlatformAuthService {
     // enumerates which administrator accounts exist despite the identical error body —
     // the same oracle the dashboard login already closes.
     if (!admin) {
-      await this.passwordService.compareDummy(dto.password)
-      await this.bruteForce.recordFailure(bfIdentifier)
+      await pinned(this.passwordService.compareDummy(dto.password))
+      await pinned(this.bruteForce.recordFailure(bfId))
       logEvent(this.logger, 'AUTH_LOGIN_INVALID_CREDENTIALS', { plane: 'platform' })
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
@@ -135,9 +136,9 @@ export class PlatformAuthService {
     // which enumerated operator accounts and read their moderation state on the
     // highest-privilege plane in the system. The hashing it saved is bounded by the per-IP
     // limiter; the disclosure was bounded by nothing.
-    const passwordMatch = await this.passwordService.compare(dto.password, admin.passwordHash)
-    if (!passwordMatch) {
-      await this.bruteForce.recordFailure(bfIdentifier)
+    const matched = await pinned(this.passwordService.compare(dto.password, admin.passwordHash))
+    if (!matched) {
+      await pinned(this.bruteForce.recordFailure(bfId))
       logEvent(this.logger, 'AUTH_LOGIN_INVALID_CREDENTIALS', { plane: 'platform' })
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
@@ -147,13 +148,13 @@ export class PlatformAuthService {
     // operator keeps full platform access as long as the password is known.
     assertNotBlocked(admin.status, this.options.blockedStatuses)
 
-    await this.bruteForce.resetFailures(bfIdentifier)
+    await pinned(this.bruteForce.resetFailures(bfId))
 
     // MFA challenge path: issue a short-lived temp token and stop here.
     if (admin.mfaEnabled) {
-      const mfaTempToken = await this.tokenManager.issueMfaTempToken(admin.id, 'platform')
+      const mfaTempToken = await pinned(this.tokenManager.issueMfaTempToken(admin.id, 'platform'))
       logEvent(this.logger, 'AUTH_LOGIN_MFA_CHALLENGED', { ...PASSWORD_LOGIN, userId: admin.id })
-      return { mfaRequired: true, mfaTempToken }
+      return checked({ mfaRequired: true, mfaTempToken })
     }
 
     // Destructure credential fields before issuing tokens.
@@ -164,7 +165,7 @@ export class PlatformAuthService {
       ...safeAdmin
     } = admin
 
-    const result = await this.tokenManager.issuePlatformTokens(safeAdmin, ip, userAgent)
+    const result = await pinned(this.tokenManager.issuePlatformTokens(safeAdmin, ip, userAgent))
     logEvent(this.logger, 'AUTH_LOGIN_SUCCEEDED', { ...PASSWORD_LOGIN, userId: admin.id })
 
     // Fire-and-forget: a slow or failing DB update must not block the auth response.
@@ -172,7 +173,7 @@ export class PlatformAuthService {
       logHook(this.logger, 'updateLastLogin', 'rejected')
     })
 
-    return result
+    return checked(result)
   }
 
   // ---------------------------------------------------------------------------
@@ -198,9 +199,9 @@ export class PlatformAuthService {
     // marker naming its owner for exactly this call, written from the session record.
     const tokenHash = sha256(rawRefreshToken)
     const markerKey = logoutPendingKey('platform', tokenHash)
-    const live = await this.redis.readSessionOwner(`prt:${tokenHash}`)
+    const live = await pinned(this.redis.readSessionOwner(`prt:${tokenHash}`))
     const fromSession = live.userId !== ''
-    const { userId } = fromSession ? live : await this.redis.readSessionOwner(markerKey)
+    const { userId } = fromSession ? live : await pinned(this.redis.readSessionOwner(markerKey))
     logEvent(this.logger, 'AUTH_LOGOUT', { plane: 'platform', ...(userId ? { userId } : {}) })
 
     // Every credential write is attempted whatever the earlier ones did, and the first failure is
@@ -211,41 +212,33 @@ export class PlatformAuthService {
     const index = userId ? sessionIndexKey('platform', userId, this.options.hmacKey, undefined) : ''
     const prune = (member: string): Array<() => Promise<unknown>> =>
       index === '' ? [] : [(): Promise<unknown> => this.redis.srem(index, member)]
-    const failures = await settleWrites([
-      ...this.blacklistWrites(accessToken),
-      settleAfter(
-        (): Promise<unknown> => this.redis.del('prt:' + tokenHash),
-        [...prune('prt:' + tokenHash), (): Promise<unknown> => this.redis.del('psd:' + tokenHash)]
-      ),
-      settleAfter(
-        (): Promise<unknown> => this.redis.del('prp:' + tokenHash),
-        prune('prp:' + tokenHash)
-      )
-    ])
+    const failures = await pinned(
+      settleWrites([
+        ...this.blacklistWrites(accessToken),
+        settleAfter(
+          (): Promise<unknown> => this.redis.del('prt:' + tokenHash),
+          [...prune('prt:' + tokenHash), (): Promise<unknown> => this.redis.del('psd:' + tokenHash)]
+        ),
+        settleAfter(
+          (): Promise<unknown> => this.redis.del('prp:' + tokenHash),
+          prune('prp:' + tokenHash)
+        )
+      ])
+    )
 
     // A refused write is not a completed logout: no hook, and the caller is told so. The session
     // record is already gone, so the owner is kept for the retry that will finish it.
     const markerTtl = logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn)
+    const owner = { userId, tenantId: undefined }
     if (failures.length > 0 && fromSession) {
-      await rememberPendingLogout(
-        this.redis,
-        markerKey,
-        { userId, tenantId: undefined },
-        markerTtl,
-        this.logger
-      )
+      await pinned(rememberPendingLogout(this.redis, markerKey, owner, markerTtl, this.logger))
     }
     raiseFirst(failures)
 
     if (
       userId !== '' &&
-      (await settlePendingLogout(
-        this.redis,
-        markerKey,
-        fromSession,
-        { userId, tenantId: undefined },
-        markerTtl,
-        this.logger
+      (await pinned(
+        settlePendingLogout(this.redis, markerKey, fromSession, owner, markerTtl, this.logger)
       ))
     ) {
       this.emitPlatformLogout(userId)
@@ -336,7 +329,9 @@ export class PlatformAuthService {
     ip: string,
     userAgent: string
   ): Promise<RotatedTokenResult> {
-    const result = await this.tokenManager.reissuePlatformTokens(rawRefreshToken, ip, userAgent)
+    const result = await pinned(
+      this.tokenManager.reissuePlatformTokens(rawRefreshToken, ip, userAgent)
+    )
 
     // Re-read the administrator and re-apply the status gate — the backstop the dashboard
     // plane has carried since ASVS v5 §7.4.2 was applied to it, and which this plane went
@@ -345,11 +340,11 @@ export class PlatformAuthService {
     // access every fifteen minutes for the refresh token's whole lifetime, on the
     // highest-privilege identity in the system, and the kill switch was advisory exactly
     // where it mattered most.
-    const admin = await this.platformUserRepo.findById(result.session.userId)
+    const admin = await pinned(this.platformUserRepo.findById(result.session.userId))
     if (!admin) {
       // The account was deleted while the session outlived it. Clear what is left rather than
       // leaving the freshly rotated records to be rotated again.
-      await this.revokeAllPlatformSessions(result.session.userId)
+      await pinned(this.revokeAllPlatformSessions(result.session.userId))
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
 
@@ -358,7 +353,7 @@ export class PlatformAuthService {
     } catch (err: unknown) {
       // Compensated, not merely refused: the rotation above already minted a live pair, and
       // leaving it would hand back exactly the access this gate exists to end.
-      await this.revokeAllPlatformSessions(admin.id)
+      await pinned(this.revokeAllPlatformSessions(admin.id))
       throw err
     }
 
@@ -374,18 +369,13 @@ export class PlatformAuthService {
     // sitting there, unused. Only re-signed when a claim actually differs.
     const rotated = this.tokenManager.verifyPlatformIgnoringExpiry(result.accessToken)
     if (rotated.role !== admin.role || rotated.mfaEnabled !== admin.mfaEnabled) {
-      return {
-        ...result,
-        session: { ...result.session, role: admin.role },
-        accessToken: await this.tokenManager.reissuePlatformAccessWithAuthority(
-          rotated,
-          admin.role,
-          admin.mfaEnabled
-        )
-      }
+      const { role, mfaEnabled } = admin
+      const signed = this.tokenManager.reissuePlatformAccessWithAuthority(rotated, role, mfaEnabled)
+      const accessToken = await pinned(signed)
+      return checked({ ...result, session: { ...result.session, role }, accessToken })
     }
 
-    return result
+    return checked(result)
   }
 
   // ---------------------------------------------------------------------------
@@ -400,7 +390,7 @@ export class PlatformAuthService {
    * @throws {@link AuthException} with `TOKEN_INVALID` if the admin no longer exists.
    */
   async getMe(userId: string): Promise<SafeAuthPlatformUser> {
-    const admin = await this.platformUserRepo.findById(userId)
+    const admin = await pinned(this.platformUserRepo.findById(userId))
     if (!admin) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -412,7 +402,7 @@ export class PlatformAuthService {
       ...safeAdmin
     } = admin
 
-    return safeAdmin
+    return checked(safeAdmin)
   }
 
   // ---------------------------------------------------------------------------
@@ -461,7 +451,7 @@ export class PlatformAuthService {
   async revokeAllPlatformSessions(userId: string): Promise<void> {
     // The platform plane carries no tenant: its admins are cross-tenant by definition, which
     // is the same asymmetry `userSubject` encodes for every other user-derived key.
-    await this.redis.invalidateUserSessions(userId, undefined, 'platform')
-    await this.redis.bumpUserTokenEpoch(userId, undefined, 'platform')
+    await pinned(this.redis.invalidateUserSessions(userId, undefined, 'platform'))
+    await pinned(this.redis.bumpUserTokenEpoch(userId, undefined, 'platform'))
   }
 }

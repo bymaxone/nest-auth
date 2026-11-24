@@ -31,6 +31,7 @@ import type {
   UpdateWorkspaceStatusResult,
   WorkspaceRef
 } from '../interfaces/workspace-repository.interface'
+import { checked, pinned } from '../utils/settle'
 import { normalizeWorkspaceName } from '../utils/workspace-name'
 
 const DAY_MS = 86_400_000
@@ -106,23 +107,25 @@ export class WorkspaceService {
     context: HookContext
   ): Promise<AuthWorkspace> {
     const name = normalizeWorkspaceName(data.name)
-    await this.assertMayCreate(user, name, context)
+    await pinned(this.assertMayCreate(user, name, context))
 
     const ref = { tenantId: user.tenantId, workspaceId: randomUUID() }
     const event = { type: 'workspace.created' as const, ...ref, actorUserId: user.id, at: now() }
-    const created = await this.workspaces.createWithOwner({
-      ...ref,
-      name,
-      ownerUserId: user.id,
-      ownerRole: this.group.roles.ownerRole,
-      maxWorkspacesPerUser: this.group.maxWorkspacesPerUser,
-      audit: event
-    })
+    const created = await pinned(
+      this.workspaces.createWithOwner({
+        ...ref,
+        name,
+        ownerUserId: user.id,
+        ownerRole: this.group.roles.ownerRole,
+        maxWorkspacesPerUser: this.group.maxWorkspacesPerUser,
+        audit: event
+      })
+    )
     if (created.status === 'limit_reached') {
       throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED)
     }
     this.events.emit(event, context)
-    return created.workspace
+    return checked(created.workspace)
   }
 
   /**
@@ -149,12 +152,14 @@ export class WorkspaceService {
       actorUserId: actor.userId,
       at: now()
     }
-    const result = await this.workspaces.rename({
-      ...ref,
-      name,
-      actor: judged(actor),
-      audit: event
-    })
+    const result = await pinned(
+      this.workspaces.rename({
+        ...ref,
+        name,
+        actor: judged(actor),
+        audit: event
+      })
+    )
     if (result === 'not_found') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     if (result === 'actor_changed') {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
@@ -187,17 +192,22 @@ export class WorkspaceService {
       ? ({ type: 'workspace.deleted', ...ref, actorUserId: actor.userId, at } as const)
       : ({ type: 'workspace.deletion_scheduled', ...ref, actorUserId: actor.userId, at } as const)
 
-    const result = await this.workspaces.updateStatus({
-      ...ref,
-      status: immediate ? 'deleted' : 'pending_deletion',
-      expectedStatus: 'active',
-      deletionScheduledAt: scheduledAt,
-      actor: judged(actor),
-      audit: event
-    })
-    await this.settle(result, ref)
+    const result = await pinned(
+      this.workspaces.updateStatus({
+        ...ref,
+        status: immediate ? 'deleted' : 'pending_deletion',
+        expectedStatus: 'active',
+        deletionScheduledAt: scheduledAt,
+        actor: judged(actor),
+        audit: event
+      })
+    )
+    await pinned(this.settle(result, ref))
     this.events.emit(event, context)
-    return { status: immediate ? 'deleted' : 'pending_deletion', deletionScheduledAt: scheduledAt }
+    return checked({
+      status: immediate ? 'deleted' : 'pending_deletion',
+      deletionScheduledAt: scheduledAt
+    })
   }
 
   /**
@@ -210,7 +220,7 @@ export class WorkspaceService {
    *   or its grace period is over.
    */
   async restore(ref: WorkspaceRef, actor: WorkspaceActor, context: HookContext): Promise<void> {
-    const workspace = await this.workspaces.findById(ref)
+    const workspace = await pinned(this.workspaces.findById(ref))
     const due = workspace?.deletionScheduledAt
     if (workspace?.status !== 'pending_deletion' || (due != null && due.getTime() <= Date.now())) {
       throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
@@ -221,15 +231,17 @@ export class WorkspaceService {
       actorUserId: actor.userId,
       at: now()
     }
-    const result = await this.workspaces.updateStatus({
-      ...ref,
-      status: 'active',
-      expectedStatus: 'pending_deletion',
-      deletionScheduledAt: null,
-      actor: judged(actor),
-      audit: event
-    })
-    await this.settle(result, ref)
+    const result = await pinned(
+      this.workspaces.updateStatus({
+        ...ref,
+        status: 'active',
+        expectedStatus: 'pending_deletion',
+        deletionScheduledAt: null,
+        actor: judged(actor),
+        audit: event
+      })
+    )
+    await pinned(this.settle(result, ref))
     this.events.emit(event, context)
   }
 
@@ -242,26 +254,28 @@ export class WorkspaceService {
    * @returns `deleted`, or why nothing changed.
    */
   async finalizeDeletion(ref: WorkspaceRef, context?: HookContext): Promise<FinalizeResult> {
-    const workspace = await this.workspaces.findById(ref)
+    const workspace = await pinned(this.workspaces.findById(ref))
     if (workspace === null) return 'not_found'
     const refusal = finalizeRefusal(workspace)
     if (refusal !== null) return refusal
     const event = { type: 'workspace.deleted' as const, ...ref, actorUserId: null, at: now() }
-    const result = await this.workspaces.updateStatus({
-      ...ref,
-      status: 'deleted',
-      expectedStatus: 'pending_deletion',
-      expectedDeletionScheduledAt: workspace.deletionScheduledAt,
-      deletionScheduledAt: null,
-      audit: event
-    })
+    const result = await pinned(
+      this.workspaces.updateStatus({
+        ...ref,
+        status: 'deleted',
+        expectedStatus: 'pending_deletion',
+        expectedDeletionScheduledAt: workspace.deletionScheduledAt,
+        deletionScheduledAt: null,
+        audit: event
+      })
+    )
     if (result === 'status_conflict') {
       // The workspace changed after this job read it, so nothing was written. Answer from what it
       // is now; one that is still due is left for the next run.
-      const current = await this.workspaces.findById(ref)
+      const current = await pinned(this.workspaces.findById(ref))
       return current === null ? 'not_found' : (finalizeRefusal(current) ?? 'not_due')
     }
-    await this.settle(result, ref)
+    await pinned(this.settle(result, ref))
     this.events.emit(event, context ?? systemContext(ref.tenantId))
     return 'deleted'
   }
@@ -282,18 +296,20 @@ export class WorkspaceService {
     userId: string,
     context: HookContext
   ): Promise<ResolvedWorkspaceMember> {
-    const member = await this.access.resolveMembership({ ...ref, userId })
+    const member = await pinned(this.access.resolveMembership({ ...ref, userId }))
     if (member === null) throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
-    await this.memberships.setLastActiveWorkspaceId?.({
-      tenantId: ref.tenantId,
-      userId,
-      workspaceId: ref.workspaceId
-    })
+    await pinned(
+      this.memberships.setLastActiveWorkspaceId?.({
+        tenantId: ref.tenantId,
+        userId,
+        workspaceId: ref.workspaceId
+      })
+    )
     this.events.emit(
       { type: 'workspace.switched', ...ref, actorUserId: userId, userId, at: now() },
       context
     )
-    return member
+    return checked(member)
   }
 
   /**
@@ -305,12 +321,12 @@ export class WorkspaceService {
    * @throws {AuthException} `auth.workspace_not_found` when the caller is not an active member.
    */
   async getAccess(ref: WorkspaceRef, userId: string): Promise<WorkspaceAccessView> {
-    const member = await this.access.resolveMembership({ ...ref, userId })
-    const workspace = member === null ? null : await this.workspaces.findById(ref)
+    const member = await pinned(this.access.resolveMembership({ ...ref, userId }))
+    const workspace = member === null ? null : await pinned(this.workspaces.findById(ref))
     if (member === null || workspace === null) {
       throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     }
-    return { workspace, role: member.role }
+    return checked({ workspace, role: member.role })
   }
 
   private async assertMayCreate(
@@ -319,21 +335,24 @@ export class WorkspaceService {
     context: HookContext
   ): Promise<void> {
     const { allowCreate, maxWorkspacesPerUser } = this.group
-    const allowed = typeof allowCreate === 'function' ? await allowCreate(user) : allowCreate
+    const allowed =
+      typeof allowCreate === 'function' ? await pinned(allowCreate(user)) : allowCreate
     if (!allowed) throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
 
     if (maxWorkspacesPerUser > 0) {
-      const owned = await this.memberships.countOwned({
-        tenantId: user.tenantId,
-        userId: user.id,
-        ownerRole: this.group.roles.ownerRole
-      })
+      const owned = await pinned(
+        this.memberships.countOwned({
+          tenantId: user.tenantId,
+          userId: user.id,
+          ownerRole: this.group.roles.ownerRole
+        })
+      )
       if (owned >= maxWorkspacesPerUser) {
         throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED)
       }
     }
 
-    const verdict = await this.hooks.beforeWorkspaceCreate?.(user, { name }, context)
+    const verdict = await pinned(this.hooks.beforeWorkspaceCreate?.(user, { name }, context))
     if (verdict !== undefined && !verdict.allowed) {
       throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN, [
         { field: 'name', message: verdict.reason ?? 'Workspace creation was refused' }
@@ -353,14 +372,14 @@ export class WorkspaceService {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     }
     if (result === 'status_conflict') {
-      const current = await this.workspaces.findById(ref)
+      const current = await pinned(this.workspaces.findById(ref))
       throw new AuthException(
         current?.status === 'pending_deletion'
           ? AUTH_ERROR_CODES.WORKSPACE_PENDING_DELETION
           : AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND
       )
     }
-    await this.access.invalidateWorkspace(ref)
+    await pinned(this.access.invalidateWorkspace(ref))
   }
 }
 
