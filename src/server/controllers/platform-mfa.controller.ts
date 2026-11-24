@@ -91,7 +91,9 @@ export class PlatformMfaController {
     @CurrentUser() user: PlatformJwtPayload,
     @Body() dto: MfaSetupDto
   ): Promise<MfaSetupResult> {
-    return this.mfaService.setup(user.sub, 'platform', dto.password, undefined, user.sid)
+    return await pinned(
+      this.mfaService.setup(user.sub, 'platform', dto.password, undefined, user.sid)
+    )
   }
 
   /**
@@ -180,6 +182,8 @@ export class PlatformMfaController {
   ): Promise<{ recoveryCodes: string[] }> {
     const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
-    return this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, 'platform')
+    return await pinned(
+      this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, 'platform')
+    )
   }
 }

@@ -201,7 +201,7 @@ export class PlatformAuthController {
   @Get('me')
   @Pinned()
   async me(@CurrentUser() user: PlatformJwtPayload): Promise<SafeAuthPlatformUser> {
-    return this.platformAuthService.getMe(user.sub)
+    return await pinned(this.platformAuthService.getMe(user.sub))
   }
 
   // ---------------------------------------------------------------------------

@@ -95,6 +95,35 @@ function pinnedNames(text: string): Set<string> {
   return found
 }
 
+/**
+ * The `return` statements of an async method that hand back a call of a collaborator without `await`. Returning a promise from an
+ * async function resolves the outer promise from it, which reads its `then`; `return await pinned(...)` reads the pinned constructor
+ * instead. The `deliver*` methods of the token delivery are synchronous and answer a plain object, so they are not promises.
+ */
+function bareReturns(text: string): string[] {
+  const found: string[] = []
+  const source = ts.createSourceFile('x.ts', text, ts.ScriptTarget.Latest, true)
+  const visit = (node: ts.Node, inAsync: boolean): void => {
+    const isAsync =
+      ts.isMethodDeclaration(node) &&
+      (ts.getModifiers(node) ?? []).some((m) => m.getText(source) === 'async')
+    const here = ts.isFunctionLike(node) ? isAsync : inAsync
+    if (here && ts.isReturnStatement(node) && node.expression !== undefined) {
+      const operand = node.expression
+      if (ts.isCallExpression(operand)) {
+        const callee = operand.expression.getText(source)
+        if (callee.startsWith('this.') && !/\.deliver\w*$/.test(callee))
+          found.push(
+            `${callee} (line ${source.getLineAndCharacterOfPosition(operand.getStart(source)).line + 1})`
+          )
+      }
+    }
+    ts.forEachChild(node, (child) => visit(child, here))
+  }
+  visit(source, false)
+  return found
+}
+
 /** The async methods named in `names`, or any async `canActivate` when `names` is `canActivate`, that neither the class nor a `@Pinned()` on the method pins. */
 function undecorated(text: string, names: string[] | 'canActivate' | 'async'): string[] {
   const found: string[] = []
@@ -158,6 +187,16 @@ describe('the promises of a decision path carry the language constructor', () =>
     }
   )
 
+  // Scenario: every async handler of a controller. Expected: none returns the call of a collaborator without `await pinned(...)`.
+  // Why: a bare `return service.x()` resolves the handler's own promise from the service's, and that reads its `then`, which a
+  // replaced `then` decides, so the pin on the outer promise would not be the last word.
+  it.each(DECISION_FILES.filter((file) => file.startsWith('controllers/')))(
+    '%s returns no promise it has not awaited',
+    (file) => {
+      expect(bareReturns(readFileSync(join(SERVER, file), 'utf8'))).toEqual([])
+    }
+  )
+
   // Scenario: the scanners on text that breaks each rule. Expected: both report it, so a green scan is not a scanner that finds nothing.
   it('reports an await that is not pinned and a decision that is not decorated', () => {
     const broken = `@PinnedMethods('other')
@@ -173,5 +212,18 @@ describe('the promises of a decision path carry the language constructor', () =>
       'decide',
       'missing (not found)'
     ])
+  })
+  // Scenario: a handler that returns a service call bare, one that awaits it pinned, a synchronous delivery and a nested function.
+  // Expected: only the bare return is reported, with its line.
+  it('reports a bare return of a promise in an async handler', () => {
+    const broken = `class A {
+      async bare() { return this.service.run() }
+      async fine() { return await pinned(this.service.run()) }
+      async plain() { return this.tokenDelivery.deliverAuthResponse() }
+      sync() { return this.service.run() }
+      async nested() { const f = () => { return this.service.run() }; return await pinned(f()) }
+    }`
+
+    expect(bareReturns(broken)).toEqual(['this.service.run (line 2)'])
   })
 })

@@ -136,7 +136,7 @@ export class WorkspaceInvitationController {
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @Query() query: WorkspacePageQueryDto
   ): Promise<InvitationPage> {
-    return this.invitations.list(refOf(workspace), pageOf(query))
+    return await pinned(this.invitations.list(refOf(workspace), pageOf(query)))
   }
 
   /**
@@ -216,7 +216,7 @@ export class WorkspaceInvitationController {
   @Post('invitations/preview')
   @Pinned()
   async preview(@Body() dto: PreviewWorkspaceInvitationDto): Promise<WorkspaceInvitationPreview> {
-    return this.invitations.preview(dto.token)
+    return await pinned(this.invitations.preview(dto.token))
   }
 
   /**
@@ -241,7 +241,7 @@ export class WorkspaceInvitationController {
     @Body() dto: AcceptWorkspaceInvitationDto,
     @Req() req: Request
   ): Promise<AcceptedInvitation> {
-    return this.accepts.accept(user, dto.token, dashboardHookContext(req, user))
+    return await pinned(this.accepts.accept(user, dto.token, dashboardHookContext(req, user)))
   }
 
   /**

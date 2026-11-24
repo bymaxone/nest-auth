@@ -117,11 +117,13 @@ export class SessionController {
     // When no refresh token is present (e.g. access-token-only requests),
     // isCurrent will be false for all sessions — this is the correct behaviour.
     const currentHash = rawRefresh ? sha256(rawRefresh) : undefined
-    return this.sessionService.listSessions({
-      userId: user.sub,
-      tenantId: user.tenantId,
-      currentSessionHash: currentHash
-    })
+    return await pinned(
+      this.sessionService.listSessions({
+        userId: user.sub,
+        tenantId: user.tenantId,
+        currentSessionHash: currentHash
+      })
+    )
   }
 
   // ---------------------------------------------------------------------------

@@ -227,7 +227,7 @@ export class AuthController {
   @Get('me')
   @Pinned()
   async me(@CurrentUser() user: DashboardJwtPayload): Promise<SafeAuthUser> {
-    return this.authService.getMe(user.sub, user.tenantId)
+    return await pinned(this.authService.getMe(user.sub, user.tenantId))
   }
 
   /**
@@ -260,7 +260,7 @@ export class AuthController {
   async wsTicket(
     @CurrentUser() user: DashboardJwtPayload
   ): Promise<{ ticket: string; expiresIn: number }> {
-    return this.wsTicketService.issue(user)
+    return await pinned(this.wsTicketService.issue(user))
   }
 
   /**

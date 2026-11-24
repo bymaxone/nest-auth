@@ -7,6 +7,7 @@
  */
 
 import { resolveOptions } from '../../config/resolved-options'
+import { PlatformAuthController } from '../../controllers/platform-auth.controller'
 import { mappingOutages } from '../../redis/redis-outage'
 import { AuthRevocationService } from '../auth-revocation.service'
 import { AuthTokenVerifierService } from '../auth-token-verifier.service'
@@ -261,6 +262,21 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
     }
   )
   settle(subject.verifyAccessToken('token', { plane: 'dashboard' }), showToken)
+} else if (scenario === 'route') {
+  // A route handler returns what a service answers; host code called by the service plants a `then` that answers another account.
+  const platformAuth = {
+    getMe: (): Promise<unknown> => {
+      Promise.prototype.then = function forgingThen(resolve: (answer: unknown) => void): void {
+        resolve({ id: 'FORGED' })
+      } as never
+      return Promise.resolve({ id: 'real' })
+    }
+  }
+  const controller = new PlatformAuthController(platformAuth as never, {} as never, {} as never)
+  settle(
+    controller.me({ sub: 'u1' } as never),
+    (answer) => `account:${(answer as { id: string }).id}`
+  )
 } else if (scenario === 'revoked-token') {
   const revocation = new AuthRevocationService({
     get: () => Promise.resolve('1'),

@@ -191,7 +191,9 @@ export class MfaController {
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaSetupDto
   ): Promise<MfaSetupResult> {
-    return this.mfaService.setup(user.sub, 'dashboard', dto.password, user.tenantId, user.sid)
+    return await pinned(
+      this.mfaService.setup(user.sub, 'dashboard', dto.password, user.tenantId, user.sid)
+    )
   }
 
   /**
@@ -371,13 +373,15 @@ export class MfaController {
     const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
     // See `disable`: this controller is dashboard-only by its guard.
-    return this.mfaService.regenerateRecoveryCodes(
-      user.sub,
-      dto.code,
-      ip,
-      userAgent,
-      'dashboard',
-      user.tenantId
+    return await pinned(
+      this.mfaService.regenerateRecoveryCodes(
+        user.sub,
+        dto.code,
+        ip,
+        userAgent,
+        'dashboard',
+        user.tenantId
+      )
     )
   }
 }

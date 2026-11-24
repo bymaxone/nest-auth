@@ -48,6 +48,13 @@ describe('a decision made while a host forges what a promise answers', () => {
     rmSync(directory, { recursive: true, force: true })
   })
 
+  // Scenario: a route handler returns what a service answered, and a `then` forging another account is planted by the code the
+  // service called. Expected: the account the service answered. Why: a handler that returns the promise bare resolves its own from
+  // it, which reads that promise's `then`; `return await pinned(...)` reads the pinned constructor instead.
+  it('answers the account the service returned through a route handler', () => {
+    expect(run('route', file)).toEqual({ outcome: 'account:real', unhandled: 0 })
+  })
+
   // Scenario: no host interference. Expected: a user with no membership is denied. Why: the other rows mean nothing unless this holds.
   it('denies a non-member when nothing is forged', () => {
     expect(run('baseline', file)).toEqual({ outcome: 'denied', unhandled: 0 })
