@@ -29,6 +29,7 @@ import type {
   ClientIpSource
 } from '../interfaces/auth-module-options.interface'
 import type { RegistrationMode } from '../interfaces/workspace-options.interface'
+import { hasOwn } from '../utils/captured-builtins'
 
 /**
  * Domain-separation label for the HMAC key derivation. Changing this value is
@@ -372,12 +373,11 @@ export function resolveOptions(given: BymaxAuthModuleOptions): ResolvedOptions {
  * @param target - The object owning the property.
  * @param key - The property to withhold from serialization.
  */
-function withholdFromSerialization(target: object, key: string): void {
+export function withholdFromSerialization(target: object, key: string): void {
   const descriptor = Object.getOwnPropertyDescriptor(target, key)
   if (descriptor === undefined) return
-  // Read through the descriptor rather than by bracket index: the value is the
-  // same, and the property name never becomes a dynamic lookup key.
-  const value: unknown = descriptor.value
+  // Read through the descriptor, own field only: the key is never a dynamic lookup.
+  const value: unknown = hasOwn(descriptor, 'value') ? descriptor.value : undefined
   Object.defineProperty(target, key, {
     get: (): unknown => value,
     enumerable: false,

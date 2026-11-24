@@ -5,6 +5,7 @@ import type { Request } from 'express'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AccountStatusService } from '../services/account-status.service'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
+import { pinned, PinnedMethods } from '../utils/settle'
 
 /**
  * Verifies that the authenticated user's account status is not blocked.
@@ -38,6 +39,7 @@ import { assertRootIsStandard } from '../utils/object-prototype-guard'
  * @layer Guard
  */
 @Injectable()
+@PinnedMethods('canActivate')
 export class UserStatusGuard implements CanActivate {
   /**
    * @param accountStatus - The shared account lifecycle gate.
@@ -57,10 +59,12 @@ export class UserStatusGuard implements CanActivate {
     // Public routes (no user populated) pass through.
     if (!user) return true
 
-    await this.accountStatus.assertDashboardAccountUsable({
-      userId: user.sub,
-      tenantId: user.tenantId
-    })
+    await pinned(
+      this.accountStatus.assertDashboardAccountUsable({
+        userId: user.sub,
+        tenantId: user.tenantId
+      })
+    )
     assertRootIsStandard()
 
     return true

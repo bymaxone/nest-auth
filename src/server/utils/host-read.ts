@@ -27,6 +27,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
+import { applyFunction, hasOwn } from './captured-builtins'
 import { readOwnOrClass } from './own-or-class'
 import {
   API_KEY_REPOSITORY_CONTRACT,
@@ -38,6 +39,7 @@ import {
   type ErasedContract,
   type ErasedRepositoryContract
 } from './repository-contracts'
+import { checked, pinned } from './settle'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 
@@ -97,7 +99,9 @@ export async function readHostOptionsAsync<T>(
   read: () => Promise<T>
 ): Promise<{ readonly value: T }> {
   try {
-    return { value: await read() }
+    // No prototype: nothing the root holds can answer for `then` when this resolves, and this is the boot, not a decision to refuse.
+    const boxed = { __proto__: null, value: await pinned(read()) }
+    return boxed
   } catch (error: unknown) {
     throw configurationError(error)
   }
@@ -114,7 +118,7 @@ export function callFactory<T>(
   factory: (...args: never[]) => T | Promise<T>,
   args: unknown[]
 ): Promise<{ readonly value: T }> {
-  return readHostOptionsAsync(async () => factory(...(args as never[])))
+  return readHostOptionsAsync(async () => await pinned(factory(...(args as never[]))))
 }
 
 /** Whether the host's object holds the key, the read being inside the boundary of {@link readHostOptions}. */
@@ -359,7 +363,8 @@ function copyRecord(value: object, contract: RecordContract, run: Read): unknown
   for (const key of keys) {
     if (Object.hasOwn(contract.fields, key)) continue
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
-    if (descriptor !== undefined && 'value' in descriptor) define(copy, key, descriptor.value, true)
+    if (descriptor !== undefined && hasOwn(descriptor, 'value'))
+      define(copy, key, descriptor.value, true)
   }
   const own = new Set(keys)
   for (const [field, spec] of Object.entries(contract.fields)) {
@@ -472,27 +477,46 @@ export function guardRepository<T extends object>(host: T, contract: ErasedRepos
         // Awaiting the view reads `then`, and a symbol is no method name: neither may become a function that never settles.
         if (key === 'then' || typeof key === 'symbol') return undefined
         // The read happens in the service, outside any try, so the failure becomes the rejection of the call.
-        return async (): Promise<never> => {
-          throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
-        }
+        return (): Promise<never> =>
+          pinned(
+            (async (): Promise<never> => {
+              throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
+            })()
+          )
       }
       if (typeof member !== 'function') return member
-      return async (...args: unknown[]): Promise<unknown> => {
-        let answer: unknown
-        try {
-          answer = await (member as (...parameters: unknown[]) => unknown).apply(host, args)
-        } catch (error: unknown) {
-          // A typed error the host chose to throw (a unique-key conflict it maps to `AuthException`) goes out as it is.
-          if (isTypedError(error)) throw error
-          throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
-        }
-        // A method the interface does not have is not one the library calls: its answer goes out as the host gave it.
-        const promised =
-          typeof key === 'string' && Object.hasOwn(contract, key) ? contract[key] : undefined
-        return promised === undefined ? answer : copyHostRecord(answer, promised)
-      }
+      // The caller awaits what comes back, bare, after the last check ran: the promise carries the language's own constructor, so a
+      // host that planted accessors while its repository ran is not asked what that `await` yields.
+      return (...args: unknown[]): Promise<unknown> =>
+        pinned(answerOf(host, member, key, contract, args))
     }
   })
+}
+
+/** One call of a method of the host's repository, and the copy of what it answered for the fields the method promises. */
+async function answerOf(
+  host: object,
+  member: unknown,
+  key: string | symbol,
+  contract: ErasedRepositoryContract,
+  args: unknown[]
+): Promise<unknown> {
+  let answer: unknown
+  try {
+    answer = await pinned(
+      applyFunction(member as (...parameters: unknown[]) => unknown, host, args)
+    )
+  } catch (error: unknown) {
+    // A typed error the host chose to throw (a unique-key conflict it maps to `AuthException`) goes out as it is.
+    if (isTypedError(error)) throw error
+    throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
+  }
+  // A method the interface does not have is not one the library calls: its answer goes out as the host gave it.
+  const promised =
+    typeof key === 'string' && Object.hasOwn(contract, key) ? contract[key] : undefined
+  const copied = promised === undefined ? answer : copyHostRecord(answer, promised)
+  // The copy is read for `then` when it is returned, so the root is checked as the last statement.
+  return checked(copied)
 }
 
 /** The guarded token and the contract of each repository the host may provide, keyed by the host's token. */

@@ -74,6 +74,11 @@ describe('AuthHealthProbe', () => {
     ['answers', (late: ReturnType<typeof deferred<string>>) => late.resolve('PONG')],
     ['fails', (late: ReturnType<typeof deferred<string>>) => late.reject(new Error('ECONNRESET'))]
   ])('handles the store ending after the wait when it %s', async (_case, settle) => {
+    const unhandled: unknown[] = []
+    const listener = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', listener)
     const late = deferred<string>()
     const attached = jest.spyOn(late.promise, 'then')
     const asked = jest
@@ -88,11 +93,12 @@ describe('AuthHealthProbe', () => {
     await expect(waiting).rejects.toThrow('did not answer in time')
     settle(late)
     await new Promise((resolve) => setImmediate(resolve))
+    process.off('unhandledRejection', listener)
 
-    // The probe's own bookkeeping and the wait for the caller each attached a continuation, and both
-    // handle a rejection.
-    expect(attached).toHaveBeenCalledTimes(2)
-    for (const [, onRejected] of attached.mock.calls) expect(typeof onRejected).toBe('function')
+    // The probe's own bookkeeping and the wait for the caller are awaits, never `.then` chains: the promise is never asked for
+    // its `then`, and the late ending is heard.
+    expect(attached).not.toHaveBeenCalled()
+    expect(unhandled).toEqual([])
     // The late ending leaves the next probe to ask the store afresh and get its answer.
     await expect(probe.ping()).resolves.toBe(true)
     expect(asked).toHaveBeenCalledTimes(2)

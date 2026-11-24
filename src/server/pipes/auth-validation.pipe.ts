@@ -11,6 +11,7 @@ import { NO_CONTROL_CHARACTERS } from '../dto/no-control-characters'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { exceedsCodePoints } from '../utils/code-points'
+import { checked, pinned } from '../utils/settle'
 
 /** One rejected request field, as it serializes under `error.details`. */
 export interface AuthFieldError {
@@ -94,13 +95,13 @@ function flattenValidationErrors(
  */
 class AuthValidationPipe extends ValidationPipe {
   override async transform(value: unknown, metadata: ArgumentMetadata): Promise<unknown> {
-    const validated: unknown = await super.transform(value, metadata)
+    const validated: unknown = await pinned(super.transform(value, metadata))
 
     const missing = validated === undefined || validated === null
 
     if (!missing || metadata.type !== 'body' || !this.toValidate(metadata)) return validated
 
-    return plainToInstance(metadata.metatype as new () => object, {})
+    return checked(plainToInstance(metadata.metatype as new () => object, {}))
   }
 }
 

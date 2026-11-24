@@ -16,6 +16,7 @@ import { WorkspaceAccessRefusal } from '../errors/workspace-access-refusal'
 import type { WorkspaceAuditEvent } from '../interfaces/workspace-audit.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { runDetached } from '../utils/run-detached'
+import { pinned, PinnedAll } from '../utils/settle'
 
 /** How long a suppressed count is kept: it must outlive any window, which is capped at one hour. */
 const SUPPRESSED_COUNT_TTL_SECONDS = 86_400
@@ -49,6 +50,7 @@ export interface DeniedAccess {
  * increment can only under-count. When Redis fails nothing is emitted, never an unlimited stream,
  * and one warning per window per process says so.
  */
+@PinnedAll()
 @Injectable()
 export class WorkspaceDeniedEventsService {
   private readonly logger = new Logger(WorkspaceDeniedEventsService.name)
@@ -98,12 +100,12 @@ export class WorkspaceDeniedEventsService {
 
     let suppressedCount: number
     try {
-      const inWindow = await this.redis.incrWithFixedTtl(windowKey, limits.windowSeconds)
+      const inWindow = await pinned(this.redis.incrWithFixedTtl(windowKey, limits.windowSeconds))
       if (inWindow > limits.max) {
-        await this.redis.incrWithFixedTtl(suppressedKey, SUPPRESSED_COUNT_TTL_SECONDS)
+        await pinned(this.redis.incrWithFixedTtl(suppressedKey, SUPPRESSED_COUNT_TTL_SECONDS))
         return
       }
-      suppressedCount = Number((await this.redis.getdel(suppressedKey)) ?? 0)
+      suppressedCount = Number((await pinned(this.redis.getdel(suppressedKey))) ?? 0)
     } catch {
       this.warnOncePerWindow(limits.windowSeconds)
       return

@@ -18,8 +18,10 @@ import { AuthException } from '../errors/auth-exception'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
+import { pinned, PinnedAll } from '../utils/settle'
 
 /** Re-authentication for the callers that change a credential or a membership. */
+@PinnedAll()
 @Injectable()
 export class ReauthenticationService {
   private readonly logger = new Logger(MFA_LOG_CONTEXT)
@@ -84,7 +86,7 @@ export class ReauthenticationService {
       // rotate it indefinitely and never make the mark fresh again. Producing one requires
       // driving a real sign-in, which requires the provider credentials the theft did not
       // include.
-      const recent = await this.recentMark(context, userId, tenantId, sid)
+      const recent = await pinned(this.recentMark(context, userId, tenantId, sid))
       if (recent === null) {
         logEvent(this.logger, 'AUTH_REAUTHENTICATION_REFUSED', {
           plane: context,
@@ -95,7 +97,7 @@ export class ReauthenticationService {
       return
     }
 
-    if (await this.lockout.isLockedOut('reauth', context, userId, tenantId)) {
+    if (await pinned(this.lockout.isLockedOut('reauth', context, userId, tenantId))) {
       logEvent(this.logger, 'AUTH_ACCOUNT_LOCKED', { flow: 'reauthentication' })
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
@@ -103,13 +105,13 @@ export class ReauthenticationService {
     // A missing password still pays the KDF, so "no password sent" and "wrong password" take
     // the same time — otherwise the response separates them for free.
     const supplied = password ?? ''
-    const matches = await this.passwordService.compare(supplied, passwordHash)
+    const matches = await pinned(this.passwordService.compare(supplied, passwordHash))
     if (!matches) {
-      await this.lockout.recordFailure('reauth', context, userId, tenantId)
+      await pinned(this.lockout.recordFailure('reauth', context, userId, tenantId))
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
-    await this.lockout.reset('reauth', context, userId, tenantId)
+    await pinned(this.lockout.reset('reauth', context, userId, tenantId))
   }
 
   /**
@@ -127,8 +129,8 @@ export class ReauthenticationService {
   ): Promise<string | null> {
     const bound = sessionId(sid)
     if (bound === undefined) return null
-    return await this.redis.get(
-      recentAuthKey(context, userId, this.options.hmacKey, tenantId, bound)
+    return await pinned(
+      this.redis.get(recentAuthKey(context, userId, this.options.hmacKey, tenantId, bound))
     )
   }
 }

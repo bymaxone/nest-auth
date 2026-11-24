@@ -30,6 +30,7 @@ import { readStampedEpoch } from '../utils'
 import { AuthRevocationService } from './auth-revocation.service'
 import { logEvent } from '../observability/log-event'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /**
  * Seconds a ticket is kept short of the access token's expiry, to cover the time between reading
@@ -37,6 +38,7 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
  */
 const EXPIRY_MARGIN_SECONDS = 1
 
+@PinnedAll()
 @Injectable()
 export class WsTicketService {
   private readonly logger = new Logger(WsTicketService.name)
@@ -83,7 +85,9 @@ export class WsTicketService {
     // with a blank authorization field for as long as it stayed open. Re-reading also closes
     // the window the `us:` cache leaves open on the route in front of this one, and gives the
     // socket the role and tenant the account holds now rather than the ones its login did.
-    const user = await this.userRepo.findById({ id: payload.sub, tenantId: payload.tenantId })
+    const user = await pinned(
+      this.userRepo.findById({ id: payload.sub, tenantId: payload.tenantId })
+    )
     if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     assertNotBlocked(user.status, this.options.blockedStatuses)
 
@@ -102,12 +106,12 @@ export class WsTicketService {
     // the write, so a lifetime read before the account lookup would carry the ticket past the
     // token's expiry by the length of that lookup.
     const lifetime = this.lifetimeFor(payload)
-    const ticket = await this.redis.mintWsTicket(snapshot, lifetime)
+    const ticket = await pinned(this.redis.mintWsTicket(snapshot, lifetime))
     logEvent(this.logger, 'AUTH_WS_TICKET_ISSUED', {
       userId: payload.sub,
       tenantId: payload.tenantId
     })
-    return { ticket, expiresIn: lifetime }
+    return checked({ ticket, expiresIn: lifetime })
   }
 
   /**
@@ -170,7 +174,7 @@ export class WsTicketService {
    *   caller.
    */
   async redeem(ticket: string): Promise<WsTicketSnapshot> {
-    const snapshot = ticket ? await this.redis.redeemWsTicket(ticket) : null
+    const snapshot = ticket ? await pinned(this.redis.redeemWsTicket(ticket)) : null
     if (!snapshot) {
       // Worth a line: a ticket that will not redeem is either a replay of a captured upgrade
       // URL or a client that took longer than the window to open its socket, and an operator
@@ -183,14 +187,21 @@ export class WsTicketService {
     // once and never revalidated, so the session behind it is checked here against the same two
     // channels a bearer token is. The platform plane is named for a snapshot with no tenant, the way
     // the epoch key itself is.
-    const revoked = await this.revocation.isAccessTokenRevoked(
-      { jti: snapshot.jti, sub: snapshot.sub, epoch: snapshot.epoch, tenantId: snapshot.tenantId },
-      snapshot.tenantId === undefined ? 'platform' : 'dashboard'
+    const revoked = await pinned(
+      this.revocation.isAccessTokenRevoked(
+        {
+          jti: snapshot.jti,
+          sub: snapshot.sub,
+          epoch: snapshot.epoch,
+          tenantId: snapshot.tenantId
+        },
+        snapshot.tenantId === undefined ? 'platform' : 'dashboard'
+      )
     )
     if (revoked) {
       logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'session_revoked' })
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
-    return snapshot
+    return checked(snapshot)
   }
 }

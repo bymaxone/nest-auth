@@ -33,6 +33,7 @@ import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { SessionInfo } from '../services/session.service'
 import { SessionService } from '../services/session.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { Pinned, pinned } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
 // SessionController
@@ -107,6 +108,7 @@ export class SessionController {
   @Throttle(AUTH_THROTTLE_CONFIGS.listSessions)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.listSessions)
   @Get()
+  @Pinned()
   async listSessions(
     @CurrentUser() user: DashboardJwtPayload,
     @Req() req: Request
@@ -115,11 +117,13 @@ export class SessionController {
     // When no refresh token is present (e.g. access-token-only requests),
     // isCurrent will be false for all sessions — this is the correct behaviour.
     const currentHash = rawRefresh ? sha256(rawRefresh) : undefined
-    return this.sessionService.listSessions({
-      userId: user.sub,
-      tenantId: user.tenantId,
-      currentSessionHash: currentHash
-    })
+    return await pinned(
+      this.sessionService.listSessions({
+        userId: user.sub,
+        tenantId: user.tenantId,
+        currentSessionHash: currentHash
+      })
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -153,6 +157,7 @@ export class SessionController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequestEncoding('unchecked')
   @Post('revoke-all')
+  @Pinned()
   async revokeAllSessions(
     @CurrentUser() user: DashboardJwtPayload,
     @Req() req: Request
@@ -168,11 +173,13 @@ export class SessionController {
     }
 
     const currentHash = sha256(rawRefresh)
-    await this.sessionService.revokeAllExceptCurrent({
-      userId: user.sub,
-      tenantId: user.tenantId,
-      currentSessionHash: currentHash
-    })
+    await pinned(
+      this.sessionService.revokeAllExceptCurrent({
+        userId: user.sub,
+        tenantId: user.tenantId,
+        currentSessionHash: currentHash
+      })
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -200,14 +207,17 @@ export class SessionController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.revokeSession)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete(':id')
+  @Pinned()
   async revokeSession(
     @CurrentUser() user: DashboardJwtPayload,
     @Param('id') id: string
   ): Promise<void> {
-    await this.sessionService.revokeOtherSession({
-      userId: user.sub,
-      tenantId: user.tenantId,
-      sessionHash: id
-    })
+    await pinned(
+      this.sessionService.revokeOtherSession({
+        userId: user.sub,
+        tenantId: user.tenantId,
+        sessionHash: id
+      })
+    )
   }
 }

@@ -55,6 +55,7 @@ import { MembershipService } from '../services/membership.service'
 import { WorkspaceActionsService } from '../services/workspace-actions.service'
 import { WorkspaceService } from '../services/workspace.service'
 import { dashboardHookContext } from '../utils/request-hook-context'
+import { Pinned, pinned } from '../utils/settle'
 import {
   toAccessResponse,
   toMemberView,
@@ -127,12 +128,13 @@ export class WorkspaceController {
   @Throttle(AUTH_THROTTLE_CONFIGS.workspaceList)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceList)
   @Get()
+  @Pinned()
   async list(
     @CurrentUser() user: DashboardJwtPayload,
     @Query() query: WorkspacePageQueryDto
   ): Promise<MyWorkspacesResponse> {
     return toMyWorkspacesResponse(
-      await this.memberships.listMine(user.tenantId, user.sub, pageOf(query))
+      await pinned(this.memberships.listMine(user.tenantId, user.sub, pageOf(query)))
     )
   }
 
@@ -151,10 +153,13 @@ export class WorkspaceController {
   @Throttle(AUTH_THROTTLE_CONFIGS.workspaceAccess)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceAccess)
   @Get(':workspaceId/access')
+  @Pinned()
   async access(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext
   ): Promise<WorkspaceAccessResponse> {
-    return toAccessResponse(await this.workspaces.getAccess(refOf(workspace), workspace.userId))
+    return toAccessResponse(
+      await pinned(this.workspaces.getAccess(refOf(workspace), workspace.userId))
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -177,15 +182,14 @@ export class WorkspaceController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequestEncoding('when-body')
   @Post(':workspaceId/switch')
+  @Pinned()
   async switchTo(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
     @Req() req: Request
   ): Promise<void> {
-    await this.workspaces.switchTo(
-      refOf(workspace),
-      workspace.userId,
-      dashboardHookContext(req, user)
+    await pinned(
+      this.workspaces.switchTo(refOf(workspace), workspace.userId, dashboardHookContext(req, user))
     )
   }
 
@@ -209,11 +213,14 @@ export class WorkspaceController {
   @Throttle(AUTH_THROTTLE_CONFIGS.workspaceMembers)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceMembers)
   @Get(':workspaceId/members')
+  @Pinned()
   async members(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @Query() query: WorkspacePageQueryDto
   ): Promise<MembersResponse> {
-    return toMembersResponse(await this.memberships.listMembers(refOf(workspace), pageOf(query)))
+    return toMembersResponse(
+      await pinned(this.memberships.listMembers(refOf(workspace), pageOf(query)))
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -234,13 +241,14 @@ export class WorkspaceController {
   @Throttle(AUTH_THROTTLE_CONFIGS.workspaceCreate)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceCreate)
   @Post()
+  @Pinned()
   async create(
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: CreateWorkspaceDto,
     @Req() req: Request
   ): Promise<WorkspaceView> {
     return toWorkspaceView(
-      await this.actions.create(user, dto.name, dashboardHookContext(req, user))
+      await pinned(this.actions.create(user, dto.name, dashboardHookContext(req, user)))
     )
   }
 
@@ -262,6 +270,7 @@ export class WorkspaceController {
   @Throttle(AUTH_THROTTLE_CONFIGS.workspaceRename)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceRename)
   @Patch(':workspaceId')
+  @Pinned()
   async rename(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
@@ -269,11 +278,13 @@ export class WorkspaceController {
     @Req() req: Request
   ): Promise<WorkspaceView> {
     return toWorkspaceView(
-      await this.actions.rename(
-        refOf(workspace),
-        actorOf(workspace),
-        dto.name,
-        dashboardHookContext(req, user)
+      await pinned(
+        this.actions.rename(
+          refOf(workspace),
+          actorOf(workspace),
+          dto.name,
+          dashboardHookContext(req, user)
+        )
       )
     )
   }
@@ -299,18 +310,21 @@ export class WorkspaceController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceScheduleDeletion)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post(':workspaceId/schedule-deletion')
+  @Pinned()
   async scheduleDeletion(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: ScheduleWorkspaceDeletionDto,
     @Req() req: Request
   ): Promise<void> {
-    await this.actions.scheduleDeletion(
-      refOf(workspace),
-      actorOf(workspace),
-      user,
-      dto.password,
-      dashboardHookContext(req, user)
+    await pinned(
+      this.actions.scheduleDeletion(
+        refOf(workspace),
+        actorOf(workspace),
+        user,
+        dto.password,
+        dashboardHookContext(req, user)
+      )
     )
   }
 
@@ -336,15 +350,14 @@ export class WorkspaceController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequestEncoding('when-body')
   @Post(':workspaceId/restore')
+  @Pinned()
   async restore(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
     @Req() req: Request
   ): Promise<void> {
-    await this.workspaces.restore(
-      refOf(workspace),
-      actorOf(workspace),
-      dashboardHookContext(req, user)
+    await pinned(
+      this.workspaces.restore(refOf(workspace), actorOf(workspace), dashboardHookContext(req, user))
     )
   }
 
@@ -370,6 +383,7 @@ export class WorkspaceController {
   @Throttle(AUTH_THROTTLE_CONFIGS.workspaceChangeRole)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceChangeRole)
   @Patch(':workspaceId/members/:userId')
+  @Pinned()
   async changeRole(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
@@ -378,12 +392,14 @@ export class WorkspaceController {
     @Req() req: Request
   ): Promise<MemberView> {
     return toMemberView(
-      await this.actions.changeRole(
-        refOf(workspace),
-        params.userId,
-        dto.role,
-        actorOf(workspace),
-        dashboardHookContext(req, user)
+      await pinned(
+        this.actions.changeRole(
+          refOf(workspace),
+          params.userId,
+          dto.role,
+          actorOf(workspace),
+          dashboardHookContext(req, user)
+        )
       )
     )
   }
@@ -406,17 +422,20 @@ export class WorkspaceController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceRemoveMember)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete(':workspaceId/members/:userId')
+  @Pinned()
   async removeMember(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
     @Param() params: MemberRouteParamsDto,
     @Req() req: Request
   ): Promise<void> {
-    await this.memberships.remove(
-      refOf(workspace),
-      params.userId,
-      actorOf(workspace),
-      dashboardHookContext(req, user)
+    await pinned(
+      this.memberships.remove(
+        refOf(workspace),
+        params.userId,
+        actorOf(workspace),
+        dashboardHookContext(req, user)
+      )
     )
   }
 
@@ -438,15 +457,14 @@ export class WorkspaceController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequestEncoding('when-body')
   @Post(':workspaceId/leave')
+  @Pinned()
   async leave(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
     @Req() req: Request
   ): Promise<void> {
-    await this.memberships.leave(
-      refOf(workspace),
-      workspace.userId,
-      dashboardHookContext(req, user)
+    await pinned(
+      this.memberships.leave(refOf(workspace), workspace.userId, dashboardHookContext(req, user))
     )
   }
 
@@ -473,18 +491,21 @@ export class WorkspaceController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceTransferOwnership)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post(':workspaceId/transfer-ownership')
+  @Pinned()
   async transferOwnership(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: TransferOwnershipDto,
     @Req() req: Request
   ): Promise<void> {
-    await this.actions.transferOwnership(
-      refOf(workspace),
-      actorOf(workspace),
-      user,
-      { toUserId: dto.userId, keeps: dto.demoteSelfTo ?? null, password: dto.password },
-      dashboardHookContext(req, user)
+    await pinned(
+      this.actions.transferOwnership(
+        refOf(workspace),
+        actorOf(workspace),
+        user,
+        { toUserId: dto.userId, keeps: dto.demoteSelfTo ?? null, password: dto.password },
+        dashboardHookContext(req, user)
+      )
     )
   }
 }

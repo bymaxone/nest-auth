@@ -12,6 +12,11 @@ import {
   withDeadline
 } from './plugin-deadline'
 
+/** Reads the answer of a helper: a failure is thrown by `.value`, not by the promise. */
+async function unbox<T>(pending: Promise<{ readonly value: T }>): Promise<T> {
+  return (await pending).value
+}
+
 describe('pluginDeadlineMs', () => {
   // Scenario: the two ends of the accepted range, one past each, and the default. Expected: a whole
   // number from 1 to the maximum is taken as given, so 1 is a deadline of one millisecond and not the
@@ -41,7 +46,7 @@ describe('withDeadline', () => {
   // time and not before.
   it('rejects with the elapsed budget when the work never settles', async () => {
     const attempt = withDeadline(() => new Promise<never>(() => undefined), 5)
-    const outcome = expect(attempt).rejects.toThrow('the plugin did not answer within 5 ms')
+    const outcome = expect(unbox(attempt)).rejects.toThrow('the plugin did not answer within 5 ms')
 
     await jest.advanceTimersByTimeAsync(5)
 
@@ -50,16 +55,18 @@ describe('withDeadline', () => {
 
   // Scenario: work that settles in time. Expected: its value, and no timer left behind.
   it('resolves with the work and leaves no timer running', async () => {
-    await expect(withDeadline(() => Promise.resolve('done'), 5000)).resolves.toBe('done')
+    await expect(withDeadline(() => Promise.resolve('done'), 5000)).resolves.toEqual({
+      value: 'done'
+    })
 
     expect(jest.getTimerCount()).toBe(0)
   })
 
   // Scenario: work that rejects in time. Expected: its rejection, and no timer left behind.
   it('passes the work rejection through and leaves no timer running', async () => {
-    await expect(withDeadline(() => Promise.reject(new Error('boom')), 5000)).rejects.toThrow(
-      'boom'
-    )
+    await expect(
+      unbox(withDeadline(() => Promise.reject(new Error('boom')), 5000))
+    ).rejects.toThrow('boom')
 
     expect(jest.getTimerCount()).toBe(0)
   })

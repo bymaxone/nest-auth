@@ -14,8 +14,11 @@
  * monitor of the host patches and no source calls is therefore never compared. What the library serialises and parses
  * (`JSON`) and what it hashes and compares secrets with (`node:crypto`) is not compared but captured, in
  * `captured-builtins` and `captured-crypto`, so no replacement reaches it. The clock source (the `Date` binding, `Date.now`
- * and `Date.parse`), `Promise` and `Intl` are not compared: the test doubles of a host replace them (a fake clock replaces
- * `Date` and `Intl` together). The methods of the dates themselves (`getTime`, `toISOString`), which the expiry of a key and the
+ * and `Date.parse`) and `Intl` are not compared: the test doubles of a host replace them (a fake clock replaces `Date` and
+ * `Intl` together). Of `Promise` only `Promise.prototype.constructor` is compared, because `await` reads it; the statics
+ * (`all`, `race`) and `then` are not, since the monitors of a host wrap them, so no decision of the library calls one: they
+ * wait with `await` on promises they pinned (`utils/settle`), which attaches a handler without reading `then`, and a spec fails on a
+ * static of `Promise` in the sources. The methods of the dates themselves (`getTime`, `toISOString`), which the expiry of a key and the
  * reading of a cursor are decided with, are compared.
  *
  * @layer Utility
@@ -24,7 +27,14 @@
 import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 
-import { getDescriptor, getKey, hasOwn, ownKeys, prototypeOf } from './captured-builtins'
+import {
+  IntrinsicPromise,
+  getDescriptor,
+  getKey,
+  hasOwn,
+  ownKeys,
+  prototypeOf
+} from './captured-builtins'
 import { nodeCrypto } from '../crypto/captured-crypto'
 
 /** The name under which the iterator function of a type is listed: the key is the well-known symbol. */
@@ -260,6 +270,7 @@ export const SPECIES_CONSTRUCTORS = [
   'Array',
   'ArrayBuffer',
   'Map',
+  'Promise',
   'RegExp',
   'Set',
   'TypedArray'
@@ -276,6 +287,7 @@ export const BASELINED_CONSTRUCTORS: Record<(typeof SPECIES_CONSTRUCTORS)[number
   Array,
   ArrayBuffer,
   Map,
+  Promise: IntrinsicPromise,
   RegExp,
   Set,
   TypedArray: prototypeOf(Uint8Array) as object
@@ -375,8 +387,10 @@ function record(holder: object, key: PropertyKey): void {
     if (holders[index] === holder && keys[index] === key) return
   const descriptor = getDescriptor(holder, key)
   if (descriptor === undefined) return
-  const field = typeof descriptor.value === 'function' ? 'value' : 'get'
-  const held = field === 'value' ? descriptor.value : descriptor.get
+  // Own fields only: a descriptor is an ordinary object, and a `value` or a `get` planted on the root would answer for an accessor.
+  const field =
+    hasOwn(descriptor, 'value') && typeof descriptor.value === 'function' ? 'value' : 'get'
+  const held = hasOwn(descriptor, field) ? descriptor[field] : undefined
   if (typeof held !== 'function') return
   holders[holders.length] = holder
   keys[keys.length] = key
@@ -428,6 +442,7 @@ for (let index = 0; index < SPECIES_CONSTRUCTORS.length; index += 1) {
 }
 record(Buffer.prototype, 'constructor')
 record(Uint8Array.prototype, 'constructor')
+// `await` reads `constructor` of a promise to decide whether it is a native one (recorded above with the species of `Promise`); the statics of `Promise` are not read anywhere.
 for (const [namespace, list] of Object.entries(BASELINED_STATICS))
   // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which names no property, so `record` finds no descriptor and returns
   for (let at = 0; at < list.length; at += 1) record(world[namespace] as object, list[at] as string)
@@ -437,6 +452,24 @@ const globalOriginals: unknown[] = []
 // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and the global named `undefined` is `undefined` when it is stored and when it is compared, so the extra pass counts nothing
 for (let index = 0; index < BASELINED_GLOBALS.length; index += 1)
   globalOriginals[index] = world[BASELINED_GLOBALS[index] as string]
+
+/**
+ * The holders an awaited value can inherit from: a value an `await` or a `resolve` receives is asked for `then` first, so a `then`
+ * planted on one of these prototypes (the root is counted by the root guard) answers for every value that inherits it.
+ */
+const thenHolders: object[] = []
+const holderNames = ownKeys(BASELINED_HOLDERS)
+// Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not a name of the table
+for (let index = 0; index < holderNames.length; index += 1)
+  thenHolders[thenHolders.length] = BASELINED_HOLDERS[holderNames[index] as string] as object
+
+/** Counts the holders that carry an own `then`, which none of them has. */
+function plantedThens(): number {
+  let planted = 0
+  for (let index = 0; index < thenHolders.length; index += 1)
+    if (hasOwn(thenHolders[index] as object, 'then')) planted += 1
+  return planted
+}
 
 /** Counts the symbol keys a protocol holder has now that it did not have when this module loaded. */
 function addedProtocolSymbols(): number {
@@ -497,6 +530,7 @@ export function replacedBuiltins(): number {
       count += 1
   }
   count += addedProtocolSymbols()
+  count += plantedThens()
   // Read by `Reflect.get` and not through a descriptor: the global object of a `vm` context answers a descriptor through a native
   // interceptor that reads the root, and a planted `get` or `value` there aborts the process.
   // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and the global named `undefined` is `undefined` when it is stored and when it is compared, so the extra pass counts nothing

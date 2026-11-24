@@ -44,6 +44,7 @@ import type {
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { WsTicketService } from '../services/ws-ticket.service'
 import { resolveClientAddress } from '../utils/client-address'
+import { Pinned, pinned } from '../utils/settle'
 
 /**
  * Narrows `AuthResult | MfaChallengeResult` to `MfaChallengeResult` using the
@@ -95,12 +96,13 @@ export class AuthController {
   @Throttle(AUTH_THROTTLE_CONFIGS.register)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.register)
   @Post('register')
+  @Pinned()
   async register(
     @Body() dto: RegisterDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ): Promise<CookieAuthResponse | BearerAuthResponse | BothAuthResponse> {
-    const result = await this.authService.register(dto, req)
+    const result = await pinned(this.authService.register(dto, req))
     return this.tokenDelivery.deliverAuthResponse(res, result, req)
   }
 
@@ -120,12 +122,13 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ObserveAuth('login', 'dashboard')
   @Post('login')
+  @Pinned()
   async login(
     @Body() dto: LoginDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ): Promise<CookieAuthResponse | BearerAuthResponse | BothAuthResponse | MfaChallengeResult> {
-    const result = await this.authService.login(dto, req)
+    const result = await pinned(this.authService.login(dto, req))
 
     // Discriminate MFA challenge via the literal boolean `mfaRequired` field.
     if (isMfaChallenge(result)) {
@@ -158,10 +161,11 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequestEncoding('unchecked')
   @Post('logout')
+  @Pinned()
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
     const accessToken = this.tokenDelivery.extractAccessToken(req) ?? ''
     const rawRefreshToken = this.tokenDelivery.extractLogoutRefreshToken(req) ?? ''
-    await this.authService.logout(accessToken, rawRefreshToken)
+    await pinned(this.authService.logout(accessToken, rawRefreshToken))
     this.tokenDelivery.clearAuthSession(res, req)
   }
 
@@ -182,6 +186,7 @@ export class AuthController {
   @RequestEncoding('unchecked')
   @ObserveAuth('refresh', 'dashboard')
   @Post('refresh')
+  @Pinned()
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
@@ -192,7 +197,7 @@ export class AuthController {
 
     // `refresh` re-reads the account to re-apply the status gate, and hands the record back so
     // this does not pay a second repository read to build the body.
-    const rotated = await this.authService.refresh(rawRefreshToken, ip, userAgent)
+    const rotated = await pinned(this.authService.refresh(rawRefreshToken, ip, userAgent))
 
     const authResult: AuthResult = {
       user: rotated.user,
@@ -220,8 +225,9 @@ export class AuthController {
    */
   @UseGuards(JwtAuthGuard)
   @Get('me')
+  @Pinned()
   async me(@CurrentUser() user: DashboardJwtPayload): Promise<SafeAuthUser> {
-    return this.authService.getMe(user.sub, user.tenantId)
+    return await pinned(this.authService.getMe(user.sub, user.tenantId))
   }
 
   /**
@@ -250,10 +256,11 @@ export class AuthController {
   @RequestEncoding('unchecked')
   @Post('ws-ticket')
   @HttpCode(HttpStatus.OK)
+  @Pinned()
   async wsTicket(
     @CurrentUser() user: DashboardJwtPayload
   ): Promise<{ ticket: string; expiresIn: number }> {
-    return this.wsTicketService.issue(user)
+    return await pinned(this.wsTicketService.issue(user))
   }
 
   /**
@@ -268,8 +275,9 @@ export class AuthController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.verifyEmail)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-email')
+  @Pinned()
   async verifyEmail(@Body() dto: VerifyEmailDto, @Req() req: Request): Promise<void> {
-    await this.authService.verifyEmail(dto.tenantId, dto.email, dto.otp, req)
+    await pinned(this.authService.verifyEmail(dto.tenantId, dto.email, dto.otp, req))
   }
 
   /**
@@ -284,7 +292,8 @@ export class AuthController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resendVerification)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('resend-verification')
+  @Pinned()
   async resendVerification(@Body() dto: ResendVerificationDto, @Req() req: Request): Promise<void> {
-    await this.authService.resendVerificationEmail(dto.tenantId, dto.email, req)
+    await pinned(this.authService.resendVerificationEmail(dto.tenantId, dto.email, req))
   }
 }

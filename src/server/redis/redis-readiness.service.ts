@@ -9,6 +9,8 @@ import type { OnApplicationBootstrap } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import { IntrinsicPromise } from '../utils/captured-builtins'
+import { awaiting, withDeadline } from '../utils/settle'
 
 /** How long boot keeps trying to PING Redis, in milliseconds. */
 const STARTUP_PING_TIMEOUT_MS = 5000
@@ -75,7 +77,7 @@ function addressOf(client: unknown): string | undefined {
  * @returns A promise that resolves after it.
  */
 function pause(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return new IntrinsicPromise((resolve) => setTimeout(resolve, ms))
 }
 
 /**
@@ -107,10 +109,16 @@ export class RedisReadinessService implements OnApplicationBootstrap {
     const { status } = this.redis
     if (status === 'end') {
       // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
-      return Promise.reject(new Error('the client is closed'))
+      return new IntrinsicPromise<void>((_resolve, reject) => {
+        reject(new Error('the client is closed'))
+      })
     }
-    if (!CONNECTING_STATES.includes(status)) return Promise.resolve()
-    return new Promise((resolve, reject) => {
+    if (!CONNECTING_STATES.includes(status)) {
+      return new IntrinsicPromise<void>((resolve) => {
+        resolve()
+      })
+    }
+    return new IntrinsicPromise((resolve, reject) => {
       const settle = (done: () => void): void => {
         clearTimeout(timer)
         this.redis.off('ready', onReady)
@@ -145,18 +153,19 @@ export class RedisReadinessService implements OnApplicationBootstrap {
    * @throws {Error} When the client is closed, the command fails or the time runs out.
    */
   private async attempt(timeoutMs: number): Promise<void> {
-    let timer: NodeJS.Timeout | undefined
-    const expiry = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
-        reject(new Error('the PING did not complete in time'))
-      }, timeoutMs)
-    })
-    try {
-      await Promise.race([this.whenReachable(timeoutMs).then(() => this.redis.ping()), expiry])
-    } finally {
-      clearTimeout(timer)
-    }
+    // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
+    const { value } = await awaiting(
+      withDeadline(
+        async () => {
+          await this.whenReachable(timeoutMs)
+          await this.redis.ping()
+        },
+        timeoutMs,
+        'the PING did not complete in time'
+      )
+    )
+    // Reading the box throws the reason of a PING that failed or did not finish in time.
+    void value
   }
 
   /**

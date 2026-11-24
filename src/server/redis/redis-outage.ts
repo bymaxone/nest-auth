@@ -13,6 +13,8 @@ import type { Redis } from 'ioredis'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
+import { checked, markHandled, pinned } from '../utils/settle'
 
 /**
  * Why Redis did not answer.
@@ -120,6 +122,22 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 }
 
 /**
+ * Waits for a call of the client and raises the typed 503 when it failed for an outage. It waits with `await`, not through
+ * `then` of the promise it was given: every answer of the store passes here, so a replaced `then` would answer for all of them.
+ */
+async function mappingOutage(result: PromiseLike<unknown>): Promise<unknown> {
+  markHandled(result)
+  try {
+    assertRootIsStandard()
+    const answer = await pinned(result)
+    // The answer is read for `then` when this function returns it, so the root is checked again as the last statement.
+    return checked(answer)
+  } catch (error: unknown) {
+    return rethrowAsOutage(error)
+  }
+}
+
+/**
  * A view of the client whose failed calls raise the typed 503 for an outage.
  *
  * Every method of the client is wrapped, not a list of names: a command added to the service later
@@ -136,7 +154,9 @@ export function mappingOutages(redis: Redis): Redis {
       if (typeof value !== 'function') return value
       return (...args: unknown[]): unknown => {
         const result: unknown = Reflect.apply(value, target, args)
-        return isThenable(result) ? result.then(undefined, rethrowAsOutage) : result
+        // Before `isThenable` reads `then`: that read can throw, and a rejection with no handler ends the process.
+        markHandled(result)
+        return isThenable(result) ? mappingOutage(result) : result
       }
     }
   })

@@ -28,6 +28,7 @@ import { assertTenantBinding, tenantBindingEnforced } from '../utils/assert-tena
 import type { HandshakeLike } from '../utils/handshake-request'
 import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
@@ -215,6 +216,7 @@ export interface VerifyAccessTokenOptions {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class AuthTokenVerifierService {
   private readonly logger = new Logger(AuthTokenVerifierService.name)
@@ -294,11 +296,17 @@ export class AuthTokenVerifierService {
         : { check: workspace, resolve: this.workspaceResolver(plane) }
 
     if (plane === 'dashboard') {
-      const verified = await this.verifyDashboard(token, requireMfa, checkStatus, options.request)
-      if (admit === undefined) return verified
-      return { ...verified, workspace: await admit.resolve(verified.payload, admit.check) }
+      const verified = await pinned(
+        this.verifyDashboard(token, requireMfa, checkStatus, options.request)
+      )
+      if (admit === undefined) return checked(verified)
+      return checked({
+        ...verified,
+        workspace: await pinned(admit.resolve(verified.payload, admit.check))
+      })
     }
-    if (plane === 'platform') return await this.verifyPlatform(token, requireMfa, checkStatus)
+    if (plane === 'platform')
+      return checked(await pinned(this.verifyPlatform(token, requireMfa, checkStatus)))
 
     // Neither, which TypeScript rules out and a runtime does not: a JavaScript consumer, or one
     // deriving the plane from a namespace segment or a config value it never narrowed. Written as
@@ -333,24 +341,28 @@ export class AuthTokenVerifierService {
     assertValidTenantId(payload.tenantId)
     assertTokenType(payload, 'dashboard')
 
-    if (await this.revocation.isAccessTokenRevoked(payload, 'dashboard')) {
+    if (await pinned(this.revocation.isAccessTokenRevoked(payload, 'dashboard'))) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    await this.assertBound(payload.tenantId, request)
+    await pinned(this.assertBound(payload.tenantId, request))
 
     if (requireMfa) this.assertMfaClaimShape(payload)
 
     if (checkStatus) {
-      await this.accountStatus.assertDashboardAccountUsable({
-        userId: payload.sub,
-        tenantId: payload.tenantId
-      })
+      await pinned(
+        this.accountStatus.assertDashboardAccountUsable({
+          userId: payload.sub,
+          tenantId: payload.tenantId
+        })
+      )
     }
 
     if (requireMfa) this.assertMfaVerified(payload)
 
-    return { plane: 'dashboard', payload }
+    const verified = { plane: 'dashboard', payload } as const
+    assertRootIsStandard()
+    return checked(verified)
   }
 
   /**
@@ -373,42 +385,41 @@ export class AuthTokenVerifierService {
     const group = this.options.workspaces
     const denied = this.deniedEvents
     if (access === null || group === undefined) {
-      return () =>
-        Promise.reject(
-          new AuthException(AUTH_ERROR_CODES.VALIDATION, [
-            {
-              field: 'workspaceId',
-              message: 'workspaceId is not accepted: workspaces are not enabled for this deployment'
-            }
-          ])
-        )
+      return async () => {
+        throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+          {
+            field: 'workspaceId',
+            message: 'workspaceId is not accepted: workspaces are not enabled for this deployment'
+          }
+        ])
+      }
     }
     return async (payload, check) => {
       const workspaceId = assertWorkspaceId(check.workspaceId)
-      const resolved = await access.resolveAccess({
-        tenantId: payload.tenantId,
-        workspaceId,
-        userId: payload.sub
-      })
+      const resolved = await pinned(
+        access.resolveAccess({
+          tenantId: payload.tenantId,
+          workspaceId,
+          userId: payload.sub
+        })
+      )
       assertRootIsStandard()
+      const { roles, allowPending } = check
       const decide = (): CurrentWorkspaceContext =>
-        assertWorkspaceAccess(
-          resolved,
-          check.roles,
-          group.roles.hierarchy,
-          check.allowPending === true
-        )
-      return denied === null
-        ? decide()
-        : denied.admit(
-            {
-              tenantId: payload.tenantId,
-              userId: payload.sub,
-              workspaceId,
-              surface: 'verifier'
-            },
-            decide
-          )
+        assertWorkspaceAccess(resolved, roles, group.roles.hierarchy, allowPending === true)
+      return checked(
+        denied === null
+          ? decide()
+          : denied.admit(
+              {
+                tenantId: payload.tenantId,
+                userId: payload.sub,
+                workspaceId,
+                surface: 'verifier'
+              },
+              decide
+            )
+      )
     }
   }
 
@@ -421,7 +432,7 @@ export class AuthTokenVerifierService {
    */
   private async assertBound(tenantId: string, request: HandshakeLike | undefined): Promise<void> {
     if (request !== undefined) {
-      await assertTenantBinding(this.options, request, tenantId)
+      await pinned(assertTenantBinding(this.options, request, tenantId))
       return
     }
     if (tenantBindingEnforced(this.options) && !this.warnedUnbound) {
@@ -460,17 +471,19 @@ export class AuthTokenVerifierService {
       throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
     }
 
-    if (await this.revocation.isAccessTokenRevoked(payload, 'platform')) {
+    if (await pinned(this.revocation.isAccessTokenRevoked(payload, 'platform'))) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     if (requireMfa) this.assertMfaClaimShape(payload)
 
-    if (checkStatus) await this.accountStatus.assertPlatformAccountUsable(payload.sub)
+    if (checkStatus) await pinned(this.accountStatus.assertPlatformAccountUsable(payload.sub))
 
     if (requireMfa) this.assertMfaVerified(payload)
 
-    return { plane: 'platform', payload }
+    const verified = { plane: 'platform', payload } as const
+    assertRootIsStandard()
+    return checked(verified)
   }
 
   /**

@@ -4,6 +4,7 @@ import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { readStampedEpoch } from '../utils'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
+import { pinned, PinnedAll } from '../utils/settle'
 
 /**
  * The claims a revocation check reads off a verified access token. A caller passes the payload it
@@ -49,6 +50,7 @@ export interface RevocableTokenPayload {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class AuthRevocationService {
   private readonly logger = new Logger(AuthRevocationService.name)
@@ -100,11 +102,11 @@ export class AuthRevocationService {
       return true
     }
 
-    if ((await this.redis.get(`rv:${payload.jti}`)) !== null) {
+    if ((await pinned(this.redis.get(`rv:${payload.jti}`))) !== null) {
       return true
     }
 
-    const epoch = await this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, kind)
+    const epoch = await pinned(this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, kind))
     assertRootIsStandard()
     return readStampedEpoch(payload) < epoch
   }

@@ -18,6 +18,7 @@ import type { StoredWorkspaceInvitation } from '../interfaces/workspace-invitati
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 import { isStoredWorkspaceName } from '../utils/workspace-name'
 
 /** A pending invitation with the key it is stored under and the seconds it has left. */
@@ -65,6 +66,7 @@ end
 return 0`
 
 /** Reads and writes workspace invitation records; it makes no authorization decision. */
+@PinnedAll()
 @Injectable()
 export class WorkspaceInvitationStore {
   private readonly hmacKey: string
@@ -83,7 +85,7 @@ export class WorkspaceInvitationStore {
    * @returns The record, or `null` when absent, expired, or not a record this library wrote.
    */
   async readByHash(tokenHash: string): Promise<StoredWorkspaceInvitation | null> {
-    return this.readKey(invitationKeyOfHash(tokenHash))
+    return checked(await pinned(this.readKey(invitationKeyOfHash(tokenHash))))
   }
 
   /**
@@ -98,8 +100,8 @@ export class WorkspaceInvitationStore {
     ref: WorkspaceRef,
     email: string
   ): Promise<{ key: string; record: StoredWorkspaceInvitation | null } | null> {
-    const key = await this.redis.get(this.indexKey(ref, email))
-    return key === null ? null : { key, record: await this.readKey(key) }
+    const key = await pinned(this.redis.get(this.indexKey(ref, email)))
+    return checked(key === null ? null : { key, record: await pinned(this.readKey(key)) })
   }
 
   /**
@@ -131,11 +133,13 @@ export class WorkspaceInvitationStore {
     expectedKey: string | null
   ): Promise<'published' | 'lost' | 'full'> {
     // Members whose record expired still count in the set, so they are dropped before it is counted.
-    if (limit > 0) await this.pending(ref)
-    const outcome = await this.redis.eval(
-      PUBLISH_SCRIPT,
-      [this.indexKey(ref, email), key, this.setKey(ref), expectedKey ?? key],
-      [key, stringifyJson(record), String(ttlSeconds), String(limit), expectedKey ?? '']
+    if (limit > 0) await pinned(this.pending(ref))
+    const outcome = await pinned(
+      this.redis.eval(
+        PUBLISH_SCRIPT,
+        [this.indexKey(ref, email), key, this.setKey(ref), expectedKey ?? key],
+        [key, stringifyJson(record), String(ttlSeconds), String(limit), expectedKey ?? '']
+      )
     )
     return outcome === 1 ? 'published' : outcome === 2 ? 'full' : 'lost'
   }
@@ -150,9 +154,11 @@ export class WorkspaceInvitationStore {
    *   moved or deleted it; the record's own key is gone either way.
    */
   async remove(ref: WorkspaceRef, email: string, key: string): Promise<boolean> {
-    await this.redis.del(key)
-    await this.redis.srem(this.setKey(ref), key)
-    const released = await this.redis.eval(RELEASE_INDEX_SCRIPT, [this.indexKey(ref, email)], [key])
+    await pinned(this.redis.del(key))
+    await pinned(this.redis.srem(this.setKey(ref), key))
+    const released = await pinned(
+      this.redis.eval(RELEASE_INDEX_SCRIPT, [this.indexKey(ref, email)], [key])
+    )
     return released === 1
   }
 
@@ -166,13 +172,13 @@ export class WorkspaceInvitationStore {
     const set = this.setKey(ref)
     const live: PendingInvitation[] = []
     const dead: string[] = []
-    for (const key of await this.redis.smembers(set)) {
-      const record = await this.readKey(key)
+    for (const key of await pinned(this.redis.smembers(set))) {
+      const record = await pinned(this.readKey(key))
       if (record === null) dead.push(key)
-      else live.push({ key, record, ttlSeconds: await this.redis.ttl(key) })
+      else live.push({ key, record, ttlSeconds: await pinned(this.redis.ttl(key)) })
     }
-    await this.redis.pruneDeadMembers(set, dead)
-    return live
+    await pinned(this.redis.pruneDeadMembers(set, dead))
+    return checked(live)
   }
 
   private indexKey(ref: WorkspaceRef, email: string): string {
@@ -184,10 +190,10 @@ export class WorkspaceInvitationStore {
   }
 
   private async readKey(key: string): Promise<StoredWorkspaceInvitation | null> {
-    const raw = await this.redis.get(key)
+    const raw = await pinned(this.redis.get(key))
     if (raw === null) return null
     try {
-      return parseRecord(parseJson(raw))
+      return checked(parseRecord(parseJson(raw)))
     } catch {
       return null
     }

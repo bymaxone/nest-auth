@@ -22,6 +22,7 @@ import { WorkspaceDeniedEventsService } from '../services/workspace-denied-event
 import { admitsPendingWorkspace, declaredWorkspaceRoles } from '../utils/declared-workspace-roles'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { resolveRequestWorkspace } from '../utils/resolve-request-workspace'
+import { pinned, PinnedMethods } from '../utils/settle'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
 type GuardedRequest = Request & WorkspaceRequest & { user?: DashboardJwtPayload }
@@ -57,6 +58,7 @@ type GuardedRequest = Request & WorkspaceRequest & { user?: DashboardJwtPayload 
  * so the host's rate limiting on guarded routes is what bounds a caller probing ids.
  */
 @Injectable()
+@PinnedMethods('canActivate')
 export class WorkspaceGuard implements CanActivate {
   private readonly group: ResolvedWorkspaceOptions
 
@@ -81,11 +83,13 @@ export class WorkspaceGuard implements CanActivate {
     }
 
     const workspaceId = resolveRequestWorkspace(request, this.group.resolveRequestWorkspace)
-    const access = await this.access.resolveAccess({
-      tenantId: user.tenantId,
-      workspaceId,
-      userId: user.sub
-    })
+    const access = await pinned(
+      this.access.resolveAccess({
+        tenantId: user.tenantId,
+        workspaceId,
+        userId: user.sub
+      })
+    )
     assertRootIsStandard()
     const member = this.denied.admit(
       { tenantId: user.tenantId, userId: user.sub, workspaceId, surface: 'http' },

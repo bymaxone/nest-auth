@@ -4,6 +4,8 @@
  * @layer Service
  */
 
+import { withDeadline as bound, type Settled } from '../utils/settle'
+
 /** The deadline for a plugin's code exchange and profile fetch together, in milliseconds. */
 export const OAUTH_PLUGIN_DEFAULT_TIMEOUT_MS = 10_000
 
@@ -39,19 +41,9 @@ export function pluginDeadlineMs(plugin: { readonly timeoutMs?: unknown }): numb
  *
  * @param work - The calls to bound.
  * @param ms - The deadline in milliseconds.
- * @returns What the work resolved to.
+ * @returns What the work resolved to, boxed: read `.value`.
  * @throws {Error} When the deadline passes first.
  */
-export async function withDeadline<T>(work: () => Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined
-  const expiry = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`the plugin did not answer within ${ms} ms`))
-    }, ms)
-  })
-  try {
-    return await Promise.race([work(), expiry])
-  } finally {
-    clearTimeout(timer)
-  }
+export function withDeadline<T>(work: () => Promise<T>, ms: number): Promise<Settled<T>> {
+  return bound(work, ms, `the plugin did not answer within ${ms} ms`)
 }

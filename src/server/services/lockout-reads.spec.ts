@@ -27,7 +27,7 @@ const DECISIONS = new Set([
   'mfa-management.service.ts#spendTotpAttempt',
   'reauthentication.service.ts#assertReauthenticated',
   'email-change.service.ts#requestChange',
-  'password-reset.service.ts#changePassword'
+  'password-reset.service.ts#assertCurrentPassword'
 ])
 
 /** The `file#method` of every lockout read in `source` that is not inside a `try` block. */

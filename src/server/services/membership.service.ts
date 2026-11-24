@@ -28,6 +28,7 @@ import type { WorkspaceAuditEvent } from '../interfaces/workspace-audit.interfac
 import type { AuthWorkspace, WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { hasRole } from '../utils/roles.util'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** The most rows one page may hold. */
 export const MAX_PAGE_SIZE = 100
@@ -101,6 +102,7 @@ export class MembershipBumpFailedError extends Error {
  * access ends when `workspaces.membershipCacheTtlSeconds` elapses, or at once through
  * `WorkspaceAccessService.invalidateMembership`.
  */
+@PinnedAll()
 @Injectable()
 export class MembershipService {
   private readonly group: ResolvedWorkspaceOptions
@@ -131,15 +133,17 @@ export class MembershipService {
     userId: string,
     page: { cursor?: string; limit?: number } = {}
   ): Promise<MyWorkspaces> {
-    const listed = await this.memberships.listForUser({
-      tenantId,
-      userId,
-      ...(page.cursor === undefined ? {} : { cursor: page.cursor }),
-      limit: pageSize(page.limit)
-    })
+    const listed = await pinned(
+      this.memberships.listForUser({
+        tenantId,
+        userId,
+        ...(page.cursor === undefined ? {} : { cursor: page.cursor }),
+        limit: pageSize(page.limit)
+      })
+    )
     const lastActiveWorkspaceId =
-      (await this.memberships.getLastActiveWorkspaceId?.({ tenantId, userId })) ?? null
-    return { ...listed, lastActiveWorkspaceId }
+      (await pinned(this.memberships.getLastActiveWorkspaceId?.({ tenantId, userId }))) ?? null
+    return checked({ ...listed, lastActiveWorkspaceId })
   }
 
   /**
@@ -209,16 +213,18 @@ export class MembershipService {
     actorUserId: string | null,
     context: HookContext
   ): Promise<RemovedMembership[]> {
-    const blocking = await this.soleOwnedBlocking(tenantId, userId)
+    const blocking = await pinned(this.soleOwnedBlocking(tenantId, userId))
     if (blocking.length > 0)
       throw new AuthException(AUTH_ERROR_CODES.LAST_OWNER, { workspaces: blocking })
     const at = now()
-    const outcome = await this.memberships.removeAllForUser({
-      tenantId,
-      userId,
-      ownerRole: this.group.roles.ownerRole,
-      audit: { type: 'member.removed', tenantId, actorUserId, userId, at }
-    })
+    const outcome = await pinned(
+      this.memberships.removeAllForUser({
+        tenantId,
+        userId,
+        ownerRole: this.group.roles.ownerRole,
+        audit: { type: 'member.removed', tenantId, actorUserId, userId, at }
+      })
+    )
     if (outcome.result === 'last_owner') {
       throw new AuthException(AUTH_ERROR_CODES.LAST_OWNER, {
         workspaces: outcome.workspaceIds.map((id) => ({ id }))
@@ -239,18 +245,15 @@ export class MembershipService {
         context
       )
       try {
-        await this.access.invalidateMembership({
-          tenantId,
-          workspaceId: removed.workspaceId,
-          userId
-        })
+        const ref = { tenantId, workspaceId: removed.workspaceId, userId }
+        await pinned(this.access.invalidateMembership(ref))
       } catch (error) {
         if (failed.length === 0) cause = error
         failed.push(removed)
       }
     }
     if (failed.length > 0) throw new MembershipBumpFailedError(outcome.removed, failed, cause)
-    return outcome.removed
+    return checked(outcome.removed)
   }
 
   /**
@@ -282,11 +285,11 @@ export class MembershipService {
     if (!this.outranks(actor.role, role)) {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     }
-    const target = await this.activeMember(ref, userId, actor)
+    const target = await pinned(this.activeMember(ref, userId, actor))
     if (target.role === role) {
       // Nothing to write. A retry of a change whose cache bump failed lands here, and it still has
       // to end the access the first attempt left cached.
-      await this.access.invalidateMembership({ ...ref, userId })
+      await pinned(this.access.invalidateMembership({ ...ref, userId }))
       return
     }
 
@@ -299,16 +302,18 @@ export class MembershipService {
       to: role,
       at: now()
     }
-    const result = await this.memberships.changeRole({
-      ...ref,
-      userId,
-      role,
-      expectedRole: target.role,
-      actor: { userId: actor.userId, expectedRole: actor.role },
-      ownerRole,
-      audit: event
-    })
-    await this.settle(result, ref, [userId])
+    const result = await pinned(
+      this.memberships.changeRole({
+        ...ref,
+        userId,
+        role,
+        expectedRole: target.role,
+        actor: { userId: actor.userId, expectedRole: actor.role },
+        ownerRole,
+        audit: event
+      })
+    )
+    await pinned(this.settle(result, ref, [userId]))
     this.events.emit(event, context)
   }
 
@@ -329,7 +334,7 @@ export class MembershipService {
     actor: WorkspaceActor,
     context: HookContext
   ): Promise<void> {
-    const target = await this.activeMember(ref, userId, actor)
+    const target = await pinned(this.activeMember(ref, userId, actor))
     const event = {
       type: 'member.removed' as const,
       ...ref,
@@ -337,10 +342,12 @@ export class MembershipService {
       userId,
       at: now()
     }
-    await this.removeWith(ref, userId, event, context, {
-      expectedRole: target.role,
-      actor: { userId: actor.userId, expectedRole: actor.role }
-    })
+    await pinned(
+      this.removeWith(ref, userId, event, context, {
+        expectedRole: target.role,
+        actor: { userId: actor.userId, expectedRole: actor.role }
+      })
+    )
   }
 
   /**
@@ -354,7 +361,7 @@ export class MembershipService {
    */
   async leave(ref: WorkspaceRef, userId: string, context: HookContext): Promise<void> {
     const event = { type: 'member.left' as const, ...ref, actorUserId: userId, userId, at: now() }
-    await this.removeWith(ref, userId, event, context)
+    await pinned(this.removeWith(ref, userId, event, context))
   }
 
   /**
@@ -383,7 +390,7 @@ export class MembershipService {
     context: HookContext
   ): Promise<void> {
     this.assertMayTransfer(actor, toUserId, demoteFromTo)
-    await this.assertTransferTarget(ref, toUserId)
+    await pinned(this.assertTransferTarget(ref, toUserId))
     const { ownerRole } = this.group.roles
     const fromUserId = actor.userId
     const event = {
@@ -394,16 +401,18 @@ export class MembershipService {
       toUserId,
       at: now()
     }
-    const result = await this.memberships.transferOwnership({
-      ...ref,
-      fromUserId,
-      toUserId,
-      ownerRole,
-      demoteFromTo,
-      audit: event
-    })
+    const result = await pinned(
+      this.memberships.transferOwnership({
+        ...ref,
+        fromUserId,
+        toUserId,
+        ownerRole,
+        demoteFromTo,
+        audit: event
+      })
+    )
     if (result === 'target_not_member') throw invalid('userId', 'userId must be an active member')
-    await this.settle(result, ref, [fromUserId, toUserId])
+    await pinned(this.settle(result, ref, [fromUserId, toUserId]))
     this.events.emit(event, context)
   }
 
@@ -419,7 +428,7 @@ export class MembershipService {
    * @throws {AuthException} `auth.validation` naming `userId` for a member who is absent or not active.
    */
   async assertTransferTarget(ref: WorkspaceRef, toUserId: string): Promise<void> {
-    const target = await this.memberships.find({ ...ref, userId: toUserId })
+    const target = await pinned(this.memberships.find({ ...ref, userId: toUserId }))
     if (target?.status !== 'active') throw invalid('userId', 'userId must be an active member')
   }
 
@@ -491,9 +500,9 @@ export class MembershipService {
    * @throws {AuthException} `auth.workspace_not_found` when the member does not exist.
    */
   async getMember(ref: WorkspaceRef, userId: string): Promise<AuthMembership> {
-    const member = await this.memberships.find({ ...ref, userId })
+    const member = await pinned(this.memberships.find({ ...ref, userId }))
     if (member === null) throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
-    return member
+    return checked(member)
   }
 
   /** Reads an active member and refuses an actor who would act on a role above their own. */
@@ -502,12 +511,12 @@ export class MembershipService {
     userId: string,
     actor: WorkspaceActor
   ): Promise<AuthMembership> {
-    const member = await this.memberships.find({ ...ref, userId })
+    const member = await pinned(this.memberships.find({ ...ref, userId }))
     if (member?.status !== 'active') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     if (!this.outranks(actor.role, member.role)) {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     }
-    return member
+    return checked(member)
   }
 
   /**
@@ -535,20 +544,22 @@ export class MembershipService {
     const blocking: Array<{ id: string; name: string; status: AuthWorkspace['status'] }> = []
     let cursor: string | undefined
     do {
-      const page = await this.memberships.listSoleOwned({
-        tenantId,
-        userId,
-        ownerRole: this.group.roles.ownerRole,
-        ...(cursor === undefined ? {} : { cursor }),
-        limit: MAX_PAGE_SIZE
-      })
+      const page = await pinned(
+        this.memberships.listSoleOwned({
+          tenantId,
+          userId,
+          ownerRole: this.group.roles.ownerRole,
+          ...(cursor === undefined ? {} : { cursor }),
+          limit: MAX_PAGE_SIZE
+        })
+      )
       for (const workspace of page.items) {
         if (workspace.status === 'pending_deletion' || workspace.status === 'deleted') continue
         blocking.push({ id: workspace.id, name: workspace.name, status: workspace.status })
       }
       cursor = page.nextCursor ?? undefined
     } while (cursor !== undefined && blocking.length < MAX_PAGE_SIZE)
-    return blocking.slice(0, MAX_PAGE_SIZE)
+    return checked(blocking.slice(0, MAX_PAGE_SIZE))
   }
 
   private async removeWith(
@@ -558,14 +569,16 @@ export class MembershipService {
     context: HookContext,
     judged?: { expectedRole: string; actor: ActingMember }
   ): Promise<void> {
-    const result = await this.memberships.remove({
-      ...ref,
-      userId,
-      ...(judged ?? {}),
-      ownerRole: this.group.roles.ownerRole,
-      audit: event
-    })
-    await this.settle(result, ref, [userId])
+    const result = await pinned(
+      this.memberships.remove({
+        ...ref,
+        userId,
+        ...(judged ?? {}),
+        ownerRole: this.group.roles.ownerRole,
+        audit: event
+      })
+    )
+    await pinned(this.settle(result, ref, [userId]))
     this.events.emit(event, context)
   }
 
@@ -584,7 +597,7 @@ export class MembershipService {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     }
     for (const userId of userIds) {
-      await this.access.invalidateMembership({ ...ref, userId })
+      await pinned(this.access.invalidateMembership({ ...ref, userId }))
     }
   }
 }

@@ -35,6 +35,7 @@ import { DEFAULT_RECOVERY_CODE_COUNT, generateRecoveryCodes } from '../utils/mfa
 import { committedSafeUser, platformUserAsSafeUser, toSafeUser } from '../utils/mfa-safe-user'
 import { decryptMfaSecret } from '../utils/mfa-secret-cipher'
 import { runDetached } from '../utils/run-detached'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** The plane, account and tenant an MFA change applies to. */
 interface AccountScope {
@@ -44,6 +45,7 @@ interface AccountScope {
 }
 
 /** Turns an enrolment off, removes it administratively, or replaces its recovery codes. */
+@PinnedAll()
 @Injectable()
 export class MfaManagementService {
   private readonly logger = new Logger(MFA_LOG_CONTEXT)
@@ -97,12 +99,12 @@ export class MfaManagementService {
   ): Promise<void> {
     assertPlaneTenant(context, tenantId)
     const scope: AccountScope = { userId, context, tenantId }
-    const user = await this.records.loadAccount(context, userId, tenantId)
+    const user = await pinned(this.records.loadAccount(context, userId, tenantId))
     if (!user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
     // Stryker disable next-line StringLiteral: spendTotpAttempt compares its origin only to 'regenerateRecoveryCodes', so any other string (the empty one included) takes the same path and no test can tell them apart
-    await this.spendTotpAttempt('disable', scope, user, code, mfa)
-    await this.clearFactor(scope)
+    await pinned(this.spendTotpAttempt('disable', scope, user, code, mfa))
+    await pinned(this.clearFactor(scope))
 
     logEvent(this.logger, 'AUTH_MFA_DISABLED', { plane: context, userId })
     this.notifyDisabled('mfa_disabled_notice', user)
@@ -155,14 +157,14 @@ export class MfaManagementService {
   ): Promise<void> {
     assertPlaneTenant(context, tenantId)
     const scope: AccountScope = { userId, context, tenantId }
-    const user = await this.records.loadAccount(context, userId, tenantId)
+    const user = await pinned(this.records.loadAccount(context, userId, tenantId))
 
     if (!user.mfaEnabled) {
       logEvent(this.logger, 'AUTH_MFA_NOTHING_TO_RESET', { plane: context, userId })
       return
     }
 
-    await this.clearFactor(scope)
+    await pinned(this.clearFactor(scope))
 
     logEvent(this.logger, 'AUTH_MFA_RESET', { plane: context })
     this.notifyDisabled('mfa_reset_notice', user)
@@ -232,13 +234,13 @@ export class MfaManagementService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
     }
     const scope: AccountScope = { userId, context, tenantId }
-    const user = await this.records.loadAccount(context, userId, tenantId)
+    const user = await pinned(this.records.loadAccount(context, userId, tenantId))
     if (!user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
     // The 'disable' counter is shared: both flows are TOTP-gated MFA changes from an
     // authenticated user, so they draw on one lockout pool, which is already isolated from the
     // public 'challenge' counter.
-    await this.spendTotpAttempt('regenerateRecoveryCodes', scope, user, totpCode, mfa)
+    await pinned(this.spendTotpAttempt('regenerateRecoveryCodes', scope, user, totpCode, mfa))
 
     // Same entropy, formatting and keyed-MAC digesting as the initial setup() path.
     const recoveryCount = mfa.recoveryCodeCount ?? DEFAULT_RECOVERY_CODE_COUNT
@@ -247,18 +249,20 @@ export class MfaManagementService {
     // Serialized against every other MFA transition: the prior set is replaced wholesale so an
     // old code can never coexist with the new one, which a challenge that read the old list could
     // otherwise undo by splicing it back after this write. The TOTP secret is preserved.
-    const replaced = await this.records.transition(context, userId, tenantId, (current) => {
-      // MFA was disabled while the new codes were being derived. Writing them would re-enable
-      // it with the pre-disable secret, so the caller is told the factor is gone instead.
-      if (!current.mfaEnabled) return null
-      return { mfaEnabled: true, mfaSecret: current.mfaSecret, mfaRecoveryCodes: hashedCodes }
-    })
+    const replaced = await pinned(
+      this.records.transition(context, userId, tenantId, (current) => {
+        // MFA was disabled while the new codes were being derived. Writing them would re-enable
+        // it with the pre-disable secret, so the caller is told the factor is gone instead.
+        if (!current.mfaEnabled) return null
+        return { mfaEnabled: true, mfaSecret: current.mfaSecret, mfaRecoveryCodes: hashedCodes }
+      })
+    )
     if (!replaced) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
     logEvent(this.logger, 'AUTH_MFA_RECOVERY_CODES_REGENERATED', { plane: context, userId })
     this.fireRegeneratedHook(scope, user, ip, userAgent)
 
-    return { recoveryCodes: plainCodes }
+    return checked({ recoveryCodes: plainCodes })
   }
 
   /**
@@ -286,7 +290,7 @@ export class MfaManagementService {
   ): Promise<void> {
     const { userId, context, tenantId } = scope
     const flow = origin === 'regenerateRecoveryCodes' ? 'recovery_codes' : 'disable'
-    if (await this.flowLockout.isLockedOut('disable', context, userId, tenantId)) {
+    if (await pinned(this.flowLockout.isLockedOut('disable', context, userId, tenantId))) {
       logEvent(this.logger, 'AUTH_MFA_LOCKED', { plane: context, flow })
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
@@ -294,20 +298,22 @@ export class MfaManagementService {
       // mfaEnabled is true but mfaSecret is absent — database inconsistency.
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
-    const valid = await this.records.verifyTotpWithAntiReplay(
-      context,
-      userId,
-      decryptMfaSecret(user.mfaSecret, mfa),
-      code,
-      mfa.totpWindow,
-      tenantId
+    const valid = await pinned(
+      this.records.verifyTotpWithAntiReplay(
+        context,
+        userId,
+        decryptMfaSecret(user.mfaSecret, mfa),
+        code,
+        mfa.totpWindow,
+        tenantId
+      )
     )
     if (!valid) {
-      await this.flowLockout.recordFailure('disable', context, userId, tenantId)
+      await pinned(this.flowLockout.recordFailure('disable', context, userId, tenantId))
       logEvent(this.logger, 'AUTH_MFA_CODE_INVALID', { plane: context, flow })
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
-    await this.flowLockout.reset('disable', context, userId, tenantId)
+    await pinned(this.flowLockout.reset('disable', context, userId, tenantId))
   }
 
   /**
@@ -323,13 +329,15 @@ export class MfaManagementService {
    */
   private async clearFactor(scope: AccountScope): Promise<void> {
     const { userId, context, tenantId } = scope
-    await this.records.transition(context, userId, tenantId, () => ({
-      mfaEnabled: false,
-      mfaSecret: null,
-      mfaRecoveryCodes: null
-    }))
-    await this.redis.invalidateUserSessions(userId, tenantId, context)
-    await this.redis.bumpUserTokenEpoch(userId, tenantId, context)
+    await pinned(
+      this.records.transition(context, userId, tenantId, () => ({
+        mfaEnabled: false,
+        mfaSecret: null,
+        mfaRecoveryCodes: null
+      }))
+    )
+    await pinned(this.redis.invalidateUserSessions(userId, tenantId, context))
+    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, context))
   }
 
   /**

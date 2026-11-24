@@ -6,6 +6,7 @@
 
 import { handshakeRequest } from './handshake-request'
 import type { HandshakeLike } from './handshake-request'
+import { pinned } from './settle'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -49,7 +50,7 @@ export async function assertTenantBinding(
   if (options.enforceTenantBinding !== true || !resolver) return
   let requestTenant: string
   try {
-    requestTenant = await resolver(handshakeRequest(handshake, options.isTrustedProxy))
+    requestTenant = await pinned(resolver(handshakeRequest(handshake, options.isTrustedProxy)))
   } catch {
     throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
   }

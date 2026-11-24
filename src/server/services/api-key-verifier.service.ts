@@ -25,6 +25,7 @@ import {
 import type { AuthApiKey, IApiKeyRepository } from '../interfaces/api-key-repository.interface'
 import type { ApiKeyDenyReason } from '../interfaces/auth-hooks.interface'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** Why a key was not accepted. */
 export type ApiKeyRejection = Extract<
@@ -51,6 +52,7 @@ export type ApiKeyVerdict =
  * row, and no library can remove that. Pre-verification flood protection is a per-address
  * throttle in front of the guard, documented in the README.
  */
+@PinnedAll()
 @Injectable()
 export class ApiKeyVerifierService {
   constructor(
@@ -75,7 +77,7 @@ export class ApiKeyVerifierService {
     const secret = parsed?.secret ?? API_KEY_DUMMY_SECRET
 
     // 3. Always read a row.
-    const row = await this.repository.findById(keyId)
+    const row = await pinned(this.repository.findById(keyId))
 
     // 4-5. Always digest, always compare two 32-byte buffers.
     const computed = apiKeyDigest(secret, this.options.apiKeys.pepper)
@@ -85,12 +87,12 @@ export class ApiKeyVerifierService {
     const now = this.clock.now()
     const reason = this.rejection(header, parsed !== null, row, equal, now.getTime())
     if (reason !== null) {
-      return { ok: false, reason, key: parsed === null ? null : row }
+      return checked({ ok: false, reason, key: parsed === null ? null : row })
     }
     // Reaching here means `row` is non-null: `rejection` answers 'unknown' for a null row.
     const key = row as AuthApiKey
     this.lastUsed.record(key.id, now)
-    return { ok: true, key }
+    return checked({ ok: true, key })
   }
 
   /**

@@ -32,6 +32,7 @@ import { MFA_LOG_CONTEXT } from '../utils/mfa-log-context'
 import { assertDashboardTenant } from '../utils/mfa-plane-tenant'
 import { encryptMfaSecret, holdsSecret, type MfaSecretKeys } from '../utils/mfa-secret-cipher'
 import { rethrowRefusal } from '../utils/object-prototype-guard'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /**
  * TTL in seconds for the single-use claim on a recovery code (5 minutes).
@@ -109,6 +110,7 @@ end
 return 0`
 
 /** Reads and writes the MFA state of one account, serializing every write per account and plane. */
+@PinnedAll()
 @Injectable()
 export class MfaRecordService {
   private readonly logger = new Logger(MFA_LOG_CONTEXT)
@@ -149,14 +151,17 @@ export class MfaRecordService {
     keys: MfaSecretKeys
   ): Promise<void> {
     try {
-      await this.transition(context, userId, tenantId, (current) => {
-        if (!current.mfaEnabled || !holdsSecret(current.mfaSecret, secretBase32, keys)) return null
-        return {
-          mfaEnabled: true,
-          mfaSecret: encryptMfaSecret(secretBase32, keys),
-          mfaRecoveryCodes: current.mfaRecoveryCodes ?? []
-        }
-      })
+      await pinned(
+        this.transition(context, userId, tenantId, (current) => {
+          if (!current.mfaEnabled || !holdsSecret(current.mfaSecret, secretBase32, keys))
+            return null
+          return {
+            mfaEnabled: true,
+            mfaSecret: encryptMfaSecret(secretBase32, keys),
+            mfaRecoveryCodes: current.mfaRecoveryCodes ?? []
+          }
+        })
+      )
     } catch (err: unknown) {
       rethrowRefusal(err)
       logStore(this.logger, 'AUTH_STORE_FAILED', 'mfa_reencryption', err)
@@ -216,39 +221,57 @@ export class MfaRecordService {
     // in beside the second. The release is therefore a compare-and-delete on the nonce.
     const lockKey = `mfalock:${hmacSha256(userSubject(context, userId, tenantId), this.options.hmacKey)}`
     const lockToken = randomBytes(16).toString('hex')
-    if (!(await this.redis.setIfAbsent(lockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS))) {
+    const taken = this.redis.setIfAbsent(lockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS)
+    if (!(await pinned(taken))) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT)
     }
     try {
       // Re-read inside the lock. The caller's copy was read before the lock existed and may
       // already be stale — reusing it would leave exactly the window this method closes.
-      const current = await this.loadAccount(context, userId, tenantId)
+      const current = await pinned(this.loadAccount(context, userId, tenantId))
       const update = mutate(current)
       if (update === null) return false
-      // Narrowed to the repository contract rather than cast to it. `MfaRecordUpdate` widens to
-      // `undefined` because the two planes' record types differ on the read side, but both
-      // `updateMfa` contracts declare `string | null` / `string[] | null` — required, not
-      // optional. A cast let `undefined` through to a consumer repository, where an ORM that
-      // reads it as "leave this column alone" would write `mfaEnabled: false` while keeping
-      // the secret and the recovery digests: MFA reported off, and every stored factor still
-      // able to satisfy a challenge. `?? null` states the clear explicitly, and dropping the
-      // casts means the compiler checks the two contracts from here on.
-      const write = {
-        mfaEnabled: update.mfaEnabled,
-        mfaSecret: update.mfaSecret ?? null,
-        mfaRecoveryCodes: update.mfaRecoveryCodes ?? null
-      }
-      if (context === 'platform' && this.platformUserRepo) {
-        await this.platformUserRepo.updateMfa(userId, write)
-      } else {
-        // Narrows the tenant for the dashboard write: every dashboard entry point already ran
-        // `assertPlaneTenant`, but only this form is one the type system reads.
-        assertDashboardTenant(tenantId)
-        await this.userRepo.updateMfa({ id: userId, tenantId, data: write })
-      }
+      await pinned(this.persist(context, userId, tenantId, update))
       return true
     } finally {
-      await this.releaseLock(lockKey, lockToken)
+      await pinned(this.releaseLock(lockKey, lockToken))
+    }
+  }
+
+  /**
+   * Writes an update inside the lock, to the repository of the plane the account belongs to.
+   *
+   * @param context - Which identity plane the account belongs to.
+   * @param userId - The account being written.
+   * @param tenantId - The account's tenant, required on the dashboard plane.
+   * @param update - What `mutate` asked to be stored.
+   */
+  private async persist(
+    context: 'dashboard' | 'platform',
+    userId: string,
+    tenantId: string | undefined,
+    update: MfaRecordUpdate
+  ): Promise<void> {
+    // Narrowed to the repository contract rather than cast to it. `MfaRecordUpdate` widens to
+    // `undefined` because the two planes' record types differ on the read side, but both
+    // `updateMfa` contracts declare `string | null` / `string[] | null` — required, not
+    // optional. A cast let `undefined` through to a consumer repository, where an ORM that
+    // reads it as "leave this column alone" would write `mfaEnabled: false` while keeping
+    // the secret and the recovery digests: MFA reported off, and every stored factor still
+    // able to satisfy a challenge. `?? null` states the clear explicitly, and dropping the
+    // casts means the compiler checks the two contracts from here on.
+    const write = {
+      mfaEnabled: update.mfaEnabled,
+      mfaSecret: update.mfaSecret ?? null,
+      mfaRecoveryCodes: update.mfaRecoveryCodes ?? null
+    }
+    if (context === 'platform' && this.platformUserRepo) {
+      await pinned(this.platformUserRepo.updateMfa(userId, write))
+    } else {
+      // Narrows the tenant for the dashboard write: every dashboard entry point already ran
+      // `assertPlaneTenant`, but only this form is one the type system reads.
+      assertDashboardTenant(tenantId)
+      await pinned(this.userRepo.updateMfa({ id: userId, tenantId, data: write }))
     }
   }
 
@@ -265,7 +288,7 @@ export class MfaRecordService {
    */
   private async releaseLock(lockKey: string, lockToken: string): Promise<void> {
     try {
-      await this.redis.eval(RELEASE_LOCK_LUA, [lockKey], [lockToken])
+      await pinned(this.redis.eval(RELEASE_LOCK_LUA, [lockKey], [lockToken]))
     } catch (err: unknown) {
       logStore(this.logger, 'AUTH_STORE_DEGRADED', 'mfa_lock_release', err)
     }
@@ -311,7 +334,7 @@ export class MfaRecordService {
     // prevents that, not a wider key: instances on a different subject derivation must not serve
     // together.
     const claimKey = `rcu:${hmacSha256(`${userSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
-    return await this.redis.setnx(claimKey, RECOVERY_CODE_CLAIM_TTL_SECONDS)
+    return await pinned(this.redis.setnx(claimKey, RECOVERY_CODE_CLAIM_TTL_SECONDS))
   }
 
   /**
@@ -340,7 +363,7 @@ export class MfaRecordService {
     // tenants' user `1` do not share a marker, so one cannot burn the other's code.
     const ttl = totpAntiReplayTtlSeconds(window)
     const replayKey = `tu:${hmacSha256(`${userSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
-    return await this.redis.setnx(replayKey, ttl)
+    return await pinned(this.redis.setnx(replayKey, ttl))
   }
 
   /**
@@ -384,10 +407,10 @@ export class MfaRecordService {
       // what makes that a compile-time fact rather than a claim about the callers: the entry
       // points do all refuse a dashboard flow without a tenant, but a `void` guard narrows
       // nothing, so the read cannot accept `string | undefined` on the strength of prose.
-      const user = await this.userRepo.findById({ id: userId, tenantId })
+      const user = await pinned(this.userRepo.findById({ id: userId, tenantId }))
       if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       assertNotBlocked(user.status, this.options.blockedStatuses)
-      return user
+      return checked(user)
     }
 
     if (!this.platformUserRepo) {
@@ -396,9 +419,9 @@ export class MfaRecordService {
       // NestJS exception filters produce a clean response rather than leaking internal details.
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
-    const admin = await this.platformUserRepo.findById(userId)
+    const admin = await pinned(this.platformUserRepo.findById(userId))
     if (!admin) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     assertNotBlocked(admin.status, this.options.blockedStatuses)
-    return admin
+    return checked(admin)
   }
 }

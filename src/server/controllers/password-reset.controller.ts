@@ -34,6 +34,7 @@ import { ObserveAuth } from '../observability/observe-auth'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { PasswordResetService } from '../services/password-reset.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { Pinned, pinned } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
 // PasswordResetController
@@ -92,11 +93,12 @@ export class PasswordResetController {
   @HttpCode(HttpStatus.OK)
   @ObserveAuth('password_reset', 'dashboard')
   @Post('forgot-password')
+  @Pinned()
   async forgotPassword(
     @Body() dto: ForgotPasswordDto,
     @Req() req: Request
   ): Promise<Record<string, never>> {
-    await this.passwordResetService.initiateReset(dto, req)
+    await pinned(this.passwordResetService.initiateReset(dto, req))
     return {}
   }
 
@@ -122,8 +124,9 @@ export class PasswordResetController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ObserveAuth('password_reset', 'dashboard')
   @Post('reset-password')
+  @Pinned()
   async resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request): Promise<void> {
-    await this.passwordResetService.resetPassword(dto, req)
+    await pinned(this.passwordResetService.resetPassword(dto, req))
   }
 
   // ---------------------------------------------------------------------------
@@ -159,17 +162,15 @@ export class PasswordResetController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.changePassword)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('change')
+  @Pinned()
   async changePassword(
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: ChangePasswordDto,
     @Req() req: Request
   ): Promise<void> {
     const currentRefreshToken = this.tokenDelivery.extractRefreshToken(req)
-    await this.passwordResetService.changePassword(
-      user.sub,
-      user.tenantId,
-      dto,
-      currentRefreshToken
+    await pinned(
+      this.passwordResetService.changePassword(user.sub, user.tenantId, dto, currentRefreshToken)
     )
   }
 
@@ -194,11 +195,12 @@ export class PasswordResetController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.verifyOtp)
   @HttpCode(HttpStatus.OK)
   @Post('verify-otp')
+  @Pinned()
   async verifyOtp(
     @Body() dto: VerifyOtpDto,
     @Req() req: Request
   ): Promise<{ verifiedToken: string }> {
-    const verifiedToken = await this.passwordResetService.verifyOtp(dto, req)
+    const verifiedToken = await pinned(this.passwordResetService.verifyOtp(dto, req))
     return { verifiedToken }
   }
 
@@ -221,8 +223,9 @@ export class PasswordResetController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resendPasswordOtp)
   @HttpCode(HttpStatus.OK)
   @Post('resend-otp')
+  @Pinned()
   async resendOtp(@Body() dto: ResendOtpDto, @Req() req: Request): Promise<Record<string, never>> {
-    await this.passwordResetService.resendOtp(dto, req)
+    await pinned(this.passwordResetService.resendOtp(dto, req))
     return {}
   }
 }

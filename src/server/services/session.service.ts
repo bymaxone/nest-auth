@@ -12,18 +12,21 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { SessionAlertInfo } from '../interfaces/email-provider.interface'
-import type {
-  AuthUser,
-  IUserRepository,
-  SafeAuthUser
-} from '../interfaces/user-repository.interface'
+import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logHook, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { hostEntityOf } from '../utils/host-read'
+import { toSafeUser } from '../utils/mfa-safe-user'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { runDetached } from '../utils/run-detached'
-import { parseUserAgent } from '../utils/session-detail'
+import {
+  parseStoredDetail,
+  parseUserAgent,
+  type StoredSessionDetail
+} from '../utils/session-detail'
+import { allOf, awaiting, checked, detached, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst } from '../utils/settle-writes'
 
 // ---------------------------------------------------------------------------
@@ -113,14 +116,6 @@ export interface SessionInfo {
 // Private types
 // ---------------------------------------------------------------------------
 
-/** Internal detail record persisted in Redis under `sd:{hash}`. */
-interface StoredSessionDetail {
-  device: string
-  ip: string
-  createdAt: number
-  lastActivityAt: number
-}
-
 /**
  * What reading one index member's session detail came to.
  *
@@ -132,49 +127,6 @@ type MemberRead =
   | { kind: 'session'; info: SessionInfo }
   | { kind: 'stale'; member: string }
   | { kind: 'failed'; member: string; error: unknown }
-
-/**
- * Parses a stored session detail record.
- *
- * @param raw - The `sd:{hash}` value.
- * @returns The record, or `null` when it is not valid JSON or lacks a field the listing shows.
- */
-function parseStoredDetail(raw: string): StoredSessionDetail | null {
-  try {
-    const parsed: unknown = parseJson(raw)
-    const p = parsed as Record<string, unknown>
-    if (
-      // Stryker disable next-line ConditionalExpression,LogicalOperator: `parsed === null` is subsumed by the adjacent `typeof parsed !== 'object'` clause (typeof null is 'object' but the field reads below reject it identically)
-      parsed === null ||
-      // Stryker disable next-line ConditionalExpression: equivalent — a non-object
-      // parsed value reaches the field reads below as `undefined` on every property,
-      // which reject it with the identical outcome
-      typeof parsed !== 'object' ||
-      typeof p['device'] !== 'string' ||
-      typeof p['ip'] !== 'string' ||
-      typeof p['createdAt'] !== 'number' ||
-      typeof p['lastActivityAt'] !== 'number'
-    ) {
-      return null
-    }
-    return parsed as StoredSessionDetail
-  } catch {
-    return null
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Projection helper
-// ---------------------------------------------------------------------------
-
-/**
- * Projects a full {@link AuthUser} to a {@link SafeAuthUser} by excluding
- * credential and secret fields.
- */
-function toSafeUser(user: AuthUser): SafeAuthUser {
-  const { passwordHash: _p, mfaSecret: _s, mfaRecoveryCodes: _r, ...safe } = user
-  return safe
-}
 
 // ---------------------------------------------------------------------------
 // SessionService
@@ -273,6 +225,7 @@ export interface RevokeAllExceptCurrentParams {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name)
@@ -347,7 +300,7 @@ export class SessionService {
     const hash = sha256(rawRefreshToken)
     const device = parseUserAgent(userAgent)
 
-    await this.enforceSessionLimit(userId, tenantId, hash, ip, userAgent)
+    await pinned(this.enforceSessionLimit(userId, tenantId, hash, ip, userAgent))
 
     // Fire onNewSession hook — fire-and-forget; errors must not propagate.
     if (this.hooks?.onNewSession) {
@@ -364,19 +317,20 @@ export class SessionService {
         sanitizedHeaders: {}
       }
 
-      void this.userRepo
-        .findById({ id: userId, tenantId })
-        .then((user) => {
+      detached(
+        async () => {
+          const user = await pinned(this.userRepo.findById({ id: userId, tenantId }))
           if (!user) return
           runDetached(
             this.logger,
             () => onNewSession(toSafeUser(user), minimalSessionInfo, context),
             'onNewSession'
           )
-        })
-        .catch((err: unknown) => {
+        },
+        (_how, err) => {
           logStore(this.logger, 'AUTH_STORE_FAILED', 'new_session_user_lookup', err)
-        })
+        }
+      )
     }
 
     return hash
@@ -412,16 +366,12 @@ export class SessionService {
     // that refreshes and never signs out again accumulates them without bound — and this
     // method ships the whole set. Fire-and-forget: a failed prune is a tidy-up that did not
     // happen, not a listing that should fail. See `pruneExpiredGraceMembers`.
-    void this.redis
-      .pruneExpiredGraceMembers(this.indexKey(userId, tenantId), 'rp:')
-      .catch((err: unknown) => {
-        logStore(this.logger, 'AUTH_STORE_DEGRADED', 'grace_pointer_prune', err)
-      })
+    this.pruneGracePointers(userId, tenantId)
 
-    const members = await this.redis.smembers(this.indexKey(userId, tenantId))
+    const members = await pinned(this.redis.smembers(this.indexKey(userId, tenantId)))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
-    const reads = await Promise.all(
-      rtMembers.map((member) => this.readSession(member, currentSessionHash))
+    const { value: reads } = await awaiting(
+      allOf(rtMembers.map((member) => this.readSession(member, currentSessionHash)))
     )
 
     const results: SessionInfo[] = []
@@ -442,20 +392,14 @@ export class SessionService {
     // that name nothing, because a member dropped while its `rt:` lives is invisible to
     // `invalidateUserSessions` — the session would then survive "sign out everywhere" and keep
     // rotating, and merely opening this listing would be what orphaned it.
-    void this.redis
-      .pruneDeadMembers(this.indexKey(userId, tenantId), staleKeys)
-      .catch((err: unknown) => {
-        logStore(this.logger, 'AUTH_STORE_FAILED', 'dead_member_prune', err)
-      })
+    this.pruneDeadPointers(userId, tenantId, staleKeys)
 
     // After the cleanup has been dispatched, not before: a read fault costs the caller the listing
     // and costs the index nothing. A listing that left out a session it could not read would be a
     // view that lies by omission, since the caller cannot revoke what they cannot see.
     raiseFirst(failures)
 
-    results.sort((a, b) => b.createdAt - a.createdAt)
-
-    return results
+    return checked(newestFirst(results))
   }
 
   /**
@@ -473,19 +417,19 @@ export class SessionService {
     let raw: string | null
 
     try {
-      raw = await this.redis.get(`sd:${hash}`)
+      raw = await pinned(this.redis.get(`sd:${hash}`))
     } catch (error: unknown) {
       // A read that throws is an infrastructure fault, not a stale member. The guarded prune
       // still sees the member as a candidate, and only this line says which one happened, so a
       // Redis outage does not read as a tidy-up.
       logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_detail_read', error)
-      return { kind: 'failed', member, error }
+      return checked({ kind: 'failed', member, error })
     }
 
     const detail = raw === null ? null : parseStoredDetail(raw)
-    if (detail === null) return { kind: 'stale', member }
+    if (detail === null) return checked({ kind: 'stale', member })
 
-    return {
+    return checked({
       kind: 'session',
       info: {
         id: hash.slice(0, 8),
@@ -499,7 +443,7 @@ export class SessionService {
         createdAt: detail.createdAt,
         lastActivityAt: detail.lastActivityAt
       }
-    }
+    })
   }
 
   /**
@@ -520,10 +464,12 @@ export class SessionService {
 
     // Atomic Lua script: ownership check (SISMEMBER) + all deletions in one
     // round-trip to eliminate TOCTOU between the membership check and DEL/SREM.
-    const result = await this.redis.eval(
-      REVOKE_SESSION_LUA,
-      [this.indexKey(userId, tenantId), `rt:${sessionHash}`, `sd:${sessionHash}`],
-      [`rt:${sessionHash}`]
+    const result = await pinned(
+      this.redis.eval(
+        REVOKE_SESSION_LUA,
+        [this.indexKey(userId, tenantId), `rt:${sessionHash}`, `sd:${sessionHash}`],
+        [`rt:${sessionHash}`]
+      )
     )
 
     const revoked = typeof result === 'number' ? result : 0
@@ -563,11 +509,11 @@ export class SessionService {
     // defence. Measured — deleting it left all 133 tests in this suite green, which is what an
     // equivalent mutant looks like. Removed rather than suppressed: a `Stryker disable` would
     // have preserved the duplication and added a comment defending it.
-    await this.revokeSession({ userId, tenantId, sessionHash })
+    await pinned(this.revokeSession({ userId, tenantId, sessionHash }))
     // After the revoke, not before: a failure above leaves the epoch untouched and the
     // operation visibly incomplete, rather than the reverse — every device losing its access
     // token for a session that is in fact still alive.
-    await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
+    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
   }
 
   /**
@@ -581,7 +527,7 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the hash is not a live session.
    */
   async assertLiveSession(params: LiveSessionParams): Promise<void> {
-    await this.resolveLiveSession(params)
+    await pinned(this.resolveLiveSession(params))
   }
 
   /**
@@ -604,9 +550,11 @@ export class SessionService {
     this.assertTenant(tenantId)
     this.assertValidSessionHash(sessionHash, 'sessionHash')
 
-    return this.resolveLiveMember(
-      await this.redis.smembers(this.indexKey(userId, tenantId)),
-      sessionHash
+    return await pinned(
+      this.resolveLiveMember(
+        await pinned(this.redis.smembers(this.indexKey(userId, tenantId))),
+        sessionHash
+      )
     )
   }
 
@@ -649,8 +597,8 @@ export class SessionService {
     this.assertTenant(tenantId)
     this.assertValidSessionHash(currentSessionHash, 'currentSessionHash')
 
-    const members = await this.redis.smembers(this.indexKey(userId, tenantId))
-    const keptHash = await this.resolveLiveMember(members, currentSessionHash)
+    const members = await pinned(this.redis.smembers(this.indexKey(userId, tenantId)))
+    const keptHash = await pinned(this.resolveLiveMember(members, currentSessionHash))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
 
     for (const member of rtMembers) {
@@ -659,7 +607,7 @@ export class SessionService {
       if (timingSafeCompare(hash, keptHash)) continue
 
       try {
-        await this.revokeSession({ userId, tenantId, sessionHash: hash })
+        await pinned(this.revokeSession({ userId, tenantId, sessionHash: hash }))
       } catch (err: unknown) {
         // SESSION_NOT_FOUND is expected when a concurrent logout already removed
         // this session between our SMEMBERS read and the Lua revocation. Any
@@ -687,14 +635,14 @@ export class SessionService {
     // single token it is handed, for the same reason.
     const gracePointers = members.filter((m) => m.startsWith('rp:'))
     for (const member of gracePointers) {
-      await this.redis.del(member)
-      await this.redis.srem(this.indexKey(userId, tenantId), member)
+      await pinned(this.redis.del(member))
+      await pinned(this.redis.srem(this.indexKey(userId, tenantId), member))
     }
 
     // Last, and only once every refresh session is gone: a bump before the loop would be
     // undone by nothing, but a bump after it means a failure above leaves the epoch untouched
     // rather than logging the user out of a device the loop never got to revoke.
-    await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
+    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
   }
 
   /**
@@ -743,6 +691,36 @@ export class SessionService {
     const now = Date.now()
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
+    const createdAt = await pinned(this.readRotatedCreatedAt(oldHash, now))
+
+    const newDetail: StoredSessionDetail = {
+      device: parseUserAgent(userAgent),
+      ip: ip.slice(0, MAX_IP_LENGTH),
+      createdAt,
+      lastActivityAt: now
+    }
+
+    // Atomically delete old detail and write new detail to prevent the window
+    // where a concurrent listSessions call would find neither key and classify
+    // the session as stale, triggering a spurious SREM on the sess: SET.
+    await pinned(
+      this.redis.eval(
+        ROTATE_SESSION_DETAIL_LUA,
+        [`sd:${oldHash}`, `sd:${newHash}`],
+        [stringifyJson(newDetail), String(ttl)]
+      )
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reads the creation time of the session being rotated, so that its age is stable across token
+   * rotations; the current time when its detail is missing or unparseable.
+   */
+  private async readRotatedCreatedAt(oldHash: string, now: number): Promise<number> {
     // Read the old detail record outside Lua (Lua cannot parse JSON). Preserve
     // createdAt so that session age is stable across token rotations.
     //
@@ -753,7 +731,7 @@ export class SessionService {
     // since both racing requests read the same sd:{oldHash} before it was gone.
     let createdAt = now
     try {
-      const raw = await this.redis.get(`sd:${oldHash}`)
+      const raw = await pinned(this.redis.get(`sd:${oldHash}`))
       if (raw !== null) {
         const parsed: unknown = parseJson(raw)
         if (
@@ -769,27 +747,8 @@ export class SessionService {
     } catch {
       // Old detail missing or unparseable — fall back to current timestamp.
     }
-
-    const newDetail: StoredSessionDetail = {
-      device: parseUserAgent(userAgent),
-      ip: ip.slice(0, MAX_IP_LENGTH),
-      createdAt,
-      lastActivityAt: now
-    }
-
-    // Atomically delete old detail and write new detail to prevent the window
-    // where a concurrent listSessions call would find neither key and classify
-    // the session as stale, triggering a spurious SREM on the sess: SET.
-    await this.redis.eval(
-      ROTATE_SESSION_DETAIL_LUA,
-      [`sd:${oldHash}`, `sd:${newHash}`],
-      [stringifyJson(newDetail), String(ttl)]
-    )
+    return createdAt
   }
-
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
 
   /**
    * Asserts that a session hash string is a valid 64-character lowercase hex string.
@@ -836,7 +795,7 @@ export class SessionService {
     sessionHash: string
   ): Promise<string> {
     if (this.isLiveMember(members, sessionHash)) return sessionHash
-    const successor = await this.graceSuccessor(sessionHash)
+    const successor = await pinned(this.graceSuccessor(sessionHash))
     if (successor !== undefined && this.isLiveMember(members, successor)) return successor
     throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
   }
@@ -855,12 +814,32 @@ export class SessionService {
    * rotation script writes it.
    */
   private async graceSuccessor(sessionHash: string): Promise<string | undefined> {
-    const pointer = await this.redis.get(`rp:${sessionHash}`)
+    const pointer = await pinned(this.redis.get(`rp:${sessionHash}`))
     if (pointer === null) return undefined
     const separator = pointer.indexOf(':')
     if (separator < 0) return undefined
     const successor = pointer.slice(0, separator)
     return SESSION_HASH_RE.test(successor) ? successor : undefined
+  }
+
+  /** Drops the grace pointers that have expired from the index, without making the listing wait for it. */
+  private pruneGracePointers(userId: string, tenantId: string): void {
+    detached(
+      () => this.redis.pruneExpiredGraceMembers(this.indexKey(userId, tenantId), 'rp:'),
+      (_how, err) => {
+        logStore(this.logger, 'AUTH_STORE_DEGRADED', 'grace_pointer_prune', err)
+      }
+    )
+  }
+
+  /** Drops the members of the index that name nothing, without making the listing wait for it. */
+  private pruneDeadPointers(userId: string, tenantId: string, staleKeys: string[]): void {
+    detached(
+      () => this.redis.pruneDeadMembers(this.indexKey(userId, tenantId), staleKeys),
+      (_how, err) => {
+        logStore(this.logger, 'AUTH_STORE_FAILED', 'dead_member_prune', err)
+      }
+    )
   }
 
   /**
@@ -910,14 +889,14 @@ export class SessionService {
   ): Promise<void> {
     // Awaited here, unlike in `listSessions`: this runs on every login, which makes it the
     // path that actually bounds the index, and the eviction below walks the set it prunes.
-    await this.redis.pruneExpiredGraceMembers(this.indexKey(userId, tenantId), 'rp:')
+    await pinned(this.redis.pruneExpiredGraceMembers(this.indexKey(userId, tenantId), 'rp:'))
 
-    const members = await this.redis.smembers(this.indexKey(userId, tenantId))
+    const members = await pinned(this.redis.smembers(this.indexKey(userId, tenantId)))
 
     // Only count active refresh token entries — exclude grace pointers (rp:).
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
 
-    const limit = await this.resolveSessionLimit(userId, tenantId)
+    const limit = await pinned(this.resolveSessionLimit(userId, tenantId))
 
     if (rtMembers.length <= limit) return
 
@@ -927,14 +906,7 @@ export class SessionService {
     // Every read finishes before the first eviction, which is what makes the skip all-or-nothing.
     let withTimestamps: { member: string; memberHash: string; createdAt: number }[]
     try {
-      withTimestamps = await Promise.all(
-        rtMembers.map(async (member) => ({
-          member,
-          // member is "rt:{hash}" — extract just the hash portion.
-          memberHash: member.slice(3),
-          createdAt: await this.readCreatedAt(member.slice(3))
-        }))
-      )
+      withTimestamps = await pinned(this.readAges(rtMembers))
     } catch (err: unknown) {
       logEvent(this.logger, 'AUTH_SESSION_EVICTION_SKIPPED', { detail: describeChannelStatus(err) })
       return
@@ -965,9 +937,9 @@ export class SessionService {
         // Best-effort eviction: partial Redis failures leave stale keys that expire via TTL.
         // The new session is already committed at this point — a mid-eviction failure
         // MUST NOT propagate back to createSession callers.
-        await this.redis.del(`rt:${entry.memberHash}`)
-        await this.redis.srem(this.indexKey(userId, tenantId), entry.member)
-        await this.redis.del(`sd:${entry.memberHash}`)
+        await pinned(this.redis.del(`rt:${entry.memberHash}`))
+        await pinned(this.redis.srem(this.indexKey(userId, tenantId), entry.member))
+        await pinned(this.redis.del(`sd:${entry.memberHash}`))
       } catch (err: unknown) {
         logEvent(this.logger, 'AUTH_SESSION_EVICTION_FAILED', {
           detail: describeChannelStatus(err)
@@ -996,7 +968,7 @@ export class SessionService {
    * @param memberHash - SHA-256 hash of the session's refresh token.
    */
   private async readCreatedAt(memberHash: string): Promise<number> {
-    const raw = await this.redis.get(`sd:${memberHash}`)
+    const raw = await pinned(this.redis.get(`sd:${memberHash}`))
     if (raw === null) return 0
     try {
       const parsed: unknown = parseJson(raw)
@@ -1042,9 +1014,9 @@ export class SessionService {
     }
 
     try {
-      const user = await this.userRepo.findById({ id: userId, tenantId })
+      const user = await pinned(this.userRepo.findById({ id: userId, tenantId }))
       if (!user) return defaultMaxSessions
-      const resolved = await maxSessionsResolver(hostEntityOf(user))
+      const resolved = await pinned(maxSessionsResolver(hostEntityOf(user)))
       if (!Number.isInteger(resolved) || resolved < 1) {
         // Loud on purpose: a cap that silently stops applying is worse than one that is merely wrong.
         logEvent(this.logger, 'AUTH_SESSION_LIMIT_RESOLVER_INVALID')
@@ -1056,4 +1028,29 @@ export class SessionService {
       return defaultMaxSessions
     }
   }
+  /** Reads the creation time of every member together; a failed read throws, after the reads before it settled. */
+  private async readAges(
+    members: string[]
+  ): Promise<{ member: string; memberHash: string; createdAt: number }[]> {
+    const read = allOf(
+      members.map(async (member) =>
+        checked({
+          member,
+          // member is "rt:{hash}" — extract just the hash portion.
+          memberHash: member.slice(3),
+          createdAt: await pinned(this.readCreatedAt(member.slice(3)))
+        })
+      )
+    )
+    const ages = (await awaiting(read)).value
+    assertRootIsStandard()
+    return checked(ages)
+  }
+}
+
+/** Orders the sessions newest first. The list is read for `then` when it is returned, so the root is checked as the last statement. */
+function newestFirst(results: SessionInfo[]): SessionInfo[] {
+  results.sort((a, b) => b.createdAt - a.createdAt)
+  assertRootIsStandard()
+  return results
 }

@@ -8,6 +8,8 @@
  * work and then raise the first.
  */
 
+import { checked, pinned } from './settle'
+
 /**
  * Attempts every write in order and returns the errors the failing ones raised.
  *
@@ -23,12 +25,12 @@ export async function settleWrites(
   const failures: unknown[] = []
   for (const write of writes) {
     try {
-      await write()
+      await pinned(write())
     } catch (err: unknown) {
       failures.push(err)
     }
   }
-  return failures
+  return checked(failures)
 }
 
 /**
@@ -60,7 +62,7 @@ export function settleAfter(
   followUps: ReadonlyArray<() => Promise<unknown>>
 ): () => Promise<void> {
   return async (): Promise<void> => {
-    await first()
-    raiseFirst(await settleWrites(followUps))
+    await pinned(first())
+    raiseFirst(await pinned(settleWrites(followUps)))
   }
 }

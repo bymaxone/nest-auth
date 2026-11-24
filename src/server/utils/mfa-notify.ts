@@ -7,6 +7,7 @@
 import type { Logger } from '@nestjs/common'
 
 import { describeChannelStatus } from './describe-error'
+import { pinned } from './settle'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { AuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { AuthUser } from '../interfaces/user-repository.interface'
@@ -81,7 +82,7 @@ export function notifyMfaChange(
   // is the consumer's `IEmailProvider` to provide and this library cannot supply on its behalf.
   void (async (): Promise<void> => {
     try {
-      await send(emailProvider, tenantId, email)
+      await pinned(send(emailProvider, tenantId, email))
     } catch (err: unknown) {
       logEvent(logger, 'AUTH_DELIVERY_FAILED', {
         kind,

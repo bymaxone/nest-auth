@@ -20,6 +20,7 @@ import {
   assertValidTenantId
 } from './utils/assert-token-type'
 import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard'
+import { pinned, PinnedMethods } from '../utils/settle'
 
 /**
  * Primary authentication guard for dashboard (tenant) routes.
@@ -45,6 +46,7 @@ import { assertRootIsStandard, refusedOr } from '../utils/object-prototype-guard
  * @layer Guard
  */
 @Injectable()
+@PinnedMethods('canActivate')
 export class JwtAuthGuard implements CanActivate {
   constructor(
     @Inject(JwtService) protected readonly jwtService: JwtService,
@@ -101,7 +103,7 @@ export class JwtAuthGuard implements CanActivate {
     // than a distinct revoked code — letting a caller tell "valid but logged out" from "never
     // valid" is a small, unnecessary oracle. `sub` and `jti` were asserted well-formed above, so
     // the keys built from them are uniform.
-    if (await this.revocation.isAccessTokenRevoked(payload)) {
+    if (await pinned(this.revocation.isAccessTokenRevoked(payload))) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
@@ -114,7 +116,7 @@ export class JwtAuthGuard implements CanActivate {
     // silent no-op; the resolver check here is the matching defensive guard. Surfaced as
     // TOKEN_INVALID, like every other refusal here, to open no oracle.
     if (this.options.enforceTenantBinding === true && this.options.tenantIdResolver) {
-      const requestTenant = await this.options.tenantIdResolver(request)
+      const requestTenant = await pinned(this.options.tenantIdResolver(request))
       if (requestTenant !== payload.tenantId) {
         throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       }

@@ -6,6 +6,7 @@
 
 import type { Logger } from '@nestjs/common'
 
+import { detached } from './settle'
 import { logHook } from '../observability/log-event'
 import type { HookStep } from '../observability/log-event'
 
@@ -26,11 +27,7 @@ export function runDetached(
   run: () => Promise<unknown> | unknown,
   hook: HookStep
 ): void {
-  try {
-    void Promise.resolve(run()).catch(() => {
-      logHook(logger, hook, 'rejected')
-    })
-  } catch {
-    logHook(logger, hook, 'threw')
-  }
+  detached(run, (how) => {
+    logHook(logger, hook, how)
+  })
 }

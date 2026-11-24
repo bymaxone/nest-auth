@@ -23,6 +23,7 @@ import type {
   IApiKeyRepository
 } from '../interfaces/api-key-repository.interface'
 import { exceedsCodePoints } from '../utils/code-points'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** Longest label accepted, in characters. A label names a machine caller, it is not a payload. */
 export const API_KEY_MAX_LABEL_LENGTH = 128
@@ -77,6 +78,7 @@ export interface RotateApiKeyInput {
  * Rotation is not special-cased: it issues a second key with the same label and scopes, and
  * retires the first after the overlap. Several active keys sharing a label is the ordinary state.
  */
+@PinnedAll()
 @Injectable()
 export class ApiKeyService {
   constructor(
@@ -100,18 +102,20 @@ export class ApiKeyService {
 
     const id = randomUUID()
     const secret = generateApiKeySecret()
-    const stored = await this.repository.create({
-      id,
-      label,
-      digest: apiKeyDigest(secret, this.options.apiKeys.pepper),
-      scopes,
-      createdAt: now,
-      expiresAt
-    })
-    return {
+    const stored = await pinned(
+      this.repository.create({
+        id,
+        label,
+        digest: apiKeyDigest(secret, this.options.apiKeys.pepper),
+        scopes,
+        createdAt: now,
+        expiresAt
+      })
+    )
+    return checked({
       key: formatApiKey(this.options.apiKeys.prefix, id, secret),
       record: summary(stored)
-    }
+    })
   }
 
   /**
@@ -121,7 +125,10 @@ export class ApiKeyService {
    * @throws {AuthException} `auth.api_key_not_found` when no such key exists.
    */
   async revoke(id: string): Promise<void> {
-    if (!UUID_PATTERN.test(id) || !(await this.repository.markRevoked(id, this.clock.now()))) {
+    if (
+      !UUID_PATTERN.test(id) ||
+      !(await pinned(this.repository.markRevoked(id, this.clock.now())))
+    ) {
       throw new AuthException(AUTH_ERROR_CODES.API_KEY_NOT_FOUND)
     }
   }
@@ -155,35 +162,37 @@ export class ApiKeyService {
     }
     const newExpiry = this.validatedExpiry('expiresAt', input.expiresAt, now)
 
-    const old = UUID_PATTERN.test(id) ? await this.repository.findById(id) : null
+    const old = UUID_PATTERN.test(id) ? await pinned(this.repository.findById(id)) : null
     if (old === null || !isActive(old, now)) {
       throw new AuthException(AUTH_ERROR_CODES.API_KEY_NOT_FOUND)
     }
 
-    const issued = await this.issue({
-      label: old.label,
-      scopes: old.scopes,
-      ...(newExpiry === null ? {} : { expiresAt: newExpiry })
-    })
+    const issued = await pinned(
+      this.issue({
+        label: old.label,
+        scopes: old.scopes,
+        ...(newExpiry === null ? {} : { expiresAt: newExpiry })
+      })
+    )
 
     if (overlap === 0) {
-      await this.repository.markRevoked(old.id, now)
+      await pinned(this.repository.markRevoked(old.id, now))
     } else {
       const retireAt = new Date(now.getTime() + overlap * 1000)
       if (this.repository.limitExpiry !== undefined) {
         // The repository takes the minimum itself, so nothing read earlier can overwrite a
         // shorter deadline another rotation of this key set in between.
-        await this.repository.limitExpiry(old.id, retireAt)
+        await pinned(this.repository.limitExpiry(old.id, retireAt))
       } else {
         const sooner =
           // Stryker disable next-line EqualityOperator: at equal instants both arms yield a Date of the same time, so `<` and `<=` store the same expiry
           old.expiresAt !== null && old.expiresAt.getTime() < retireAt.getTime()
             ? old.expiresAt
             : retireAt
-        await this.repository.setExpiry(old.id, sooner)
+        await pinned(this.repository.setExpiry(old.id, sooner))
       }
     }
-    return issued
+    return checked(issued)
   }
 
   private validatedLabel(label: unknown): string {

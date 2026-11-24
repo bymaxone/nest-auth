@@ -7,6 +7,7 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthMetricsTally } from '../observability/auth-metrics-tally'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { pinned, PinnedAll } from '../utils/settle'
 
 /**
  * Redis key prefix for brute-force lockout counters.
@@ -44,6 +45,7 @@ const MAX_IDENTIFIER_LENGTH = 512
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class BruteForceService {
   private readonly logger = new Logger(BruteForceService.name)
@@ -68,7 +70,7 @@ export class BruteForceService {
    */
   async isLockedOut(identifier: string): Promise<boolean> {
     this.validateIdentifier(identifier)
-    const raw = await this.redis.get(`${LOCKOUT_PREFIX}${identifier}`)
+    const raw = await pinned(this.redis.get(`${LOCKOUT_PREFIX}${identifier}`))
     if (raw === null) return false
     const count = parseInt(raw, 10)
     return !isNaN(count) && count >= this.maxAttempts
@@ -86,9 +88,8 @@ export class BruteForceService {
    */
   async recordFailure(identifier: string): Promise<void> {
     this.validateIdentifier(identifier)
-    const count = await this.redis.incrWithFixedTtl(
-      `${LOCKOUT_PREFIX}${identifier}`,
-      this.windowSeconds
+    const count = await pinned(
+      this.redis.incrWithFixedTtl(`${LOCKOUT_PREFIX}${identifier}`, this.windowSeconds)
     )
     // Counted at the failure that reaches the threshold, so one lockout is one count however many
     // attempts follow it.
@@ -105,7 +106,7 @@ export class BruteForceService {
    */
   async resetFailures(identifier: string): Promise<void> {
     this.validateIdentifier(identifier)
-    await this.redis.del(`${LOCKOUT_PREFIX}${identifier}`)
+    await pinned(this.redis.del(`${LOCKOUT_PREFIX}${identifier}`))
   }
 
   /**
@@ -117,7 +118,7 @@ export class BruteForceService {
    */
   async getRemainingLockoutSeconds(identifier: string): Promise<number> {
     this.validateIdentifier(identifier)
-    const ttl = await this.redis.ttl(`${LOCKOUT_PREFIX}${identifier}`)
+    const ttl = await pinned(this.redis.ttl(`${LOCKOUT_PREFIX}${identifier}`))
     // Stryker disable next-line EqualityOperator: the ternary returns 0 at the boundary under both `> 0` and `>= 0`
     return ttl > 0 ? ttl : 0
   }

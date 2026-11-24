@@ -17,6 +17,7 @@
  */
 
 import type { OAuthProfile, OAuthProviderPlugin } from '../../interfaces/oauth-provider.interface'
+import { checked, pinned } from '../../utils/settle'
 
 /** Google OAuth 2.0 authorization endpoint. */
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
@@ -139,19 +140,21 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
       body.set('code_verifier', codeVerifier)
     }
 
-    const response = await fetch(GOOGLE_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-      // 10 s timeout — prevents a slow Google endpoint from holding the request open indefinitely.
-      signal: AbortSignal.timeout(10_000)
-    })
+    const response = await pinned(
+      fetch(GOOGLE_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+        // 10 s timeout — prevents a slow Google endpoint from holding the request open indefinitely.
+        signal: AbortSignal.timeout(10_000)
+      })
+    )
 
     if (!response.ok) {
       throw new Error(`Google token exchange failed: ${response.status}`)
     }
 
-    const data = (await response.json()) as {
+    const data = (await pinned(response.json())) as {
       access_token: string
       token_type: string
       expires_in?: number
@@ -165,7 +168,7 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
       throw new Error(`Google token exchange: unexpected token_type '${data.token_type}'`)
     }
 
-    return data
+    return checked(data)
   }
 
   /**
@@ -177,17 +180,19 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
    * @throws `Error` when the UserInfo request fails (non-2xx response from Google).
    */
   async fetchProfile(accessToken: string): Promise<OAuthProfile> {
-    const response = await fetch(GOOGLE_USERINFO_URL, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      // 10 s timeout — prevents a slow UserInfo endpoint from holding the request open indefinitely.
-      signal: AbortSignal.timeout(10_000)
-    })
+    const response = await pinned(
+      fetch(GOOGLE_USERINFO_URL, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        // 10 s timeout — prevents a slow UserInfo endpoint from holding the request open indefinitely.
+        signal: AbortSignal.timeout(10_000)
+      })
+    )
 
     if (!response.ok) {
       throw new Error(`Google UserInfo fetch failed: ${response.status}`)
     }
 
-    const info = (await response.json()) as GoogleUserInfo
+    const info = (await pinned(response.json())) as GoogleUserInfo
 
     // Reject profiles unless Google has positively confirmed the email as verified.
     // Standard Google sign-in flows return `verified_email: true`; a missing or
@@ -207,6 +212,6 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
     }
     if (info.name !== undefined) profile.name = info.name
     if (info.picture !== undefined) profile.avatar = info.picture
-    return profile
+    return checked(profile)
   }
 }

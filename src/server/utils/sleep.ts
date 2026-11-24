@@ -4,6 +4,8 @@
  * @layer Utility
  */
 
+import { IntrinsicPromise } from './captured-builtins'
+
 /**
  * Maximum duration that `sleep` will wait, regardless of the `ms` argument.
  *
@@ -29,7 +31,12 @@ const MAX_SLEEP_MS = 10_000
  * ```typescript
  * const MIN_RESPONSE_MS = 300
  * const start = Date.now()
- * const user = await userRepo.findByEmail(dto.email).catch(() => null)
+ * let user = null
+ * try {
+ *   user = await userRepo.findByEmail(dto.email)
+ * } catch {
+ *   // an unknown account and a failed lookup take the same time
+ * }
  * const elapsed = Date.now() - start
  * await sleep(Math.max(0, MIN_RESPONSE_MS - elapsed)) // always >= 300 ms total
  * ```
@@ -38,7 +45,7 @@ const MAX_SLEEP_MS = 10_000
  */
 export function sleep(ms: number): Promise<void> {
   const clamped = Math.min(Math.max(0, ms), MAX_SLEEP_MS)
-  return new Promise<void>((resolve) => {
+  return new IntrinsicPromise<void>((resolve) => {
     setTimeout(resolve, clamped)
   })
 }

@@ -18,8 +18,10 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { toSafeUser } from '../utils/mfa-safe-user'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** Loads the account behind a verified dashboard token, and re-proves it before a destructive change. */
+@PinnedAll()
 @Injectable()
 export class WorkspaceCallerService {
   constructor(
@@ -35,7 +37,7 @@ export class WorkspaceCallerService {
    * @throws {AuthException} `auth.token_invalid` when the account no longer exists.
    */
   async load(caller: Pick<DashboardJwtPayload, 'sub' | 'tenantId'>): Promise<SafeAuthUser> {
-    return toSafeUser(await this.find(caller))
+    return checked(toSafeUser(await pinned(this.find(caller))))
   }
 
   /**
@@ -56,20 +58,22 @@ export class WorkspaceCallerService {
     caller: Pick<DashboardJwtPayload, 'sub' | 'tenantId' | 'sid'>,
     password: string | undefined
   ): Promise<void> {
-    const user = await this.find(caller)
-    await this.reauthentication.assertReauthenticated(
-      'dashboard',
-      user.id,
-      user.passwordHash,
-      password,
-      caller.tenantId,
-      caller.sid
+    const user = await pinned(this.find(caller))
+    await pinned(
+      this.reauthentication.assertReauthenticated(
+        'dashboard',
+        user.id,
+        user.passwordHash,
+        password,
+        caller.tenantId,
+        caller.sid
+      )
     )
   }
 
   private async find(caller: Pick<DashboardJwtPayload, 'sub' | 'tenantId'>): Promise<AuthUser> {
-    const user = await this.users.findById({ id: caller.sub, tenantId: caller.tenantId })
+    const user = await pinned(this.users.findById({ id: caller.sub, tenantId: caller.tenantId }))
     if (user === null) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    return user
+    return checked(user)
   }
 }

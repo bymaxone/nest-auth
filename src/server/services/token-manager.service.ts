@@ -31,9 +31,11 @@ import type { SessionExtra } from '../redis/create-session-script'
 import { parseJson } from '../utils/captured-builtins'
 import { jwtSignOptions } from '../utils/dependency-options'
 import { refusedOr } from '../utils/object-prototype-guard'
+import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
-import { serializeSession } from '../utils/serialize-session'
 import { dashboardSessionDetail, platformSessionExtra } from '../utils/session-detail'
+import { newSessionRecord, recoveredRecord, rotationRecord } from '../utils/session-records'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 import { readStampedEpoch } from '../utils/stamped-epoch'
 import { signerOf, verifyWithRotation } from '../utils/verify-with-rotation'
 
@@ -117,6 +119,7 @@ export const CREDENTIAL_PROVED = { credentialProved: true } as const
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class TokenManagerService {
   private readonly logger = new Logger(TokenManagerService.name)
@@ -220,7 +223,7 @@ export class TokenManagerService {
   ): Promise<AuthResult> {
     // Stamp the user's current token epoch so a later bump (a password reset) invalidates this
     // token at verification, without the server having to enumerate outstanding tokens.
-    const epoch = await this.redis.getUserTokenEpoch(user.id, user.tenantId, 'dashboard')
+    const epoch = await pinned(this.redis.getUserTokenEpoch(user.id, user.tenantId, 'dashboard'))
     // A fresh login opens a new refresh-token family; every rotation inherits this id, so the
     // whole lineage can be revoked together the moment one of its tokens is replayed. The token
     // names it as its session.
@@ -256,18 +259,12 @@ export class TokenManagerService {
     // one script, ordered so a failure leaves no live session behind. rust-auth writes the same
     // records in one `MULTI/EXEC`; see `CREATE_SESSION_LUA`.
     const proved = overrides?.credentialProved === true
-    await this.redis.writeNewSession({
-      kind: 'dashboard',
-      tenantId: user.tenantId,
-      tokenHash,
-      sessionJson: serializeSession(session),
-      familyId,
-      userId: user.id,
-      refreshTtl: ttl,
-      extras: this.dashboardExtras(user, familyId, tokenHash, ttl, ip, userAgent, proved)
-    })
+    const extras = this.dashboardExtras(user, familyId, tokenHash, ttl, ip, userAgent, proved)
+    await pinned(
+      this.redis.writeNewSession(newSessionRecord('dashboard', session, tokenHash, ttl, extras))
+    )
 
-    return { user, accessToken, rawRefreshToken }
+    return checked({ user, accessToken, rawRefreshToken })
   }
 
   /**
@@ -317,7 +314,7 @@ export class TokenManagerService {
     userAgent: string,
     overrides?: { mfaVerified?: boolean }
   ): Promise<PlatformAuthResult> {
-    const epoch = await this.redis.getUserTokenEpoch(admin.id, undefined, 'platform')
+    const epoch = await pinned(this.redis.getUserTokenEpoch(admin.id, undefined, 'platform'))
     // A fresh platform login opens its own refresh-token family, indexed under `pfam:`.
     const familyId = randomUUID()
     const accessToken = this.issuePlatformAccess({
@@ -348,18 +345,12 @@ export class TokenManagerService {
     // own `psess:` keyspace because the two id spaces come from different repositories and may
     // collide: sharing one index let revoking a dashboard user log out the admin with the
     // same id.
-    await this.redis.writeNewSession({
-      kind: 'platform',
-      tenantId: undefined,
-      tokenHash,
-      sessionJson: serializeSession(session),
-      familyId,
-      userId: admin.id,
-      refreshTtl: ttl,
-      extras: [platformSessionExtra(tokenHash, ip, userAgent, ttl)]
-    })
+    const extras = [platformSessionExtra(tokenHash, ip, userAgent, ttl)]
+    await pinned(
+      this.redis.writeNewSession(newSessionRecord('platform', session, tokenHash, ttl, extras))
+    )
 
-    return { admin, accessToken, rawRefreshToken }
+    return checked({ admin, accessToken, rawRefreshToken })
   }
 
   /**
@@ -380,7 +371,7 @@ export class TokenManagerService {
     ttl: number
   ): Promise<void> {
     const extra = platformSessionExtra(tokenHash, ip, userAgent, ttl)
-    await this.redis.set(extra.key, extra.value, extra.ttl)
+    await pinned(this.redis.set(extra.key, extra.value, extra.ttl))
   }
 
   // ---------------------------------------------------------------------------
@@ -445,23 +436,17 @@ export class TokenManagerService {
       seed.mfaVerified === true
     )
 
-    const outcome = await this.redis.rotateRefreshSession({
-      kind: 'dashboard',
-      tenantId: seed.tenantId,
-      oldHash,
-      newHash,
-      newSessionJson: serializeSession(newSession),
-      familyId: seed.familyId,
-      userId: seed.userId,
+    const record = rotationRecord('dashboard', seed, [oldHash, newHash], newSession, [
       refreshTtl,
       graceTtl
-    })
+    ])
+    const outcome = await pinned(this.redis.rotateRefreshSession(record))
 
     if (outcome.kind === 'rotated') {
-      return this.rotateFromPrimary(newSession, newRawRefresh)
+      return checked(await this.rotateFromPrimary(newSession, newRawRefresh))
     }
     if (outcome.kind === 'grace') {
-      return this.rotateFromGrace(outcome.sessionJson, ip, userAgent, refreshTtl)
+      return checked(await this.rotateFromGrace(outcome.sessionJson, ip, userAgent, refreshTtl))
     }
     if (outcome.kind === 'reused') {
       // The strongest compromise signal the library produces: a token that was already exchanged has
@@ -474,7 +459,7 @@ export class TokenManagerService {
         plane: 'dashboard',
         familyId: outcome.familyId
       })
-      const { ownerId } = await this.redis.revokeFamily(outcome.familyId)
+      const { ownerId } = await pinned(this.redis.revokeFamily(outcome.familyId))
       logEvent(this.logger, 'AUTH_REFRESH_FAMILY_REVOKED', {
         plane: 'dashboard',
         familyId: outcome.familyId
@@ -520,18 +505,12 @@ export class TokenManagerService {
     userAgent: string
   ): void {
     if (!this.hooks?.onRefreshTokenReuseDetected || userId === '') return
-    try {
-      void Promise.resolve(
-        this.hooks.onRefreshTokenReuseDetected(
-          { userId, familyId },
-          { ...createEmptyHookContext(), plane, ip, userAgent }
-        )
-      ).catch(() => {
-        logHook(this.logger, 'onRefreshTokenReuseDetected', 'rejected')
-      })
-    } catch {
-      logHook(this.logger, 'onRefreshTokenReuseDetected', 'threw')
-    }
+    const onReuse = this.hooks.onRefreshTokenReuseDetected.bind(this.hooks)
+    runDetached(
+      this.logger,
+      () => onReuse({ userId, familyId }, { ...createEmptyHookContext(), plane, ip, userAgent }),
+      'onRefreshTokenReuseDetected'
+    )
   }
 
   /**
@@ -617,13 +596,13 @@ export class TokenManagerService {
     ip: string,
     userAgent: string
   ): Promise<RefreshSession> {
-    const json = await this.redis.get(sessionKey)
+    const json = await pinned(this.redis.get(sessionKey))
     if (json === null) {
       // Empty identity, MFA left enforcing, and no family — a placeholder must never be able
       // to plant family bookkeeping or mint a token that clears the MFA gate.
-      return this.buildSession('', '', '', ip, userAgent, false, '')
+      return checked(this.buildSession('', '', '', ip, userAgent, false, ''))
     }
-    return this.parseSession(json)
+    return checked(this.parseSession(json))
   }
 
   /**
@@ -641,7 +620,7 @@ export class TokenManagerService {
     newSession: RefreshSession,
     newRawRefresh: string
   ): Promise<RotatedTokenResult> {
-    return await this.buildRotatedResult(newSession, newRawRefresh)
+    return checked(await this.buildRotatedResult(newSession, newRawRefresh))
   }
 
   /**
@@ -700,22 +679,21 @@ export class TokenManagerService {
     // `RECOVER_GRACE_LUA`.
     //
     // Deliberately NO `rp:{anotherNewHash}` write — see JSDoc above.
-    const written = await this.redis.writeRecoveredSession({
-      kind: 'dashboard',
-      tenantId: graceSession.tenantId,
-      newHash: anotherNewHash,
-      newSessionJson: serializeSession(anotherSession),
-      familyId: graceSession.familyId,
-      userId: graceSession.userId,
+    const record = recoveredRecord(
+      'dashboard',
+      graceSession,
+      anotherNewHash,
+      anotherSession,
       refreshTtl
-    })
+    )
+    const written = await pinned(this.redis.writeRecoveredSession(record))
     if (!written) {
       // The account was swept while this recovery was in flight. The grace pointer is already
       // consumed, so there is nothing left to retry against — which is the right end state:
       // the revocation the sweep performed is what the caller must now obey.
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
-    return await this.buildRotatedResult(anotherSession, anotherNewRefresh)
+    return checked(await this.buildRotatedResult(anotherSession, anotherNewRefresh))
   }
 
   /**
@@ -870,7 +848,9 @@ export class TokenManagerService {
     // keeps enforcing MFA after rotation and keeps admitting a session that completed it.
     // The epoch is re-read at rotation time, so a reset that lands mid-session is picked up
     // by the very next rotation rather than being carried over from the old token.
-    const epoch = await this.redis.getUserTokenEpoch(session.userId, session.tenantId, 'dashboard')
+    const epoch = await pinned(
+      this.redis.getUserTokenEpoch(session.userId, session.tenantId, 'dashboard')
+    )
     const accessToken = this.issueAccess({
       sid: sessionId(session.familyId),
       sub: session.userId,
@@ -883,11 +863,11 @@ export class TokenManagerService {
       epoch
     })
 
-    return {
+    return checked({
       session: { userId: session.userId, tenantId: session.tenantId, role: session.role },
       accessToken,
       rawRefreshToken
-    }
+    })
   }
 
   // ---------------------------------------------------------------------------
@@ -913,10 +893,8 @@ export class TokenManagerService {
     const oldHash = sha256(oldRefresh)
     const newRawRefresh = generateSecureToken()
     const newHash = sha256(newRawRefresh)
-
     const refreshTtl = this.options.jwt.refreshExpiresInDays * 86_400
     const graceTtl = this.options.jwt.refreshGraceWindowSeconds
-
     const seed = await this.readSeedSession(`prt:${oldHash}`, ip, userAgent)
     this.assertWithinAbsoluteLifetime(seed)
     const newSession = this.buildSession(
@@ -930,32 +908,29 @@ export class TokenManagerService {
       seed.familyCreatedAt,
       seed.mfaVerified === true
     )
-
-    const outcome = await this.redis.rotateRefreshSession({
-      kind: 'platform',
-      tenantId: undefined,
-      oldHash,
-      newHash,
-      newSessionJson: serializeSession(newSession),
-      familyId: seed.familyId,
-      userId: seed.userId,
+    const record = rotationRecord('platform', seed, [oldHash, newHash], newSession, [
       refreshTtl,
       graceTtl
-    })
+    ])
+    const outcome = await pinned(this.redis.rotateRefreshSession(record))
 
     if (outcome.kind === 'rotated') {
-      return this.rotatePlatformFromPrimary(
-        oldHash,
-        newHash,
-        newSession,
-        ip,
-        userAgent,
-        newRawRefresh,
-        refreshTtl
+      return checked(
+        await this.rotatePlatformFromPrimary(
+          oldHash,
+          newHash,
+          newSession,
+          ip,
+          userAgent,
+          newRawRefresh,
+          refreshTtl
+        )
       )
     }
     if (outcome.kind === 'grace') {
-      return this.rotatePlatformFromGrace(outcome.sessionJson, oldHash, ip, userAgent, refreshTtl)
+      return checked(
+        await this.rotatePlatformFromGrace(outcome.sessionJson, oldHash, ip, userAgent, refreshTtl)
+      )
     }
     if (outcome.kind === 'reused') {
       // #38 deferred platform reuse detection entirely; the family design closes that gap on
@@ -964,7 +939,7 @@ export class TokenManagerService {
         plane: 'platform',
         familyId: outcome.familyId
       })
-      const { ownerId } = await this.redis.revokeFamily(outcome.familyId, 'platform')
+      const { ownerId } = await pinned(this.redis.revokeFamily(outcome.familyId, 'platform'))
       // Named for the same reason as the dashboard plane, and more so: this is the
       // highest-privilege identity in the system.
       logEvent(this.logger, 'AUTH_REFRESH_FAMILY_REVOKED', {
@@ -976,7 +951,6 @@ export class TokenManagerService {
       this.emitReuseDetected('platform', ownerId, outcome.familyId, ip, userAgent)
       throw observed('reuse_detected', new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID))
     }
-
     logEvent(this.logger, 'AUTH_REFRESH_REFUSED', { plane: 'platform' })
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
   }
@@ -1002,10 +976,10 @@ export class TokenManagerService {
     // the session the rotation was minting. What remains is the per-session DETAIL, which the
     // revocation never reaches through — a stale `psd:` costs a row in a session listing, not
     // a session that should have died.
-    await this.redis.del(`psd:${oldHash}`)
+    await pinned(this.redis.del(`psd:${oldHash}`))
     await this.writePlatformSessionDetail(newHash, ip, userAgent, refreshTtl)
 
-    return await this.buildPlatformRotatedResult(newSession, newRawRefresh)
+    return checked(await this.buildPlatformRotatedResult(newSession, newRawRefresh))
   }
 
   /**
@@ -1049,28 +1023,25 @@ export class TokenManagerService {
 
     // The platform twin of the dashboard grace write, atomic for the same reason.
     // Deliberately NO `prp:{anotherNewHash}` write — see JSDoc above.
-    const written = await this.redis.writeRecoveredSession({
-      kind: 'platform',
-      tenantId: undefined,
-      newHash: anotherNewHash,
-      newSessionJson: serializeSession(anotherSession),
-      familyId: graceSession.familyId,
-      userId: graceSession.userId,
+    const record = recoveredRecord(
+      'platform',
+      graceSession,
+      anotherNewHash,
+      anotherSession,
       refreshTtl
-    })
+    )
+    const written = await pinned(this.redis.writeRecoveredSession(record))
     if (!written) {
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
     // Remove the consumed grace pointer from the per-user SET — the key itself is still live
     // (the script leaves it for its remaining window); the SET entry is what a revoke-all uses.
-    await this.redis.srem(
-      sessionIndexKey('platform', graceSession.userId, this.options.hmacKey, undefined),
-      `prp:${oldHash}`
-    )
-    await this.redis.del(`psd:${oldHash}`)
+    const index = sessionIndexKey('platform', graceSession.userId, this.options.hmacKey, undefined)
+    await pinned(this.redis.srem(index, `prp:${oldHash}`))
+    await pinned(this.redis.del(`psd:${oldHash}`))
     await this.writePlatformSessionDetail(anotherNewHash, ip, userAgent, refreshTtl)
 
-    return await this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh)
+    return checked(await this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh))
   }
 
   /**
@@ -1083,7 +1054,7 @@ export class TokenManagerService {
     session: RefreshSession,
     rawRefreshToken: string
   ): Promise<RotatedTokenResult> {
-    const epoch = await this.redis.getUserTokenEpoch(session.userId, undefined, 'platform')
+    const epoch = await pinned(this.redis.getUserTokenEpoch(session.userId, undefined, 'platform'))
     const accessToken = this.issuePlatformAccess({
       sid: sessionId(session.familyId),
       sub: session.userId,
@@ -1094,11 +1065,11 @@ export class TokenManagerService {
       epoch
     })
 
-    return {
+    return checked({
       session: { userId: session.userId, tenantId: '', role: session.role },
       accessToken,
       rawRefreshToken
-    }
+    })
   }
 
   /**
@@ -1134,7 +1105,7 @@ export class TokenManagerService {
       type: 'platform',
       mfaEnabled,
       mfaVerified: claims.mfaVerified,
-      epoch: await this.redis.getUserTokenEpoch(claims.sub, undefined, 'platform')
+      epoch: await pinned(this.redis.getUserTokenEpoch(claims.sub, undefined, 'platform'))
     })
   }
 
@@ -1216,7 +1187,7 @@ export class TokenManagerService {
       ...(tenantId !== undefined ? { tenantId } : {}),
       // Stamped so the challenge token dies with the rest of the account's credentials. See
       // the claim's own documentation for what it was surviving.
-      epoch: await this.redis.getUserTokenEpoch(userId, tenantId, context)
+      epoch: await pinned(this.redis.getUserTokenEpoch(userId, tenantId, context))
     }
 
     const token = this.jwtService.sign(
@@ -1231,7 +1202,7 @@ export class TokenManagerService {
       })
     )
 
-    await this.redis.set(`mfa:${sha256(jti)}`, userId, MFA_TEMP_TOKEN_TTL_SECONDS)
+    await pinned(this.redis.set(`mfa:${sha256(jti)}`, userId, MFA_TEMP_TOKEN_TTL_SECONDS))
 
     // The per-user MFA challenge counter is deliberately NOT reset here: possession of the password is the
     // attacker's assumed capability, so a reset on every temp-token issuance would let `login → five wrong
@@ -1291,18 +1262,22 @@ export class TokenManagerService {
 
     // Everything below runs for a token whose signature held, so the plane it names is a trusted claim and
     // every refusal carries it: the shared challenge route counts a refusal on the plane of its token.
-    return markingPlane(payload.context, async () => {
-      this.assertMfaTempTokenBinding(payload)
-      await this.assertMfaTempTokenLive(payload)
-      return {
-        userId: payload.sub,
-        context: payload.context,
-        jti: payload.jti,
-        // Absent on a platform token, which has no tenant. A dashboard token without one was
-        // refused above, so a dashboard result always carries it.
-        ...(payload.tenantId !== undefined ? { tenantId: payload.tenantId } : {})
-      }
-    })
+    return checked(
+      await pinned(
+        markingPlane(payload.context, async () => {
+          this.assertMfaTempTokenBinding(payload)
+          await pinned(this.assertMfaTempTokenLive(payload))
+          return checked({
+            userId: payload.sub,
+            context: payload.context,
+            jti: payload.jti,
+            // Absent on a platform token, which has no tenant. A dashboard token without one was
+            // refused above, so a dashboard result always carries it.
+            ...(payload.tenantId !== undefined ? { tenantId: payload.tenantId } : {})
+          })
+        })
+      )
+    )
   }
 
   /**
@@ -1340,7 +1315,7 @@ export class TokenManagerService {
     // GET (not GETDEL): keep the entry alive so wrong-TOTP attempts can
     // retry under the same token. consumeMfaTempToken deletes it once
     // the caller has confirmed the code is valid.
-    const storedUserId = await this.redis.get(`mfa:${sha256(payload.jti)}`)
+    const storedUserId = await pinned(this.redis.get(`mfa:${sha256(payload.jti)}`))
 
     if (storedUserId === null) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
@@ -1359,7 +1334,7 @@ export class TokenManagerService {
     // token inherits it.
     if (
       readStampedEpoch(payload) <
-      (await this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, payload.context))
+      (await pinned(this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, payload.context)))
     ) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
@@ -1378,6 +1353,6 @@ export class TokenManagerService {
    * @param jti - The `jti` claim returned by {@link verifyMfaTempToken}.
    */
   async consumeMfaTempToken(jti: string): Promise<boolean> {
-    return await this.redis.del(`mfa:${sha256(jti)}`)
+    return checked(await pinned(this.redis.del(`mfa:${sha256(jti)}`)))
   }
 }

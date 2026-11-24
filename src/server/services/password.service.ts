@@ -18,6 +18,7 @@ import { logEvent } from '../observability/log-event'
 import { isShorterThanCodePoints } from '../utils/code-points'
 import { SCRYPT_SHADOWS } from '../utils/dependency-options'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
+import { pinned, PinnedAll } from '../utils/settle'
 
 // promisify picks the 3-arg overload (no options); cast to the 4-arg form we need.
 const scrypt = promisify(nodeScrypt) as (
@@ -273,6 +274,7 @@ function parseStoredHash(hash: string): ParsedHash | null {
  *
  * @layer Service
  */
+@PinnedAll()
 @Injectable()
 export class PasswordService {
   private readonly logger = new Logger(PasswordService.name)
@@ -327,7 +329,7 @@ export class PasswordService {
    */
   async assertAcceptable(plain: string, field: string): Promise<void> {
     this.assertLongEnough(plain, field)
-    await this.assertNotCompromised(plain)
+    await pinned(this.assertNotCompromised(plain))
   }
 
   /**
@@ -390,7 +392,7 @@ export class PasswordService {
   async assertNotCompromised(plain: string): Promise<void> {
     let breached: boolean
     try {
-      breached = await this.breachChecker.isBreached(plain)
+      breached = await pinned(this.breachChecker.isBreached(plain))
     } catch {
       // NOTHING from the error reaches the line — not the object, not a description of it, not a
       // status parsed off its front. A checker is consumer code that received the plaintext, so
@@ -426,13 +428,15 @@ export class PasswordService {
   async hash(plain: string): Promise<string> {
     assertRootIsStandard()
     const salt = randomBytes(SALT_BYTES)
-    const derived = await scrypt(plain, salt, SCRYPT_KEY_LEN, {
-      ...SCRYPT_SHADOWS,
-      N: this.N,
-      r: this.r,
-      p: this.p,
-      maxmem: this.maxmem
-    })
+    const derived = await pinned(
+      scrypt(plain, salt, SCRYPT_KEY_LEN, {
+        ...SCRYPT_SHADOWS,
+        N: this.N,
+        r: this.r,
+        p: this.p,
+        maxmem: this.maxmem
+      })
+    )
     // The parameters travel WITH the hash. Without them a verify has to assume the currently
     // configured cost, which makes `password.costFactor` unchangeable: raise it and every
     // stored hash becomes unreproducible — every user locked out, irreversibly, because the
@@ -500,33 +504,35 @@ export class PasswordService {
     // writes a 32-byte key and this one writes 64; both are valid, both record their length
     // implicitly, and deriving to a fixed length would fail every hash the other backend wrote
     // — not as a mismatch, but as `timingSafeEqual` throwing on unequal buffers.
-    const candidate = await scrypt(plain, parsed.salt, parsed.derived.length, {
-      ...SCRYPT_SHADOWS,
-      N,
-      r,
-      p,
-      // A FIXED ceiling, deliberately not derived from the record.
-      //
-      // This used to be `Math.max(N * r * 128 * 2, this.maxmem)` — sized to the parameters
-      // actually being used, on the reasoning that `parsePhcParams` had already refused any
-      // record above `MAX_KDF_BYTES_PER_DERIVATION` so it could never widen far. That is true,
-      // and it made this line the second half of a single point of failure: the parser's ceiling
-      // was the ONLY thing between a crafted record and a `128 * N * r` allocation, because a
-      // ceiling computed FROM the record grows to fit whatever the record claims. Remove that one
-      // check and `ln = 31, r = 8` asks for 2 TiB, which does not fail the request — it OOM-kills
-      // the process and every in-flight connection with it.
-      //
-      // A constant cannot be widened by input. Nothing legitimate notices: the parser admits only
-      // records needing at most `MAX_KDF_BYTES_PER_DERIVATION`, and `this.maxmem` cannot exceed
-      // twice that ceiling either (startup holds the configured cost to the same limit), so this
-      // is at or above every value the old expression could produce for a reachable input.
-      // Above it, scrypt throws instead of allocating — a failed verification rather than a dead
-      // host.
-      // Stryker disable next-line ArithmeticOperator: `maxmem` is a CEILING and only its being too
-      // LOW is observable (scrypt throws). Halving it leaves it above what any hash these tests
-      // verify actually needs, so the derivation and its result are identical
-      maxmem: MAX_KDF_BYTES_PER_DERIVATION * 2
-    })
+    const candidate = await pinned(
+      scrypt(plain, parsed.salt, parsed.derived.length, {
+        ...SCRYPT_SHADOWS,
+        N,
+        r,
+        p,
+        // A FIXED ceiling, deliberately not derived from the record.
+        //
+        // This used to be `Math.max(N * r * 128 * 2, this.maxmem)` — sized to the parameters
+        // actually being used, on the reasoning that `parsePhcParams` had already refused any
+        // record above `MAX_KDF_BYTES_PER_DERIVATION` so it could never widen far. That is true,
+        // and it made this line the second half of a single point of failure: the parser's ceiling
+        // was the ONLY thing between a crafted record and a `128 * N * r` allocation, because a
+        // ceiling computed FROM the record grows to fit whatever the record claims. Remove that one
+        // check and `ln = 31, r = 8` asks for 2 TiB, which does not fail the request — it OOM-kills
+        // the process and every in-flight connection with it.
+        //
+        // A constant cannot be widened by input. Nothing legitimate notices: the parser admits only
+        // records needing at most `MAX_KDF_BYTES_PER_DERIVATION`, and `this.maxmem` cannot exceed
+        // twice that ceiling either (startup holds the configured cost to the same limit), so this
+        // is at or above every value the old expression could produce for a reachable input.
+        // Above it, scrypt throws instead of allocating — a failed verification rather than a dead
+        // host.
+        // Stryker disable next-line ArithmeticOperator: `maxmem` is a CEILING and only its being too
+        // LOW is observable (scrypt throws). Halving it leaves it above what any hash these tests
+        // verify actually needs, so the derivation and its result are identical
+        maxmem: MAX_KDF_BYTES_PER_DERIVATION * 2
+      })
+    )
 
     return cryptoTimingSafeEqual(candidate, parsed.derived)
   }
@@ -556,13 +562,15 @@ export class PasswordService {
     // identical and no assertion can separate them. What the mutant actually breaks is the
     // property this method exists for: that the decoy costs the same as a real verify, which is
     // a timing equivalence and not a value any test can read without measuring the clock
-    const candidate = await scrypt(plain, DUMMY_SALT, SCRYPT_KEY_LEN, {
-      ...SCRYPT_SHADOWS,
-      N: this.N,
-      r: this.r,
-      p: this.p,
-      maxmem: this.maxmem
-    })
+    const candidate = await pinned(
+      scrypt(plain, DUMMY_SALT, SCRYPT_KEY_LEN, {
+        ...SCRYPT_SHADOWS,
+        N: this.N,
+        r: this.r,
+        p: this.p,
+        maxmem: this.maxmem
+      })
+    )
     // Always false — the comparison is here so the branch ends the same way a real verify
     // does, not because the result carries information.
     return cryptoTimingSafeEqual(candidate, DUMMY_EXPECTED)

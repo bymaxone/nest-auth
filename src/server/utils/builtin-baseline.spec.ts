@@ -28,7 +28,8 @@ import {
   replacedBuiltins,
   SPECIES_CONSTRUCTORS
 } from './builtin-baseline'
-import { assertRootIsStandardAtBoot } from './object-prototype-guard'
+import { IntrinsicPromise } from './captured-builtins'
+import { assertRootIsStandard, assertRootIsStandardAtBoot } from './object-prototype-guard'
 
 // The test's own copies: the windows below replace built-ins, so nothing inside one may call a live one.
 const define = Object.defineProperty
@@ -432,6 +433,98 @@ describe('the constructor the buffers name', () => {
 
     expect(counted).toBe(1)
     expect(replacedBuiltins()).toBe(0)
+  })
+})
+
+describe('the constructor a promise names', () => {
+  // Scenario: the `constructor` property of `Promise.prototype` replaced. Expected: counted once, and none once restored.
+  // Why: `await` reads `constructor` of a promise to decide whether it is native, so a replaced one chooses what every wait yields.
+  it('counts Promise.prototype.constructor when it is replaced', () => {
+    let counted = -1
+    changed(
+      Promise.prototype,
+      'constructor',
+      { value: function Other() {}, writable: true },
+      () => {
+        counted = replacedBuiltins()
+      }
+    )
+
+    expect(counted).toBe(1)
+    expect(replacedBuiltins()).toBe(0)
+  })
+
+  // Scenario: the statics and `then` of `Promise` replaced, as the monitors and the test doubles of a host do. Expected: none
+  // counted. Why: no source reads them (the sources wait with `await` alone), so the guard must not refuse for them.
+  it.each(['all', 'race', 'allSettled', 'any', 'resolve', 'reject'])(
+    'does not count Promise.%s when it is replaced',
+    (name) => {
+      let counted = -1
+      changed(Promise, name, { value: function Other() {}, writable: true }, () => {
+        counted = replacedBuiltins()
+      })
+
+      expect(counted).toBe(0)
+    }
+  )
+
+  it('does not count Promise.prototype.then when it is replaced', () => {
+    let counted = -1
+    changed(Promise.prototype, 'then', { value: Promise.prototype.then, writable: true }, () => {
+      counted = replacedBuiltins()
+    })
+
+    expect(counted).toBe(0)
+  })
+
+  // Scenario: a `then` planted on a prototype a value resolves through, then removed. Expected: counted once, none after.
+  // Why: resolving a promise with an object asks it for `then`, so a planted one answers for every decision that resolves with one.
+  it.each([
+    ['Array.prototype', Array.prototype],
+    ['Function.prototype', Function.prototype]
+  ])('counts a then planted on %s', (_name, holder) => {
+    let counted = -1
+    Object.defineProperty(holder, 'then', { value: () => undefined, configurable: true })
+    try {
+      counted = replacedBuiltins()
+    } finally {
+      Reflect.deleteProperty(holder, 'then')
+    }
+
+    expect(counted).toBe(1)
+    expect(replacedBuiltins()).toBe(0)
+  })
+
+  // Scenario: a `then` planted on the root object, then removed. Expected: the guard refuses while it is there, and not after.
+  it('refuses while a then is planted on Object.prototype', () => {
+    let refused = false
+    Object.defineProperty(Object.prototype, 'then', { value: () => undefined, configurable: true })
+    try {
+      assertRootIsStandard()
+    } catch {
+      refused = true
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'then')
+    }
+
+    expect(refused).toBe(true)
+    expect(() => {
+      assertRootIsStandard()
+    }).not.toThrow()
+  })
+
+  // Scenario: the global `Promise` binding replaced by another constructor, as a host's test double does. Expected: none counted,
+  // and the helpers still build from the language's own constructor. Why: the binding is not what `await` reads.
+  it('builds from the intrinsic constructor when the global binding is replaced', () => {
+    const intrinsic = Object.getPrototypeOf(Promise.resolve()).constructor as unknown
+    const held = Object.getOwnPropertyDescriptor(globalThis, 'Promise') as PropertyDescriptor
+    Object.defineProperty(globalThis, 'Promise', { ...held, value: function Other() {} })
+    try {
+      expect(replacedBuiltins()).toBe(0)
+      expect(IntrinsicPromise).toBe(intrinsic)
+    } finally {
+      Object.defineProperty(globalThis, 'Promise', held)
+    }
   })
 })
 

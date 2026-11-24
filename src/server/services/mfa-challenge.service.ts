@@ -34,6 +34,7 @@ import { verifyRecoveryCode } from '../utils/mfa-recovery-codes'
 import { platformUserAsSafeUser, toSafePlatformUser, toSafeUser } from '../utils/mfa-safe-user'
 import { decryptWithRotation, encryptMfaSecret, holdsSecret } from '../utils/mfa-secret-cipher'
 import { runDetached } from '../utils/run-detached'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** The resolved MFA configuration group, present whenever the MFA services are registered. */
 export type MfaConfig = Required<NonNullable<ResolvedOptions['mfa']>>
@@ -97,6 +98,7 @@ function spliceSpentCode(
 }
 
 /** Completes an MFA challenge: verifies the code, spends the temp token and issues the session. */
+@PinnedAll()
 @Injectable()
 export class MfaChallengeService {
   private readonly logger = new Logger(MFA_LOG_CONTEXT)
@@ -150,40 +152,64 @@ export class MfaChallengeService {
       context,
       tenantId,
       jti: tempTokenJti
-    } = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
+    } = await pinned(this.tokenManager.verifyMfaTempToken(mfaTempToken))
     const scope: ChallengeScope = { userId, context, tenantId }
 
     // The token verified, so its plane is known: every way the rest of the challenge can end carries it.
-    return markingPlane(context, async () => {
-      // Step 2: brute-force check.
-      await this.assertNotLocked(scope)
+    return checked(
+      await pinned(
+        markingPlane(context, async () =>
+          checked(await this.admitChallenge(scope, tempTokenJti, code, ip, userAgent, mfa))
+        )
+      )
+    )
+  }
 
-      // Step 3: load the account, tenant-scoped, and re-check its status: a blocked account must not spend the KDF.
-      const user = await this.records.loadAccount(context, userId, tenantId)
-      if (!user.mfaEnabled || !user.mfaSecret) {
-        throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
-      }
+  /** The checks and the session of one challenge, run on the plane the temp token names. */
+  private async admitChallenge(
+    scope: ChallengeScope,
+    tempTokenJti: string,
+    code: string,
+    ip: string,
+    userAgent: string,
+    mfa: MfaConfig
+  ): Promise<AuthResult | PlatformAuthResult> {
+    const { userId, context, tenantId } = scope
+    await pinned(this.assertNotLocked(scope))
 
-      // Step 4: decrypt the TOTP secret and validate the submitted code.
-      const opened = decryptWithRotation(user.mfaSecret, mfa)
-      const { valid, recoveryIndex } = await this.checkCode(user, scope, opened.secret, code, mfa)
-      if (!valid) await this.refuseWrongCode(scope)
-      await this.flowLockout.reset('challenge', context, userId, tenantId)
+    const user = await pinned(this.records.loadAccount(context, userId, tenantId))
+    if (!user.mfaEnabled || !user.mfaSecret) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
+    }
 
-      // Step 5: consume the temp token, and the consume must WIN: two concurrent submissions both see the
-      // marker, and on the recovery-code path one code and one token would mint two sessions. The loser is
-      // reported as an invalid temp token.
-      if (!(await this.tokenManager.consumeMfaTempToken(tempTokenJti))) {
-        throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
-      }
-      await this.settleRecovery(user, scope, opened, recoveryIndex, mfa)
+    const opened = decryptWithRotation(user.mfaSecret, mfa)
+    const { valid, recoveryIndex } = await pinned(
+      this.checkCode(user, scope, opened.secret, code, mfa)
+    )
+    if (!valid) await pinned(this.refuseWrongCode(scope))
+    await pinned(this.flowLockout.reset('challenge', context, userId, tenantId))
 
-      logEvent(this.logger, 'AUTH_MFA_CHALLENGE_PASSED', { plane: context, userId })
-      // Step 6: issue full tokens with mfaVerified: true.
-      return context === 'dashboard'
-        ? this.issueDashboardSession(user as AuthUser, userId, ip, userAgent)
-        : this.issuePlatformSession(user as AuthPlatformUser, userId, ip, userAgent)
-    })
+    await pinned(this.consumeOrRefuse(tempTokenJti))
+    await pinned(this.settleRecovery(user, scope, opened, recoveryIndex, mfa))
+
+    logEvent(this.logger, 'AUTH_MFA_CHALLENGE_PASSED', { plane: context, userId })
+    return checked(
+      await pinned(
+        context === 'dashboard'
+          ? this.issueDashboardSession(user as AuthUser, userId, ip, userAgent)
+          : this.issuePlatformSession(user as AuthPlatformUser, userId, ip, userAgent)
+      )
+    )
+  }
+
+  /**
+   * Consumes the temp token, and the consume must WIN: two concurrent submissions both see the marker, and on the recovery-code
+   * path one code and one token would mint two sessions. The loser is reported as an invalid temp token.
+   */
+  private async consumeOrRefuse(tempTokenJti: string): Promise<void> {
+    if (!(await pinned(this.tokenManager.consumeMfaTempToken(tempTokenJti)))) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
   }
 
   /**
@@ -198,7 +224,7 @@ export class MfaChallengeService {
    */
   private async assertNotLocked(scope: ChallengeScope): Promise<void> {
     const { userId, context, tenantId } = scope
-    if (await this.flowLockout.isLockedOut('challenge', context, userId, tenantId)) {
+    if (await pinned(this.flowLockout.isLockedOut('challenge', context, userId, tenantId))) {
       logEvent(this.logger, 'AUTH_MFA_LOCKED', { plane: context, flow: 'challenge' })
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
@@ -213,7 +239,7 @@ export class MfaChallengeService {
    */
   private async refuseWrongCode(scope: ChallengeScope): Promise<never> {
     const { userId, context, tenantId } = scope
-    await this.flowLockout.recordFailure('challenge', context, userId, tenantId)
+    await pinned(this.flowLockout.recordFailure('challenge', context, userId, tenantId))
     logEvent(this.logger, 'AUTH_MFA_CODE_INVALID', { plane: context, flow: 'challenge' })
     throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
   }
@@ -239,29 +265,29 @@ export class MfaChallengeService {
   ): Promise<{ valid: boolean; recoveryIndex: number }> {
     const { userId, context, tenantId } = scope
     if (/^\d{6}$/.test(code)) {
-      const valid = await this.records.verifyTotpWithAntiReplay(
-        context,
-        userId,
-        secretBase32,
-        code,
-        mfa.totpWindow,
-        tenantId
+      const valid = await pinned(
+        this.records.verifyTotpWithAntiReplay(
+          context,
+          userId,
+          secretBase32,
+          code,
+          mfa.totpWindow,
+          tenantId
+        )
       )
-      return { valid, recoveryIndex: -1 }
+      return checked({ valid, recoveryIndex: -1 })
     }
     // Stryker disable next-line ArrayDeclaration: equivalent — the fallback stands in for an
     // account with no stored codes, and any content it could hold fails the constant-time
     // comparison exactly as the empty array does.
     const recoveryCodes = user.mfaRecoveryCodes ?? []
-    const recoveryIndex = await verifyRecoveryCode(
-      code,
-      recoveryCodes,
-      this.options.hmacKey,
-      this.options.previousHmacKeys
+    const recoveryIndex = await pinned(
+      verifyRecoveryCode(code, recoveryCodes, this.options.hmacKey, this.options.previousHmacKeys)
     )
     const valid =
-      recoveryIndex >= 0 && (await this.records.claimRecoveryCode(context, userId, code, tenantId))
-    return { valid, recoveryIndex }
+      recoveryIndex >= 0 &&
+      (await pinned(this.records.claimRecoveryCode(context, userId, code, tenantId)))
+    return checked({ valid, recoveryIndex })
   }
 
   /**
@@ -303,8 +329,10 @@ export class MfaChallengeService {
       // Stryker disable next-line ArrayDeclaration: unreachable — this branch is only taken
       // when `verifyRecoveryCode` matched a code inside an array it had to iterate first.
       []
-    await this.records.transition(context, userId, tenantId, (current) =>
-      spliceSpentCode(current, existingCodes, recoveryIndex, opened, mfa)
+    await pinned(
+      this.records.transition(context, userId, tenantId, (current) =>
+        spliceSpentCode(current, existingCodes, recoveryIndex, opened, mfa)
+      )
     )
   }
 
@@ -324,20 +352,24 @@ export class MfaChallengeService {
     userAgent: string
   ): Promise<AuthResult> {
     const safeUser = toSafeUser(user)
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, {
-      mfaVerified: true,
-      credentialProved: true
-    })
+    const result = await pinned(
+      this.tokenManager.issueTokens(safeUser, ip, userAgent, {
+        mfaVerified: true,
+        credentialProved: true
+      })
+    )
 
     // Track the session when sessions are enabled (enforces concurrent session limit).
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession({
-        userId: safeUser.id,
-        tenantId: safeUser.tenantId,
-        rawRefreshToken: result.rawRefreshToken,
-        ip,
-        userAgent
-      })
+      await pinned(
+        this.sessionService.createSession({
+          userId: safeUser.id,
+          tenantId: safeUser.tenantId,
+          rawRefreshToken: result.rawRefreshToken,
+          ip,
+          userAgent
+        })
+      )
     }
 
     // The login the password step (or the OAuth callback) stopped short of: for an MFA account
@@ -358,7 +390,7 @@ export class MfaChallengeService {
       )
     }
 
-    return result
+    return checked(result)
   }
 
   /**
@@ -378,11 +410,10 @@ export class MfaChallengeService {
     ip: string,
     userAgent: string
   ): Promise<PlatformAuthResult> {
-    const result = await this.tokenManager.issuePlatformTokens(
-      toSafePlatformUser(platformUser),
-      ip,
-      userAgent,
-      { mfaVerified: true }
+    const result = await pinned(
+      this.tokenManager.issuePlatformTokens(toSafePlatformUser(platformUser), ip, userAgent, {
+        mfaVerified: true
+      })
     )
 
     runDetached(
@@ -407,7 +438,7 @@ export class MfaChallengeService {
       )
     }
 
-    return result
+    return checked(result)
   }
 
   /**
@@ -438,15 +469,15 @@ export class MfaChallengeService {
     userAgent: string,
     mfa: MfaConfig
   ): Promise<PlatformAuthResult> {
-    const { context } = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
+    const { context } = await pinned(this.tokenManager.verifyMfaTempToken(mfaTempToken))
     if (context !== 'platform') {
       throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
     }
-    const result = await this.challenge(mfaTempToken, code, ip, userAgent, mfa)
+    const result = await pinned(this.challenge(mfaTempToken, code, ip, userAgent, mfa))
     // The plane was verified above, so a dashboard-shaped result means the two disagree.
     if (!('admin' in result)) {
       throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
     }
-    return result
+    return checked(result)
   }
 }

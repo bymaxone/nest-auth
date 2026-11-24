@@ -8,6 +8,16 @@ import { Injectable } from '@nestjs/common'
 import type { OnModuleInit } from '@nestjs/common'
 
 import { AuthException } from '../errors/auth-exception'
+import {
+  PinnedAll,
+  awaiting,
+  checked,
+  detached,
+  markHandled,
+  pinned,
+  started
+} from '../utils/settle'
+import type { Settled } from '../utils/settle'
 
 /** The span names the library starts. */
 export type AuthSpanName = 'auth.login' | 'auth.refresh' | 'auth.mfa.verify' | 'auth.password_reset'
@@ -47,11 +57,19 @@ function codeOf(error: unknown): string {
 
 /** Run a call into the tracer, and swallow what it throws or rejects with. */
 function attempt(call: () => unknown): void {
-  try {
-    Promise.resolve(call()).catch(() => undefined)
-  } catch {
-    // A tracer that throws has no say in what the operation does.
-  }
+  // A tracer that throws, or rejects, has no say in what the operation does.
+  detached(call, () => undefined)
+}
+
+/**
+ * What the tracer is handed to hold on to for an operation: a promise of its own that settles with the operation. The tracer may
+ * attach `then` to it, replace its species or wait on it from its own code; the library waits on a box it keeps to itself.
+ */
+function mirror<T>(answer: Promise<Settled<T>>): Promise<T> {
+  const copy = pinned((async (): Promise<T> => checked((await awaiting(answer)).value))())
+  // The tracer may never look at it, and the library never waits on it, so a failure of the operation must not be left unhandled here.
+  markHandled(copy)
+  return copy
 }
 
 /**
@@ -62,6 +80,7 @@ function attempt(call: () => unknown): void {
  * the API present and no SDK registered the API itself is a no-op. A span carries a closed set of attributes
  * and, on failure, the library error code and nothing of the message.
  */
+@PinnedAll()
 @Injectable()
 export class AuthTracing implements OnModuleInit {
   #api: OtelApi | undefined
@@ -69,7 +88,7 @@ export class AuthTracing implements OnModuleInit {
   /** Loads the API once, at start-up; a package that is not there leaves the seam inert. */
   async onModuleInit(): Promise<void> {
     try {
-      const loaded: unknown = await import('@opentelemetry/api')
+      const loaded: unknown = await pinned(import('@opentelemetry/api'))
       this.#api = loaded as OtelApi
     } catch {
       // The package is not installed: the seam stays inert.
@@ -80,14 +99,15 @@ export class AuthTracing implements OnModuleInit {
   private async traced<T>(span: Span, run: () => Promise<T>): Promise<T> {
     let result: T
     try {
-      result = await run()
+      result = await awaiting(run())
     } catch (error) {
       attempt(() => span.setStatus({ code: STATUS_ERROR, message: codeOf(error) }))
       attempt(() => span.end())
       throw error
     }
+    // The tracer's code ran in `end`, after the decision: the root is checked again before the answer leaves.
     attempt(() => span.end())
-    return result
+    return checked(result)
   }
 
   /**
@@ -101,23 +121,27 @@ export class AuthTracing implements OnModuleInit {
    * @param attributes - Closed-set attributes of the span.
    * @param run - The operation; its result or its error passes through unchanged.
    */
-  span<T>(name: AuthSpanName, attributes: AuthSpanAttributes, run: () => Promise<T>): Promise<T> {
+  async span<T>(
+    name: AuthSpanName,
+    attributes: AuthSpanAttributes,
+    run: () => Promise<T>
+  ): Promise<T> {
     const api = this.#api
-    if (!api) return run()
+    if (!api) return checked(await awaiting(run()))
     // One-shot: the operation runs at most once, however often or late the tracer calls back. Whoever claims
     // it first runs it, the tracer through the span or this method bare.
-    const latch: { claimed: boolean; started?: Promise<T> } = { claimed: false }
+    const latch: { claimed: boolean; started?: Promise<Settled<T>> } = { claimed: false }
     attempt(() =>
       api.trace.getTracer(TRACER_NAME).startActiveSpan(name, { attributes }, (span): unknown => {
         if (!latch.claimed) {
           latch.claimed = true
-          latch.started = this.traced(span, run)
+          latch.started = started(this.traced(span, run))
         }
-        return latch.started
+        return latch.started && mirror(latch.started)
       })
     )
-    if (latch.started) return latch.started
+    if (latch.started) return checked((await awaiting(latch.started)).value)
     latch.claimed = true
-    return run()
+    return checked(await awaiting(run()))
   }
 }

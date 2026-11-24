@@ -150,6 +150,42 @@ describe('ApiKeyGuard while a built-in is replaced', () => {
     expect(result).toBe(500)
   })
 
+  // Scenario: in required mode the audit hook fails, and `Function.prototype.call` is replaced, between the check after the
+  // verification and the dispatch of the hook, by a function that skips the hook and puts the original back. Expected: not admitted.
+  // Why: the hook is the audit row the mode demands, so a dispatch through a replaceable `call` lets a request in without one.
+  it('does not admit a request whose audit hook a replaced call skipped', async () => {
+    const dispatched: number[] = []
+    const hook = async function audit(): Promise<void> {
+      dispatched.push(1)
+      throw new Error('audit store down')
+    }
+    const hooks = {
+      get onApiKeyRequest(): typeof hook {
+        const held = getOwn(Function.prototype, 'call') as PropertyDescriptor
+        define(Function.prototype, 'call', {
+          ...held,
+          value: function skip(this: unknown, ...args: unknown[]): unknown {
+            // Only the dispatch of the hook is skipped; every other use of `call` goes through.
+            if (this !== hook) return Reflect.apply(held.value as () => unknown, this, args)
+            define(Function.prototype, 'call', held)
+            return undefined
+          }
+        })
+        return hook
+      }
+    } as never
+    const held = getOwn(Function.prototype, 'call') as PropertyDescriptor
+    let result: number | true | undefined
+    try {
+      result = await outcome(build(repository(), hooks))
+    } finally {
+      define(Function.prototype, 'call', held)
+    }
+
+    expect(dispatched).toHaveLength(1)
+    expect(result).toBe(500)
+  })
+
   // Scenario: the step the verifier takes after it has decided, the record of the key's last use, replaces `Array.prototype.every`.
   // Expected: the library's refusal. Why: nothing the verifier checks follows that step, so only a check by the guard after the
   // verification, before it reads the scopes, refuses the replacement, and no audit event says the key was allowed.

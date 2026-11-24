@@ -102,6 +102,7 @@ import { WsTicketService } from './services/ws-ticket.service'
 import { jwtModuleOptions } from './utils/dependency-options'
 import { hostHasKey, readHostOptions, callFactory, withGuardedViews } from './utils/host-read'
 import { assertRootIsStandardAtBoot } from './utils/object-prototype-guard'
+import { checked, pinned } from './utils/settle'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -340,7 +341,7 @@ export class BymaxAuthModule {
       provide: BYMAX_AUTH_OPTIONS,
       useFactory: async (...args: unknown[]): Promise<ResolvedOptions> => {
         // Nest supplies the injected values, and their types are the consumer's declaration.
-        const { value: userOptions } = await callFactory(options.useFactory, args)
+        const { value: userOptions } = await pinned(callFactory(options.useFactory, args))
 
         // `controllers` belongs on the `registerAsync()` call, never in the factory's return value.
         // Nest decides a module's shape before any factory runs, so a `controllers` key here is read
@@ -584,9 +585,9 @@ export class BymaxAuthModule {
           imports: options.imports ?? [],
           useFactory: async (...args: unknown[]) => {
             // Nest supplies the injected values, and their types are the consumer's declaration.
-            const { value: userOptions } = await callFactory(options.useFactory, args)
+            const { value: userOptions } = await pinned(callFactory(options.useFactory, args))
             // Stryker disable next-line ObjectLiteral: jsonwebtoken defaults to HS256 and TokenManagerService overrides signOptions per call, so the emptied `signOptions` produces identical signing
-            return jwtModuleOptions(readHostOptions(() => userOptions.jwt.secret))
+            return checked(jwtModuleOptions(readHostOptions(() => userOptions.jwt.secret)))
           },
           inject: options.inject ?? []
         })

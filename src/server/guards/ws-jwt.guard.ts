@@ -12,6 +12,7 @@ import { AuthTokenVerifierService } from '../services/auth-token-verifier.servic
 import { WsTicketService } from '../services/ws-ticket.service'
 import { assertTenantBinding } from '../utils/assert-tenant-binding'
 import type { HandshakeLike } from '../utils/handshake-request'
+import { pinned, PinnedMethods } from '../utils/settle'
 
 /** Minimal shape of a WebSocket client as seen during the handshake. */
 type WsClient = {
@@ -79,6 +80,7 @@ type WsClient = {
  * @layer Guard
  */
 @Injectable()
+@PinnedMethods('canActivate')
 export class WsJwtGuard implements CanActivate, OnModuleInit {
   constructor(
     @Inject(AuthTokenVerifierService) private readonly verifier: AuthTokenVerifierService,
@@ -93,7 +95,7 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
    */
   async onModuleInit(): Promise<void> {
     try {
-      await import('@nestjs/websockets')
+      await pinned(import('@nestjs/websockets'))
     } catch {
       throw new Error('WsJwtGuard requires @nestjs/websockets to be installed')
     }
@@ -122,9 +124,9 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
     // client that presents both is authenticated by the stronger, single-use credential.
     const ticket = readUpgradeTicket(handshake)
     if (ticket !== undefined) {
-      const snapshot = await this.wsTickets.redeem(ticket)
+      const snapshot = await pinned(this.wsTickets.redeem(ticket))
       assertDashboardSnapshot(snapshot)
-      await assertTenantBinding(this.options, bindingInput(handshake), snapshot.tenantId)
+      await pinned(assertTenantBinding(this.options, bindingInput(handshake), snapshot.tenantId))
       // The socket is authorized as the snapshot the ticket was minted from — a frozen copy of
       // what the access token proved at mint time. It is deliberately not a token: it carries
       // no signature to re-verify, and its `jti` and `epoch` are identifiers that `redeem` has
@@ -140,23 +142,23 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    // The same chain an HTTP request is held to, from the one service that owns it: signature
-    // and pinned algorithm, a UUID `jti`, `sub` and `tenantId` shapes, the token type, both
-    // revocation channels, the tenant binding, the account's CURRENT status, and the MFA policy.
-    // A socket is the longer-lived credential, so it must not be admitted on less than a request
-    // is. The status and MFA gates are on by default; `@SkipMfa()` lifts only the MFA one, as it
-    // does on HTTP for the handler that has to work while a second factor is being set up.
+    // The same chain an HTTP request is held to, from the one service that owns it: signature,
+    // `jti`, `sub` and `tenantId` shapes, token type, both revocation channels, the tenant binding,
+    // the account's CURRENT status and the MFA policy. A socket is the longer-lived credential, so
+    // it is not admitted on less. `@SkipMfa()` lifts only the MFA gate, as it does on HTTP.
     const skipMfa =
       this.reflector.getAllAndOverride<boolean | undefined>(SKIP_MFA_KEY, [
         context.getHandler(),
         context.getClass()
       ]) === true
-    const verified = await this.verifier.verifyAccessToken(token, {
-      plane: 'dashboard',
-      requireMfa: !skipMfa,
-      checkStatus: true,
-      request: bindingInput(handshake)
-    })
+    const verified = await pinned(
+      this.verifier.verifyAccessToken(token, {
+        plane: 'dashboard',
+        requireMfa: !skipMfa,
+        checkStatus: true,
+        request: bindingInput(handshake)
+      })
+    )
 
     client.data.user = verified.payload
     return true

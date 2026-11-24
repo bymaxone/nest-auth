@@ -58,9 +58,11 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { cookieOptions } from '../utils/dependency-options'
 import { describeChannelStatus } from '../utils/describe-error'
+import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
+import { awaiting, checked, pinned, PinnedAll } from '../utils/settle'
 
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
 const OAUTH_STATE_TTL_SECONDS = 600
@@ -94,6 +96,7 @@ function toSafeUser(user: AuthUser): SafeAuthUser {
  * service resolves the correct plugin by name and delegates the provider-specific
  * operations (authorize URL, code exchange, profile fetch) to the plugin.
  */
+@PinnedAll()
 @Injectable()
 export class OAuthService {
   private readonly logger = new Logger(OAuthService.name)
@@ -159,7 +162,7 @@ export class OAuthService {
     // reset flows: a deployment that derives the tenant from the request has stated that the
     // caller's value is not to be trusted. The resolved value is what goes into the state record,
     // so the callback cannot be talked into a different tenant either.
-    tenantId = await resolveTenantId(tenantId, req, this.options.tenantIdResolver)
+    tenantId = await pinned(resolveTenantId(tenantId, req, this.options.tenantIdResolver))
     const invitation = this.hashInvitation(workspaceInvitation)
 
     // Generate a 64-char hex nonce for CSRF protection.
@@ -178,7 +181,7 @@ export class OAuthService {
       codeVerifier,
       ...(invitation === undefined ? {} : { workspaceInvitation: invitation })
     }
-    await this.redis.set(stateKey, stringifyJson(stored), OAUTH_STATE_TTL_SECONDS)
+    await pinned(this.redis.set(stateKey, stringifyJson(stored), OAUTH_STATE_TTL_SECONDS))
 
     this.bindToBrowser(res, state)
     if (invitation !== undefined) res.setHeader('Referrer-Policy', 'no-referrer')
@@ -278,18 +281,15 @@ export class OAuthService {
     // state the user would otherwise have to restart the whole flow to replace.
     const plugin = this.resolvePlugin(provider)
 
-    const record = await this.consumeState(provider, state, stateCookie)
+    const record = await pinned(this.consumeState(provider, state, stateCookie))
     const { tenantId, codeVerifier } = record
-
-    const profile = await this.fetchProfile(plugin, provider, code, codeVerifier)
-    const invitation = await this.vetInvitation(record, profile)
+    const profile = await pinned(this.fetchProfile(plugin, provider, code, codeVerifier))
+    const invitation = await pinned(this.vetInvitation(record, profile))
 
     // Look up an existing user linked to this OAuth identity.
-    const existingAuthUser = await this.userRepo.findByOAuthId({
-      provider,
-      providerId: profile.providerId,
-      tenantId
-    })
+    const existingAuthUser = await pinned(
+      this.userRepo.findByOAuthId({ provider, providerId: profile.providerId, tenantId })
+    )
 
     // Strip credential fields before passing to the hook.
     const existingUser: SafeAuthUser | null = existingAuthUser ? toSafeUser(existingAuthUser) : null
@@ -309,26 +309,26 @@ export class OAuthService {
     // Run the onOAuthLogin hook — required for account resolution strategy.
     // Null hooks or a missing onOAuthLogin method both result in OAUTH_FAILED,
     // preventing unauthenticated OAuth logins on unconfigured installations.
-    const hookResult = await this.hooks?.onOAuthLogin?.(profile, existingUser, hookContext)
-
+    const hookResult = await pinned(this.hooks?.onOAuthLogin?.(profile, existingUser, hookContext))
     if (!hookResult) {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
-    const authUser = await this.resolveAccount(
-      { provider, tenantId, profile, hookResult, existingAuthUser },
-      invitation
+    const authUser = await pinned(
+      this.resolveAccount({ provider, tenantId, profile, hookResult, existingAuthUser }, invitation)
     )
 
     this.assertMaySignIn(authUser)
 
     if (authUser.mfaEnabled) {
-      return this.issueMfaChallenge(authUser)
+      return checked(await pinned(this.issueMfaChallenge(authUser)))
     }
 
     const created = hookResult.action === 'create'
-    await invitation?.complete(authUser, created, { ...hookContext, userId: authUser.id })
-    return this.openSession(authUser, provider, hookResult, hookContext, ip, userAgent)
+    await pinned(invitation?.complete(authUser, created, { ...hookContext, userId: authUser.id }))
+    return checked(
+      await pinned(this.openSession(authUser, provider, hookResult, hookContext, ip, userAgent))
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -378,10 +378,8 @@ export class OAuthService {
     // registered.
     // OAuth is dashboard-only; bind the tenant so the challenge resolves this account
     // tenant-scoped rather than by `sub` alone.
-    const mfaTempToken = await this.tokenManager.issueMfaTempToken(
-      authUser.id,
-      'dashboard',
-      authUser.tenantId
+    const mfaTempToken = await pinned(
+      this.tokenManager.issueMfaTempToken(authUser.id, 'dashboard', authUser.tenantId)
     )
     logEvent(this.logger, 'AUTH_LOGIN_MFA_CHALLENGED', {
       plane: 'dashboard',
@@ -389,7 +387,7 @@ export class OAuthService {
       tenantId: authUser.tenantId,
       via: 'oauth'
     })
-    return { mfaRequired: true, mfaTempToken }
+    return checked({ mfaRequired: true, mfaTempToken })
   }
 
   /**
@@ -415,17 +413,21 @@ export class OAuthService {
     // Strip credentials before token issuance — prevents passwordHash / mfaSecret
     // from flowing into the AuthResult.user field that is serialized in the response.
     const safeUser = toSafeUser(authUser)
-    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, CREDENTIAL_PROVED)
+    const result = await pinned(
+      this.tokenManager.issueTokens(safeUser, ip, userAgent, CREDENTIAL_PROVED)
+    )
 
     // Create a tracked session if session management is enabled.
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession({
-        userId: safeUser.id,
-        tenantId: safeUser.tenantId,
-        rawRefreshToken: result.rawRefreshToken,
-        ip,
-        userAgent
-      })
+      await pinned(
+        this.sessionService.createSession({
+          userId: safeUser.id,
+          tenantId: safeUser.tenantId,
+          rawRefreshToken: result.rawRefreshToken,
+          ip,
+          userAgent
+        })
+      )
     }
 
     logEvent(this.logger, 'AUTH_LOGIN_SUCCEEDED', {
@@ -435,6 +437,12 @@ export class OAuthService {
       via: 'oauth'
     })
 
+    this.runLoginSideEffects(safeUser, hookContext)
+    return checked(result)
+  }
+
+  /** Starts the non-blocking side effects of a login; nothing waits for them. */
+  private runLoginSideEffects(safeUser: SafeAuthUser, hookContext: HookContext): void {
     // The same non-blocking side effects a password login runs once it has succeeded. An MFA
     // account reaches them from the challenge completion instead, so this is only the path that
     // issued a session.
@@ -451,7 +459,6 @@ export class OAuthService {
         'afterLogin'
       )
     }
-    return result
   }
 
   /**
@@ -486,7 +493,7 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
-    const stored = await this.readState(state)
+    const stored = await pinned(this.readState(state))
 
     // Mix-up defence (RFC 9700 §2.1/§4.4). `provider` here comes from the callback's own URL
     // path; the record says which provider the flow was actually started with. A mismatch means
@@ -503,7 +510,7 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
-    return stored
+    return checked(stored)
   }
 
   /**
@@ -516,7 +523,7 @@ export class OAuthService {
   private async readState(state: string): Promise<StoredOAuthState> {
     // Atomically read and delete the CSRF state — single-use enforcement.
     const stateKey = `os:${sha256(state)}`
-    const rawState = await this.redis.getdel(stateKey)
+    const rawState = await pinned(this.redis.getdel(stateKey))
 
     if (!rawState) {
       logEvent(this.logger, 'AUTH_OAUTH_STATE_REFUSED', { reason: 'invalid_or_expired' })
@@ -539,7 +546,7 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
-    return parsedState
+    return checked(parsedState)
   }
 
   /**
@@ -560,10 +567,16 @@ export class OAuthService {
     codeVerifier: string
   ): Promise<OAuthProfile> {
     try {
-      return await withDeadline(async () => {
-        const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
-        return await plugin.fetchProfile(tokenResponse.access_token)
-      }, pluginDeadlineMs(plugin))
+      const profile = (
+        await awaiting(
+          withDeadline(async () => {
+            const tokenResponse = await pinned(plugin.exchangeCode(code, codeVerifier))
+            return checked(await pinned(plugin.fetchProfile(tokenResponse.access_token)))
+          }, pluginDeadlineMs(plugin))
+        )
+      ).value
+      assertRootIsStandard()
+      return checked(profile)
     } catch (err: unknown) {
       // Nothing the plugin wrote is published. This path holds a LIVE ACCESS TOKEN: the plugin
       // received `code`, `codeVerifier` and `accessToken`, and an HTTP client attaching its
@@ -610,29 +623,31 @@ export class OAuthService {
     // Nothing portable can be done about that here — `IUserRepository` is host-implemented
     // and its errors are untyped — so the check closes the deterministic case and leaves
     // the race to the constraint.
-    if (await this.userRepo.findByEmail({ email: profile.email, tenantId })) {
+    if (await pinned(this.userRepo.findByEmail({ email: profile.email, tenantId }))) {
       logEvent(this.logger, 'AUTH_OAUTH_CREATE_REFUSED')
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
     }
 
-    const created = await this.userRepo.createWithOAuth({
-      email: profile.email,
-      name: derivedName,
-      tenantId,
-      // What the provider actually asserted, not a convenient constant. An account created
-      // from an unverified address belongs to whoever controls the OAuth account, not to
-      // whoever controls the mailbox; marking it verified would make the consumer's
-      // "this email is proven" invariant false from the first login.
-      emailVerified: profile.emailVerified,
-      oauthProvider: provider,
-      oauthProviderId: profile.providerId
-    })
+    const created = await pinned(
+      this.userRepo.createWithOAuth({
+        email: profile.email,
+        name: derivedName,
+        tenantId,
+        // What the provider actually asserted, not a convenient constant. An account created
+        // from an unverified address belongs to whoever controls the OAuth account, not to
+        // whoever controls the mailbox; marking it verified would make the consumer's
+        // "this email is proven" invariant false from the first login.
+        emailVerified: profile.emailVerified,
+        oauthProvider: provider,
+        oauthProviderId: profile.providerId
+      })
+    )
     logEvent(this.logger, 'AUTH_USER_REGISTERED', {
       userId: created.id,
       tenantId: created.tenantId,
       via: 'oauth'
     })
-    return created
+    return checked(created)
   }
 
   /**
@@ -653,21 +668,25 @@ export class OAuthService {
       // Hook returned 'link' but there is no existing user — treat as OAuth failure.
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
-    await this.userRepo.linkOAuth({
-      id: existingAuthUser.id,
-      tenantId: existingAuthUser.tenantId,
-      provider,
-      providerId: profile.providerId
-    })
+    await pinned(
+      this.userRepo.linkOAuth({
+        id: existingAuthUser.id,
+        tenantId: existingAuthUser.tenantId,
+        provider,
+        providerId: profile.providerId
+      })
+    )
     // Re-fetch by primary key (more direct than findByOAuthId — id is already known).
-    const linked = await this.userRepo.findById({
-      id: existingAuthUser.id,
-      tenantId: existingAuthUser.tenantId
-    })
+    const linked = await pinned(
+      this.userRepo.findById({
+        id: existingAuthUser.id,
+        tenantId: existingAuthUser.tenantId
+      })
+    )
     if (!linked) {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
-    return linked
+    return checked(linked)
   }
 
   /**
@@ -699,9 +718,9 @@ export class OAuthService {
         if (invitation === null && this.options.registration === 'invitation-only') {
           throw new AuthException(AUTH_ERROR_CODES.REGISTRATION_CLOSED)
         }
-        return this.createAccount(provider, tenantId, profile)
+        return checked(await pinned(this.createAccount(provider, tenantId, profile)))
       case 'link':
-        return this.linkAccount(provider, profile, existingAuthUser)
+        return checked(await pinned(this.linkAccount(provider, profile, existingAuthUser)))
       case 'reject':
       default:
         throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
@@ -726,16 +745,17 @@ export class OAuthService {
     if (this.invitations === null)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
     const accepts = this.invitations
-    const loaded: LoadedInvitation = await accepts.prepareOAuth(
-      record.workspaceInvitation,
-      record.tenantId,
-      { email: profile.email, emailVerified: profile.emailVerified }
+    const loaded: LoadedInvitation = await pinned(
+      accepts.prepareOAuth(record.workspaceInvitation, record.tenantId, {
+        email: profile.email,
+        emailVerified: profile.emailVerified
+      })
     )
-    return {
+    return checked({
       complete: async (user, created, context): Promise<void> => {
-        await accepts.completeOAuth(loaded, user, created, context)
+        await pinned(accepts.completeOAuth(loaded, user, created, context))
       }
-    }
+    })
   }
 
   /**

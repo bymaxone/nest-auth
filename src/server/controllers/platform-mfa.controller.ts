@@ -31,6 +31,7 @@ import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { MfaSetupResult } from '../services/mfa.service'
 import { MfaService } from '../services/mfa.service'
 import { resolveClientAddress } from '../utils/client-address'
+import { Pinned, pinned } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
 // PlatformMfaController
@@ -85,11 +86,14 @@ export class PlatformMfaController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @RequestEncoding('when-body')
   @Post('setup')
+  @Pinned()
   async setup(
     @CurrentUser() user: PlatformJwtPayload,
     @Body() dto: MfaSetupDto
   ): Promise<MfaSetupResult> {
-    return this.mfaService.setup(user.sub, 'platform', dto.password, undefined, user.sid)
+    return await pinned(
+      this.mfaService.setup(user.sub, 'platform', dto.password, undefined, user.sid)
+    )
   }
 
   /**
@@ -110,6 +114,7 @@ export class PlatformMfaController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-enable')
+  @Pinned()
   async verifyEnable(
     @CurrentUser() user: PlatformJwtPayload,
     @Body() dto: MfaVerifyDto,
@@ -117,7 +122,7 @@ export class PlatformMfaController {
   ): Promise<void> {
     const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
-    await this.mfaService.verifyAndEnable(user.sub, dto.code, ip, userAgent, 'platform')
+    await pinned(this.mfaService.verifyAndEnable(user.sub, dto.code, ip, userAgent, 'platform'))
   }
 
   /**
@@ -138,6 +143,7 @@ export class PlatformMfaController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('disable')
+  @Pinned()
   async disable(
     @CurrentUser() user: PlatformJwtPayload,
     @Body() dto: MfaDisableDto,
@@ -145,7 +151,7 @@ export class PlatformMfaController {
   ): Promise<void> {
     const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
-    await this.mfaService.disable(user.sub, dto.code, ip, userAgent, 'platform')
+    await pinned(this.mfaService.disable(user.sub, dto.code, ip, userAgent, 'platform'))
   }
 
   /**
@@ -168,6 +174,7 @@ export class PlatformMfaController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.OK)
   @Post('recovery-codes')
+  @Pinned()
   async regenerateRecoveryCodes(
     @CurrentUser() user: PlatformJwtPayload,
     @Body() dto: MfaRegenerateRecoveryCodesDto,
@@ -175,6 +182,8 @@ export class PlatformMfaController {
   ): Promise<{ recoveryCodes: string[] }> {
     const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
-    return this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, 'platform')
+    return await pinned(
+      this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, 'platform')
+    )
   }
 }

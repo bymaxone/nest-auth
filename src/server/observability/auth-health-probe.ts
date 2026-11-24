@@ -7,6 +7,8 @@
 import { Inject, Injectable } from '@nestjs/common'
 
 import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import { IntrinsicPromise } from '../utils/captured-builtins'
+import { PinnedAll, awaiting, pinned } from '../utils/settle'
 
 /**
  * How long a probe waits for the store, in milliseconds.
@@ -30,6 +32,7 @@ export const PING_TIMEOUT_MS = 4000
  * command the client never settles cannot keep the readiness check down after the store has recovered, and
  * at most one `PING` is sent per timeout window.
  */
+@PinnedAll()
 @Injectable()
 export class AuthHealthProbe {
   #pending: { readonly asked: Promise<string>; readonly at: number } | undefined
@@ -49,7 +52,7 @@ export class AuthHealthProbe {
   async ping(signal?: AbortSignal): Promise<boolean> {
     const stop = AbortSignal.timeout(PING_TIMEOUT_MS)
     const bound = signal === undefined ? stop : AbortSignal.any([signal, stop])
-    return (await this.within(this.#ask(), bound)) === 'PONG'
+    return (await awaiting(this.within(this.#ask(), bound))) === 'PONG'
   }
 
   /** The pending `PING` while it is younger than the timeout, otherwise a fresh one. */
@@ -58,22 +61,38 @@ export class AuthHealthProbe {
     // The monotonic clock: a step of the wall clock must not lengthen how long a stuck PING is shared.
     if (pending !== undefined && performance.now() - pending.at < PING_TIMEOUT_MS)
       return pending.asked
-    const entry = { asked: this.redis.ping(), at: performance.now() }
+    const entry = { asked: pinned(this.redis.ping()), at: performance.now() }
     const clear = (): void => {
       if (this.#pending === entry) this.#pending = undefined
     }
-    entry.asked.then(clear, clear)
+    void (async (): Promise<void> => {
+      try {
+        await awaiting(entry.asked)
+      } catch {
+        // The failure is the caller's to read; here the entry only has to be forgotten.
+      } finally {
+        clear()
+      }
+    })()
     this.#pending = entry
     return entry.asked
   }
 
   /** `answer`, or a rejection as soon as `signal` aborts. */
   private within(answer: Promise<string>, signal: AbortSignal): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
+    return new IntrinsicPromise<string>((resolve, reject) => {
       const stop = (): void => reject(new Error('The authentication store did not answer in time.'))
       if (signal.aborted) return stop()
       signal.addEventListener('abort', stop, { once: true })
-      answer.then(resolve, reject).finally(() => signal.removeEventListener('abort', stop))
+      void (async (): Promise<void> => {
+        try {
+          resolve(await awaiting(answer))
+        } catch (error: unknown) {
+          reject(error)
+        } finally {
+          signal.removeEventListener('abort', stop)
+        }
+      })()
     })
   }
 }

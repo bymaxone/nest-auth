@@ -1,5 +1,6 @@
 import type { Request } from 'express'
 
+import { pinned } from './settle'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { TenantResolverRequest } from '../interfaces/auth-module-options.interface'
@@ -71,7 +72,7 @@ export async function resolveTenantId(
       ])
     }
 
-    return await resolver(req)
+    return await pinned(resolver(req))
   }
   if (dtoTenantId === undefined || dtoTenantId === null) {
     throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [

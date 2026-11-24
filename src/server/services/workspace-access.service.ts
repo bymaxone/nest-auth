@@ -30,12 +30,14 @@ import { NO_CONTROL_CHARACTERS } from '../dto/no-control-characters'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type {
+  AuthMembership,
   IMembershipRepository,
   MembershipRef
 } from '../interfaces/membership-repository.interface'
 import type { WorkspaceJobContext } from '../interfaces/workspace-job-context.interface'
 import type { WorkspaceRoleList } from '../interfaces/workspace-options.interface'
 import type {
+  AuthWorkspace,
   IWorkspaceRepository,
   WorkspaceRef
 } from '../interfaces/workspace-repository.interface'
@@ -45,6 +47,7 @@ import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { exceedsCodePoints } from '../utils/code-points'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { assertWorkspaceId } from '../utils/resolve-request-workspace'
+import { awaiting, checked, pinned, PinnedAll, started } from '../utils/settle'
 import { assertWorkspaceAccess } from '../utils/workspace-access-decision'
 
 /** An active member of an active workspace, as the access check resolves it. */
@@ -91,6 +94,7 @@ interface MembershipRead {
  * up to its lifetime, the exposure the token-epoch counters have, so run the store with a
  * no-eviction policy for the auth keyspace.
  */
+@PinnedAll()
 @Injectable()
 export class WorkspaceAccessService {
   private readonly logger = new Logger(WorkspaceAccessService.name)
@@ -122,7 +126,7 @@ export class WorkspaceAccessService {
    */
   async resolveMembership(ref: MembershipRef): Promise<ResolvedWorkspaceMember | null> {
     const access = await this.resolveAccess(ref)
-    return access.kind === 'member' ? access.member : null
+    return checked(access.kind === 'member' ? access.member : null)
   }
 
   /**
@@ -138,18 +142,25 @@ export class WorkspaceAccessService {
     assertRootIsStandard()
     assertKey(ref)
     const ttl = this.group.membershipCacheTtlSeconds
-    if (ttl === 0) return this.readRepositories(ref)
+    if (ttl === 0) {
+      const read = await pinned(this.readRepositories(ref))
+      assertRootIsStandard()
+      return checked(read)
+    }
 
-    const cached = await this.readCache(ref)
+    const cached = await pinned(this.readCache(ref))
     if (cached !== null && cached.role !== null) {
-      return { kind: 'member', member: { ...ref, role: cached.role } }
+      const member = { kind: 'member', member: { ...ref, role: cached.role } } as const
+      assertRootIsStandard()
+      return checked(member)
     }
 
-    const access = await this.readRepositories(ref)
+    const access = await pinned(this.readRepositories(ref))
     if (cached !== null && access.kind === 'member') {
-      await this.fillCache(ref, cached, access.member.role, ttl)
+      await pinned(this.fillCache(ref, cached, access.member.role, ttl))
     }
-    return access
+    assertRootIsStandard()
+    return checked(access)
   }
 
   /**
@@ -190,18 +201,21 @@ export class WorkspaceAccessService {
       workspaceId: assertWorkspaceId(claimed.workspaceId),
       userId: assertBoundedText('actorUserId', claimed.actorUserId)
     }
-    await this.accountStatus.assertDashboardAccountUsableNow({
-      userId: ref.userId,
-      tenantId: ref.tenantId
-    })
-    const access = await this.readRepositories(ref)
-    assertRootIsStandard()
-    return assertWorkspaceAccess(
+    await pinned(
+      this.accountStatus.assertDashboardAccountUsableNow({
+        userId: ref.userId,
+        tenantId: ref.tenantId
+      })
+    )
+    const access = await pinned(this.readRepositories(ref))
+    const member = assertWorkspaceAccess(
       access,
       roles,
       this.group.roles.hierarchy,
       options.allowPending === true
     )
+    assertRootIsStandard()
+    return checked(member)
   }
 
   /**
@@ -214,8 +228,10 @@ export class WorkspaceAccessService {
    */
   async invalidateMembership(ref: MembershipRef): Promise<void> {
     assertKey(ref)
-    await this.bump(
-      membershipVersionKey(ref.tenantId, ref.workspaceId, ref.userId, this.options.hmacKey)
+    await pinned(
+      this.bump(
+        membershipVersionKey(ref.tenantId, ref.workspaceId, ref.userId, this.options.hmacKey)
+      )
     )
   }
 
@@ -229,26 +245,32 @@ export class WorkspaceAccessService {
    */
   async invalidateWorkspace(ref: WorkspaceRef): Promise<void> {
     assertKey(ref)
-    await this.bump(workspaceVersionKey(ref.tenantId, ref.workspaceId, this.options.hmacKey))
+    await pinned(
+      this.bump(workspaceVersionKey(ref.tenantId, ref.workspaceId, this.options.hmacKey))
+    )
   }
 
   private async bump(key: string): Promise<void> {
-    await this.redis.eval(BUMP_VERSION_SCRIPT, [key], [String(WORKSPACE_VERSION_RETENTION_SECONDS)])
+    await pinned(
+      this.redis.eval(BUMP_VERSION_SCRIPT, [key], [String(WORKSPACE_VERSION_RETENTION_SECONDS)])
+    )
   }
 
   private async readCache(ref: MembershipRef): Promise<MembershipRead | null> {
     try {
       const { hmacKey } = this.options
-      const reply = await this.redis.eval(
-        READ_MEMBERSHIP_SCRIPT,
-        [
-          workspaceVersionKey(ref.tenantId, ref.workspaceId, hmacKey),
-          membershipVersionKey(ref.tenantId, ref.workspaceId, ref.userId, hmacKey),
-          membershipCacheKeyBase(ref.tenantId, ref.workspaceId, ref.userId, hmacKey)
-        ],
-        []
+      const reply = await pinned(
+        this.redis.eval(
+          READ_MEMBERSHIP_SCRIPT,
+          [
+            workspaceVersionKey(ref.tenantId, ref.workspaceId, hmacKey),
+            membershipVersionKey(ref.tenantId, ref.workspaceId, ref.userId, hmacKey),
+            membershipCacheKeyBase(ref.tenantId, ref.workspaceId, ref.userId, hmacKey)
+          ],
+          []
+        )
       )
-      return parseRead(reply)
+      return checked(parseRead(reply))
     } catch {
       // The cache is advisory: an unreachable store must cost a repository read, not a request.
       logEvent(this.logger, 'AUTH_STORE_DEGRADED', { operation: 'workspace_cache_read' })
@@ -265,20 +287,22 @@ export class WorkspaceAccessService {
     const { hmacKey } = this.options
     const base = membershipCacheKeyBase(ref.tenantId, ref.workspaceId, ref.userId, hmacKey)
     try {
-      await this.redis.eval(
-        FILL_MEMBERSHIP_SCRIPT,
-        [
-          workspaceVersionKey(ref.tenantId, ref.workspaceId, hmacKey),
-          membershipVersionKey(ref.tenantId, ref.workspaceId, ref.userId, hmacKey),
-          `${base}:${read.workspaceVersion}:${read.membershipVersion}`
-        ],
-        [
-          stringifyJson({ role, status: 'active' }),
-          String(ttl),
-          String(WORKSPACE_VERSION_RETENTION_SECONDS),
-          read.workspaceVersion,
-          read.membershipVersion
-        ]
+      await pinned(
+        this.redis.eval(
+          FILL_MEMBERSHIP_SCRIPT,
+          [
+            workspaceVersionKey(ref.tenantId, ref.workspaceId, hmacKey),
+            membershipVersionKey(ref.tenantId, ref.workspaceId, ref.userId, hmacKey),
+            `${base}:${read.workspaceVersion}:${read.membershipVersion}`
+          ],
+          [
+            stringifyJson({ role, status: 'active' }),
+            String(ttl),
+            String(WORKSPACE_VERSION_RETENTION_SECONDS),
+            read.workspaceVersion,
+            read.membershipVersion
+          ]
+        )
       )
     } catch {
       logEvent(this.logger, 'AUTH_STORE_DEGRADED', { operation: 'workspace_cache_write' })
@@ -293,10 +317,24 @@ export class WorkspaceAccessService {
    * answer for an owner is decided from these same two rows.
    */
   private async readRepositories(ref: MembershipRef): Promise<WorkspaceAccess> {
-    const [workspace, membership] = await Promise.all([
-      this.workspaceRepo.findById({ tenantId: ref.tenantId, workspaceId: ref.workspaceId }),
-      this.membershipRepo.find(ref)
-    ])
+    // Both reads start before either is awaited; the answers are never combined by a static of `Promise`.
+    const workspaceRead = started(
+      this.workspaceRepo.findById({ tenantId: ref.tenantId, workspaceId: ref.workspaceId })
+    )
+    const membershipRead = started(this.membershipRepo.find(ref))
+    const workspace = (await awaiting(workspaceRead)).value
+    const membership = (await awaiting(membershipRead)).value
+    const access = this.accessFrom(ref, workspace, membership)
+    // The answer is read for `then` when it is returned, so the root is checked as the last statement before the return.
+    assertRootIsStandard()
+    return checked(access)
+  }
+
+  private accessFrom(
+    ref: MembershipRef,
+    workspace: AuthWorkspace | null,
+    membership: AuthMembership | null
+  ): WorkspaceAccess {
     if (membership?.status !== 'active' || workspace === null) return { kind: 'denied' }
     // What the repository answered must be the row that was asked about, in the tenant, the workspace and for the user:
     // the key it was given is not a proof of the row it returned, and another row is never access.

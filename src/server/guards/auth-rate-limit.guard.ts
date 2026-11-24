@@ -20,6 +20,7 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { resolveClientAddress } from '../utils/client-address'
 import { rateLimitBucket } from '../utils/rate-limit-bucket'
+import { pinned, PinnedMethods } from '../utils/settle'
 
 /** Milliseconds in one second, for the window and `Retry-After` conversions. */
 const MS_PER_SECOND = 1_000
@@ -56,6 +57,7 @@ const MS_PER_SECOND = 1_000
 const UNKNOWN_CLIENT = 'unknown'
 
 @Injectable()
+@PinnedMethods('canActivate')
 export class AuthRateLimitGuard implements CanActivate {
   constructor(
     @Inject(Reflector) private readonly reflector: Reflector,
@@ -76,7 +78,7 @@ export class AuthRateLimitGuard implements CanActivate {
     const windowSeconds = Math.max(1, Math.ceil(limit.ttl / MS_PER_SECOND))
     const key = this.counterKey(request, context)
 
-    const hits = await this.redis.incrWithFixedTtl(key, windowSeconds)
+    const hits = await pinned(this.redis.incrWithFixedTtl(key, windowSeconds))
     if (hits <= limit.limit) return true
 
     // `Retry-After` is the window length, not the remaining time: the remaining time would

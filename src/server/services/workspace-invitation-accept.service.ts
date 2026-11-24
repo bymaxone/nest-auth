@@ -49,6 +49,7 @@ import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
+import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** What a signed-in acceptance answers: where the caller now belongs, and as what. */
 export interface AcceptedInvitation {
@@ -95,6 +96,7 @@ export interface LoadedInvitation {
  * membership, which counts as success, so the invitee is never left without the invitation they
  * were promised and the token cannot be used twice by anyone but the one address it names.
  */
+@PinnedAll()
 @Injectable()
 export class WorkspaceInvitationAcceptService {
   private readonly logger = new Logger(WorkspaceInvitationAcceptService.name)
@@ -142,13 +144,13 @@ export class WorkspaceInvitationAcceptService {
     token: string,
     context: HookContext
   ): Promise<AcceptedInvitation> {
-    const loaded = await this.load(token)
-    const user = await this.users.findById({ id: caller.sub, tenantId: caller.tenantId })
+    const loaded = await pinned(this.load(token))
+    const user = await pinned(this.users.findById({ id: caller.sub, tenantId: caller.tenantId }))
     if (user === null) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     if (user.tenantId !== loaded.record.tenantId) throw invalidToken()
     assertAddress(loaded.record, user.email, user.emailVerified)
-    await this.assertStillGrantable(loaded.record)
-    return this.finish(loaded, user, context)
+    await pinned(this.assertStillGrantable(loaded.record))
+    return checked(await pinned(this.finish(loaded, user, context)))
   }
 
   /**
@@ -168,11 +170,11 @@ export class WorkspaceInvitationAcceptService {
     tenantId: string,
     profile: { email: string; emailVerified: boolean }
   ): Promise<LoadedInvitation> {
-    const loaded = await this.loadByHash(tokenHash)
+    const loaded = await pinned(this.loadByHash(tokenHash))
     if (loaded.record.tenantId !== tenantId) throw invalidToken()
     assertAddress(loaded.record, profile.email, profile.emailVerified)
-    await this.assertStillGrantable(loaded.record)
-    return loaded
+    await pinned(this.assertStillGrantable(loaded.record))
+    return checked(loaded)
   }
 
   /**
@@ -201,11 +203,11 @@ export class WorkspaceInvitationAcceptService {
     created: boolean,
     context: HookContext
   ): Promise<AcceptedInvitation> {
-    const current = await this.loadByHash(loaded.tokenHash)
+    const current = await pinned(this.loadByHash(loaded.tokenHash))
     if (user.tenantId !== current.record.tenantId) throw invalidToken()
     assertAddress(current.record, user.email, user.emailVerified)
-    await this.assertStillGrantable(current.record)
-    const accepted = await this.finish(current, user, context)
+    await pinned(this.assertStillGrantable(current.record))
+    const accepted = await pinned(this.finish(current, user, context))
     if (created) {
       runDetached(
         this.logger,
@@ -213,7 +215,7 @@ export class WorkspaceInvitationAcceptService {
         'afterInvitationAccepted'
       )
     }
-    return accepted
+    return checked(accepted)
   }
 
   /**
@@ -230,16 +232,16 @@ export class WorkspaceInvitationAcceptService {
     dto: AcceptWorkspaceInvitationSignupDto,
     request: SignupRequest
   ): Promise<AcceptedSignup> {
-    const loaded = await this.load(dto.token)
-    await this.assertStillGrantable(loaded.record)
+    const loaded = await pinned(this.load(dto.token))
+    await pinned(this.assertStillGrantable(loaded.record))
     const { email, tenantId } = loaded.record
-    if ((await this.users.findByEmail({ email, tenantId })) !== null) {
+    if ((await pinned(this.users.findByEmail({ email, tenantId }))) !== null) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
     // Judged before anything is written or spent: a refused password is the invitee's mistake to
     // correct, and the invitation must still be there when they do.
-    await this.passwords.assertAcceptable(dto.password, 'password')
-    const created = await this.createAccount(dto, email, tenantId)
+    await pinned(this.passwords.assertAcceptable(dto.password, 'password'))
+    const created = await pinned(this.createAccount(dto, email, tenantId))
     const context: HookContext = {
       plane: 'dashboard',
       tenantId,
@@ -248,8 +250,11 @@ export class WorkspaceInvitationAcceptService {
       userAgent: request.userAgent,
       sanitizedHeaders: sanitizeHeaders(request.headers)
     }
-    const accepted = await this.finish(loaded, created, context)
-    return { result: await this.signIn(toSafeUser(created), request, context), accepted }
+    const accepted = await pinned(this.finish(loaded, created, context))
+    return checked({
+      result: await pinned(this.signIn(toSafeUser(created), request, context)),
+      accepted
+    })
   }
 
   /**
@@ -261,18 +266,22 @@ export class WorkspaceInvitationAcceptService {
     email: string,
     tenantId: string
   ): Promise<AuthUser> {
-    const passwordHash = await this.passwords.hash(dto.password)
+    const passwordHash = await pinned(this.passwords.hash(dto.password))
     try {
       // The invitation reached this address, which is what verification proves.
-      return await this.users.create({
-        email,
-        name: dto.name,
-        passwordHash,
-        tenantId,
-        emailVerified: true
-      })
+      return checked(
+        await pinned(
+          this.users.create({
+            email,
+            name: dto.name,
+            passwordHash,
+            tenantId,
+            emailVerified: true
+          })
+        )
+      )
     } catch (error: unknown) {
-      if ((await this.users.findByEmail({ email, tenantId })) !== null) {
+      if ((await pinned(this.users.findByEmail({ email, tenantId }))) !== null) {
         throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
       }
       throw error
@@ -281,14 +290,14 @@ export class WorkspaceInvitationAcceptService {
 
   /** Reads the record a token names, or refuses a token that names nothing usable. */
   private async load(token: string): Promise<LoadedInvitation> {
-    return this.loadByHash(sha256(token))
+    return checked(await pinned(this.loadByHash(sha256(token))))
   }
 
   /** Reads the record a token's hash names, or refuses a hash that names nothing usable. */
   private async loadByHash(tokenHash: string): Promise<LoadedInvitation> {
-    const record = await this.store.readByHash(tokenHash)
+    const record = await pinned(this.store.readByHash(tokenHash))
     if (record === null || !this.grantsAKnownRole(record)) throw invalidToken()
-    return { tokenHash, key: `winv:${tokenHash}`, record }
+    return checked({ tokenHash, key: `winv:${tokenHash}`, record })
   }
 
   /** A member record grants a role of the hierarchy; a bootstrap record grants the owner role. */
@@ -307,7 +316,7 @@ export class WorkspaceInvitationAcceptService {
    */
   private async assertStillGrantable(record: StoredWorkspaceInvitation): Promise<void> {
     const ref = refOf(record)
-    const workspace = await this.workspaces.findById(ref)
+    const workspace = await pinned(this.workspaces.findById(ref))
     if (record.kind === 'bootstrap') {
       // A bootstrap invitation is accepted before its workspace exists, or again after it was
       // created but before the token was spent.
@@ -315,11 +324,13 @@ export class WorkspaceInvitationAcceptService {
       return
     }
     if (workspace?.status !== 'active') throw invalidToken()
-    const inviter = await this.users.findById({
-      id: record.inviterUserId,
-      tenantId: record.tenantId
-    })
-    const membership = await this.memberships.find({ ...ref, userId: record.inviterUserId })
+    const inviter = await pinned(
+      this.users.findById({
+        id: record.inviterUserId,
+        tenantId: record.tenantId
+      })
+    )
+    const membership = await pinned(this.memberships.find({ ...ref, userId: record.inviterUserId }))
     const stands =
       inviter !== null &&
       isInGoodStanding(inviter, this.options.blockedStatuses) &&
@@ -347,9 +358,9 @@ export class WorkspaceInvitationAcceptService {
   ): Promise<AcceptedInvitation> {
     const { record } = loaded
     const ref = refOf(record)
-    const role = await this.join(record, user, context)
-    const spent = await this.store.remove(ref, record.email, loaded.key)
-    await this.access.invalidateMembership({ ...ref, userId: user.id })
+    const role = await pinned(this.join(record, user, context))
+    const spent = await pinned(this.store.remove(ref, record.email, loaded.key))
+    await pinned(this.access.invalidateMembership({ ...ref, userId: user.id }))
     this.events.emit(
       {
         type: 'invitation.accepted',
@@ -363,7 +374,7 @@ export class WorkspaceInvitationAcceptService {
       },
       context
     )
-    return { workspaceId: record.workspaceId, role }
+    return checked({ workspaceId: record.workspaceId, role })
   }
 
   /**
@@ -378,28 +389,31 @@ export class WorkspaceInvitationAcceptService {
   ): Promise<string> {
     const ref = refOf(record)
     const at = new Date(Date.now()).toISOString()
-    if (record.kind === 'bootstrap') return this.createOwned(record, user, at, context)
-    const created = await this.memberships.create({
-      ...ref,
-      userId: user.id,
-      role: record.role,
-      invitedByUserId: record.inviterUserId,
-      audit: {
-        type: 'invitation.accepted',
+    if (record.kind === 'bootstrap')
+      return checked(await pinned(this.createOwned(record, user, at, context)))
+    const created = await pinned(
+      this.memberships.create({
         ...ref,
-        actorUserId: user.id,
-        email: record.email,
-        role: record.role,
         userId: user.id,
-        at
-      }
-    })
+        role: record.role,
+        invitedByUserId: record.inviterUserId,
+        audit: {
+          type: 'invitation.accepted',
+          ...ref,
+          actorUserId: user.id,
+          email: record.email,
+          role: record.role,
+          userId: user.id,
+          at
+        }
+      })
+    )
     if (created === 'workspace_not_found') throw invalidToken()
     if (created === 'ok') return record.role
     // Already a member: the invitation is spent and changes nothing, so the answer is the role
     // they hold, not the one the invitation offered. A membership that is not active is not one
     // the invitation can reinstate, and it is not spent for it.
-    const existing = await this.memberships.find({ ...ref, userId: user.id })
+    const existing = await pinned(this.memberships.find({ ...ref, userId: user.id }))
     if (existing?.status !== 'active') throw invalidToken()
     return existing.role
   }
@@ -412,24 +426,26 @@ export class WorkspaceInvitationAcceptService {
     context: HookContext
   ): Promise<string> {
     const ref = refOf(record)
-    const existing = await this.workspaces.findById(ref)
+    const existing = await pinned(this.workspaces.findById(ref))
     if (existing !== null) {
       // Created by an earlier attempt that did not get to spend the token. It is read again here,
       // so it is judged again: a workspace that stopped being active in between is not joined.
       if (existing.status !== 'active') throw invalidToken()
-      const member = await this.memberships.find({ ...ref, userId: user.id })
+      const member = await pinned(this.memberships.find({ ...ref, userId: user.id }))
       if (member?.status !== 'active' || member.role !== record.role) throw invalidToken()
       return record.role
     }
-    await this.assertMayOwnAnother(record, user, context)
-    const created = await this.workspaces.createWithOwner({
-      ...ref,
-      name: record.workspaceName,
-      ownerUserId: user.id,
-      ownerRole: record.role,
-      maxWorkspacesPerUser: this.group.maxWorkspacesPerUser,
-      audit: { type: 'workspace.created', ...ref, actorUserId: user.id, at }
-    })
+    await pinned(this.assertMayOwnAnother(record, user, context))
+    const created = await pinned(
+      this.workspaces.createWithOwner({
+        ...ref,
+        name: record.workspaceName,
+        ownerUserId: user.id,
+        ownerRole: record.role,
+        maxWorkspacesPerUser: this.group.maxWorkspacesPerUser,
+        audit: { type: 'workspace.created', ...ref, actorUserId: user.id, at }
+      })
+    )
     if (created.status === 'limit_reached') {
       throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED)
     }
@@ -453,19 +469,19 @@ export class WorkspaceInvitationAcceptService {
   ): Promise<void> {
     const { maxWorkspacesPerUser } = this.group
     if (maxWorkspacesPerUser > 0) {
-      const owned = await this.memberships.countOwned({
-        tenantId: record.tenantId,
-        userId: user.id,
-        ownerRole: record.role
-      })
+      const owned = await pinned(
+        this.memberships.countOwned({
+          tenantId: record.tenantId,
+          userId: user.id,
+          ownerRole: record.role
+        })
+      )
       if (owned >= maxWorkspacesPerUser) {
         throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED)
       }
     }
-    const verdict = await this.hooks.beforeWorkspaceCreate?.(
-      toSafeUser(user),
-      { name: record.workspaceName },
-      context
+    const verdict = await pinned(
+      this.hooks.beforeWorkspaceCreate?.(toSafeUser(user), { name: record.workspaceName }, context)
     )
     if (verdict !== undefined && !verdict.allowed) {
       throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN, [
@@ -480,27 +496,26 @@ export class WorkspaceInvitationAcceptService {
     request: SignupRequest,
     context: HookContext
   ): Promise<AuthResult> {
-    const result = await this.tokens.issueTokens(
-      user,
-      request.ip,
-      request.userAgent,
-      CREDENTIAL_PROVED
+    const result = await pinned(
+      this.tokens.issueTokens(user, request.ip, request.userAgent, CREDENTIAL_PROVED)
     )
     if (this.options.sessions.enabled) {
-      await this.sessions.createSession({
-        userId: user.id,
-        tenantId: user.tenantId,
-        rawRefreshToken: result.rawRefreshToken,
-        ip: request.ip,
-        userAgent: request.userAgent
-      })
+      await pinned(
+        this.sessions.createSession({
+          userId: user.id,
+          tenantId: user.tenantId,
+          rawRefreshToken: result.rawRefreshToken,
+          ip: request.ip,
+          userAgent: request.userAgent
+        })
+      )
     }
     runDetached(
       this.logger,
       () => this.hooks.afterInvitationAccepted?.(user, context),
       'afterInvitationAccepted'
     )
-    return result
+    return checked(result)
   }
 }
 

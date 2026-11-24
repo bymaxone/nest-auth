@@ -16,6 +16,8 @@ import { sessionIndexKey, tokenEpochKey } from '../constants/user-keys'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
+import { checked, pinned } from '../utils/settle'
+import { isWsTicketSnapshot } from '../utils/ws-ticket-snapshot'
 
 /**
  * Entropy of a freshly-minted WebSocket ticket, in bytes (256-bit, like the opaque refresh
@@ -352,7 +354,7 @@ export class AuthRedisService {
    * @returns The stored string, or `null` if the key does not exist.
    */
   async get(key: string): Promise<string | null> {
-    return this.#redis.get(this.prefix(key))
+    return checked(await pinned(this.#redis.get(this.prefix(key))))
   }
 
   /**
@@ -364,9 +366,9 @@ export class AuthRedisService {
    */
   async set(key: string, value: string, ttl?: number): Promise<void> {
     if (ttl !== undefined) {
-      await this.#redis.set(this.prefix(key), value, 'EX', ttl)
+      await pinned(this.#redis.set(this.prefix(key), value, 'EX', ttl))
     } else {
-      await this.#redis.set(this.prefix(key), value)
+      await pinned(this.#redis.set(this.prefix(key), value))
     }
   }
 
@@ -379,7 +381,7 @@ export class AuthRedisService {
     // Redis answers `DEL` with the number of keys it removed. Returning it lets a caller that
     // needs exactly-once semantics — consuming an MFA temp token, say — tell "I removed it"
     // from "someone else already had". Callers that only want the key gone can ignore it.
-    const removed = await this.#redis.del(this.prefix(key))
+    const removed = await pinned(this.#redis.del(this.prefix(key)))
     return typeof removed === 'number' && removed > 0
   }
 
@@ -397,7 +399,7 @@ export class AuthRedisService {
    * @returns `true` if the key was newly set, `false` if it already existed.
    */
   async setnx(key: string, ttl: number): Promise<boolean> {
-    const result = await this.#redis.set(this.prefix(key), '1', 'EX', ttl, 'NX')
+    const result = await pinned(this.#redis.set(this.prefix(key), '1', 'EX', ttl, 'NX'))
     return result === 'OK'
   }
 
@@ -412,7 +414,7 @@ export class AuthRedisService {
    * @returns The value of the key after the increment.
    */
   async incr(key: string): Promise<number> {
-    return this.#redis.incr(this.prefix(key))
+    return checked(await pinned(this.#redis.incr(this.prefix(key))))
   }
 
   /**
@@ -422,7 +424,7 @@ export class AuthRedisService {
    * @param ttl - New time-to-live in seconds.
    */
   async expire(key: string, ttl: number): Promise<void> {
-    await this.#redis.expire(this.prefix(key), ttl)
+    await pinned(this.#redis.expire(this.prefix(key), ttl))
   }
 
   /**
@@ -433,7 +435,7 @@ export class AuthRedisService {
    *   does not exist.
    */
   async ttl(key: string): Promise<number> {
-    return this.#redis.ttl(this.prefix(key))
+    return checked(await pinned(this.#redis.ttl(this.prefix(key))))
   }
 
   // ---------------------------------------------------------------------------
@@ -448,7 +450,7 @@ export class AuthRedisService {
    * @returns `1` if the member was added, `0` if it already existed.
    */
   async sadd(setKey: string, member: string): Promise<number> {
-    return this.#redis.sadd(this.prefix(setKey), member)
+    return checked(await pinned(this.#redis.sadd(this.prefix(setKey), member)))
   }
 
   /**
@@ -459,7 +461,7 @@ export class AuthRedisService {
    * @returns `1` if the member was removed, `0` if it did not exist.
    */
   async srem(setKey: string, member: string): Promise<number> {
-    return this.#redis.srem(this.prefix(setKey), member)
+    return checked(await pinned(this.#redis.srem(this.prefix(setKey), member)))
   }
 
   /**
@@ -469,7 +471,7 @@ export class AuthRedisService {
    * @returns Array of member strings (empty array if the key does not exist).
    */
   async smembers(setKey: string): Promise<string[]> {
-    return this.#redis.smembers(this.prefix(setKey))
+    return checked(await pinned(this.#redis.smembers(this.prefix(setKey))))
   }
 
   /**
@@ -480,7 +482,7 @@ export class AuthRedisService {
    * @returns `true` if the member is in the set, `false` otherwise.
    */
   async sismember(setKey: string, member: string): Promise<boolean> {
-    const result = await this.#redis.sismember(this.prefix(setKey), member)
+    const result = await pinned(this.#redis.sismember(this.prefix(setKey), member))
     return result === 1
   }
 
@@ -504,7 +506,9 @@ export class AuthRedisService {
    */
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const prefixedKeys = keys.map((k) => this.prefix(k))
-    return this.#redis.eval(script, prefixedKeys.length, ...prefixedKeys, ...args)
+    return checked(
+      await pinned(this.#redis.eval(script, prefixedKeys.length, ...prefixedKeys, ...args))
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -535,38 +539,40 @@ export class AuthRedisService {
    */
   async rotateRefreshSession(params: RefreshRotationParams): Promise<RefreshRotationOutcome> {
     const p = prefixesFor(params.kind)
-    const raw = await this.eval(
-      ROTATE_LUA,
-      [
-        `${p.live}:${params.oldHash}`,
-        `${p.live}:${params.newHash}`,
-        `${p.grace}:${params.oldHash}`,
-        `${p.consumed}:${params.oldHash}`,
-        `${p.family}:${params.familyId}`,
-        sessionIndexKey(params.kind, params.userId, this.#hmacKey, params.tenantId)
-      ],
-      [
-        params.newSessionJson,
-        String(params.refreshTtl),
-        String(params.graceTtl),
-        params.familyId,
-        params.oldHash,
-        params.newHash,
-        this.prefix(p.live),
-        p.live,
-        p.grace
-      ]
+    const raw = await pinned(
+      this.eval(
+        ROTATE_LUA,
+        [
+          `${p.live}:${params.oldHash}`,
+          `${p.live}:${params.newHash}`,
+          `${p.grace}:${params.oldHash}`,
+          `${p.consumed}:${params.oldHash}`,
+          `${p.family}:${params.familyId}`,
+          sessionIndexKey(params.kind, params.userId, this.#hmacKey, params.tenantId)
+        ],
+        [
+          params.newSessionJson,
+          String(params.refreshTtl),
+          String(params.graceTtl),
+          params.familyId,
+          params.oldHash,
+          params.newHash,
+          this.prefix(p.live),
+          p.live,
+          p.grace
+        ]
+      )
     )
-    if (typeof raw !== 'string') return { kind: 'invalid' }
+    if (typeof raw !== 'string') return checked({ kind: 'invalid' })
     if (raw.startsWith(GRACE_TAG)) {
       const sessionJson = raw.slice(GRACE_TAG.length)
-      const alive = await this.familyIsAlive(sessionJson, p.family)
-      return alive ? { kind: 'grace', sessionJson } : { kind: 'invalid' }
+      const alive = await pinned(this.familyIsAlive(sessionJson, p.family))
+      return checked(alive ? { kind: 'grace', sessionJson } : { kind: 'invalid' })
     }
     if (raw.startsWith(REUSED_TAG)) {
-      return { kind: 'reused', familyId: raw.slice(REUSED_TAG.length) }
+      return checked({ kind: 'reused', familyId: raw.slice(REUSED_TAG.length) })
     }
-    return { kind: 'rotated', sessionJson: raw }
+    return checked({ kind: 'rotated', sessionJson: raw })
   }
 
   /**
@@ -591,24 +597,26 @@ export class AuthRedisService {
   }): Promise<void> {
     const p = prefixesFor(params.kind)
     const extra = sessionExtraArgs(params.extras ?? [])
-    await this.eval(
-      CREATE_SESSION_LUA,
-      [
-        `${p.live}:${params.tokenHash}`,
-        sessionIndexKey(params.kind, params.userId, this.#hmacKey, params.tenantId),
-        // Always passed, even with no family: a Lua script's key list is fixed at the call
-        // site, and the script skips the key rather than the caller skipping the argument.
-        `${p.family}:${params.familyId}`,
-        ...extra.keys
-      ],
-      [
-        params.sessionJson,
-        String(params.refreshTtl),
-        params.familyId,
-        p.live,
-        params.tokenHash,
-        ...extra.argv
-      ]
+    await pinned(
+      this.eval(
+        CREATE_SESSION_LUA,
+        [
+          `${p.live}:${params.tokenHash}`,
+          sessionIndexKey(params.kind, params.userId, this.#hmacKey, params.tenantId),
+          // Always passed, even with no family: a Lua script's key list is fixed at the call
+          // site, and the script skips the key rather than the caller skipping the argument.
+          `${p.family}:${params.familyId}`,
+          ...extra.keys
+        ],
+        [
+          params.sessionJson,
+          String(params.refreshTtl),
+          params.familyId,
+          p.live,
+          params.tokenHash,
+          ...extra.argv
+        ]
+      )
     )
   }
 
@@ -635,14 +643,16 @@ export class AuthRedisService {
     refreshTtl: number
   }): Promise<boolean> {
     const p = prefixesFor(params.kind)
-    const written = await this.eval(
-      RECOVER_GRACE_LUA,
-      [
-        `${p.live}:${params.newHash}`,
-        sessionIndexKey(params.kind, params.userId, this.#hmacKey, params.tenantId),
-        `${p.family}:${params.familyId}`
-      ],
-      [params.newSessionJson, String(params.refreshTtl), params.familyId, p.live, params.newHash]
+    const written = await pinned(
+      this.eval(
+        RECOVER_GRACE_LUA,
+        [
+          `${p.live}:${params.newHash}`,
+          sessionIndexKey(params.kind, params.userId, this.#hmacKey, params.tenantId),
+          `${p.family}:${params.familyId}`
+        ],
+        [params.newSessionJson, String(params.refreshTtl), params.familyId, p.live, params.newHash]
+      )
     )
     // Narrowed rather than compared straight to `1`. `eval` answers `unknown`, and a client
     // that surfaced the Lua integer reply as a string would make `=== 1` false — reporting a
@@ -677,7 +687,7 @@ export class AuthRedisService {
       // Reporting it as a dead family here would be a misleading theft signal.
     }
     if (typeof familyId !== 'string' || familyId === '') return true
-    const present = await this.#redis.exists(this.prefix(`${familyPrefix}:${familyId}`))
+    const present = await pinned(this.#redis.exists(this.prefix(`${familyPrefix}:${familyId}`)))
     return present === 1
   }
 
@@ -706,10 +716,10 @@ export class AuthRedisService {
     familyId: string,
     kind: 'dashboard' | 'platform' = 'dashboard'
   ): Promise<{ removed: number; ownerId: string }> {
-    if (familyId === '') return { removed: 0, ownerId: '' }
+    if (familyId === '') return checked({ removed: 0, ownerId: '' })
     const p = prefixesFor(kind)
-    const members = await this.smembers(`${p.family}:${familyId}`)
-    const { userId: ownerId, tenantId } = await this.readFamilyOwner(members, p.live)
+    const members = await pinned(this.smembers(`${p.family}:${familyId}`))
+    const { userId: ownerId, tenantId } = await pinned(this.readFamilyOwner(members, p.live))
 
     // No owner, or a dashboard owner whose record names no tenant, means NO index to prune —
     // the same answer logout gives a pre-upgrade record, and for the same reason. Deriving one
@@ -721,12 +731,14 @@ export class AuthRedisService {
     const indexKey = nameable
       ? this.prefix(sessionIndexKey(kind, ownerId, this.#hmacKey, tenantId))
       : ''
-    const removed = await this.eval(
-      REVOKE_FAMILY_LUA,
-      [`${p.family}:${familyId}`],
-      [this.namespace, p.live, p.detail, indexKey]
+    const removed = await pinned(
+      this.eval(
+        REVOKE_FAMILY_LUA,
+        [`${p.family}:${familyId}`],
+        [this.namespace, p.live, p.detail, indexKey]
+      )
     )
-    return { removed: typeof removed === 'number' ? removed : 0, ownerId }
+    return checked({ removed: typeof removed === 'number' ? removed : 0, ownerId })
   }
 
   /**
@@ -753,7 +765,7 @@ export class AuthRedisService {
     livePrefix: string
   ): Promise<{ userId: string; tenantId: string | undefined }> {
     for (const hash of members) {
-      const record = await this.get(`${livePrefix}:${hash}`)
+      const record = await pinned(this.get(`${livePrefix}:${hash}`))
       if (record === null) continue
       let parsed: Record<string, unknown> | undefined
       try {
@@ -765,10 +777,10 @@ export class AuthRedisService {
       const userId = parsed?.['userId']
       if (typeof userId === 'string' && userId !== '') {
         const tenantId = parsed?.['tenantId']
-        return { userId, tenantId: typeof tenantId === 'string' ? tenantId : undefined }
+        return checked({ userId, tenantId: typeof tenantId === 'string' ? tenantId : undefined })
       }
     }
-    return { userId: '', tenantId: undefined }
+    return checked({ userId: '', tenantId: undefined })
   }
 
   // ---------------------------------------------------------------------------
@@ -785,10 +797,12 @@ export class AuthRedisService {
    * @returns The value of the key before deletion, or `null` if it did not exist.
    */
   async getdel(key: string): Promise<string | null> {
-    const result = await this.eval(
-      `local v = redis.call('GET', KEYS[1]); if v then redis.call('DEL', KEYS[1]) end; return v`,
-      [key],
-      []
+    const result = await pinned(
+      this.eval(
+        `local v = redis.call('GET', KEYS[1]); if v then redis.call('DEL', KEYS[1]) end; return v`,
+        [key],
+        []
+      )
     )
     return typeof result === 'string' ? result : null
   }
@@ -808,7 +822,7 @@ export class AuthRedisService {
    * @returns `true` if the key was newly set, `false` if it already existed.
    */
   async setIfAbsent(key: string, value: string, ttl: number): Promise<boolean> {
-    const result = await this.#redis.set(this.prefix(key), value, 'EX', ttl, 'NX')
+    const result = await pinned(this.#redis.set(this.prefix(key), value, 'EX', ttl, 'NX'))
     return result === 'OK'
   }
 
@@ -842,8 +856,9 @@ export class AuthRedisService {
    * @returns How many dead members were dropped.
    */
   async pruneExpiredGraceMembers(setKey: string, gracePrefix: string): Promise<number> {
-    const removed = await this.eval(
-      `local members = redis.call('SMEMBERS', KEYS[1])
+    const removed = await pinned(
+      this.eval(
+        `local members = redis.call('SMEMBERS', KEYS[1])
        local ns, grace = ARGV[1], ARGV[2]
        local removed = 0
        for _, member in ipairs(members) do
@@ -857,8 +872,9 @@ export class AuthRedisService {
          end
        end
        return removed`,
-      [setKey],
-      [this.namespace, gracePrefix]
+        [setKey],
+        [this.namespace, gracePrefix]
+      )
     )
     // Narrowed rather than cast: `eval` answers `unknown`, and a client that surfaced the Lua
     // integer reply as a string would make a numeric read `NaN`.
@@ -892,8 +908,9 @@ export class AuthRedisService {
   async pruneDeadMembers(setKey: string, members: string[]): Promise<number> {
     if (members.length === 0) return 0
 
-    const removed = await this.eval(
-      `local ns = ARGV[1]
+    const removed = await pinned(
+      this.eval(
+        `local ns = ARGV[1]
        local removed = 0
        for i = 2, #ARGV do
          -- The member IS the key suffix, so its own liveness is one EXISTS away.
@@ -903,8 +920,9 @@ export class AuthRedisService {
          end
        end
        return removed`,
-      [setKey],
-      [this.namespace, ...members]
+        [setKey],
+        [this.namespace, ...members]
+      )
     )
     // Narrowed rather than cast, for the reason given on `pruneExpiredGraceMembers`.
     if (typeof removed === 'number') return removed
@@ -939,8 +957,9 @@ export class AuthRedisService {
     gracePrefix: string,
     detailPrefix: string
   ): Promise<void> {
-    await this.eval(
-      `local members = redis.call('SMEMBERS', KEYS[1])
+    await pinned(
+      this.eval(
+        `local members = redis.call('SMEMBERS', KEYS[1])
        local ns, live, grace, detail = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
        for _, member in ipairs(members) do
          local isLive = string.sub(member, 1, string.len(live)) == live
@@ -955,8 +974,9 @@ export class AuthRedisService {
        if redis.call('SCARD', KEYS[1]) == 0 then
          redis.call('DEL', KEYS[1])
        end`,
-      [setKey],
-      [this.namespace, livePrefix, gracePrefix, detailPrefix]
+        [setKey],
+        [this.namespace, livePrefix, gracePrefix, detailPrefix]
+      )
     )
   }
 
@@ -980,11 +1000,11 @@ export class AuthRedisService {
   ): Promise<void> {
     const key = sessionIndexKey(kind, userId, this.#hmacKey, tenantId)
     if (kind === 'platform') {
-      await this.sweepSessionIndex(key, 'prt:', 'prp:', 'psd:')
+      await pinned(this.sweepSessionIndex(key, 'prt:', 'prp:', 'psd:'))
       return
     }
 
-    await this.sweepSessionIndex(key, 'rt:', 'rp:', 'sd:')
+    await pinned(this.sweepSessionIndex(key, 'rt:', 'rp:', 'sd:'))
   }
 
   /**
@@ -1001,12 +1021,14 @@ export class AuthRedisService {
    * @returns The value of the counter after incrementing.
    */
   async incrWithFixedTtl(key: string, ttl: number): Promise<number> {
-    const result = await this.eval(
-      `local v = redis.call('INCR', KEYS[1])
+    const result = await pinned(
+      this.eval(
+        `local v = redis.call('INCR', KEYS[1])
        if v == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
        return v`,
-      [key],
-      [String(ttl)]
+        [key],
+        [String(ttl)]
+      )
     )
     return typeof result === 'number' ? result : 0
   }
@@ -1041,7 +1063,7 @@ export class AuthRedisService {
     tenantId: string | undefined,
     kind: 'dashboard' | 'platform'
   ): Promise<number> {
-    const raw = await this.get(tokenEpochKey(kind, userId, this.#hmacKey, tenantId))
+    const raw = await pinned(this.get(tokenEpochKey(kind, userId, this.#hmacKey, tenantId)))
     // `Number(null)` is 0, which is exactly the "never bumped" default, so an absent key needs
     // no branch of its own. Anything that is not a whole number — a corrupt value, a float —
     // reads as 0 too: comparing a stamped epoch against NaN is always false, which would
@@ -1074,18 +1096,18 @@ export class AuthRedisService {
    */
   async readSessionOwner(key: string): Promise<{ userId: string; tenantId: string | undefined }> {
     const none = { userId: '', tenantId: undefined }
-    const raw = await this.get(key)
-    if (raw === null) return none
+    const raw = await pinned(this.get(key))
+    if (raw === null) return checked(none)
     try {
       const parsed: unknown = parseJson(raw)
       // Stryker disable next-line ConditionalExpression,LogicalOperator: defensive shape guard
       // fully masked by what follows — a scalar reads `['userId']` as `undefined` and fails the
       // string test, and `null` throws on the index and is caught below. Every mutant of it
       // returns the same empty owner through a different path
-      if (typeof parsed !== 'object' || parsed === null) return none
+      if (typeof parsed !== 'object' || parsed === null) return checked(none)
       const record = parsed as Record<string, unknown>
       const userId = record['userId']
-      if (typeof userId !== 'string') return none
+      if (typeof userId !== 'string') return checked(none)
       const tenantId = record['tenantId']
       // A BLANK tenant is normalised to absent, not returned as a usable value. Callers test
       // presence to decide whether they can name an index, and `''` builds `dashboard:0::{userId}`
@@ -1093,14 +1115,14 @@ export class AuthRedisService {
       // as a string made `AuthService.logout`'s `tenantId !== undefined` check pass and then miss
       // the real index, leaving the member and its detail record behind. One shape of "no tenant"
       // at the boundary means every caller downstream gets the same answer.
-      return {
+      return checked({
         userId,
         tenantId: typeof tenantId === 'string' && tenantId !== '' ? tenantId : undefined
-      }
+      })
     } catch {
       // A malformed record names nobody. The session parser reports it on the paths that
       // need to fail loudly; here the caller only wants an owner or the absence of one.
-      return none
+      return checked(none)
     }
   }
 
@@ -1133,12 +1155,14 @@ export class AuthRedisService {
     // still inside their lifetime, and `getUserTokenEpoch` would answer 0 — under which
     // `stamped < epoch` is false for every token and the revocation quietly stops applying.
     // rust-auth has always issued the unconditional `EXPIRE`; this is the same contract.
-    const result = await this.eval(
-      `local v = redis.call('INCR', KEYS[1])
+    const result = await pinned(
+      this.eval(
+        `local v = redis.call('INCR', KEYS[1])
        redis.call('EXPIRE', KEYS[1], ARGV[1])
        return v`,
-      [key],
-      [String(TOKEN_EPOCH_RETENTION_SECONDS)]
+        [key],
+        [String(TOKEN_EPOCH_RETENTION_SECONDS)]
+      )
     )
     return typeof result === 'number' ? result : 0
   }
@@ -1166,7 +1190,7 @@ export class AuthRedisService {
    */
   async mintWsTicket(snapshot: WsTicketSnapshot, ttlSeconds: number): Promise<string> {
     const ticket = generateSecureToken(WS_TICKET_ENTROPY_BYTES)
-    await this.set(`wst:${sha256(ticket)}`, stringifyJson(snapshot), ttlSeconds)
+    await pinned(this.set(`wst:${sha256(ticket)}`, stringifyJson(snapshot), ttlSeconds))
     return ticket
   }
 
@@ -1181,48 +1205,15 @@ export class AuthRedisService {
    * @returns The bound snapshot, or `null` when the ticket cannot be redeemed.
    */
   async redeemWsTicket(ticket: string): Promise<WsTicketSnapshot | null> {
-    const raw = await this.getdel(`wst:${sha256(ticket)}`)
+    const raw = await pinned(this.getdel(`wst:${sha256(ticket)}`))
     if (raw === null) return null
     try {
       const parsed: unknown = parseJson(raw)
-      return isWsTicketSnapshot(parsed) ? parsed : null
+      return checked(isWsTicketSnapshot(parsed) ? parsed : null)
     } catch {
       // A stored value that will not parse is a corrupted record, not a valid ticket. It has
       // already been consumed by the GETDEL above, which is the right outcome either way.
       return null
     }
   }
-}
-
-/**
- * Whether an unknown value is a well-formed {@link WsTicketSnapshot}.
- *
- * The record is read back from Redis, which the sibling implementation also writes, so it is
- * parsed defensively rather than cast: a snapshot missing `mfaVerified` would otherwise
- * authorize a socket as MFA-satisfied through an `undefined` that reads as false only by luck
- * of the comparison used downstream.
- *
- * @param value - The parsed JSON read back from the store.
- * @returns `true` when every required field is present and correctly typed.
- */
-function isWsTicketSnapshot(value: unknown): value is WsTicketSnapshot {
-  // Stryker disable next-line ConditionalExpression,LogicalOperator: defensive shape guard
-  // masked by the field checks below — a scalar reads every field as `undefined` and fails the
-  // first `typeof`, and the only caller parses JSON inside a try/catch, so the `null` deref
-  // this would otherwise allow surfaces as the same refusal
-  if (typeof value !== 'object' || value === null) return false
-  const record = value as Record<string, unknown>
-  return (
-    typeof record['sub'] === 'string' &&
-    typeof record['role'] === 'string' &&
-    typeof record['status'] === 'string' &&
-    typeof record['mfaEnabled'] === 'boolean' &&
-    typeof record['mfaVerified'] === 'boolean' &&
-    typeof record['jti'] === 'string' &&
-    record['jti'] !== '' &&
-    typeof record['epoch'] === 'number' &&
-    Number.isSafeInteger(record['epoch']) &&
-    record['epoch'] >= 0 &&
-    (record['tenantId'] === undefined || typeof record['tenantId'] === 'string')
-  )
 }

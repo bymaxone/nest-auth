@@ -14,6 +14,7 @@
 export type ObservedRefusal = 'reuse_detected' | 'expired'
 
 import type { AuthPlane } from '../services/auth-token-verifier.service'
+import { awaiting, checked } from '../utils/settle'
 
 const REFUSALS = new WeakMap<object, ObservedRefusal>()
 
@@ -77,7 +78,7 @@ export function markedPlane(error: unknown): AuthPlane | undefined {
  */
 export async function markingPlane<T>(plane: AuthPlane, run: () => Promise<T>): Promise<T> {
   try {
-    return await run()
+    return checked(await awaiting(run()))
   } catch (error) {
     if (error instanceof Error) onPlane(plane, error)
     throw error

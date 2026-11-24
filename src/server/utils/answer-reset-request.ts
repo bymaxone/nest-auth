@@ -24,6 +24,7 @@
 import type { Logger } from '@nestjs/common'
 
 import { isRefusal } from './object-prototype-guard'
+import { checked, pinned } from './settle'
 import { sleep } from './sleep'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -69,7 +70,7 @@ export async function answerResetRequest(
   // A release that fails is logged and never raised: the failure that called for it is the answer.
   const releaseCooldown = async (): Promise<void> => {
     try {
-      await redis.del(cooldownKey)
+      await pinned(redis.del(cooldownKey))
     } catch (err: unknown) {
       logStore(logger, 'AUTH_STORE_FAILED', 'reset_cooldown_release', err)
     }
@@ -77,32 +78,32 @@ export async function answerResetRequest(
 
   let claimed: boolean
   try {
-    claimed = await redis.setnx(cooldownKey, request.cooldownSeconds)
+    claimed = await pinned(redis.setnx(cooldownKey, request.cooldownSeconds))
   } catch (err: unknown) {
     logStore(logger, 'AUTH_STORE_FAILED', 'reset_cooldown_store', err)
-    await holdFloor()
+    await pinned(holdFloor())
     throw isServiceUnavailable(err) ? err : new AuthException(AUTH_ERROR_CODES.INTERNAL)
   }
   // Silent success on a cooldown hit, with the same floor as every other exit, so the throttle
   // does not itself answer whether the account exists.
   if (!claimed) {
-    await holdFloor()
+    await pinned(holdFloor())
     return
   }
 
   let account: { id: string; status: string } | null
   try {
-    account = await request.findAccount()
+    account = await pinned(request.findAccount())
   } catch (err: unknown) {
     logStore(logger, 'AUTH_STORE_FAILED', 'reset_account_lookup', err)
-    await releaseCooldown()
-    await holdFloor()
+    await pinned(releaseCooldown())
+    await pinned(holdFloor())
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
   }
 
-  const issued = await issueQuietly(logger, request, account)
-  if (issued.failed) await releaseCooldown()
-  await holdFloor()
+  const issued = await pinned(issueQuietly(logger, request, account))
+  if (issued.failed) await pinned(releaseCooldown())
+  await pinned(holdFloor())
   // The refusal of the runtime is raised last, after the cooldown was released and the floor was held.
   if (issued.refusal !== undefined) throw issued.refusal
 }
@@ -117,10 +118,10 @@ async function issueQuietly(
   account: { id: string; status: string } | null
 ): Promise<{ failed: boolean; refusal: unknown }> {
   try {
-    if (account && !request.isBlocked(account.status)) await request.issue(account.id)
-    return { failed: false, refusal: undefined }
+    if (account && !request.isBlocked(account.status)) await pinned(request.issue(account.id))
+    return checked({ failed: false, refusal: undefined })
   } catch (err: unknown) {
     if (!isRefusal(err)) logStore(logger, 'AUTH_STORE_FAILED', 'reset_issue', err)
-    return { failed: true, refusal: isRefusal(err) ? err : undefined }
+    return checked({ failed: true, refusal: isRefusal(err) ? err : undefined })
   }
 }
