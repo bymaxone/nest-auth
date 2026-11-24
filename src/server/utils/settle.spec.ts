@@ -112,6 +112,40 @@ describe('allOf', () => {
     }
   })
 
+  // Scenario: `Promise.prototype.constructor` becomes a getter that throws while a started call is already rejected, and is put back.
+  // Expected: no unhandled rejection, and the failure is still the call's own. Why: `then` asks the promise for its constructor
+  // before it attaches a handler, so a throw there left the rejection of the call with none.
+  it('keeps a rejection handled when the constructor of promises throws', async () => {
+    const unhandled = jest.fn()
+    process.on('unhandledRejection', unhandled)
+    const own = Object.getOwnPropertyDescriptor(
+      Promise.prototype,
+      'constructor'
+    ) as PropertyDescriptor
+    try {
+      const rejecting = Promise.reject(new Error('the read failed'))
+      Object.defineProperty(Promise.prototype, 'constructor', {
+        configurable: true,
+        get(): never {
+          throw new Error('planted')
+        }
+      })
+      let answer: ReturnType<typeof started<unknown>>
+      try {
+        answer = started(rejecting)
+      } finally {
+        Object.defineProperty(Promise.prototype, 'constructor', own)
+      }
+      await new Promise((done) => setImmediate(done))
+
+      expect(unhandled).not.toHaveBeenCalled()
+      await expect(unbox(answer)).rejects.toThrow()
+    } finally {
+      Object.defineProperty(Promise.prototype, 'constructor', own)
+      process.off('unhandledRejection', unhandled)
+    }
+  })
+
   // Scenario: two calls that reject. Expected: the one that failed first is the one thrown.
   it('throws the first rejection in the order of the list', async () => {
     const all = allOf([Promise.reject(new Error('first')), Promise.reject(new Error('second'))])

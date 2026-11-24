@@ -77,7 +77,7 @@ function addressOf(client: unknown): string | undefined {
  * @returns A promise that resolves after it.
  */
 function pause(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return new IntrinsicPromise((resolve) => setTimeout(resolve, ms))
 }
 
 /**
@@ -118,7 +118,7 @@ export class RedisReadinessService implements OnApplicationBootstrap {
         resolve()
       })
     }
-    return new Promise((resolve, reject) => {
+    return new IntrinsicPromise((resolve, reject) => {
       const settle = (done: () => void): void => {
         clearTimeout(timer)
         this.redis.off('ready', onReady)

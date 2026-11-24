@@ -20,7 +20,15 @@
  * @layer Utility
  */
 
-import { IntrinsicPromise, applyFunction, intrinsicThen } from './captured-builtins'
+import { types } from 'node:util'
+
+import {
+  IntrinsicPromise,
+  applyFunction,
+  createObject,
+  defineKey,
+  intrinsicThen
+} from './captured-builtins'
 import { assertRootIsStandard } from './object-prototype-guard'
 
 /** The language's own constructor, so neither a replaced global nor a library bound to it before load chooses what the deadline builds. */
@@ -29,12 +37,36 @@ const CapturedPromise = IntrinsicPromise
 /** Takes no action: it only marks a rejection as handled. */
 function ignore(): void {}
 
+const isNativePromise = types.isPromise
+
+/**
+ * Gives a native promise an own `constructor` that is the language's. `then` and `await` ask a promise for its constructor, and
+ * without an own one that is a read of `Promise.prototype.constructor`, which a host can replace with a getter that throws or
+ * a function that answers: a throw there happens before `then` attaches a handler, so the rejection stays unhandled.
+ */
+function pin<P>(promise: P): P {
+  if (isNativePromise(promise)) {
+    try {
+      // A descriptor with no prototype: defining a property reads `get` and `set` through it.
+      const own = createObject(null) as PropertyDescriptor
+      own.value = CapturedPromise
+      own.writable = true
+      own.configurable = true
+      defineKey(promise, 'constructor', own)
+    } catch {
+      // A frozen promise keeps the constructor it has; the root check refuses one that is replaced.
+    }
+  }
+  return promise
+}
+
 /**
  * Marks a promise's rejection as handled, through the `then` taken at load, before anything else can refuse. A call the root check
  * refuses would otherwise leave a rejecting `work` with no handler, and an unhandled rejection ends the process. A value that is
  * not a native promise has nothing to mark.
  */
 export function markHandled(work: unknown): void {
+  pin(work)
   try {
     applyFunction(intrinsicThen, work, [ignore, ignore])
   } catch {
@@ -88,7 +120,7 @@ export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
  * @returns A promise of the boxed answer: it never rejects, and reading `.value` of a failure throws its reason.
  */
 export function started<T>(work: PromiseLike<T> | T): Promise<Settled<T>> {
-  return (async (): Promise<Settled<T>> => {
+  const answer = (async (): Promise<Settled<T>> => {
     markHandled(work)
     try {
       assertRootIsStandard()
@@ -97,6 +129,7 @@ export function started<T>(work: PromiseLike<T> | T): Promise<Settled<T>> {
       return failed(error)
     }
   })()
+  return pin(answer)
 }
 
 /**
@@ -111,26 +144,28 @@ export async function allOf<T>(calls: readonly (PromiseLike<T> | T)[]): Promise<
   try {
     const pending: Promise<Settled<T>>[] = []
     for (let index = 0; index < calls.length; index += 1) pending.push(started(calls[index] as T))
-    const everyone = new CapturedPromise<Settled<T[]>>((resolve) => {
-      const values: T[] = []
-      let remaining = pending.length
-      if (remaining === 0) resolve(box(values))
-      for (let index = 0; index < pending.length; index += 1) {
-        applyFunction(intrinsicThen, pending[index], [
-          (answer: Settled<T>): void => {
-            try {
-              values[index] = answer.value
-            } catch (error: unknown) {
-              resolve(failed(error))
-              return
-            }
-            remaining -= 1
-            if (remaining === 0) resolve(box(values))
-          },
-          ignore
-        ])
-      }
-    })
+    const everyone = pin(
+      new CapturedPromise<Settled<T[]>>((resolve) => {
+        const values: T[] = []
+        let remaining = pending.length
+        if (remaining === 0) resolve(box(values))
+        for (let index = 0; index < pending.length; index += 1) {
+          applyFunction(intrinsicThen, pending[index], [
+            (answer: Settled<T>): void => {
+              try {
+                values[index] = answer.value
+              } catch (error: unknown) {
+                resolve(failed(error))
+                return
+              }
+              remaining -= 1
+              if (remaining === 0) resolve(box(values))
+            },
+            ignore
+          ])
+        }
+      })
+    )
     return await awaiting(everyone)
   } catch (error: unknown) {
     return failed(error)
@@ -154,22 +189,24 @@ export async function withDeadline<T>(
   message: string
 ): Promise<Settled<T>> {
   let timer: NodeJS.Timeout | undefined
-  const settled = new CapturedPromise<Settled<T>>((resolve) => {
-    timer = setTimeout(() => {
-      resolve(failed(new Error(message)))
-    }, ms)
-    const run = async (): Promise<void> => {
-      try {
-        const answer = work()
-        markHandled(answer)
-        assertRootIsStandard()
-        resolve(box(await answer))
-      } catch (error: unknown) {
-        resolve(failed(error))
+  const settled = pin(
+    new CapturedPromise<Settled<T>>((resolve) => {
+      timer = setTimeout(() => {
+        resolve(failed(new Error(message)))
+      }, ms)
+      const run = async (): Promise<void> => {
+        try {
+          const answer = work()
+          markHandled(answer)
+          assertRootIsStandard()
+          resolve(box(await answer))
+        } catch (error: unknown) {
+          resolve(failed(error))
+        }
       }
-    }
-    void run()
-  })
+      void run()
+    })
+  )
   try {
     return await awaiting(settled)
   } catch (error: unknown) {

@@ -30,6 +30,7 @@ import { markedPlane, observedRefusal } from './observed-outcome'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { AuthPlane } from '../services/auth-token-verifier.service'
+import { IntrinsicPromise } from '../utils/captured-builtins'
 
 /** The operations a route can be observed as. */
 export type ObservedOperation = 'login' | 'refresh' | 'mfa_verify' | 'password_reset'
@@ -154,7 +155,7 @@ export class AuthObservabilityInterceptor implements NestInterceptor {
       let failure: unknown
       let failed = false
       try {
-        result = await new Promise((resolve, reject) => {
+        result = await new IntrinsicPromise((resolve, reject) => {
           next
             .handle()
             .subscribe({ next: resolve, error: reject, complete: () => resolve(undefined) })

@@ -72,6 +72,22 @@ function staticsRead(text: string): string[] {
   return found
 }
 
+/** Every `new Promise(...)` in `text`: the global binding is read there, and a host can replace it after load. */
+function constructed(text: string): string[] {
+  const found: string[] = []
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'Promise'
+    )
+      found.push(anchorOf(node, 'new Promise'))
+    ts.forEachChild(node, visit)
+  }
+  visit(ts.createSourceFile('probe.ts', text, ts.ScriptTarget.Latest, true))
+  return found
+}
+
 /** The methods of a promise that a host can replace on `Promise.prototype`: a source that calls one lets that replacement answer. */
 const METHODS = ['catch', 'finally', 'then']
 
@@ -378,6 +394,17 @@ describe('the statics of Promise in the sources of the server', () => {
 
     expect(counted).toEqual(expected)
     expect(counted).not.toEqual({ 'audit: Promise.resolve': 1 })
+  })
+
+  // Scenario: a promise built with the global `Promise`, in a snippet and then across the sources. Expected: found in the snippet, and
+  // none in the sources. Why: the global binding is replaceable after load, so the library builds promises from the one taken at
+  // load (`IntrinsicPromise`); a site that needs the global must be argued in a table, and none is.
+  it('builds no promise with the global constructor', () => {
+    expect(constructed('function wait() { return new Promise((r) => r(1)) }')).toEqual([
+      'wait: new Promise'
+    ])
+    expect(constructed('new IntrinsicPromise((r) => r(1))')).toEqual([])
+    expect(tally(constructed)).toEqual({})
   })
 
   // Scenario: each way to read a method of a promise in a snippet. Expected: found, including through `call` and an element.

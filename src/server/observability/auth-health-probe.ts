@@ -7,6 +7,7 @@
 import { Inject, Injectable } from '@nestjs/common'
 
 import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import { IntrinsicPromise } from '../utils/captured-builtins'
 
 /**
  * How long a probe waits for the store, in milliseconds.
@@ -69,7 +70,7 @@ export class AuthHealthProbe {
 
   /** `answer`, or a rejection as soon as `signal` aborts. */
   private within(answer: Promise<string>, signal: AbortSignal): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
+    return new IntrinsicPromise<string>((resolve, reject) => {
       const stop = (): void => reject(new Error('The authentication store did not answer in time.'))
       if (signal.aborted) return stop()
       signal.addEventListener('abort', stop, { once: true })
