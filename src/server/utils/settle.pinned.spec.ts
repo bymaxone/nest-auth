@@ -5,7 +5,7 @@
  * @layer Test
  */
 
-import { PinnedMethods, pinned } from './settle'
+import { Pinned, PinnedMethods, pinned } from './settle'
 
 const prototypeConstructor = Object.getOwnPropertyDescriptor(
   Promise.prototype,
@@ -136,5 +136,25 @@ describe('@PinnedMethods()', () => {
     await expect(answer).resolves.toBe('a:3')
     await expect(refusal).rejects.toThrow('refused')
     expect(reads).toBe(0)
+  })
+})
+
+describe('@Pinned() on a route handler', () => {
+  class Handler {
+    @Pinned()
+    async handle(this: Handler, left: string, right: number): Promise<string> {
+      await Promise.resolve()
+      return `${left}:${right}:${this instanceof Handler}`
+    }
+  }
+
+  // Scenario: a handler decorated on the method, called with arguments. Expected: it keeps `this` and the arguments, answers the
+  // same value, and the promise it returns has the own constructor. Why: a route handler is decorated per method because Nest reads
+  // the route from the method itself, which a class decorator would replace.
+  it('keeps this and the arguments, and returns a pinned promise', async () => {
+    const promise = new Handler().handle('a', 2)
+
+    expect(Object.getOwnPropertyDescriptor(promise, 'constructor')?.value).toBe(Promise)
+    await expect(promise).resolves.toBe('a:2:true')
   })
 })

@@ -26,6 +26,7 @@ import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { EmailChangeService } from '../services/email-change.service'
+import { Pinned, pinned } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
 // EmailChangeController
@@ -84,11 +85,12 @@ export class EmailChangeController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.emailChangeRequest)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('change')
+  @Pinned()
   async requestChange(
     @Body() dto: ChangeEmailDto,
     @CurrentUser() user: DashboardJwtPayload
   ): Promise<void> {
-    await this.emailChangeService.requestChange(user.sub, user.tenantId, dto)
+    await pinned(this.emailChangeService.requestChange(user.sub, user.tenantId, dto))
   }
 
   // ---------------------------------------------------------------------------
@@ -108,7 +110,8 @@ export class EmailChangeController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.emailChangeConfirm)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('change/confirm')
+  @Pinned()
   async confirmChange(@Body() dto: ConfirmEmailChangeDto): Promise<void> {
-    await this.emailChangeService.confirmChange(dto)
+    await pinned(this.emailChangeService.confirmChange(dto))
   }
 }

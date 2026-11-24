@@ -39,6 +39,7 @@ import { PlatformAuthService } from '../services/platform-auth.service'
 import type { PlatformBearerAuthResponse } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { resolveClientAddress } from '../utils/client-address'
+import { Pinned, pinned } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
 // Type guard
@@ -123,6 +124,7 @@ export class PlatformAuthController {
   @HttpCode(HttpStatus.OK)
   @ObserveAuth('login', 'platform')
   @Post('login')
+  @Pinned()
   async login(
     @Body() dto: PlatformLoginDto,
     @Req() req: Request
@@ -131,7 +133,7 @@ export class PlatformAuthController {
     // Truncate User-Agent to 512 chars — the value is stored in the Redis session record
     // (device field). Unbounded storage is a minor memory amplification vector.
     const userAgent = String(req.headers['user-agent'] ?? '').slice(0, 512)
-    const result = await this.platformAuthService.login(dto, ip, userAgent)
+    const result = await pinned(this.platformAuthService.login(dto, ip, userAgent))
 
     // MFA challenge path: return the temp token for the client to exchange.
     if (isMfaChallenge(result)) {
@@ -162,6 +164,7 @@ export class PlatformAuthController {
   @HttpCode(HttpStatus.OK)
   @ObserveAuth('mfa_verify', 'platform')
   @Post('mfa/challenge')
+  @Pinned()
   async mfaChallenge(
     @Body() dto: MfaChallengeDto,
     @Req() req: Request
@@ -181,7 +184,7 @@ export class PlatformAuthController {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
     return this.tokenDelivery.deliverPlatformAuthResponse(
-      await this.mfaService.challengePlatformOnly(dto.mfaTempToken, dto.code, ip, userAgent)
+      await pinned(this.mfaService.challengePlatformOnly(dto.mfaTempToken, dto.code, ip, userAgent))
     )
   }
 
@@ -196,6 +199,7 @@ export class PlatformAuthController {
    */
   @UseGuards(JwtPlatformGuard)
   @Get('me')
+  @Pinned()
   async me(@CurrentUser() user: PlatformJwtPayload): Promise<SafeAuthPlatformUser> {
     return this.platformAuthService.getMe(user.sub)
   }
@@ -226,6 +230,7 @@ export class PlatformAuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequestEncoding('unchecked')
   @Post('logout')
+  @Pinned()
   async logout(@Req() req: Request): Promise<void> {
     // Public for the same reason the dashboard route is: an operator who stepped away for
     // longer than the fifteen-minute access lifetime must still be able to sign out, or the
@@ -236,7 +241,7 @@ export class PlatformAuthController {
     const accessToken = this.tokenDelivery.extractPlatformAccessToken(req) ?? ''
     // Always reads from req.body — platform sessions never use cookie delivery.
     const rawRefreshToken = this.tokenDelivery.extractPlatformRefreshToken(req) ?? ''
-    await this.platformAuthService.logout(accessToken, rawRefreshToken)
+    await pinned(this.platformAuthService.logout(accessToken, rawRefreshToken))
   }
 
   // ---------------------------------------------------------------------------
@@ -263,6 +268,7 @@ export class PlatformAuthController {
   @RequestEncoding('unchecked')
   @ObserveAuth('refresh', 'platform')
   @Post('refresh')
+  @Pinned()
   async refresh(@Req() req: Request): Promise<PlatformBearerAuthResponse> {
     // Always reads from req.body — platform sessions never use cookie delivery.
     const rawRefreshToken = this.tokenDelivery.extractPlatformRefreshToken(req) ?? ''
@@ -270,8 +276,8 @@ export class PlatformAuthController {
     // Truncate User-Agent to 512 chars (same reason as login).
     const userAgent = String(req.headers['user-agent'] ?? '').slice(0, 512)
 
-    const rotated = await this.platformAuthService.refresh(rawRefreshToken, ip, userAgent)
-    const admin = await this.platformAuthService.getMe(rotated.session.userId)
+    const rotated = await pinned(this.platformAuthService.refresh(rawRefreshToken, ip, userAgent))
+    const admin = await pinned(this.platformAuthService.getMe(rotated.session.userId))
 
     return this.tokenDelivery.deliverPlatformAuthResponse({
       admin,
@@ -304,7 +310,8 @@ export class PlatformAuthController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete('sessions')
+  @Pinned()
   async revokeSessions(@CurrentUser() user: PlatformJwtPayload): Promise<void> {
-    await this.platformAuthService.revokeAllPlatformSessions(user.sub)
+    await pinned(this.platformAuthService.revokeAllPlatformSessions(user.sub))
   }
 }

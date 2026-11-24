@@ -23,6 +23,9 @@ const DECISION_FILES = [
   ...readdirSync(join(SERVER, 'guards')).flatMap((name) =>
     /\.ts$/.test(name) && !/\.(spec|test)\.ts$/.test(name) ? [`guards/${name}`] : []
   ),
+  ...readdirSync(join(SERVER, 'controllers')).flatMap((name) =>
+    /\.controller\.ts$/.test(name) ? [`controllers/${name}`] : []
+  ),
   'services/account-status.service.ts',
   'services/auth-revocation.service.ts',
   'services/auth-token-verifier.service.ts',
@@ -92,8 +95,8 @@ function pinnedNames(text: string): Set<string> {
   return found
 }
 
-/** The async methods named in `names`, or any async `canActivate` when `names` is `canActivate`, that the class does not pin. */
-function undecorated(text: string, names: string[] | 'canActivate'): string[] {
+/** The async methods named in `names`, or any async `canActivate` when `names` is `canActivate`, that neither the class nor a `@Pinned()` on the method pins. */
+function undecorated(text: string, names: string[] | 'canActivate' | 'async'): string[] {
   const found: string[] = []
   const source = ts.createSourceFile('x.ts', text, ts.ScriptTarget.Latest, true)
   const pinnedByClass = pinnedNames(text)
@@ -102,19 +105,22 @@ function undecorated(text: string, names: string[] | 'canActivate'): string[] {
     if (ts.isMethodDeclaration(node) && node.body !== undefined) {
       const name = node.name.getText(source)
       const wanted =
-        names === 'canActivate'
-          ? name === 'canActivate' &&
+        names === 'canActivate' || names === 'async'
+          ? (names === 'async' || name === 'canActivate') &&
             (ts.getModifiers(node) ?? []).some((m) => m.getText(source) === 'async')
           : names.includes(name)
       if (wanted) {
         seen.add(name)
-        if (!pinnedByClass.has(name)) found.push(name)
+        const ownDecorator = (ts.getDecorators(node) ?? []).some(
+          (decorator) => decorator.expression.getText(source) === 'Pinned()'
+        )
+        if (!pinnedByClass.has(name) && !ownDecorator) found.push(name)
       }
     }
     ts.forEachChild(node, visit)
   }
   visit(source)
-  if (names !== 'canActivate')
+  if (typeof names !== 'string')
     for (const name of names) if (!seen.has(name)) found.push(`${name} (not found)`)
   return found
 }
@@ -139,6 +145,16 @@ describe('the promises of a decision path carry the language constructor', () =>
     '%s pins an async canActivate',
     (file) => {
       expect(undecorated(readFileSync(join(SERVER, file), 'utf8'), 'canActivate')).toEqual([])
+    }
+  )
+
+  // Scenario: every controller. Expected: each async route handler is pinned by the class, so a handler that returns what a service
+  // decided never resolves its own promise from a promise that is not pinned. Why: the response of login, refresh, the OAuth callback
+  // and the MFA verify carries a decision, and an `async` handler resolving from `p` reads `p.then`.
+  it.each(DECISION_FILES.filter((file) => file.startsWith('controllers/')))(
+    '%s pins every async handler',
+    (file) => {
+      expect(undecorated(readFileSync(join(SERVER, file), 'utf8'), 'async')).toEqual([])
     }
   )
 

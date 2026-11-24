@@ -38,6 +38,7 @@ import type {
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { resolveClientAddress } from '../utils/client-address'
+import { Pinned, pinned } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
 // InvitationController
@@ -94,17 +95,14 @@ export class InvitationController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.invitationCreate)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post()
+  @Pinned()
   async invite(
     @Body() dto: CreateInvitationDto,
     @CurrentUser() user: DashboardJwtPayload
   ): Promise<void> {
     // tenantId comes from the JWT — not from the DTO body — to prevent tenant spoofing.
-    await this.invitationService.invite(
-      user.sub,
-      dto.email,
-      dto.role,
-      user.tenantId,
-      dto.tenantName
+    await pinned(
+      this.invitationService.invite(user.sub, dto.email, dto.role, user.tenantId, dto.tenantName)
     )
   }
 
@@ -133,12 +131,13 @@ export class InvitationController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.invitationRevoke)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('revoke')
+  @Pinned()
   async revoke(
     @Body() dto: RevokeInvitationDto,
     @CurrentUser() user: DashboardJwtPayload
   ): Promise<void> {
     // tenantId comes from the JWT — not from the DTO body — to prevent tenant spoofing.
-    await this.invitationService.revokeInvitation(user.sub, dto.email, user.tenantId)
+    await pinned(this.invitationService.revokeInvitation(user.sub, dto.email, user.tenantId))
   }
 
   // ---------------------------------------------------------------------------
@@ -162,6 +161,7 @@ export class InvitationController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.invitationAccept)
   @HttpCode(HttpStatus.CREATED)
   @Post('accept')
+  @Pinned()
   async accept(
     @Body() dto: AcceptInvitationDto,
     @Req() req: Request,
@@ -170,11 +170,8 @@ export class InvitationController {
     const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
     const headers = req.headers as Record<string, string | string[] | undefined>
-    const result: AuthResult = await this.invitationService.acceptInvitation(
-      dto,
-      ip,
-      userAgent,
-      headers
+    const result: AuthResult = await pinned(
+      this.invitationService.acceptInvitation(dto, ip, userAgent, headers)
     )
     return this.tokenDelivery.deliverAuthResponse(res, result, req)
   }

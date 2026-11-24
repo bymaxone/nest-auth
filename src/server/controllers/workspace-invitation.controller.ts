@@ -58,6 +58,7 @@ import type { AcceptedInvitation } from '../services/workspace-invitation-accept
 import { WorkspaceInvitationService } from '../services/workspace-invitation.service'
 import { resolveClientAddress } from '../utils/client-address'
 import { dashboardHookContext } from '../utils/request-hook-context'
+import { Pinned, pinned } from '../utils/settle'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
 
 /**
@@ -100,18 +101,21 @@ export class WorkspaceInvitationController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceInvite)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post(':workspaceId/invitations')
+  @Pinned()
   async invite(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: InviteToWorkspaceDto,
     @Req() req: Request
   ): Promise<void> {
-    await this.invitations.invite(
-      refOf(workspace),
-      actorOf(workspace),
-      dto.email,
-      dto.role,
-      dashboardHookContext(req, user)
+    await pinned(
+      this.invitations.invite(
+        refOf(workspace),
+        actorOf(workspace),
+        dto.email,
+        dto.role,
+        dashboardHookContext(req, user)
+      )
     )
   }
 
@@ -127,6 +131,7 @@ export class WorkspaceInvitationController {
   @Throttle(AUTH_THROTTLE_CONFIGS.workspaceInvitations)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceInvitations)
   @Get(':workspaceId/invitations')
+  @Pinned()
   async list(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @Query() query: WorkspacePageQueryDto
@@ -148,17 +153,20 @@ export class WorkspaceInvitationController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceInvitationResend)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post(':workspaceId/invitations/resend')
+  @Pinned()
   async resend(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: WorkspaceInvitationEmailDto,
     @Req() req: Request
   ): Promise<void> {
-    await this.invitations.resend(
-      refOf(workspace),
-      actorOf(workspace),
-      dto.email,
-      dashboardHookContext(req, user)
+    await pinned(
+      this.invitations.resend(
+        refOf(workspace),
+        actorOf(workspace),
+        dto.email,
+        dashboardHookContext(req, user)
+      )
     )
   }
 
@@ -176,17 +184,20 @@ export class WorkspaceInvitationController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceInvitationRevoke)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post(':workspaceId/invitations/revoke')
+  @Pinned()
   async revoke(
     @CurrentWorkspace() workspace: CurrentWorkspaceContext,
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: WorkspaceInvitationEmailDto,
     @Req() req: Request
   ): Promise<void> {
-    await this.invitations.revoke(
-      refOf(workspace),
-      actorOf(workspace),
-      dto.email,
-      dashboardHookContext(req, user)
+    await pinned(
+      this.invitations.revoke(
+        refOf(workspace),
+        actorOf(workspace),
+        dto.email,
+        dashboardHookContext(req, user)
+      )
     )
   }
 
@@ -203,6 +214,7 @@ export class WorkspaceInvitationController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceInvitationPreview)
   @HttpCode(HttpStatus.OK)
   @Post('invitations/preview')
+  @Pinned()
   async preview(@Body() dto: PreviewWorkspaceInvitationDto): Promise<WorkspaceInvitationPreview> {
     return this.invitations.preview(dto.token)
   }
@@ -223,6 +235,7 @@ export class WorkspaceInvitationController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceInvitationAccept)
   @HttpCode(HttpStatus.OK)
   @Post('invitations/accept')
+  @Pinned()
   async accept(
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: AcceptWorkspaceInvitationDto,
@@ -246,6 +259,7 @@ export class WorkspaceInvitationController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.workspaceInvitationAcceptSignup)
   @HttpCode(HttpStatus.CREATED)
   @Post('invitations/accept-signup')
+  @Pinned()
   async acceptSignup(
     @Body() dto: AcceptWorkspaceInvitationSignupDto,
     @Req() req: Request,
@@ -256,7 +270,7 @@ export class WorkspaceInvitationController {
       userAgent: String(req.headers['user-agent'] ?? ''),
       headers: req.headers as Record<string, string | string[] | undefined>
     }
-    const { result, accepted } = await this.accepts.acceptSignup(dto, request)
+    const { result, accepted } = await pinned(this.accepts.acceptSignup(dto, request))
     return { ...this.tokenDelivery.deliverAuthResponse(res, result, req), ...accepted }
   }
 }

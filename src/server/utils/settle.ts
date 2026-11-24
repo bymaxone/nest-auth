@@ -114,10 +114,25 @@ export function awaiting<P extends PromiseLike<unknown>>(pending: P): P {
 }
 
 /**
+ * Makes the promise of one async method one whose own `constructor` is the language's, for a route handler: applied as the
+ * decorator nearest the method, it runs before the route decorators attach their metadata to what it returns.
+ *
+ * @returns A method decorator.
+ */
+export function Pinned(): MethodDecorator {
+  return (_target, _key, descriptor) => {
+    const method = descriptor.value as (...args: never[]) => unknown
+    descriptor.value = function pinnedMethod(this: unknown, ...args: never[]): unknown {
+      return pinned(applyFunction(method, this, args))
+    } as never
+  }
+}
+
+/**
  * Makes the promise each named async method of a class returns one whose own `constructor` is the language's. The caller of a
  * decision (a guard's caller, a controller awaiting a service, a host awaiting the API) reads `constructor` of that promise after
  * the library's last check, and a replaced `Promise.prototype.constructor` decides what that `await` yields, a refusal included.
- * The methods are called with the `this` and the arguments they were given. It decorates the class, not each method, so a method
+ * The methods are called with the `this` and the arguments they were given. A route handler is not listed here: Nest reads its path and guards from the method itself, so `@Pinned()` goes on it, below the route decorators. It decorates the class, not each method, so a method
  * does not grow by the line of its decorator.
  *
  * @param names - The methods of the class, each declared on it.
@@ -128,9 +143,10 @@ export function PinnedMethods(...names: string[]): ClassDecorator {
     for (const name of names) {
       const own = getDescriptor(target.prototype, name) as PropertyDescriptor
       const method = own.value as (...args: never[]) => unknown
-      own.value = function pinnedMethod(this: unknown, ...args: never[]): unknown {
+      const wrapper = function pinnedMethod(this: unknown, ...args: never[]): unknown {
         return pinned(applyFunction(method, this, args))
       }
+      own.value = wrapper
       defineKey(target.prototype, name, own)
     }
   }

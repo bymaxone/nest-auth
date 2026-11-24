@@ -51,6 +51,7 @@ import type {
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { resolveClientAddress } from '../utils/client-address'
 import { cookieOptions } from '../utils/dependency-options'
+import { Pinned, pinned } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
 // Type guard
@@ -185,6 +186,7 @@ export class MfaController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @RequestEncoding('when-body')
   @Post('setup')
+  @Pinned()
   async setup(
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaSetupDto
@@ -209,6 +211,7 @@ export class MfaController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-enable')
+  @Pinned()
   async verifyEnable(
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaVerifyDto,
@@ -216,13 +219,8 @@ export class MfaController {
   ): Promise<void> {
     const ip = resolveClientAddress(req)
     const userAgent = String(req.headers['user-agent'] ?? '')
-    await this.mfaService.verifyAndEnable(
-      user.sub,
-      dto.code,
-      ip,
-      userAgent,
-      'dashboard',
-      user.tenantId
+    await pinned(
+      this.mfaService.verifyAndEnable(user.sub, dto.code, ip, userAgent, 'dashboard', user.tenantId)
     )
   }
 
@@ -261,6 +259,7 @@ export class MfaController {
   @HttpCode(HttpStatus.OK)
   @ObserveAuth('mfa_verify', 'token')
   @Post('challenge')
+  @Pinned()
   async challenge(
     @Body() dto: MfaChallengeDto,
     @Req() req: Request,
@@ -281,7 +280,7 @@ export class MfaController {
     // Cookie clearing policy lives on `clearMfaTempCookie` JSDoc.
     let result: AuthResult | PlatformAuthResult
     try {
-      result = await this.mfaService.challenge(mfaTempToken, dto.code, ip, userAgent)
+      result = await pinned(this.mfaService.challenge(mfaTempToken, dto.code, ip, userAgent))
     } catch (err) {
       if (cookieToken !== undefined && isTokenInvalidException(err)) {
         this.clearMfaTempCookie(res)
@@ -322,6 +321,7 @@ export class MfaController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('disable')
+  @Pinned()
   async disable(
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaDisableDto,
@@ -333,7 +333,9 @@ export class MfaController {
     // so a platform token cannot reach this controller at all. The platform surface has its
     // own — `PlatformMfaController` — and the branch that used to read the plane off the
     // payload here could never take its other arm.
-    await this.mfaService.disable(user.sub, dto.code, ip, userAgent, 'dashboard', user.tenantId)
+    await pinned(
+      this.mfaService.disable(user.sub, dto.code, ip, userAgent, 'dashboard', user.tenantId)
+    )
   }
 
   /**
@@ -360,6 +362,7 @@ export class MfaController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.OK)
   @Post('recovery-codes')
+  @Pinned()
   async regenerateRecoveryCodes(
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaRegenerateRecoveryCodesDto,
