@@ -27,6 +27,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY,
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../bymax-auth.constants'
+import { applyFunction } from './captured-builtins'
 import { readOwnOrClass } from './own-or-class'
 import {
   API_KEY_REPOSITORY_CONTRACT,
@@ -480,7 +481,7 @@ export function guardRepository<T extends object>(host: T, contract: ErasedRepos
       return async (...args: unknown[]): Promise<unknown> => {
         let answer: unknown
         try {
-          answer = await (member as (...parameters: unknown[]) => unknown).apply(host, args)
+          answer = await applyFunction(member as (...parameters: unknown[]) => unknown, host, args)
         } catch (error: unknown) {
           // A typed error the host chose to throw (a unique-key conflict it maps to `AuthException`) goes out as it is.
           if (isTypedError(error)) throw error
