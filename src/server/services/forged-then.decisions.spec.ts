@@ -164,4 +164,41 @@ describe('a decision made while a host forges what a promise answers', () => {
   it('does not pass a wrong code for a then planted while the code is verified', () => {
     expect(run('mfa-valid', file)).toEqual({ outcome: 'refused:auth.internal', unhandled: 0 })
   })
+
+  // Scenario: a repository of the host answers no membership and installs one-shot accessors for `constructor` and `then` on the
+  // prototype of promises while it makes the promise, the way a host that restores them on first read would. Expected: not an owner.
+  // Why: the wait must not read the prototype at all, so the accessor that is never read stays and the next check refuses.
+  it('does not make an owner of a membership read when accessors restore themselves', () => {
+    expect(run('self-restoring-member', file)).toEqual({
+      outcome: 'refused:auth.internal',
+      unhandled: 0
+    })
+  })
+
+  // Scenario: the revocation check says the token is revoked while the accessors answer that it is not. Expected: the token is invalid.
+  it('does not verify a revoked token when accessors restore themselves', () => {
+    expect(run('self-restoring-revoked', file)).toEqual({
+      outcome: 'refused:auth.token_invalid',
+      unhandled: 0
+    })
+  })
+
+  // Scenario: the status check refuses the account while the accessors answer that it passed. Expected: the refusal reaches the caller.
+  it('does not pass a blocked account when accessors restore themselves', () => {
+    expect(run('self-restoring-status', file)).toEqual({ outcome: 'refused:other', unhandled: 0 })
+  })
+
+  // Scenario: the client of the store makes the promise that answers a marker, with the accessors installed. Expected: `value:1` or a
+  // refusal, never an absent marker. Why: a read answered through the forged `then` is a revoked token that is not.
+  it('answers the marker the store holds when accessors restore themselves', () => {
+    expect(run('self-restoring-redis', file)).toEqual({
+      outcome: 'refused:auth.internal',
+      unhandled: 0
+    })
+  })
+
+  // Scenario: the store says a recovery code is spent, with the accessors installed that say it was claimed. Expected: not claimed.
+  it('does not claim a spent recovery code when accessors restore themselves', () => {
+    expect(run('self-restoring-claim', file)).toEqual({ outcome: 'claimed:false', unhandled: 0 })
+  })
 })

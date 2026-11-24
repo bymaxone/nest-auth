@@ -15,6 +15,7 @@ import { mappingOutages } from '../../redis/redis-outage'
 import { AuthRevocationService } from '../auth-revocation.service'
 import { AuthTokenVerifierService } from '../auth-token-verifier.service'
 import { MfaChallengeService } from '../mfa-challenge.service'
+import { MfaRecordService } from '../mfa-record.service'
 import { WorkspaceAccessService } from '../workspace-access.service'
 
 const scenario = process.env['SCENARIO'] ?? ''
@@ -211,6 +212,34 @@ function replaceConstructorAndForge(value: unknown): void {
     value: function Other() {}
   })
   Promise.prototype.then = erasingThen(value) as typeof ownThen
+}
+
+/**
+ * Makes the next promise a host hands the library answer `value`, the way a one-shot attacker would: accessors on the prototype of
+ * promises for `constructor` and for `then`, each of which puts its own entry back when it is read. The checks of the root that run
+ * before and after the call find it clean, because the entries are restored by the read that uses them.
+ */
+function selfRestoring(value: unknown): void {
+  Object.defineProperty(Promise.prototype, 'constructor', {
+    configurable: true,
+    get(): unknown {
+      Object.defineProperty(Promise.prototype, 'constructor', ownConstructor)
+      return function Other() {}
+    }
+  })
+  Object.defineProperty(Promise.prototype, 'then', {
+    configurable: true,
+    get(): unknown {
+      Object.defineProperty(Promise.prototype, 'then', {
+        value: ownThen,
+        configurable: true,
+        writable: true
+      })
+      return (resolve: (answer: unknown) => void): void => {
+        resolve(value)
+      }
+    }
+  })
 }
 
 const service = new WorkspaceAccessService(
@@ -446,6 +475,64 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
   } catch (error: unknown) {
     report(`threw:${(error as Error).message}`)
   }
+} else if (scenario === 'self-restoring-member') {
+  // A repository of the host answers no membership, and installs the self-restoring accessors while it makes the promise. A wait that
+  // reads the constructor of that promise gets the forged `then`, which answers an owner. Expected: denied.
+  const attacked = new WorkspaceAccessService(
+    { eval: () => Promise.resolve(null) } as never,
+    workspaces as never,
+    {
+      find: (): Promise<null> => {
+        selfRestoring(forged)
+        return Promise.resolve(null)
+      }
+    } as never,
+    options
+  )
+  settle(attacked.resolveAccess(ref), showAccess)
+} else if (scenario === 'self-restoring-revoked') {
+  // The revocation check answers that the token is revoked, and installs the accessors that answer it is not. Expected: refused.
+  const subject = verifier(
+    identity,
+    () => Promise.resolve(),
+    () => {
+      selfRestoring(false)
+      return Promise.resolve(true)
+    }
+  )
+  settle(subject.verifyAccessToken('token', { plane: 'dashboard' }), showToken)
+} else if (scenario === 'self-restoring-status') {
+  // The check of the account refuses a blocked account, and installs the accessors that answer it passed. Expected: refused.
+  const subject = verifier(identity, () => {
+    selfRestoring(undefined)
+    return Promise.reject(new Error('blocked'))
+  })
+  settle(subject.verifyAccessToken('token', { plane: 'dashboard' }), showToken)
+} else if (scenario === 'self-restoring-redis') {
+  // The client of the store installs the accessors while it makes the promise that answers the marker of a revoked token. Expected: the
+  // marker the store holds, or a refusal, never an absent one.
+  const redis = new AuthRedisService(
+    {
+      get: (): Promise<string> => {
+        selfRestoring(null)
+        return Promise.resolve('1')
+      }
+    } as never,
+    options
+  )
+  settle(redis.get('revoked'), (answer) => `value:${String(answer)}`)
+} else if (scenario === 'self-restoring-claim') {
+  // The store says a recovery code is already spent and installs the accessors that say it was claimed. Expected: not claimed.
+  const record = new MfaRecordService(options, {} as never, null, {
+    setnx: (): Promise<boolean> => {
+      selfRestoring(true)
+      return Promise.resolve(false)
+    }
+  } as never)
+  settle(
+    record.claimRecoveryCode('dashboard', 'u', '123456', 't1'),
+    (answer) => `claimed:${String(answer)}`
+  )
 } else if (scenario === 'mid-read' || scenario === 'late' || scenario === 'unhandled') {
   settle(service.resolveAccess(ref), showAccess)
 } else {
