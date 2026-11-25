@@ -92,12 +92,12 @@ describe('WorkspaceInvitationService revoke against a concurrent writer', () => 
     expect(revokedRoles(h)).toEqual([])
   })
 
-  // Scenario: the address is replaced before every removal. Expected: `auth.too_many_requests` after
+  // Scenario: the address is replaced before each of the first three removals. Expected: `auth.too_many_requests` after
   // three attempts and no revoke reported. Why: nothing the caller asked for happened.
-  it('refuses after three attempts when the address keeps moving', async () => {
+  it('refuses after three replacements, with no fourth attempt', async () => {
     const h = build()
     await h.service.invite(WORKSPACE_REF, OWNER, EMAIL, 'viewer', CONTEXT)
-    const remove = raceTheRemoval(h, Number.POSITIVE_INFINITY, () => reinvite(h, 'viewer'))
+    const remove = raceTheRemoval(h, 3, () => reinvite(h, 'viewer'))
 
     expect(await code(h.service.revoke(WORKSPACE_REF, OWNER, EMAIL, CONTEXT))).toBe(
       AUTH_ERROR_CODES.TOO_MANY_REQUESTS
@@ -105,6 +105,19 @@ describe('WorkspaceInvitationService revoke against a concurrent writer', () => 
 
     expect(remove).toHaveBeenCalledTimes(3)
     expect(revokedRoles(h)).toEqual([])
+  })
+
+  // Scenario: the address is replaced before each of the first two removals. Expected: the third
+  // attempt removes and reports. Why: the bound is three, not two.
+  it('removes on the third attempt after two replacements', async () => {
+    const h = build()
+    await h.service.invite(WORKSPACE_REF, OWNER, EMAIL, 'viewer', CONTEXT)
+    const remove = raceTheRemoval(h, 2, () => reinvite(h, 'viewer'))
+
+    await h.service.revoke(WORKSPACE_REF, OWNER, EMAIL, CONTEXT)
+
+    expect(remove).toHaveBeenCalledTimes(3)
+    expect(revokedRoles(h)).toEqual(['viewer'])
   })
 
   // Scenario: another revoke removes the invitation first. Expected: success with no second event.
