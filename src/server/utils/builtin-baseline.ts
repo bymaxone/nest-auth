@@ -389,7 +389,7 @@ function record(holder: object, key: PropertyKey): void {
   if (descriptor === undefined) return
   // Own fields only: a descriptor is an ordinary object, and a `value` or a `get` planted on the root would answer for an accessor.
   const field = hasOwn(descriptor, 'value') ? 'value' : 'get'
-  const held = hasOwn(descriptor, field) ? descriptor[field] : undefined
+  const held = descriptor[field]
   if (typeof held !== 'function') return
   holders[holders.length] = holder
   keys[keys.length] = key
