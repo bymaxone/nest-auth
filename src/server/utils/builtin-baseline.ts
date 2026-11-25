@@ -373,28 +373,36 @@ export const BASELINED_HOLDERS: Record<string, object> = {
   'Verify.prototype': nodeCrypto.Verify.prototype
 }
 
-// Parallel lists, filled once: the holder, the key, the field of the descriptor that holds the function (`value` for a method,
-// `get` for an accessor) and the function each entry held at load.
-const holders: object[] = []
-const keys: PropertyKey[] = []
-const fields: string[] = []
-const originals: unknown[] = []
+// What each entry held at load, kept in one set of parallel lists per kind of descriptor field: `value` for a method, `get` for an
+// accessor. A walk reads every entry, so it runs one loop per kind and names the field in each, instead of choosing it per entry.
+interface Entries {
+  holders: object[]
+  keys: PropertyKey[]
+  originals: unknown[]
+}
+const methods: Entries = { holders: [], keys: [], originals: [] }
+const accessors: Entries = { holders: [], keys: [], originals: [] }
+
+function recorded(entries: Entries, holder: object, key: PropertyKey): boolean {
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which equals no holder
+  for (let index = 0; index < entries.holders.length; index += 1)
+    if (entries.holders[index] === holder && entries.keys[index] === key) return true
+  return false
+}
 
 function record(holder: object, key: PropertyKey): void {
   // An entry the lists and the protocol both name is recorded once, so a replacement is counted once.
-  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which equals no holder
-  for (let index = 0; index < holders.length; index += 1)
-    if (holders[index] === holder && keys[index] === key) return
+  if (recorded(methods, holder, key) || recorded(accessors, holder, key)) return
   const descriptor = getDescriptor(holder, key)
   if (descriptor === undefined) return
   // Own fields only: a descriptor is an ordinary object, and a `value` or a `get` planted on the root would answer for an accessor.
-  const field = hasOwn(descriptor, 'value') ? 'value' : 'get'
-  const held = descriptor[field]
+  const isMethod = hasOwn(descriptor, 'value')
+  const held = isMethod ? descriptor.value : descriptor.get
   if (typeof held !== 'function') return
-  holders[holders.length] = holder
-  keys[keys.length] = key
-  fields[fields.length] = field
-  originals[originals.length] = held
+  const entries = isMethod ? methods : accessors
+  entries.holders[entries.holders.length] = holder
+  entries.keys[entries.keys.length] = key
+  entries.originals[entries.originals.length] = held
 }
 
 /** Records the entries of `lists`, each name read from the holder named by its key. */
@@ -500,11 +508,11 @@ function addedProtocolSymbols(): number {
  */
 export function rebaselinePolyfills(): void {
   // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not `Reflect`, so the pass continues
-  for (let index = 0; index < holders.length; index += 1) {
-    if (keys[index] !== 'getMetadata') continue
-    const descriptor = getDescriptor(holders[index] as object, keys[index] as PropertyKey)
-    if (descriptor !== undefined && hasOwn(descriptor, fields[index] as string))
-      originals[index] = getKey(descriptor, fields[index] as string)
+  for (let index = 0; index < methods.holders.length; index += 1) {
+    if (methods.keys[index] !== 'getMetadata') continue
+    const descriptor = getDescriptor(methods.holders[index] as object, 'getMetadata')
+    if (descriptor !== undefined && hasOwn(descriptor, 'value'))
+      methods.originals[index] = descriptor.value
   }
 }
 
@@ -518,13 +526,29 @@ export function rebaselinePolyfills(): void {
  */
 export function replacedBuiltins(): number {
   let count = 0
-  for (let index = 0; index < holders.length; index += 1) {
-    const descriptor = getDescriptor(holders[index] as object, keys[index] as PropertyKey)
-    const field = fields[index] as string
+  // After `hasOwn` the field is an own data property of the descriptor the call just made, so it is read directly: it cannot reach
+  // the root or run code. A missing entry is counted before any read, and a field the root would answer for is counted by `hasOwn`.
+  for (let index = 0; index < methods.holders.length; index += 1) {
+    const descriptor = getDescriptor(
+      methods.holders[index] as object,
+      methods.keys[index] as PropertyKey
+    )
     if (
       descriptor === undefined ||
-      !hasOwn(descriptor, field) ||
-      getKey(descriptor, field) !== originals[index]
+      !hasOwn(descriptor, 'value') ||
+      descriptor.value !== methods.originals[index]
+    )
+      count += 1
+  }
+  for (let index = 0; index < accessors.holders.length; index += 1) {
+    const descriptor = getDescriptor(
+      accessors.holders[index] as object,
+      accessors.keys[index] as PropertyKey
+    )
+    if (
+      descriptor === undefined ||
+      !hasOwn(descriptor, 'get') ||
+      descriptor.get !== accessors.originals[index]
     )
       count += 1
   }
