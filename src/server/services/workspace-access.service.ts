@@ -308,9 +308,10 @@ export class WorkspaceAccessService {
   /**
    * Reads the workspace and the membership together, whatever the first one says.
    *
-   * A missing workspace, an inactive one and a non-member then cost the same repository work, so
-   * the time an answer takes does not tell a caller which of the three it was. The pending-deletion
-   * answer for an owner is decided from these same two rows.
+   * A missing workspace, an inactive one and a non-member then cost the same repository reads, and
+   * a repository that finds nothing is copied for the same work per field as one that finds a row.
+   * That is the same work, not the same time: how long a host's database takes for each row is
+   * outside this library. The pending-deletion answer for an owner is decided from these same two rows.
    */
   private async readRepositories(ref: MembershipRef): Promise<WorkspaceAccess> {
     // Both reads start before either is awaited; the answers are never combined by a static of `Promise`.

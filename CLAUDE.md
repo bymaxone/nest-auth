@@ -130,6 +130,9 @@ The symptom is always transport-level: `socket hang up` on one request in a rand
 request that failed silently and starved a downstream assertion. It never reproduces under
 `pnpm test:e2e` alone, only in the merged run.
 
+A `SIGSEGV` (a worker or the Stryker child dying with a signal) is a failed gate, not a flake to
+wave through: rerun it, and record both results, the failed one and the rerun, in the same place.
+
 What was ruled out: worker contention (`--maxWorkers=3` still failed), the 1 GB
 `workerIdleMemoryLimit` (raising it to 4 GB still failed), unhandled rejections
 (`--unhandled-rejections=warn` printed none), and the leftover sandbox — which looked convincing

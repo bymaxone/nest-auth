@@ -1,0 +1,153 @@
+/**
+ * @fileoverview A repository that finds nothing is copied for the same work per field as one that finds a row, for every
+ * method whose contract may answer nothing.
+ *
+ * The work is counted in the calls the copy makes to read and define fields, never in time: a clock cannot show a
+ * difference this small, and the claim is of work and not of duration.
+ *
+ * @layer Test
+ */
+
+import { copyHostRecord } from './host-read'
+import {
+  API_KEY_REPOSITORY_CONTRACT,
+  MEMBERSHIP_REPOSITORY_CONTRACT,
+  PLATFORM_USER_REPOSITORY_CONTRACT,
+  USER_REPOSITORY_CONTRACT,
+  WORKSPACE_REPOSITORY_CONTRACT,
+  type ErasedContract,
+  type ErasedRepositoryContract
+} from './repository-contracts'
+
+const REPOSITORIES: Readonly<Record<string, ErasedRepositoryContract>> = {
+  user: USER_REPOSITORY_CONTRACT as ErasedRepositoryContract,
+  platformUser: PLATFORM_USER_REPOSITORY_CONTRACT as ErasedRepositoryContract,
+  apiKey: API_KEY_REPOSITORY_CONTRACT as ErasedRepositoryContract,
+  workspace: WORKSPACE_REPOSITORY_CONTRACT as ErasedRepositoryContract,
+  membership: MEMBERSHIP_REPOSITORY_CONTRACT as ErasedRepositoryContract
+}
+
+/** Every method, by repository and name, whose contract is a record or a list that may be found nothing. */
+const NULLABLE_METHODS: [string, ErasedContract][] = Object.entries(REPOSITORIES).flatMap(
+  ([repository, contracts]) =>
+    Object.entries(contracts)
+      .filter(([, contract]) => typeof contract !== 'string' && contract.nullable === true)
+      .map(([method, contract]): [string, ErasedContract] => [`${repository}.${method}`, contract])
+)
+
+/** A value of the kind a spec names, the same for every field. */
+function valueOf(spec: string): unknown {
+  const base = spec
+    .replace(/^~/, '')
+    .replace(/\?$/, '')
+    .replace(/\|null$/, '')
+  if (base === 'boolean') return true
+  if (base === 'number') return 1
+  if (base === 'strings') return ['a']
+  return base === 'date' ? new Date(1) : 'row'
+}
+
+/** A row that holds every field of the contract, built without reading the library's own decoy. */
+function rowOf(contract: ErasedContract): unknown {
+  if (typeof contract === 'string') return valueOf(contract)
+  if ('list' in contract) return [rowOf(contract.list)]
+  return Object.fromEntries(
+    Object.entries(contract.fields).map(([field, spec]) => [
+      field,
+      spec.startsWith('nested') ? rowOf(contract.nested[field] as ErasedContract) : valueOf(spec)
+    ])
+  )
+}
+
+/** The calls to the reads and the definitions a copy makes, counted while `body` runs. */
+function workOf(body: () => unknown): number {
+  const spies = [
+    jest.spyOn(Object, 'keys'),
+    jest.spyOn(Object, 'entries'),
+    jest.spyOn(Object, 'getOwnPropertyDescriptor'),
+    jest.spyOn(Object, 'getPrototypeOf'),
+    jest.spyOn(Object, 'defineProperty'),
+    jest.spyOn(Object, 'create'),
+    jest.spyOn(Array.prototype, 'push')
+  ]
+  try {
+    body()
+    return spies.reduce((total, spy) => total + spy.mock.calls.length, 0)
+  } finally {
+    for (const spy of spies) spy.mockRestore()
+  }
+}
+
+describe('the copy of an answer of a repository that finds nothing', () => {
+  it('enumerates the methods that may find nothing, so a new one is covered without being listed', () => {
+    expect(NULLABLE_METHODS.map(([name]) => name)).toEqual(
+      expect.arrayContaining(['user.findById', 'workspace.findById', 'membership.find'])
+    )
+    expect(NULLABLE_METHODS.length).toBeGreaterThanOrEqual(8)
+  })
+
+  // Scenario: a method that may find nothing answers `null` or `undefined`, and the same method answers a row with every
+  // field. Expected: the copy does the same work for the three, and answers the miss as it was. Why: a copy of a found row
+  // is work per field and a miss that skipped it would be the faster answer, which tells a caller the row is not there.
+  it.each(NULLABLE_METHODS)(
+    'does the same work for a miss as for a found row of %s',
+    (_name, contract) => {
+      const row = rowOf(contract)
+
+      const found = workOf(() => copyHostRecord(row, contract))
+
+      const missed = workOf(() => copyHostRecord(null, contract))
+      const absent = workOf(() => copyHostRecord(undefined, contract))
+
+      expect(found).toBeGreaterThan(0)
+      expect(missed).toBe(found)
+      expect(absent).toBe(found)
+      expect(copyHostRecord(null, contract)).toBeNull()
+      expect(copyHostRecord(undefined, contract)).toBeUndefined()
+    }
+  )
+
+  // Scenario: the module is loaded fresh and its first call is a miss. Expected: the miss does the same work as a found row.
+  // Why: the decoys are built when the module loads. A module that built one on the first miss would make that miss dearer,
+  // and every contract already copied by the rows above would hide it, so only a fresh load shows it.
+  it('does the same work on the first miss of a fresh load as on a found row', () => {
+    jest.isolateModules(() => {
+      const fresh = jest.requireActual<typeof import('./host-read')>('./host-read')
+      const contracts =
+        jest.requireActual<typeof import('./repository-contracts')>('./repository-contracts')
+      const contract = contracts.USER_REPOSITORY_CONTRACT.findById as ErasedContract
+      const row = rowOf(contract)
+
+      const first = workOf(() => fresh.copyHostRecord(null, contract))
+      const found = workOf(() => fresh.copyHostRecord(row, contract))
+
+      expect(first).toBe(found)
+    })
+  })
+
+  // Scenario: a contract that may find nothing holds a date, a nested record and a list of records, which no repository of
+  // the library has yet. Expected: the miss does the same work as the found row, once the decoy of this contract exists. Why:
+  // the decoy copies a date and a nested record as a found row does. This contract is not one the module built at load, so
+  // its decoy is built by the first miss, which is the dearer one and is made here before the miss that is measured.
+  it('does the same work for a miss as for a found row of a contract with a nested record, a list and a date', () => {
+    const contract: ErasedContract = {
+      fields: { owner: 'nested', items: 'nested', at: 'date', note: '~string', tags: 'strings' },
+      nested: {
+        owner: { fields: { id: 'id' }, nested: {} },
+        items: { list: { fields: { id: 'id', at: '~date' }, nested: {} } }
+      },
+      nullable: true
+    }
+    const row = rowOf(contract)
+
+    copyHostRecord(null, contract)
+
+    const found = workOf(() => copyHostRecord(row, contract))
+    const missed = workOf(() => copyHostRecord(null, contract))
+    const absent = workOf(() => copyHostRecord(undefined, contract))
+
+    expect(found).toBeGreaterThan(0)
+    expect(missed).toBe(found)
+    expect(absent).toBe(found)
+  })
+})

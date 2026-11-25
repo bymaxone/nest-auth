@@ -403,6 +403,62 @@ function applyContract(value: unknown, contract: Structured, run: Read): unknown
   return copyRecord(value, contract, run)
 }
 
+/** The decoys already built, one per contract. */
+const DECOYS = new WeakMap<object, unknown>()
+
+/** The text every text kind accepts: a non-empty string that is not blank, which is what a tenant and an id require. */
+const DECOY_TEXT = 'decoy'
+
+/** A value that passes the reader of each kind, for the decoy of a field. The date and the list are only ever copied. */
+const DECOY_VALUES: Readonly<Record<ReaderName, unknown>> = {
+  // Stryker disable next-line BooleanLiteral: the reader takes either boolean and the copy does the same work for both
+  boolean: false,
+  string: DECOY_TEXT,
+  tenant: DECOY_TEXT,
+  id: DECOY_TEXT,
+  number: 0,
+  date: new Date(0),
+  strings: [DECOY_TEXT],
+  '~id': DECOY_TEXT,
+  '~string': DECOY_TEXT,
+  '~date': new Date(0)
+}
+
+/**
+ * A record that holds every field of a contract, each as a value its reader accepts, a list of one element and a nested
+ * record included. Built once per contract. Copying it is the work a found row costs, which a miss repeats and discards.
+ */
+function decoyOf(contract: Structured): unknown {
+  const known = DECOYS.get(contract)
+  if (known !== undefined) return known
+  let decoy: unknown
+  if ('list' in contract) decoy = [decoyOf(contract.list as Structured)]
+  else {
+    const record: Record<string, unknown> = {}
+    for (const [field, spec] of Object.entries(contract.fields)) {
+      const { base } = parseSpec(spec)
+      record[field] =
+        base === 'nested'
+          ? decoyOf(contract.nested[field] as Structured)
+          : DECOY_VALUES[base as ReaderName]
+    }
+    decoy = record
+  }
+  DECOYS.set(contract, decoy)
+  return decoy
+}
+
+/** The decoy of every record or list contract of the repositories is built when the module loads, so no miss pays for building one. */
+for (const repository of [
+  USER_REPOSITORY_CONTRACT,
+  PLATFORM_USER_REPOSITORY_CONTRACT,
+  API_KEY_REPOSITORY_CONTRACT,
+  WORKSPACE_REPOSITORY_CONTRACT,
+  MEMBERSHIP_REPOSITORY_CONTRACT
+] as readonly ErasedRepositoryContract[])
+  for (const contract of Object.values(repository))
+    if (typeof contract !== 'string') decoyOf(contract)
+
 /**
  * Copies what a repository method returned, so a failed read of it ends here.
  *
@@ -416,8 +472,12 @@ export function copyHostRecord(record: unknown, contract: ErasedContract): unkno
   try {
     const run: Read = { copies: new WeakMap(), nodes: MAX_NODES }
     if (typeof contract === 'string') return readScalar(record, contract, run)
-    // A method that may find nothing answers nothing; any other method owes a record or a list.
-    if ((record === null || record === undefined) && contract.nullable === true) return record
+    // A method that may find nothing answers nothing; any other method owes a record or a list. The copy of a row that
+    // was found is work the library does per field, so a miss does the same work on a decoy and answers its own value.
+    if ((record === null || record === undefined) && contract.nullable === true) {
+      applyContract(decoyOf(contract), contract, run)
+      return record
+    }
     return applyContract(record, contract, run)
   } catch (error: unknown) {
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, { cause: error })
