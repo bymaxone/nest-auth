@@ -126,7 +126,6 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  * `then` of the promise it was given: every answer of the store passes here, so a replaced `then` would answer for all of them.
  */
 async function mappingOutage(result: PromiseLike<unknown>): Promise<unknown> {
-  markHandled(result)
   try {
     assertRootIsStandard()
     const answer = await pinned(result)

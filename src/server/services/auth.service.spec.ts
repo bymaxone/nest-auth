@@ -66,18 +66,8 @@ const USER = {
   createdAt: new Date('2026-01-01')
 }
 
-const SAFE_USER = {
-  id: 'user-1',
-  email: 'user@example.com',
-  name: 'Test User',
-  role: 'member',
-  status: 'active',
-  tenantId: 'tenant-1',
-  emailVerified: true,
-  mfaEnabled: false,
-  lastLoginAt: null,
-  createdAt: new Date('2026-01-01')
-}
+/** The user as the service returns it: everything but the password hash. */
+const { passwordHash: _passwordHash, ...SAFE_USER } = USER
 
 const AUTH_RESULT = {
   user: SAFE_USER,
@@ -230,6 +220,10 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
+    // `clearAllMocks` keeps implementations, so every test starts from these defaults whatever ran before it.
+    mockRedis.readSessionOwner.mockResolvedValue({ userId: USER.id, tenantId: USER.tenantId })
+    mockUserRepo.findById.mockResolvedValue({ ...USER })
+    mockTokenManager.verifyIgnoringExpiry.mockReturnValue(USER)
 
     const module = await Test.createTestingModule({
       providers: [

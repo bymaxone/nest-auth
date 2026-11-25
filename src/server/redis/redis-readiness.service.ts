@@ -108,9 +108,8 @@ export class RedisReadinessService implements OnApplicationBootstrap {
   private whenReachable(timeoutMs: number): Promise<void> {
     const { status } = this.redis
     if (status === 'end') {
-      // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
       return new IntrinsicPromise<void>((_resolve, reject) => {
-        reject(new Error('the client is closed'))
+        reject(new Error())
       })
     }
     if (!CONNECTING_STATES.includes(status)) {
@@ -153,16 +152,11 @@ export class RedisReadinessService implements OnApplicationBootstrap {
    * @throws {Error} When the client is closed, the command fails or the time runs out.
    */
   private async attempt(timeoutMs: number): Promise<void> {
-    // Stryker disable next-line StringLiteral: equivalent. The text of this rejection is never read: the retry loop discards the reason and the final error is built from the client's address.
     const { value } = await awaiting(
-      withDeadline(
-        async () => {
-          await this.whenReachable(timeoutMs)
-          await this.redis.ping()
-        },
-        timeoutMs,
-        'the PING did not complete in time'
-      )
+      withDeadline(async () => {
+        await this.whenReachable(timeoutMs)
+        await this.redis.ping()
+      }, timeoutMs)
     )
     // Reading the box throws the reason of a PING that failed or did not finish in time.
     void value

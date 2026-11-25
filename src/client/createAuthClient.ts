@@ -355,9 +355,9 @@ function readErrorEnvelope(value: unknown, response: Response): AuthErrorRespons
     // comment, where the per-line directive points at the comment's own continuation.
     details:
       typeof details === 'object' && details !== null ? (details as Record<string, unknown>) : null
-    // Stryker restore ConditionalExpression
   }
 }
+// Stryker restore ConditionalExpression
 
 /**
  * Type-guard for the flat NestJS error body shape.
@@ -539,10 +539,9 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
       // drops an `undefined` value, but a reader cannot see that from the call site — and the
       // difference matters here: the server distinguishes "the caller named no tenant" from "the
       // caller named one", and refuses the second under a resolver.
-      return postNoContent(AUTH_PASSWORD_ROUTES.forgotPassword, {
-        email,
-        ...(tenantId !== undefined ? { tenantId } : {})
-      })
+      const payload: Record<string, string> = { email }
+      if (tenantId !== undefined) payload['tenantId'] = tenantId
+      return postNoContent(AUTH_PASSWORD_ROUTES.forgotPassword, payload)
     },
 
     async resetPassword(input): Promise<void> {

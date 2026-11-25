@@ -48,7 +48,6 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
-import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { awaiting, checked, pinned, PinnedAll, started } from '../utils/settle'
 import { pageInvitations } from '../utils/workspace-invitation-page'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
@@ -266,7 +265,6 @@ export class WorkspaceInvitationService {
         workspaceName: record.workspaceName,
         ...answer
       } as const
-      assertRootIsStandard()
       return checked(bootstrap)
     }
     if (workspace?.status !== 'active' || inviter === null) throw invalidToken()
@@ -276,7 +274,6 @@ export class WorkspaceInvitationService {
       inviterName: inviter.name,
       ...answer
     } as const
-    assertRootIsStandard()
     return checked(preview)
   }
 

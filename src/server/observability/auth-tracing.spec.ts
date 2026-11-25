@@ -195,3 +195,34 @@ describe('AuthTracing', () => {
     await expect(tracing.span('auth.login', {}, () => Promise.resolve(7))).resolves.toBe(7)
   })
 })
+
+describe('AuthTracing and the promise handed to a tracer that never looks at it', () => {
+  // Scenario: the operation fails and the tracer drops the promise it was handed without attaching a handler. Expected: the failure
+  // reaches the caller and the process reports no unhandled rejection. Why: the promise handed to the tracer is a copy of the
+  // operation's own outcome that nothing in the library waits on, so only the mark made when it was built keeps its rejection heard.
+  it('leaves no rejection unhandled', async () => {
+    startActiveSpan = (_name, _options, fn) => {
+      fn(span())
+    }
+    const failure = new Error('the operation failed')
+    const tracing = await loaded()
+    const reported: unknown[] = []
+    const listener = (reason: unknown): void => {
+      reported.push(reason)
+    }
+    process.on('unhandledRejection', listener)
+    let thrown: unknown
+    try {
+      thrown = await tracing
+        .span('auth.login', {}, () => Promise.reject(failure))
+        .catch((error: unknown) => error)
+      await new Promise((done) => setImmediate(done))
+      await new Promise((done) => setImmediate(done))
+    } finally {
+      process.off('unhandledRejection', listener)
+    }
+
+    expect(thrown).toBe(failure)
+    expect(reported).toEqual([])
+  })
+})

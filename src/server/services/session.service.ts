@@ -19,7 +19,6 @@ import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { hostEntityOf } from '../utils/host-read'
 import { toSafeUser } from '../utils/mfa-safe-user'
-import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { runDetached } from '../utils/run-detached'
 import {
   parseStoredDetail,
@@ -816,10 +815,8 @@ export class SessionService {
   private async graceSuccessor(sessionHash: string): Promise<string | undefined> {
     const pointer = await pinned(this.redis.get(`rp:${sessionHash}`))
     if (pointer === null) return undefined
-    const separator = pointer.indexOf(':')
-    if (separator < 0) return undefined
-    const successor = pointer.slice(0, separator)
-    return SESSION_HASH_RE.test(successor) ? successor : undefined
+    const successor = pointer.slice(0, 64)
+    return SESSION_HASH_RE.test(successor) && pointer[64] === ':' ? successor : undefined
   }
 
   /** Drops the grace pointers that have expired from the index, without making the listing wait for it. */
@@ -1043,14 +1040,12 @@ export class SessionService {
       )
     )
     const ages = (await awaiting(read)).value
-    assertRootIsStandard()
     return checked(ages)
   }
 }
 
-/** Orders the sessions newest first. The list is read for `then` when it is returned, so the root is checked as the last statement. */
+/** Orders the sessions newest first. */
 function newestFirst(results: SessionInfo[]): SessionInfo[] {
   results.sort((a, b) => b.createdAt - a.createdAt)
-  assertRootIsStandard()
   return results
 }

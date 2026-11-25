@@ -368,14 +368,14 @@ export async function allOf<T>(calls: readonly (PromiseLike<T> | T)[]): Promise<
  *
  * @param work - The calls to bound.
  * @param ms - The deadline in milliseconds.
- * @param message - The message of the error thrown when the deadline passes first.
+ * @param message - The message of the error thrown when the deadline passes first; none when nothing reads it.
  * @returns What the work resolved to, boxed. The promise never rejects: reading `.value` throws the error of the work, or one with
  * `message` when the deadline passes first.
  */
 export async function withDeadline<T>(
   work: () => Promise<T>,
   ms: number,
-  message: string
+  message?: string
 ): Promise<Settled<T>> {
   let timer: NodeJS.Timeout | undefined
   const settled = pinned(
