@@ -106,20 +106,28 @@ describe('the copy of an answer of a repository that finds nothing', () => {
     }
   )
 
-  // Scenario: the same method misses twice. Expected: both misses do the same work. Why: the decoy is built when the module
-  // loads, so the first miss does not pay for building it and the second is not the cheaper one.
-  it('does the same work on the first miss as on the second', () => {
-    const [, contract] = NULLABLE_METHODS[0] as [string, ErasedContract]
+  // Scenario: the module is loaded fresh and its first call is a miss. Expected: the miss does the same work as a found row.
+  // Why: the decoys are built when the module loads. A module that built one on the first miss would make that miss dearer,
+  // and every contract already copied by the rows above would hide it, so only a fresh load shows it.
+  it('does the same work on the first miss of a fresh load as on a found row', () => {
+    jest.isolateModules(() => {
+      const fresh = jest.requireActual<typeof import('./host-read')>('./host-read')
+      const contracts =
+        jest.requireActual<typeof import('./repository-contracts')>('./repository-contracts')
+      const contract = contracts.USER_REPOSITORY_CONTRACT.findById as ErasedContract
+      const row = rowOf(contract)
 
-    const first = workOf(() => copyHostRecord(null, contract))
-    const second = workOf(() => copyHostRecord(null, contract))
+      const first = workOf(() => fresh.copyHostRecord(null, contract))
+      const found = workOf(() => fresh.copyHostRecord(row, contract))
 
-    expect(first).toBe(second)
+      expect(first).toBe(found)
+    })
   })
 
   // Scenario: a contract that may find nothing holds a date, a nested record and a list of records, which no repository of
-  // the library has yet. Expected: the miss does the same work as the found row, the second miss included. Why: the decoy
-  // copies a date and a nested record as a found row does, and a contract added later is covered the same way.
+  // the library has yet. Expected: the miss does the same work as the found row, once the decoy of this contract exists. Why:
+  // the decoy copies a date and a nested record as a found row does. This contract is not one the module built at load, so
+  // its decoy is built by the first miss, which is the dearer one and is made here before the miss that is measured.
   it('does the same work for a miss as for a found row of a contract with a nested record, a list and a date', () => {
     const contract: ErasedContract = {
       fields: { owner: 'nested', items: 'nested', at: 'date', note: '~string' },
@@ -131,12 +139,14 @@ describe('the copy of an answer of a repository that finds nothing', () => {
     }
     const row = rowOf(contract)
 
+    copyHostRecord(null, contract)
+
     const found = workOf(() => copyHostRecord(row, contract))
     const missed = workOf(() => copyHostRecord(null, contract))
-    const again = workOf(() => copyHostRecord(undefined, contract))
+    const absent = workOf(() => copyHostRecord(undefined, contract))
 
     expect(found).toBeGreaterThan(0)
-    expect(missed).toBeGreaterThanOrEqual(found)
-    expect(again).toBe(found)
+    expect(missed).toBe(found)
+    expect(absent).toBe(found)
   })
 })
