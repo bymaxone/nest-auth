@@ -6,6 +6,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { isStoredInvitation, type StoredInvitation } from './invitation-record'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { CREDENTIAL_PROVED, TokenManagerService } from './token-manager.service'
@@ -20,7 +21,7 @@ import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { RELEASE_INDEX_SCRIPT } from '../redis/release-index.script'
+import { releaseIndex } from '../redis/release-index.script'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -30,44 +31,6 @@ import { hasRole } from '../utils/roles.util'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 import { checked, pinned, PinnedAll } from '../utils/settle'
-
-/**
- * Stored payload for a pending invitation, kept in Redis.
- * The raw token is never stored — only its SHA-256 hash is used as the key.
- */
-interface StoredInvitation {
-  /** Normalized (lowercased, trimmed) email address of the invitee. */
-  email: string
-  /** Role to assign upon acceptance. */
-  role: string
-  /** Tenant the invitee will join. */
-  tenantId: string
-  /** Internal ID of the user who sent the invitation. */
-  inviterUserId: string
-  /** ISO timestamp of when the invitation was created. */
-  createdAt: string
-}
-
-/**
- * Narrows an unknown value to `StoredInvitation` at runtime.
- *
- * Used after `JSON.parse` to prevent injection of unexpected field values
- * (e.g. a tampered `role`) from a compromised or misconfigured Redis instance.
- */
-function isStoredInvitation(value: unknown): value is StoredInvitation {
-  // Stryker disable next-line ConditionalExpression: non-object JSON primitives have no string fields, so the downstream field guards reject them identically when the type clause is dropped
-  if (typeof value !== 'object' || value === null) return false
-  const v = value as Record<string, unknown>
-  return (
-    typeof v['email'] === 'string' &&
-    // Stryker disable next-line ConditionalExpression: equivalent — a non-string role is refused downstream by `Object.hasOwn(hierarchy, role)` and by `hasRole`, which compares by identity, so no non-string value can reach an account. Kept as the contract this guard states.
-    typeof v['role'] === 'string' &&
-    // Stryker disable next-line ConditionalExpression: equivalent — a non-string tenantId is refused downstream by `inviter.tenantId === invitation.tenantId`, a strict comparison against a string that no non-string can satisfy. Kept for the same reason as the role clause.
-    typeof v['tenantId'] === 'string' &&
-    typeof v['inviterUserId'] === 'string' &&
-    typeof v['createdAt'] === 'string'
-  )
-}
 
 /**
  * How many times a supersede re-derives its approval before giving up.
@@ -569,7 +532,7 @@ export class InvitationService {
         return false
       }
 
-      if (!(await pinned(this.releaseIndex(indexKey, tokenHash)))) continue
+      if (!(await pinned(releaseIndex(this.redis, indexKey, tokenHash)))) continue
       const removed = await pinned(this.redis.del(`inv:${tokenHash}`))
       if (removed) {
         logEvent(this.logger, 'AUTH_INVITATION_REVOKED', { tenantId, actorUserId: revokerUserId })
@@ -580,21 +543,6 @@ export class InvitationService {
   }
 
   /**
-   * Drops the invitee index while it still names `tokenHash`.
-   *
-   * A later invite can claim the index between a caller's read and this removal. Its entry is the
-   * only handle a revoke has on its record, so it stays.
-   *
-   * @param indexKey - The invitee index key.
-   * @param tokenHash - The hash of the invitation the caller is removing.
-   * @returns Whether this call dropped the index.
-   */
-  private async releaseIndex(indexKey: string, tokenHash: string): Promise<boolean> {
-    const released = await pinned(this.redis.eval(RELEASE_INDEX_SCRIPT, [indexKey], [tokenHash]))
-    return released === 1
-  }
-
-  /**
    * Drops the invitee index of an invitation whose record was consumed, while it still names it.
    *
    * @param invitation - The consumed record.
@@ -602,7 +550,7 @@ export class InvitationService {
    */
   private async releaseAccepted(invitation: StoredInvitation, token: string): Promise<void> {
     const indexKey = this.inviteeKey(invitation.email, invitation.tenantId)
-    await pinned(this.releaseIndex(indexKey, sha256(token)))
+    await pinned(releaseIndex(this.redis, indexKey, sha256(token)))
   }
 
   /**

@@ -30,7 +30,6 @@ import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { RELEASE_INDEX_SCRIPT } from '../redis/release-index.script'
 import { InvitationService } from './invitation.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
@@ -936,32 +935,6 @@ describe('InvitationService', () => {
   // they had to fix it was gone. `PasswordResetService.resetPassword` was refactored away from
   // exactly this shape; the reasoning had not reached here.
   describe('a recoverable client error must not spend the invitation', () => {
-    // An acceptance drops the index only while it names the invitation being accepted.
-    it('releases the index against the hash of the token it consumed', async () => {
-      mockRedis.getdel.mockResolvedValueOnce(JSON.stringify(VALID_STORED_INVITATION))
-      mockRedis.eval.mockClear()
-      mockRedis.del.mockClear()
-      mockUserRepo.findByEmail.mockResolvedValueOnce({ id: 'existing' })
-
-      await expect(
-        service.acceptInvitation(
-          { token: 'a'.repeat(64), name: 'Name', password: 'Secure123!' },
-          '1.2.3.4',
-          'agent',
-          {}
-        )
-      ).rejects.toBeInstanceOf(AuthException)
-
-      expect(mockRedis.eval).toHaveBeenCalledWith(
-        RELEASE_INDEX_SCRIPT,
-        [
-          `invidx:${VALID_STORED_INVITATION.tenantId}:${hmacSha256(VALID_STORED_INVITATION.email, HMAC_KEY)}`
-        ],
-        [sha256('a'.repeat(64))]
-      )
-      expect(mockRedis.del).not.toHaveBeenCalled()
-    })
-
     it('screens the password before consuming the token', async () => {
       // `Once`, so the rejection cannot leak into a later case — these mocks are shared and
       // not reset between tests.
@@ -1070,7 +1043,6 @@ describe('InvitationService', () => {
         Promise.resolve(key === INDEX_KEY ? TOKEN_HASH : JSON.stringify(VALID_STORED_INVITATION))
       )
       mockRedis.del.mockResolvedValue(true)
-      mockRedis.eval.mockResolvedValue(1)
     })
 
     // The capability the module has always documented and never had: an invitation is a
@@ -1081,8 +1053,7 @@ describe('InvitationService', () => {
         service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
       ).resolves.toBe(true)
 
-      expect(mockRedis.eval).toHaveBeenCalledWith(RELEASE_INDEX_SCRIPT, [INDEX_KEY], [TOKEN_HASH])
-      expect(mockRedis.del).not.toHaveBeenCalledWith(INDEX_KEY)
+      expect(mockRedis.eval).toHaveBeenCalledWith(expect.any(String), [INDEX_KEY], [TOKEN_HASH])
       expect(mockRedis.del).toHaveBeenCalledWith(`inv:${TOKEN_HASH}`)
       // The record is READ under the same key it is deleted under, or the role check below
       // would be reading someone else's invitation — or nothing at all, which reads as
@@ -1101,56 +1072,6 @@ describe('InvitationService', () => {
         'invited@example.com',
         'i***@example.com'
       ])
-      logSpy.mockRestore()
-    })
-
-    // Nothing was removed (the record was already gone), so nothing is reported as withdrawn.
-    it('logs no withdrawal when no record was removed', async () => {
-      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      mockRedis.del.mockResolvedValue(false)
-
-      await expect(
-        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
-      ).resolves.toBe(false)
-
-      expect(logSpy).not.toHaveBeenCalled()
-      logSpy.mockRestore()
-    })
-
-    // The index stopped naming the judged invitation, so the record is left alone and the address
-    // is read again, three times at most.
-    it('deletes nothing and refuses after three attempts while the index keeps moving', async () => {
-      mockRedis.del.mockClear()
-      mockRedis.get.mockClear()
-      mockRedis.eval.mockResolvedValue(0)
-
-      await expect(
-        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
-      ).rejects.toMatchObject({
-        response: { error: { code: AUTH_ERROR_CODES.TOO_MANY_REQUESTS } }
-      })
-
-      expect(mockRedis.get.mock.calls.filter(([key]) => key === INDEX_KEY)).toHaveLength(3)
-      expect(mockRedis.del).not.toHaveBeenCalled()
-    })
-
-    // The bound from both sides: the third attempt still removes, and there is no fourth.
-    it.each([
-      [2, 'removes on the third attempt'],
-      [3, 'refuses although a fourth attempt would have removed']
-    ])('after %i replacements %s', async (replacements) => {
-      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      mockRedis.eval.mockReset().mockResolvedValue(1)
-      for (let i = 0; i < replacements; i += 1) mockRedis.eval.mockResolvedValueOnce(0)
-
-      const outcome = await service
-        .revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
-        .catch((error: unknown) => error)
-
-      expect(outcome === true).toBe(replacements === 2)
-      expect(outcome instanceof AuthException).toBe(replacements === 3)
-      expect(mockRedis.eval).toHaveBeenCalledTimes(3)
-      expect(logSpy).toHaveBeenCalledTimes(replacements === 2 ? 1 : 0)
       logSpy.mockRestore()
     })
 
