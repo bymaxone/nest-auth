@@ -1717,6 +1717,12 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | GET    | `/oauth/:provider`             | Public + `@SkipMfa()`              | Initiate OAuth authorization redirect                       |
 | GET    | `/oauth/:provider/callback`    | Public + `@SkipMfa()`              | Handle OAuth callback, exchange code, issue tokens          |
 
+> **Revoking one session cuts every access token of the account, the caller's included.**
+> `DELETE /sessions/:id` and `POST /sessions/revoke-all` advance the account's token epoch, because
+> a session cannot be traced to the access tokens issued from it. The caller's next request answers
+> `401` until the client refreshes; every session that was kept refreshes normally, and a revoked
+> one cannot.
+
 > **The platform plane never uses a refresh cookie.** `extractPlatformRefreshToken` reads
 > `req.body.refreshToken` in every `tokenDelivery` mode, and the access token is always the
 > `Authorization` header — so a consumer sending platform credentials as cookies is sending

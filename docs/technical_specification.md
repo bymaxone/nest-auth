@@ -2778,6 +2778,11 @@ export class ResetPasswordDto {
 | `DELETE` | `/:id`        | JWT  | `JwtAuthGuard`, `UserStatusGuard` | —    | Revokes a specific session     |
 | `POST`   | `/revoke-all` | JWT  | `JwtAuthGuard`, `UserStatusGuard` | —    | Revokes all except the current |
 
+Both revocations advance the account's token epoch, because a session cannot be traced to the access
+tokens issued from it: every access token of the account stops verifying, the caller's own included.
+A kept session gets a new one on its next refresh; a revoked one cannot refresh. `logout` does not do
+this: it blacklists the one access token it is given.
+
 **Responses:**
 
 ```typescript
