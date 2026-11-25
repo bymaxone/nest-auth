@@ -2852,9 +2852,9 @@ export class PlatformLoginDto {
 A revoke whose invitation is replaced while it runs reads the address again and applies the role
 ceiling to the record it finds. A tenant revoke that finds the address claimed and no record yet
 releases the address, whatever the revoker's role: the invite in flight fails with `403`, or the record
-it has just stored is removed. When the invitation is replaced before each attempt to remove it, it answers
-`429` `auth.too_many_requests`. An index naming another invitation than the one being removed or accepted
-is left in place.
+it has just stored is removed, even one above the revoker's role. When the invitation is replaced during
+each attempt to remove it, it answers `429` `auth.too_many_requests`. An index naming another
+invitation than the one being removed or accepted is left in place.
 
 **DTO:**
 
