@@ -40,19 +40,20 @@ describe('the baseline loaded over a runtime that differs from the usual one', (
     expect(counted).toBe(0)
   })
 
-  // Scenario: a listed built-in is a plain value and not a function when the module loads. Expected: the import does not throw,
-  // nothing is counted and the entry is not compared.
+  // Scenario: a listed built-in is a plain value and not a function when the module loads, and is a function again when the count
+  // is taken. Expected: the import does not throw, nothing is counted and the entry is not compared. Why: the record holds
+  // functions only, so a value that was never one has no original to differ from.
   it('loads with a listed built-in that is not a function', () => {
     const held = getOwn(Number.prototype, 'toFixed') as PropertyDescriptor
     define(Number.prototype, 'toFixed', { ...held, value: 5 })
-    let counted = -1
+    let loaded: Baseline
     try {
-      counted = loadFresh().replacedBuiltins()
+      loaded = loadFresh()
     } finally {
       define(Number.prototype, 'toFixed', held)
     }
 
-    expect(counted).toBe(0)
+    expect(loaded.replacedBuiltins()).toBe(0)
   })
 
   // Scenario: a function is planted as `value` on the root when the module loads, and later the getter of a listed accessor is replaced.
