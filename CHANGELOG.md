@@ -31,7 +31,7 @@ A patch release.
 ### Changed
 
 - The comparison of the recorded built-ins that the root guard runs at each decision does less work, with the same verdicts.
-- The documentation now says that revoking a session, or all the others, cuts every access token of the account, the caller's included, until the next refresh; and that `create`, `createWithOAuth` and `updateEmail` of a user repository should throw `AuthException` `EMAIL_ALREADY_EXISTS` when the write finds the address taken, since any other error reaches the caller as `500`.
+- The documentation now says that revoking a session, or all the others, cuts every access token of the account, the caller's included, until the next refresh; and that `create`, `createWithOAuth` and `updateEmail` of a user repository should throw `AuthException` `EMAIL_ALREADY_EXISTS` when the write finds the address taken.
 
 ### Known limits
 
@@ -39,7 +39,7 @@ A patch release.
 
 ### Apply to a derived backend
 
-`InvitationService.revokeInvitation` and the workspace revokes can now refuse with `TOO_MANY_REQUESTS`. A backend that shares the keyspace drops an invitee index only while it still holds the key of the invitation it acted on.
+`InvitationService.revokeInvitation` and the workspace revokes can now refuse with `TOO_MANY_REQUESTS`. A backend that shares the keyspace drops an invitee index only while it still names the invitation it acted on.
 
 ## [1.5.16] - 2026-11-25
 

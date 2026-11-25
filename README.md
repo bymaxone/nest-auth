@@ -1329,7 +1329,7 @@ the URL fragment and set `Referrer-Policy: no-referrer` there.
 
 A revoke, here and on the tenant's `POST /invitations/revoke`, whose invitation is replaced by a
 newer one while it runs reads the address again and applies the same role ceiling to what it finds.
-When the invitation is replaced before each of three attempts, it answers `429`
+When the invitation is replaced before each attempt to remove it, it answers `429`
 `auth.too_many_requests`; the caller can try again.
 
 ### Frontend

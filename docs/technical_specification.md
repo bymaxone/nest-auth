@@ -2850,8 +2850,8 @@ export class PlatformLoginDto {
 | `POST` | `/accept` | Public + token | —                                 | `AcceptInvitationDto` | Accepts invitation and creates account                     |
 
 A revoke whose invitation is replaced while it runs reads the address again and applies the same role
-ceiling to what it finds. It makes three attempts, with no pause between them, and then answers `429`
-`auth.too_many_requests`. An index naming another invitation than the one being removed or accepted
+ceiling to what it finds. When the invitation is replaced before each attempt to remove it, it answers
+`429` `auth.too_many_requests`. An index naming another invitation than the one being removed or accepted
 is left in place.
 
 **DTO:**
@@ -4390,8 +4390,8 @@ role, the owner at any role. A suspended member is still a member. An invitation
 a role, is stored as a digest of its token, and is accepted either by the signed-in account it was
 addressed to or by creating that account. Acceptance takes effect at the membership write and the
 token is spent after it. Inviting, resending and revoking answer `204` whatever the address, so they do not reveal whether
-an address has an account. The one other answer of a revoke to an allowed caller is `429`, when the invitation was replaced
-before each of three attempts to remove it.
+an address has an account. A revoke answers `429` when the invitation was replaced
+before each attempt to remove it.
 
 ### 22.3a Deleting an account
 
