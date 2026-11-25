@@ -406,17 +406,21 @@ function applyContract(value: unknown, contract: Structured, run: Read): unknown
 /** The decoys already built, one per contract. */
 const DECOYS = new WeakMap<object, unknown>()
 
+/** The text every text kind accepts: a non-empty string that is not blank, which is what a tenant and an id require. */
+const DECOY_TEXT = 'decoy'
+
 /** A value that passes the reader of each kind, for the decoy of a field. The date and the list are only ever copied. */
 const DECOY_VALUES: Readonly<Record<ReaderName, unknown>> = {
+  // Stryker disable next-line BooleanLiteral: the reader takes either boolean and the copy does the same work for both
   boolean: false,
-  string: 'decoy',
-  tenant: 'decoy',
-  id: 'decoy',
+  string: DECOY_TEXT,
+  tenant: DECOY_TEXT,
+  id: DECOY_TEXT,
   number: 0,
   date: new Date(0),
-  strings: ['decoy'],
-  '~id': 'decoy',
-  '~string': 'decoy',
+  strings: [DECOY_TEXT],
+  '~id': DECOY_TEXT,
+  '~string': DECOY_TEXT,
   '~date': new Date(0)
 }
 

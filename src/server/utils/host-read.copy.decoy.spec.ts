@@ -67,7 +67,8 @@ function workOf(body: () => unknown): number {
     jest.spyOn(Object, 'getOwnPropertyDescriptor'),
     jest.spyOn(Object, 'getPrototypeOf'),
     jest.spyOn(Object, 'defineProperty'),
-    jest.spyOn(Object, 'create')
+    jest.spyOn(Object, 'create'),
+    jest.spyOn(Array.prototype, 'push')
   ]
   try {
     body()
@@ -130,7 +131,7 @@ describe('the copy of an answer of a repository that finds nothing', () => {
   // its decoy is built by the first miss, which is the dearer one and is made here before the miss that is measured.
   it('does the same work for a miss as for a found row of a contract with a nested record, a list and a date', () => {
     const contract: ErasedContract = {
-      fields: { owner: 'nested', items: 'nested', at: 'date', note: '~string' },
+      fields: { owner: 'nested', items: 'nested', at: 'date', note: '~string', tags: 'strings' },
       nested: {
         owner: { fields: { id: 'id' }, nested: {} },
         items: { list: { fields: { id: 'id', at: '~date' }, nested: {} } }
