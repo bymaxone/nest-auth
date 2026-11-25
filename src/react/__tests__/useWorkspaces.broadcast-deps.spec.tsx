@@ -6,6 +6,8 @@
  * The handler of a cross-tab broadcast asks the session check it was given by the latest render. The
  * auth provider hands a new check when its client changes, and a handler that kept the first one would
  * revalidate through a client that is no longer the session's.
+ *
+ * @layer Test
  */
 
 import { act, renderHook } from '@testing-library/react'
