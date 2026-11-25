@@ -10,8 +10,12 @@
  *  - the index TTL starts at the claim and the record TTL at the write, so the record outlives
  *    the entry that names it.
  *
- * Each case forces the interleave deterministically by wrapping the Redis client's `set` for the
- * invitation record, rather than racing two requests and hoping.
+ * The other window is on the removing side: a revoke and an acceptance read the index, or consume
+ * the record it names, and drop the index afterwards. A later invite of the address can claim the
+ * index in between.
+ *
+ * Each case forces the interleave deterministically by wrapping one command of the Redis client,
+ * rather than racing two requests and hoping.
  */
 
 import type { INestApplication } from '@nestjs/common'
@@ -46,6 +50,55 @@ describe('invitation claim-then-write window (E2E)', () => {
   let sent: CapturedEmail[]
   let realSet: Redis['set']
 
+  /**
+   * Runs `write` once, right after the first call of `command` that names an invitation record:
+   * after a revoke has read it, or an acceptance has consumed it.
+   */
+  function afterRecordAccess(command: 'get' | 'eval', write: () => Promise<void>): void {
+    const original = (boot.redis[command] as (...a: unknown[]) => Promise<unknown>).bind(boot.redis)
+    let done = false
+    jest.spyOn(boot.redis, command).mockImplementation((async (...args: unknown[]) => {
+      const reply = await original(...args)
+      if (!done && args.some((arg) => String(arg).includes(':inv:'))) {
+        done = true
+        await write()
+      }
+      return reply
+    }) as never)
+  }
+
+  /** Moves the index to a new record granting `role`, as a later invite by someone else does. */
+  async function replaceWithRole(role: string): Promise<void> {
+    const namespace = boot.options.redisNamespace ?? 'auth'
+    const { records, indexes } = await invitationKeys(boot.redis, namespace)
+    const stored = JSON.parse((await boot.redis.get(records[0] as string)) as string) as object
+    const hash = 'f'.repeat(64)
+    await boot.redis.del(records[0] as string)
+    await boot.redis.set(`${namespace}:inv:${hash}`, JSON.stringify({ ...stored, role }))
+    await boot.redis.set(indexes[0] as string, hash)
+  }
+
+  /** Collects the raw tokens of the invitations emailed from here on. */
+  function emailedTokens(): string[] {
+    const tokens: string[] = []
+    boot.email.sendInvitation = async (_tenantId, _email, data) => {
+      tokens.push(data.inviteToken)
+    }
+    return tokens
+  }
+
+  /** The invitation keys of this suite's namespace, counted. */
+  async function countKeys(): Promise<{ records: number; indexes: number }> {
+    const namespace = boot.options.redisNamespace ?? 'auth'
+    const { records, indexes } = await invitationKeys(boot.redis, namespace)
+    return { records: records.length, indexes: indexes.length }
+  }
+
+  const accept = (token: string) =>
+    request(app.getHttpServer())
+      .post('/invitations/accept')
+      .send({ token, name: 'Invitee', password: 'InviteeSecret123!' })
+
   /** Runs `beforeWrite` once, immediately before the invitation record is written. */
   function beforeRecordWrite(beforeWrite: () => Promise<void>): void {
     const original = realSet.bind(boot.redis)
@@ -62,7 +115,13 @@ describe('invitation claim-then-write window (E2E)', () => {
 
   beforeEach(async () => {
     boot = await bootstrapTestApp(
-      { invitations: { enabled: true, tokenTtlSeconds: TTL_SECONDS } },
+      {
+        invitations: { enabled: true, tokenTtlSeconds: TTL_SECONDS },
+        roles: {
+          hierarchy: { OWNER: ['ADMIN'], ADMIN: ['MEMBER'], MEMBER: [] },
+          platformHierarchy: { SUPER_ADMIN: [] }
+        }
+      },
       {
         controllers: {
           auth: true,
@@ -132,6 +191,75 @@ describe('invitation claim-then-write window (E2E)', () => {
       indexes: 0
     })
     expect(sent.filter((mail) => mail.to === INVITEE)).toHaveLength(0)
+  })
+
+  // Scenario: a re-invite lands after a revoke has read the invitation and before it drops the
+  // index. Expected: the replacement stays indexed, and the next revoke removes it. Why: dropping
+  // the index unconditionally left the new token redeemable, out of reach of every later revoke,
+  // and let a further invite add a second live token beside it.
+  it('keeps a replacement revocable when it lands during a revoke', async () => {
+    const tokens = emailedTokens()
+    await invite()
+    afterRecordAccess('get', async () => {
+      await invite()
+    })
+
+    expect((await revoke()).status).toBe(204)
+
+    expect(await countKeys()).toEqual({ records: 0, indexes: 0 })
+    expect((await accept(tokens[1] as string)).status).toBe(400)
+  })
+
+  // Scenario: the replacement grants a role above the revoker. Expected: it stays, indexed, and the
+  // revoke answers as it does for an address with nothing pending. Why: the ceiling applies to
+  // what is there, and the answer must not say that something is.
+  it('leaves a replacement above the revoker, answering as for no invitation', async () => {
+    await invite()
+    afterRecordAccess('get', async () => {
+      await replaceWithRole('OWNER')
+    })
+
+    const res = await revoke()
+
+    const nothingPending = await request(app.getHttpServer())
+      .post('/invitations/revoke')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ email: 'nobody@example.com' })
+    expect([res.status, res.text]).toEqual([nothingPending.status, nothingPending.text])
+    expect(await countKeys()).toEqual({ records: 1, indexes: 1 })
+  })
+
+  // Scenario: a re-invite lands after an acceptance has consumed the record and before it drops
+  // the index. Expected: the replacement stays indexed, so a revoke removes it. Why: the
+  // acceptance dropped whatever the index named, which was no longer the invitation it consumed.
+  it('keeps a replacement revocable when it lands during an acceptance', async () => {
+    const tokens = emailedTokens()
+    await invite()
+    afterRecordAccess('eval', async () => {
+      await invite()
+    })
+
+    expect((await accept(tokens[0] as string)).status).toBe(201)
+
+    expect(await countKeys()).toEqual({ records: 1, indexes: 1 })
+    await revoke()
+    expect(await countKeys()).toEqual({ records: 0, indexes: 0 })
+  })
+
+  // Scenario: the address is invited again after an acceptance that was raced by a re-invite.
+  // Expected: that invite supersedes the replacement, leaving one record. Why: an invite deletes
+  // only the record the index names, so a lost entry left two live tokens.
+  it('leaves one live record after an invite that follows the race', async () => {
+    const tokens = emailedTokens()
+    await invite()
+    afterRecordAccess('eval', async () => {
+      await invite()
+    })
+    await accept(tokens[0] as string)
+
+    expect((await invite()).status).toBe(204)
+
+    expect(await countKeys()).toEqual({ records: 1, indexes: 1 })
   })
 
   // Scenario: the record is written some time after the claim. Expected: the index outlives, or

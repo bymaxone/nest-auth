@@ -75,7 +75,7 @@ async function serviceWith(
       },
       {
         provide: AuthRedisService,
-        useValue: { getdel: jest.fn().mockResolvedValue(stored), del: jest.fn() }
+        useValue: { getdel: jest.fn().mockResolvedValue(stored), eval: jest.fn() }
       }
     ]
   }).compile()

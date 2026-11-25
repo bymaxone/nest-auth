@@ -17,6 +17,7 @@ import {
 import type { StoredWorkspaceInvitation } from '../interfaces/workspace-invitation.interface'
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { RELEASE_INDEX_SCRIPT } from '../redis/release-index.script'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { checked, pinned, PinnedAll } from '../utils/settle'
 import { isStoredWorkspaceName } from '../utils/workspace-name'
@@ -57,13 +58,6 @@ if ARGV[5] ~= '' then
   redis.call('SREM', KEYS[3], ARGV[5])
 end
 return 1`
-
-/** Deletes the index only while it still names the given record key. */
-const RELEASE_INDEX_SCRIPT = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0`
 
 /** Reads and writes workspace invitation records; it makes no authorization decision. */
 @PinnedAll()

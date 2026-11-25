@@ -20,6 +20,7 @@ import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { RELEASE_INDEX_SCRIPT } from '../redis/release-index.script'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -77,6 +78,9 @@ function isStoredInvitation(value: unknown): value is StoredInvitation {
  * into an unbounded loop, so the budget is small and exceeding it is refused.
  */
 const SUPERSEDE_ATTEMPTS = 3
+
+/** How often a revoke reads an address again when its invitation is replaced under it. */
+const REVOKE_ATTEMPTS = 3
 
 /**
  * Manages tenant invitation flows — creating and accepting invitations.
@@ -496,8 +500,9 @@ export class InvitationService {
    * @param email - The invited address. Normalized at this boundary.
    * @param tenantId - The tenant the invitation was issued for.
    * @returns `true` when a pending invitation was removed, `false` when there was none.
-   * @throws {@link AuthException} `TOKEN_INVALID` when the revoker no longer exists, or
-   *   `INSUFFICIENT_ROLE` when they may not withdraw this invitation.
+   * @throws {@link AuthException} `TOKEN_INVALID` when the revoker no longer exists,
+   *   `INSUFFICIENT_ROLE` when they are outside the tenant or not in good standing, or
+   *   `TOO_MANY_REQUESTS` when the invitation was replaced before each attempt to remove it.
    */
   async revokeInvitation(revokerUserId: string, email: string, tenantId: string): Promise<boolean> {
     const normalizedEmail = normalizeEmail(email)
@@ -518,32 +523,86 @@ export class InvitationService {
     }
 
     const indexKey = this.inviteeKey(normalizedEmail, tenantId)
-    const tokenHash = await pinned(this.redis.get(indexKey))
-    if (tokenHash === null) return false
+    return await pinned(this.withdrawPending(revoker, indexKey, tenantId, revokerUserId))
+  }
 
-    // The role check reads the invitation itself rather than the request: the caller names an
-    // address, not a role, so the only way to know what authority is being withdrawn is to
-    // look. A record that no longer parses is withdrawn without a role check — it can no
-    // longer be accepted either, and leaving it would be worse than removing it.
-    const raw = await pinned(this.redis.get(`inv:${tokenHash}`))
-    const invitation = raw === null ? null : this.parseInvitation(raw)
+  /**
+   * Removes the invitation the index names, when the revoker may withdraw what is there.
+   *
+   * The index is released only while it still names the invitation that was judged. When a later
+   * invite has claimed it meanwhile, the address is read again and what replaced it is judged anew.
+   *
+   * @param revoker - The authenticated caller, in the tenant and in good standing.
+   * @param indexKey - The invitee index key.
+   * @param tenantId - The tenant, for the log.
+   * @param revokerUserId - Who revokes, for the log.
+   * @returns `true` when a pending invitation was removed, `false` when there was none to remove.
+   * @throws {@link AuthException} `TOO_MANY_REQUESTS` when the invitation was replaced before each
+   *   attempt to remove it.
+   */
+  private async withdrawPending(
+    revoker: { role: string; status: string },
+    indexKey: string,
+    tenantId: string,
+    revokerUserId: string
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < REVOKE_ATTEMPTS; attempt += 1) {
+      const tokenHash = await pinned(this.redis.get(indexKey))
+      if (tokenHash === null) return false
 
-    // A revoker who may not withdraw THIS invitation is answered exactly as one who asked
-    // about an address with no invitation at all. `INSUFFICIENT_ROLE` here was an oracle: the
-    // caller names an address and nothing else, so a 403 said "there is a pending invitation
-    // for this address, at a role above yours" while a 204 said "there is none" — letting any
-    // member enumerate a tenant's pending invitations, and roughly at what authority. That is
-    // precisely the disclosure the index hashes the address to prevent. The refusal is
-    // recorded server-side, where an operator can see it and the prober cannot.
-    if (invitation !== null && !this.mayWithdraw(revoker, invitation)) {
-      logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'revoke_outranked' })
-      return false
+      // The role check reads the invitation itself rather than the request: the caller names an
+      // address, not a role, so the only way to know what authority is being withdrawn is to
+      // look. A record that no longer parses is withdrawn without a role check — it can no
+      // longer be accepted either, and leaving it would be worse than removing it.
+      const raw = await pinned(this.redis.get(`inv:${tokenHash}`))
+      const invitation = raw === null ? null : this.parseInvitation(raw)
+
+      // A revoker who may not withdraw THIS invitation is answered exactly as one who asked
+      // about an address with no invitation at all. `INSUFFICIENT_ROLE` here was an oracle: the
+      // caller names an address and nothing else, so a 403 said "there is a pending invitation
+      // for this address, at a role above yours" while a 204 said "there is none" — letting any
+      // member enumerate a tenant's pending invitations, and roughly at what authority. That is
+      // precisely the disclosure the index hashes the address to prevent. The refusal is
+      // recorded server-side, where an operator can see it and the prober cannot.
+      if (invitation !== null && !this.mayWithdraw(revoker, invitation)) {
+        logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'revoke_outranked' })
+        return false
+      }
+
+      if (!(await pinned(this.releaseIndex(indexKey, tokenHash)))) continue
+      const removed = await pinned(this.redis.del(`inv:${tokenHash}`))
+      if (removed) {
+        logEvent(this.logger, 'AUTH_INVITATION_REVOKED', { tenantId, actorUserId: revokerUserId })
+      }
+      return removed
     }
+    throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
+  }
 
-    await pinned(this.redis.del(indexKey))
-    const removed = await pinned(this.redis.del(`inv:${tokenHash}`))
-    logEvent(this.logger, 'AUTH_INVITATION_REVOKED', { tenantId, actorUserId: revokerUserId })
-    return removed
+  /**
+   * Drops the invitee index while it still names `tokenHash`.
+   *
+   * A later invite can claim the index between a caller's read and this removal. Its entry is the
+   * only handle a revoke has on its record, so it stays.
+   *
+   * @param indexKey - The invitee index key.
+   * @param tokenHash - The hash of the invitation the caller is removing.
+   * @returns Whether this call dropped the index.
+   */
+  private async releaseIndex(indexKey: string, tokenHash: string): Promise<boolean> {
+    const released = await pinned(this.redis.eval(RELEASE_INDEX_SCRIPT, [indexKey], [tokenHash]))
+    return released === 1
+  }
+
+  /**
+   * Drops the invitee index of an invitation whose record was consumed, while it still names it.
+   *
+   * @param invitation - The consumed record.
+   * @param token - The raw token it was consumed with.
+   */
+  private async releaseAccepted(invitation: StoredInvitation, token: string): Promise<void> {
+    const indexKey = this.inviteeKey(invitation.email, invitation.tenantId)
+    await pinned(this.releaseIndex(indexKey, sha256(token)))
   }
 
   /**
@@ -707,7 +766,7 @@ export class InvitationService {
     // report success over an invitation that was accepted. Both carry the same TTL, so this is
     // tidiness rather than correctness — but a stale pointer is exactly the kind of thing an
     // operator reads as "still pending".
-    await pinned(this.redis.del(this.inviteeKey(invitation.email, invitation.tenantId)))
+    await pinned(this.releaseAccepted(invitation, dto.token))
 
     // Re-validate role against the hierarchy to guard against Redis tampering.
     if (!Object.hasOwn(this.options.roles.hierarchy, invitation.role)) {
