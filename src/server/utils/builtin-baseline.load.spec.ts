@@ -88,8 +88,8 @@ describe('the baseline loaded over a runtime that differs from the usual one', (
   })
 
   // Scenario: a listed built-in that can be neither assigned nor redefined when the module loads. Expected: the import does not
-  // throw, nothing is counted and the entry is not compared, since nothing can replace it. This case is the last, and the change
-  // it makes to `WeakMap.prototype.set` is permanent for this file.
+  // throw, nothing is counted and the entry is not compared, since nothing can replace it. The change it makes to
+  // `WeakMap.prototype.set` is permanent for this file.
   it('loads with a listed built-in that cannot be replaced', () => {
     const held = getOwn(WeakMap.prototype, 'set') as PropertyDescriptor
     define(WeakMap.prototype, 'set', { ...held, writable: false, configurable: false })
@@ -196,9 +196,31 @@ describe('the baseline loaded over a runtime that differs from the usual one', (
     expect(spy).toHaveBeenCalled()
   })
 
+  // Scenario: `Object.getOwnPropertySymbols` is replaced before the module loads with a function that lists one symbol more
+  // than `RegExp.prototype` has. Expected: the comparison calls it. Why: it lists every symbol the holder has, so it is used.
+  it('keeps a symbol reader that lists a symbol beyond those the holder has', () => {
+    const native = Object.getOwnPropertySymbols
+    const held = getOwn(Object, 'getOwnPropertySymbols') as PropertyDescriptor
+    const extra = Symbol('beyond')
+    const spy = jest.fn((value: object): symbol[] =>
+      value === RegExp.prototype ? [...native(value), extra] : native(value)
+    )
+    let baseline: Baseline
+    define(Object, 'getOwnPropertySymbols', { ...held, value: spy })
+    try {
+      baseline = loadFresh()
+    } finally {
+      define(Object, 'getOwnPropertySymbols', held)
+    }
+    spy.mockClear()
+    baseline.replacedBuiltins()
+
+    expect(spy).toHaveBeenCalled()
+  })
+
   // Scenario: `Reflect.ownKeys` is replaced before the module loads with a function that lists nothing, then a symbol function is
-  // added to a protocol holder. Expected: it is counted. Why: the reader that lists more symbols is the one to compare with, so
-  // neither replaced reader hides the other's answer.
+  // added to a protocol holder. Expected: it is counted. Why: a key reader that lists no symbol gives nothing to hold the
+  // symbol reader to, so the symbol reader stays in use.
   it('counts an added protocol symbol while the replaced key reader lists nothing', () => {
     const held = getOwn(Reflect, 'ownKeys') as PropertyDescriptor
     const added = Symbol('added-protocol')

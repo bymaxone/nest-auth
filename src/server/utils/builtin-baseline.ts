@@ -444,7 +444,6 @@ for (let index = 0; index < PROTOCOL_HOLDERS.length; index += 1) {
   const listed = ownSymbols(holder) as symbol[] | null | undefined
   const expected = symbolsAmongKeys(holder)
   if (!listed) readSymbols = symbolsAmongKeys
-  // Stryker disable next-line EqualityOperator: the pass one past the end differs only for a list with symbols the holder does not have, and then either reader counts the same added keys
   else
     for (let at = 0; at < expected.length; at += 1)
       if (listed[at] !== expected[at]) readSymbols = symbolsAmongKeys
