@@ -5,17 +5,18 @@
  * @layer Test
  */
 
-import type { Redis } from 'ioredis'
+import { Redis } from 'ioredis'
 
 import { isRefusal } from '../utils/object-prototype-guard'
 import { mappingOutages } from './redis-outage'
 
-/** The proxy over a client whose one method answers `answer`, read as the plain method table it behaves as. */
+/** The proxy over a client whose one method answers `answer`, read as the plain method it behaves as. */
 function methodOf(answer: unknown): () => unknown {
-  const client = { command: (): unknown => answer }
-  return (mappingOutages(client as unknown as Redis) as unknown as Record<string, () => unknown>)[
-    'command'
-  ] as () => unknown
+  const client = new Redis({ lazyConnect: true })
+  Object.defineProperty(client, 'command', { value: (): unknown => answer })
+  const method: unknown = Reflect.get(mappingOutages(client), 'command')
+  if (typeof method !== 'function') throw new Error('the proxy answered no method')
+  return (): unknown => Reflect.apply(method, undefined, []) as unknown
 }
 
 /** Lets the microtasks and the next turns of the event loop run, which is when an unhandled rejection is reported. */
