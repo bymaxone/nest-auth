@@ -44,6 +44,7 @@ const REPLACED: readonly (readonly [string, object, PropertyKey, unknown])[] = [
   ['Object.assign', Object, 'assign', () => ({})],
   ['Object.freeze', Object, 'freeze', empty],
   ['Reflect.ownKeys', Reflect, 'ownKeys', () => []],
+  ['Object.getOwnPropertySymbols', Object, 'getOwnPropertySymbols', () => []],
   ['Reflect.get', Reflect, 'get', empty],
   ['Reflect.has', Reflect, 'has', () => false],
   ['the iterator of an array', Array.prototype, Symbol.iterator, iteratorOfNothing],

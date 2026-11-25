@@ -58,6 +58,9 @@ export const getKey = Reflect.get
 /** `Reflect.ownKeys` as it was when the module loaded: the own keys of an object, strings and symbols. */
 export const ownKeys = Reflect.ownKeys
 
+/** `Object.getOwnPropertySymbols` as it was when the module loaded: the own symbol keys of an object, and no string ones. */
+export const ownSymbols = Object.getOwnPropertySymbols
+
 /** `Object.getOwnPropertyDescriptor` as it was when the module loaded. */
 export const getDescriptor = Object.getOwnPropertyDescriptor
 

@@ -33,6 +33,7 @@ import {
   getKey,
   hasOwn,
   ownKeys,
+  ownSymbols,
   prototypeOf
 } from './captured-builtins'
 import { nodeCrypto } from '../crypto/captured-crypto'
@@ -426,11 +427,10 @@ const protocolSymbols: symbol[][] = []
 for (let index = 0; index < PROTOCOL_HOLDERS.length; index += 1) {
   const holder = BASELINED_HOLDERS[PROTOCOL_HOLDERS[index] as string] as object
   const known: symbol[] = []
-  const present = ownKeys(holder)
-  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not a symbol and is skipped
+  const present = ownSymbols(holder)
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not a key and which `record` does not find
   for (let at = 0; at < present.length; at += 1) {
-    const key = present[at] as string | symbol
-    if (typeof key !== 'symbol') continue
+    const key = present[at] as symbol
     known[known.length] = key
     record(holder, key)
   }
@@ -482,12 +482,11 @@ function plantedThens(): number {
 function addedProtocolSymbols(): number {
   let added = 0
   for (let index = 0; index < protocolHolders.length; index += 1) {
-    const present = ownKeys(protocolHolders[index] as object)
+    const present = ownSymbols(protocolHolders[index] as object)
     const known = protocolSymbols[index] as symbol[]
-    // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not a symbol and is skipped
+    // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is never the symbol compared, so the extra pass counts it as added
     for (let at = 0; at < present.length; at += 1) {
-      const key = present[at] as string | symbol
-      if (typeof key !== 'symbol') continue
+      const key = present[at] as symbol
       let found = false
       // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is never the symbol compared
       for (let seen = 0; seen < known.length; seen += 1)
