@@ -151,6 +151,7 @@ pnpm add cookie-parser
 
 # React subpath (optional)
 pnpm add react
+pnpm add -D @types/react # a TypeScript project: the subpath's declarations import React's types
 
 # Next.js subpath (optional)
 pnpm add next react server-only
