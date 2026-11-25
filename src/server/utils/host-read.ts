@@ -448,7 +448,7 @@ function decoyOf(contract: Structured): unknown {
   return decoy
 }
 
-/** The decoy of every contract that may answer nothing is built when the module loads, so no miss pays for building one. */
+/** The decoy of every record or list contract of the repositories is built when the module loads, so no miss pays for building one. */
 for (const repository of [
   USER_REPOSITORY_CONTRACT,
   PLATFORM_USER_REPOSITORY_CONTRACT,
@@ -457,7 +457,7 @@ for (const repository of [
   MEMBERSHIP_REPOSITORY_CONTRACT
 ] as readonly ErasedRepositoryContract[])
   for (const contract of Object.values(repository))
-    if (typeof contract !== 'string' && contract.nullable === true) decoyOf(contract)
+    if (typeof contract !== 'string') decoyOf(contract)
 
 /**
  * Copies what a repository method returned, so a failed read of it ends here.
