@@ -49,7 +49,6 @@ function within(
   return result
 }
 
-const METHOD_HOLDER = Array.prototype as unknown as Record<string, unknown>
 const METHOD = 'some'
 const ACCESSOR_HOLDER = Map.prototype
 const ACCESSOR = 'size'
@@ -62,7 +61,7 @@ describe('the walk over the recorded built-ins reads descriptors without trustin
 
   // Scenario: a method is replaced by another function. Expected: one. Why: the function read is not the one recorded.
   it('counts a method replaced by another function', () => {
-    const held = METHOD_HOLDER[METHOD]
+    const held: unknown = Reflect.get(Array.prototype, METHOD)
     const window = within(Array.prototype, METHOD, () =>
       define(Array.prototype, METHOD, { value: () => held, writable: true, configurable: true })
     )
@@ -74,7 +73,7 @@ describe('the walk over the recorded built-ins reads descriptors without trustin
   // Scenario: a method is replaced by an accessor that answers the original function. Expected: one, and the accessor is not run.
   // Why: an accessor has no own `value`, so the entry is not what it was even though a read would find the original.
   it('counts an accessor in place of a method', () => {
-    const held = METHOD_HOLDER[METHOD]
+    const held: unknown = Reflect.get(Array.prototype, METHOD)
     let ran = false
     const window = within(Array.prototype, METHOD, () =>
       define(Array.prototype, METHOD, {
@@ -94,7 +93,7 @@ describe('the walk over the recorded built-ins reads descriptors without trustin
   // one. Why: the descriptor has no own `value`, and a read of `value` finds the planted one through the root; only the own-field
   // test keeps the root from answering for it.
   it('counts an accessor in place of a method while the original is planted as value on the root', () => {
-    const held = METHOD_HOLDER[METHOD]
+    const held: unknown = Reflect.get(Array.prototype, METHOD)
     const window = within(
       Array.prototype,
       METHOD,
