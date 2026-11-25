@@ -203,11 +203,11 @@ export class InvitationService {
 
     // The claim above and the write just done are two round trips, and a revoke or a later invite
     // can move the index between them. A revoke in that gap reads an index naming a record that is
-    // not there yet, withdraws nothing, and answers as if it had succeeded; the write then
-    // publishes a token that no index names, redeemable for its whole TTL and out of reach of
-    // every later revoke. So the claim is repeated against this invitation's OWN hash: it holds
-    // only while the index still names it. If it does not, the record is withdrawn instead of
-    // left live, and the address is reported as changed under the caller.
+    // not there yet and releases the index; the write can then publish a token that no index names,
+    // redeemable for its whole TTL and out of reach of every later revoke. So the claim is repeated
+    // against this invitation's OWN hash: it holds only while the index still names it. If it does
+    // not, the record is withdrawn instead of left live, and the address is reported as changed
+    // under the caller.
     //
     // The same compare-and-set renews the index TTL, which started at the claim: a record written
     // later than the claim would otherwise outlive the entry that names it.
@@ -462,10 +462,10 @@ export class InvitationService {
    * @param revokerUserId - Internal ID of the authenticated user withdrawing the invitation.
    * @param email - The invited address. Normalized at this boundary.
    * @param tenantId - The tenant the invitation was issued for.
-   * @returns `true` when a pending invitation was removed, `false` when there was none.
+   * @returns `true` when a pending invitation was removed, `false` when none was.
    * @throws {@link AuthException} `TOKEN_INVALID` when the revoker no longer exists,
    *   `INSUFFICIENT_ROLE` when they are outside the tenant or not in good standing, or
-   *   `TOO_MANY_REQUESTS` when the invitation was replaced before each attempt to remove it.
+   *   `TOO_MANY_REQUESTS` when the invitation was replaced during each attempt to remove it.
    */
   async revokeInvitation(revokerUserId: string, email: string, tenantId: string): Promise<boolean> {
     const normalizedEmail = normalizeEmail(email)
@@ -492,16 +492,18 @@ export class InvitationService {
   /**
    * Removes the invitation the index names, when the revoker may withdraw what is there.
    *
-   * The index is released only while it still names the invitation that was judged. When a later
-   * invite has claimed it meanwhile, the address is read again and what replaced it is judged anew.
+   * A record that is there is deleted before its index is released, so a store failure between the
+   * two never leaves a redeemable record that nothing names. An index that names no record is
+   * released first, so that an invite about to write it fails its second claim. A release that finds
+   * the index claimed by a later invite starts over, and judges what replaced the invitation.
    *
    * @param revoker - The authenticated caller, in the tenant and in good standing.
    * @param indexKey - The invitee index key.
    * @param tenantId - The tenant, for the log.
    * @param revokerUserId - Who revokes, for the log.
-   * @returns `true` when a pending invitation was removed, `false` when there was none to remove.
-   * @throws {@link AuthException} `TOO_MANY_REQUESTS` when the invitation was replaced before each
-   *   attempt to remove it.
+   * @returns `true` when this call removed a pending invitation, `false` when it removed none.
+   * @throws {@link AuthException} `TOO_MANY_REQUESTS` when the invitation was replaced before the
+   *   index could be released, on every attempt.
    */
   private async withdrawPending(
     revoker: { role: string; status: string },
@@ -509,37 +511,42 @@ export class InvitationService {
     tenantId: string,
     revokerUserId: string
   ): Promise<boolean> {
+    let withdrawn = false
     for (let attempt = 0; attempt < REVOKE_ATTEMPTS; attempt += 1) {
       const tokenHash = await pinned(this.redis.get(indexKey))
-      if (tokenHash === null) return false
+      if (tokenHash === null) return withdrawn
 
-      // The role check reads the invitation itself rather than the request: the caller names an
-      // address, not a role, so the only way to know what authority is being withdrawn is to
-      // look. A record that no longer parses is withdrawn without a role check — it can no
-      // longer be accepted either, and leaving it would be worse than removing it.
       const raw = await pinned(this.redis.get(`inv:${tokenHash}`))
-      const invitation = raw === null ? null : this.parseInvitation(raw)
+      if (raw !== null && this.refusesRevoker(revoker, raw)) return withdrawn
 
-      // A revoker who may not withdraw THIS invitation is answered exactly as one who asked
-      // about an address with no invitation at all. `INSUFFICIENT_ROLE` here was an oracle: the
-      // caller names an address and nothing else, so a 403 said "there is a pending invitation
-      // for this address, at a role above yours" while a 204 said "there is none" — letting any
-      // member enumerate a tenant's pending invitations, and roughly at what authority. That is
-      // precisely the disclosure the index hashes the address to prevent. The refusal is
-      // recorded server-side, where an operator can see it and the prober cannot.
-      if (invitation !== null && !this.mayWithdraw(revoker, invitation)) {
-        logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'revoke_outranked' })
-        return false
-      }
-
-      if (!(await pinned(releaseIndex(this.redis, indexKey, tokenHash)))) continue
-      const removed = await pinned(this.redis.del(`inv:${tokenHash}`))
-      if (removed) {
+      const absent = raw === null
+      if (absent && !(await pinned(releaseIndex(this.redis, indexKey, tokenHash)))) continue
+      if (await pinned(this.redis.del(`inv:${tokenHash}`))) {
+        withdrawn = true
         logEvent(this.logger, 'AUTH_INVITATION_REVOKED', { tenantId, actorUserId: revokerUserId })
       }
-      return removed
+      if (absent || (await pinned(releaseIndex(this.redis, indexKey, tokenHash)))) return withdrawn
     }
     throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
+  }
+
+  /**
+   * Whether the stored invitation is above the revoker, recording the refusal when it is.
+   *
+   * The caller names an address, not a role, so the role is read from the record. One that no longer
+   * parses is withdrawn without a role check: it cannot be accepted either. The refusal is answered
+   * like an address with no invitation, because a `403` would disclose that one is pending; it is
+   * logged server-side.
+   *
+   * @param revoker - The authenticated caller.
+   * @param raw - The stored record.
+   * @returns `true` when the withdrawal is refused.
+   */
+  private refusesRevoker(revoker: { role: string; status: string }, raw: string): boolean {
+    const invitation = this.parseInvitation(raw)
+    if (invitation === null || this.mayWithdraw(revoker, invitation)) return false
+    logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'revoke_outranked' })
+    return true
   }
 
   /**

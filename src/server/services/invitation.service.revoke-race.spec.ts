@@ -145,9 +145,9 @@ describe('InvitationService and the invitee index under a concurrent writer', ()
     expect(JSON.stringify(warned.mock.calls)).toContain('revoke_outranked')
   })
 
-  // Scenario: the index moves before every attempt. Expected: `auth.too_many_requests` after three reads of the address, and no
-  // record deleted. Why: the invitation judged is no longer the one indexed.
-  it('deletes nothing and refuses after three attempts while the index keeps moving', async () => {
+  // Scenario: the index moves before every attempt. Expected: `auth.too_many_requests` after three reads of the address, each
+  // record read being deleted and logged. Why: the invitation indexed is no longer the one judged, so the revoke is not complete.
+  it('refuses after three attempts while the index keeps moving', async () => {
     redis.eval.mockResolvedValue(0)
 
     await expect(revoke()).rejects.toMatchObject({
@@ -155,8 +155,8 @@ describe('InvitationService and the invitee index under a concurrent writer', ()
     })
 
     expect(redis.get.mock.calls.filter(([key]) => key === INDEX_KEY)).toHaveLength(3)
-    expect(redis.del).not.toHaveBeenCalled()
-    expect(logged).not.toHaveBeenCalled()
+    expect(redis.del).toHaveBeenCalledTimes(3)
+    expect(redis.del).not.toHaveBeenCalledWith(INDEX_KEY)
   })
 
   // Scenario: the index moves before the first two attempts, then before all three. Expected: the third removes; there is no
@@ -172,6 +172,86 @@ describe('InvitationService and the invitee index under a concurrent writer', ()
     expect(outcome === true).toBe(replacements === 2)
     expect(outcome instanceof AuthException).toBe(replacements === 3)
     expect(redis.eval).toHaveBeenCalledTimes(3)
-    expect(logged).toHaveBeenCalledTimes(replacements === 2 ? 1 : 0)
+    expect(logged).toHaveBeenCalledTimes(3)
+  })
+
+  // Scenario: the store fails while the record is being deleted. Expected: the index is not released. Why: the index is the only
+  // handle a later revoke has on a record that is still there.
+  it('keeps the index while the record could not be deleted', async () => {
+    redis.del.mockRejectedValueOnce(new Error('connection reset'))
+
+    await expect(revoke()).rejects.toThrow('connection reset')
+
+    expect(redis.eval).not.toHaveBeenCalled()
+  })
+
+  // Scenario: the store fails while the index is being released. Expected: the record is already deleted. Why: what stays behind
+  // must be an index that names nothing, never a record that can be redeemed.
+  it('has deleted the record when the index cannot be released', async () => {
+    redis.eval.mockRejectedValueOnce(new Error('connection reset'))
+
+    await expect(revoke()).rejects.toThrow('connection reset')
+
+    expect(redis.del).toHaveBeenCalledWith(`inv:${TOKEN_HASH}`)
+  })
+
+  // Scenario: the record is removed and the index is gone by the time it is released. Expected: `true`. Why: this call removed
+  // an invitation, whatever happened to the index afterwards.
+  it('reports the removal when the index was gone before it could be released', async () => {
+    redis.eval.mockResolvedValueOnce(0)
+    redis.get
+      .mockResolvedValueOnce(TOKEN_HASH)
+      .mockResolvedValueOnce(STORED)
+      .mockResolvedValue(null)
+
+    await expect(revoke()).resolves.toBe(true)
+  })
+
+  // Scenario: the index names no record. Expected: the index is released before the record is deleted. Why: an invite may be
+  // about to write that record, and its second claim must then fail.
+  it('releases an index that names no record before it deletes under that hash', async () => {
+    const order: string[] = []
+    redis.get.mockImplementation((key: string) =>
+      Promise.resolve(key === INDEX_KEY ? TOKEN_HASH : null)
+    )
+    redis.eval.mockImplementation(() => Promise.resolve(order.push('release')))
+    redis.del.mockImplementation(() => {
+      order.push('delete')
+      return Promise.resolve(false)
+    })
+
+    await expect(revoke()).resolves.toBe(false)
+
+    expect(order).toEqual(['release', 'delete'])
+  })
+
+  // Scenario: the index names no record and has moved by the time it is released. Expected: nothing is deleted under the old
+  // hash on that attempt and the address is read again. Why: what is indexed now has not been judged.
+  it('reads the address again when an index that named no record has moved', async () => {
+    redis.get.mockResolvedValueOnce(TOKEN_HASH).mockResolvedValueOnce(null)
+    redis.eval.mockResolvedValueOnce(0)
+
+    await expect(revoke()).resolves.toBe(true)
+
+    expect(redis.del).toHaveBeenCalledTimes(1)
+    expect(redis.get.mock.calls.filter(([key]) => key === INDEX_KEY)).toHaveLength(2)
+  })
+
+  // Scenario: the replacement read on the second attempt ranks above the revoker. Expected: it is not deleted. Why: the ceiling
+  // is applied on every attempt, not on the first one only.
+  it('applies the role ceiling to the replacement it reads on a later attempt', async () => {
+    const replacement = 'c'.repeat(64)
+    const above = STORED.replace('"member"', '"owner"')
+    redis.eval.mockResolvedValueOnce(0)
+    redis.get
+      .mockResolvedValueOnce(TOKEN_HASH)
+      .mockResolvedValueOnce(STORED)
+      .mockResolvedValueOnce(replacement)
+      .mockResolvedValueOnce(above)
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+    await expect(revoke()).resolves.toBe(true)
+
+    expect(redis.del.mock.calls).toEqual([[`inv:${TOKEN_HASH}`]])
   })
 })
