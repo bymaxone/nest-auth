@@ -153,8 +153,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     185.44 KiB (189,890 B; measured 189,864 B) holds what no decision waiting through a static or a derived promise on any
 //     path needs, for the host caller too: the pin, the own-only reads of a descriptor, the refusals they need, and the handler
 //     that hears the rejection of a promise the pin refused.
-//     185.47 KiB (189,922 B) is the measured 189,892 B plus 30 B: the reads of a descriptor lost one own check, which
-//     removed raw bytes and still grew the brotli output, so the limit follows the measurement, not the diff.
+//     185.47 KiB (189,922 B) sits 30 B above the measured 189,892 B, which holds the same set. The limit follows the
+//     brotli output and not the raw size: a change that removes source can still leave the compressed output larger.
 //     182.43 KiB sits 0.03 KiB above the measured 182.40 KiB, which holds the boundary that ends a failed read of what
 //     the host owns (the options, the records of a repository) in the library's own error, the guarded view of each
 //     repository, the contract of every repository method that says which fields of an answer are read and as which
