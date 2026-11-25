@@ -118,15 +118,19 @@ for (let index = 0; index < STANDARD.length; index += 1) {
   if (!isStandardKind(name, BASELINE[name])) LOADED_STANDARD = false
 }
 
-/** Whether two descriptors describe the same entry. */
-function same(left: Held | undefined, right: Held | undefined): boolean {
+/**
+ * Whether the entry `name` of the root is no longer what `baseline` recorded: gone, or one of its four fields differs. `value`,
+ * `get` and `set` are read only where the descriptor holds them as its own, so a key planted on the root cannot answer for a field
+ * the descriptor lacks, and `enumerable` is read directly because every descriptor the runtime returns holds it. No record is built.
+ */
+function differs(name: string, baseline: Held | undefined): boolean {
+  const descriptor = getDescriptor(root, name) as Record<string, unknown> | undefined
+  if (descriptor === undefined || baseline === undefined) return true
   return (
-    left !== undefined &&
-    right !== undefined &&
-    left.value === right.value &&
-    left.get === right.get &&
-    left.set === right.set &&
-    left.enumerable === right.enumerable
+    (hasOwn(descriptor, 'value') ? descriptor['value'] : undefined) !== baseline.value ||
+    (hasOwn(descriptor, 'get') ? descriptor['get'] : undefined) !== baseline.get ||
+    (hasOwn(descriptor, 'set') ? descriptor['set'] : undefined) !== baseline.set ||
+    (descriptor['enumerable'] === true) !== baseline.enumerable
   )
 }
 
@@ -141,13 +145,12 @@ export function plantedOnRoot(): number {
   const keys = ownKeys(root)
   for (let index = 0; index < keys.length; index += 1) {
     const key = keys[index] as string | symbol
-    if (typeof key === 'symbol' ? !isLoadedSymbol(key) : !same(describe(key), BASELINE[key]))
-      count += 1
+    if (typeof key === 'symbol' ? !isLoadedSymbol(key) : differs(key, BASELINE[key])) count += 1
   }
   // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, and no entry named `undefined` was recorded at load (`BASELINE` holds none), so the condition below is false for it
   for (let index = 0; index < STANDARD.length; index += 1) {
     const name = STANDARD[index] as string
-    if (describe(name) === undefined && BASELINE[name] !== undefined) count += 1
+    if (getDescriptor(root, name) === undefined && BASELINE[name] !== undefined) count += 1
   }
   return count
 }
