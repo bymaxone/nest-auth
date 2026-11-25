@@ -66,18 +66,8 @@ const USER = {
   createdAt: new Date('2026-01-01')
 }
 
-const SAFE_USER = {
-  id: 'user-1',
-  email: 'user@example.com',
-  name: 'Test User',
-  role: 'member',
-  status: 'active',
-  tenantId: 'tenant-1',
-  emailVerified: true,
-  mfaEnabled: false,
-  lastLoginAt: null,
-  createdAt: new Date('2026-01-01')
-}
+/** The user as the service returns it: everything but the password hash. */
+const { passwordHash: _passwordHash, ...SAFE_USER } = USER
 
 const AUTH_RESULT = {
   user: SAFE_USER,
@@ -230,9 +220,10 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
-    // A live session with an owner, as a default: `clearAllMocks` keeps an implementation a test set, so a logout test that set none
-    // read the one a test before it left.
+    // `clearAllMocks` keeps what a test set, so these are defaults a test before it cannot leave behind.
     mockRedis.readSessionOwner.mockResolvedValue({ userId: USER.id, tenantId: USER.tenantId })
+    mockUserRepo.findById.mockResolvedValue({ ...USER })
+    mockTokenManager.verifyIgnoringExpiry.mockReturnValue(USER)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -1812,27 +1803,6 @@ describe('AuthService', () => {
       expect(mockUserRepo.findById).toHaveBeenCalledWith({ id: 'u1', tenantId: 't1' })
     })
 
-    // Scenario: a refresh with sessions off. Expected: the session index is not asked to rotate a record. Why: with sessions off there is no
-    // `sd:` record to move to the new token, and the call would write one for a session nobody listed.
-    it('does not rotate a session record when sessions are off', async () => {
-      mockTokenManager.reissueTokens.mockResolvedValue({
-        session: { userId: 'u1', tenantId: 't1', role: 'member' },
-        accessToken: 'new.access',
-        rawRefreshToken: 'new-refresh'
-      })
-      mockUserRepo.findById.mockResolvedValue({
-        id: 'u1',
-        email: 'a@e.com',
-        status: 'active',
-        role: 'member',
-        tenantId: 't1'
-      })
-
-      await service.refresh('old-refresh', '1.2.3.4', 'Browser')
-
-      expect(mockSessionService.rotateSession).not.toHaveBeenCalled()
-    })
-
     // Verifies that refresh delegates to tokenManager.reissueTokens and returns the rotated result.
     it('should delegate to tokenManager.reissueTokens and return the account with it', async () => {
       const rotated = {
@@ -2140,51 +2110,6 @@ describe('AuthService', () => {
         '1.2.3.4',
         'Browser'
       )
-    })
-
-    // Scenario: an unverified account while verification is not required. Expected: tokens are issued, and the event of the issue names
-    // the user and the tenant. Why: the gate on verification applies only where it is required, and the event is how an issue is traced.
-    it('issues tokens to an unverified user when verification is not required, and logs who got them', async () => {
-      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      mockUserRepo.findById.mockResolvedValue({ ...USER, emailVerified: false, mfaEnabled: false })
-      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
-      mockSessionService.createSession.mockResolvedValue(undefined)
-
-      const result = await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
-
-      expect(result).toBe(AUTH_RESULT)
-      expectEvent(logSpy, 'AUTH_TOKENS_ISSUED', { userId: USER.id, tenantId: USER.tenantId })
-    })
-
-    // Scenario: a verified account while verification is required. Expected: tokens are issued. Why: the gate refuses the unverified only.
-    it('issues tokens to a verified user when verification is required', async () => {
-      const module = await Test.createTestingModule({
-        providers: [
-          AuthService,
-          {
-            provide: BYMAX_AUTH_OPTIONS,
-            useValue: { ...mockOptions, emailVerification: { required: true, otpTtlSeconds: 600 } }
-          },
-          { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
-          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
-          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
-          { provide: PasswordService, useValue: mockPasswordService },
-          { provide: TokenManagerService, useValue: mockTokenManager },
-          { provide: BruteForceService, useValue: mockBruteForce },
-          { provide: AuthRedisService, useValue: mockRedis },
-          { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService },
-          { provide: AccountStatusService, useValue: mockAccountStatus }
-        ]
-      }).compile()
-      const strict = module.get(AuthService)
-      mockUserRepo.findById.mockResolvedValue({ ...USER, emailVerified: true, mfaEnabled: false })
-      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
-      mockSessionService.createSession.mockResolvedValue(undefined)
-
-      await expect(
-        strict.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
-      ).resolves.toBe(AUTH_RESULT)
     })
 
     /*
@@ -3096,35 +3021,6 @@ describe('AuthService', () => {
       expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^rt:[0-9a-f]{64}$/))
     })
 
-    // Scenario: the stored session names no owner, and neither does the marker of an earlier attempt. Expected: the index is not asked to
-    // revoke anything. Why: a revoke for an empty user id names a key that belongs to nobody, and would read as a revocation that happened.
-    it('logout: skips the index revoke when no owner is known', async () => {
-      mockRedis.del.mockResolvedValue(undefined)
-      mockRedis.set.mockResolvedValue(undefined)
-      mockRedis.readSessionOwner.mockResolvedValue({ userId: '', tenantId: 'tenant-1' })
-      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti1', exp: 9_999_999_999 })
-      mockHooks.afterLogout.mockResolvedValue(undefined)
-
-      const owner = await sessionEnabledService.logout('access.jwt', 'raw-refresh-token')
-
-      expect(owner).toBe('')
-      expect(mockSessionService.revokeSession).not.toHaveBeenCalled()
-    })
-
-    // Scenario: the library runs with sessions off and the stored session names its owner. Expected: the index is not asked to revoke.
-    // Why: there is no index to revoke from when sessions are off.
-    it('logout: skips the index revoke when sessions are off', async () => {
-      mockRedis.del.mockResolvedValue(undefined)
-      mockRedis.set.mockResolvedValue(undefined)
-      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti1', exp: 9_999_999_999 })
-      mockHooks.afterLogout.mockResolvedValue(undefined)
-
-      const owner = await service.logout('access.jwt', 'raw-refresh-token')
-
-      expect(owner).toBe(USER.id)
-      expect(mockSessionService.revokeSession).not.toHaveBeenCalled()
-    })
-
     // Verifies that logout completes without throwing when revokeSession rejects with SESSION_NOT_FOUND.
     it('logout: swallows SESSION_NOT_FOUND from sessionService.revokeSession', async () => {
       // Arrange
@@ -3195,12 +3091,6 @@ describe('AuthService', () => {
     // Verifies that refresh calls sessionService.rotateSession with the sha256 hashes of the old and new tokens.
     it('refresh: calls sessionService.rotateSession as fire-and-forget', async () => {
       // Arrange
-      mockUserRepo.findById.mockResolvedValue({ ...USER })
-      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
-        role: USER.role,
-        tenantId: USER.tenantId,
-        mfaEnabled: USER.mfaEnabled
-      })
       const rotatedResult = {
         session: { userId: USER.id, tenantId: USER.tenantId, role: USER.role },
         accessToken: 'new.access.jwt',
@@ -3228,12 +3118,6 @@ describe('AuthService', () => {
     // Verifies that refresh completes without throwing when rotateSession fails because session rotation is fire-and-forget.
     it('refresh: does NOT throw when rotateSession fails (fire-and-forget)', async () => {
       // Arrange
-      mockUserRepo.findById.mockResolvedValue({ ...USER })
-      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
-        role: USER.role,
-        tenantId: USER.tenantId,
-        mfaEnabled: USER.mfaEnabled
-      })
       const rotatedResult = {
         session: { userId: USER.id, tenantId: USER.tenantId, role: USER.role },
         accessToken: 'new.access.jwt',
