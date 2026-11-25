@@ -221,7 +221,7 @@ function refusalOf(reason: string): RootNotStandardException {
  * @throws {AuthException} `auth.internal` when the value or a prototype of it holds an own `then`.
  */
 export function assertNoThenOnChain(value: unknown): void {
-  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return
+  if (typeof value !== 'object' && typeof value !== 'function') return
   let level: object | null = value
   // A chain is short; the bound only keeps a cycle a host built from looping.
   for (let depth = 0; level !== null && depth < 256; depth += 1) {

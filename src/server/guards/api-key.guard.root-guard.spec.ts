@@ -213,6 +213,41 @@ describe('ApiKeyGuard while a built-in is replaced', () => {
     expect(events).not.toContain('allowed')
   })
 
+  // Scenario: a verifier answers an admitting verdict after replacing `Array.prototype.every`, as a verifier that does not check the
+  // runtime itself may. Expected: the library's refusal, and no audit event says the key was allowed. Why: the guard reads the
+  // verdict and the scopes with the built-ins as the verification left them, so it checks the runtime itself right after the wait.
+  it('is refused when a built-in is replaced by a verifier that did not check', async () => {
+    let restore = (): void => undefined
+    const verifier = {
+      verify: async (): Promise<unknown> => {
+        await Promise.resolve()
+        restore = replace(Array.prototype, 'every', () => true)
+        return { ok: true, key: { id: KEY_ID, label: 'label', scopes: ['other'] } }
+      }
+    }
+    const events: string[] = []
+    const hooks: IAuthHooks = {
+      onApiKeyRequest: (event): void => {
+        events.push(event.outcome)
+      }
+    }
+    const guard = new ApiKeyGuard(
+      new Reflector(),
+      verifier as never,
+      makeOptions({ auditMode: 'required' }),
+      hooks
+    )
+    let result: number | true | undefined
+    try {
+      result = await outcome(guard)
+    } finally {
+      restore()
+    }
+
+    expect(result).toBe(500)
+    expect(events).toEqual([])
+  })
+
   // Scenario: the verification of the key fails with the refusal of the library, not with a store error. Expected: that refusal
   // reaches the caller and no audit event says the store failed. Why: the guard must not turn it into a store outage.
   it('passes on the refusal of the library raised by the verification', async () => {

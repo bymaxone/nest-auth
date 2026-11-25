@@ -157,8 +157,8 @@ function useReload(
       }
     }
   }, [clientRef, statusRef, identityRef, setLoaded, controllerRef])
-  // Stryker restore ArrayDeclaration
 }
+// Stryker restore ArrayDeclaration
 
 /**
  * Loads the caller's workspaces once the session is known to be signed in, and empties them when it

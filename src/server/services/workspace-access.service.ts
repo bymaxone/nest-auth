@@ -144,14 +144,12 @@ export class WorkspaceAccessService {
     const ttl = this.group.membershipCacheTtlSeconds
     if (ttl === 0) {
       const read = await pinned(this.readRepositories(ref))
-      assertRootIsStandard()
       return checked(read)
     }
 
     const cached = await pinned(this.readCache(ref))
     if (cached !== null && cached.role !== null) {
       const member = { kind: 'member', member: { ...ref, role: cached.role } } as const
-      assertRootIsStandard()
       return checked(member)
     }
 
@@ -159,7 +157,6 @@ export class WorkspaceAccessService {
     if (cached !== null && access.kind === 'member') {
       await pinned(this.fillCache(ref, cached, access.member.role, ttl))
     }
-    assertRootIsStandard()
     return checked(access)
   }
 
@@ -214,7 +211,6 @@ export class WorkspaceAccessService {
       this.group.roles.hierarchy,
       options.allowPending === true
     )
-    assertRootIsStandard()
     return checked(member)
   }
 
@@ -325,8 +321,6 @@ export class WorkspaceAccessService {
     const workspace = (await awaiting(workspaceRead)).value
     const membership = (await awaiting(membershipRead)).value
     const access = this.accessFrom(ref, workspace, membership)
-    // The answer is read for `then` when it is returned, so the root is checked as the last statement before the return.
-    assertRootIsStandard()
     return checked(access)
   }
 

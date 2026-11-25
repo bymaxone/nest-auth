@@ -690,7 +690,6 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
       // wait behind a consumer's network call.
       try {
         void Promise.resolve(onRefreshFailed?.(outcome)).catch(reportCallbackError)
-        // Stryker disable next-line BlockStatement: the catch only logs a user-callback error and swallows it; emptying the body leaves the same swallow, observable only via a console spy
       } catch (err: unknown) {
         reportCallbackError(err)
       }
@@ -703,7 +702,6 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
       // a broken redirect without breaking the fetch contract.
       try {
         onSessionExpired?.()
-        // Stryker disable next-line BlockStatement: the catch only logs a user-callback error and swallows it (fire-and-forget); emptying the body leaves the same swallow, observable only via a console spy
       } catch (err: unknown) {
         // Stryker disable next-line StringLiteral: diagnostic-only console.warn label for a swallowed callback error; no consumer behavior depends on the text
         console.warn('[nest-auth] onSessionExpired callback threw:', err)

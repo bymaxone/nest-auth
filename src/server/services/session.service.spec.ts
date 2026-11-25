@@ -158,6 +158,8 @@ describe('SessionService', () => {
     const userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/123.0'
 
     beforeEach(() => {
+      // `clearAllMocks` keeps an implementation a case set, and a hook left rejecting by an earlier case logs a second error here.
+      mockHooks.onNewSession.mockResolvedValue(undefined)
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.smembers.mockResolvedValue([])
       mockRedis.del.mockResolvedValue(undefined)
@@ -1842,6 +1844,13 @@ describe('SessionService', () => {
   describe('revokeAllExceptCurrent', () => {
     const userId = 'user-revoke-all'
 
+    // No grace pointer is stored and a revocation succeeds unless a case says otherwise: `clearAllMocks` keeps what an earlier case set,
+    // and a pointer or a rejection left over would decide which session is kept or whether the call fails.
+    beforeEach(() => {
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.eval.mockResolvedValue(1)
+    })
+
     // A blank tenant is refused here, in this method's own suite, rather than only through the
     // shared table below.
     //
@@ -2331,7 +2340,18 @@ describe('SessionService', () => {
       ['a successor that is not in the index', [`rp:${presented}`], `${successor}:{}`],
       ['no pointer', [`rp:${presented}`, `rt:${successor}`], null],
       ['a pointer with no separator', [`rt:${successor}`], successor],
-      ['a pointer whose successor is not a session hash', [`rt:${successor}`], 'nothex:{}']
+      // 65 characters, no colon: the first 64 are a hash, so only the missing separator keeps it from naming one.
+      [
+        'a pointer with no separator past the length of a hash',
+        [`rt:${successor}`],
+        `${successor}c`
+      ],
+      ['a pointer whose successor is not a session hash', [`rt:${successor}`], 'nothex:{}'],
+      [
+        'a pointer whose first 64 characters are not hex',
+        [`rt:${'z'.repeat(64)}`],
+        `${'z'.repeat(64)}:{}`
+      ]
     ])('refuses %s', async (_label, members, pointer) => {
       mockRedis.smembers.mockResolvedValue(members)
       mockRedis.get.mockResolvedValue(pointer)

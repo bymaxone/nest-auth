@@ -31,7 +31,7 @@ const PAYLOAD = {
   exp: 2
 }
 
-async function build(access: unknown) {
+async function build(access: unknown, resolve: () => Promise<unknown> = async () => access) {
   const admit = jest.fn((_denied: unknown, decide: () => unknown) => decide())
   const module = await Test.createTestingModule({
     providers: [
@@ -55,7 +55,7 @@ async function build(access: unknown) {
         provide: AccountStatusService,
         useValue: { assertDashboardAccountUsable: jest.fn().mockResolvedValue(undefined) }
       },
-      { provide: WorkspaceAccessService, useValue: { resolveAccess: async () => access } },
+      { provide: WorkspaceAccessService, useValue: { resolveAccess: resolve } },
       { provide: WorkspaceDeniedEventsService, useValue: { admit } }
     ]
   }).compile()
@@ -100,6 +100,31 @@ describe('verifyAccessToken reporting a refusal', () => {
       })
     ).rejects.toMatchObject({ response: { error: { code: AUTH_ERROR_CODES.VALIDATION } } })
 
+    expect(admit).not.toHaveBeenCalled()
+  })
+})
+
+describe('verifyAccessToken while a built-in is replaced during the lookup of the membership', () => {
+  // Scenario: the lookup replaces `Array.prototype.some` and answers a workspace that is not the caller's. Expected: the library's
+  // refusal, and nothing is reported to the `access.denied` emitter. Why: the report is made by code that runs on the built-ins as
+  // the lookup left them, so the runtime is checked before it, not only after the decision.
+  it('refuses before it reports the denial', async () => {
+    const held = Object.getOwnPropertyDescriptor(Array.prototype, 'some') as PropertyDescriptor
+    const { verifier, admit } = await build(null, async () => {
+      await Promise.resolve()
+      Object.defineProperty(Array.prototype, 'some', { ...held, value: () => true })
+      return { kind: 'denied' }
+    })
+    let failure: unknown
+    try {
+      failure = await verifier
+        .verifyAccessToken('tok', { plane: 'dashboard', workspace: CHECK })
+        .catch((error: unknown) => error)
+    } finally {
+      Object.defineProperty(Array.prototype, 'some', held)
+    }
+
+    expect(failure).toMatchObject({ response: { error: { code: AUTH_ERROR_CODES.INTERNAL } } })
     expect(admit).not.toHaveBeenCalled()
   })
 })

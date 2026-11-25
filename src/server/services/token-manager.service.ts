@@ -718,8 +718,8 @@ export class TokenManagerService {
       // suite. Block form because the reason wraps, and a wrapped `next-line` binds to its own
       // continuation rather than to the statement.
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
-      // Stryker restore CallExpression
     }
+    // Stryker restore CallExpression
     const rec = parsed as Record<string, unknown>
     if (
       // Stryker disable next-line ConditionalExpression: the object-type clause is redundant: every reachable non-object value also fails the sibling string/sub field checks, so dropping it changes nothing

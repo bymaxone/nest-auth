@@ -111,7 +111,7 @@ export function createWorkspaceAccessReader(
     try {
       body = await response.json()
     } catch {
-      body = undefined
+      // A body that is not JSON leaves `body` unset, and the shape check below refuses it.
     }
     if (!isAccess(body)) {
       throw new AuthClientError('Workspace access answer has an unexpected shape', response.status)

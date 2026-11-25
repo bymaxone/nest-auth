@@ -22,6 +22,28 @@ describe('the load of the captured built-ins', () => {
     }
   })
 
+  // Scenario: the slot is an accessor when the module loads. Expected: the load throws and says the constructor is an accessor. Why: a
+  // getter would answer with whatever it chose, and only a data property is the language's own.
+  it('fails when the constructor of Promise is an accessor', () => {
+    const own = Object.getOwnPropertyDescriptor(
+      Promise.prototype,
+      'constructor'
+    ) as PropertyDescriptor
+    Object.defineProperty(Promise.prototype, 'constructor', {
+      configurable: true,
+      get: () => Promise
+    })
+    try {
+      jest.isolateModules(() => {
+        expect(() => require('./captured-builtins')).toThrow(
+          "[BymaxAuthModule] the constructor of Promise is an accessor; the module does not start while the runtime's promises are not its own."
+        )
+      })
+    } finally {
+      Object.defineProperty(Promise.prototype, 'constructor', own)
+    }
+  })
+
   // Scenario: nothing replaced. Expected: the language's constructor is the one exported.
   it('exports the constructor whose prototype is the promises own', () => {
     jest.isolateModules(() => {
