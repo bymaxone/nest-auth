@@ -36,6 +36,7 @@ A patch release.
 ### Known limits
 
 - These guarantees cover the requests this library serves. Another backend sharing the Redis keyspace that drops an invitee index without comparing it can still leave an invitation the index does not name, and one that consumes a workspace invitation without releasing its index can make a revoke report an invitation that was already gone.
+- A workspace revoke that overlaps the acceptance of the same invitation can still report `invitation.revoked` while the membership stands; the `invitation.accepted` event then carries `lostConsumeRace`.
 
 ### Apply to a derived backend
 

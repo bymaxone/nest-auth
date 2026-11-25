@@ -332,8 +332,8 @@ export interface IUserRepository {
    *
    * A unique index is what stops two requests that both passed the caller's check. When the
    * write hits it, an implementation SHOULD throw `new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)`
-   * (409). The library does not translate a repository's error: any other one reaches the caller
-   * as an unexpected failure (500 `auth.internal` on an HTTP route).
+   * (409). Do not rely on the library to translate another error: it may reach the caller as an
+   * unexpected failure (500 `auth.internal` on an HTTP route).
    *
    * @param data - Creation payload. See {@link CreateUserData}.
    * @returns The newly created user record with all fields populated.
@@ -439,8 +439,8 @@ export interface IUserRepository {
    * the update by both the id and the tenant, exactly as its read does.
    *
    * @throws `AuthException` `EMAIL_ALREADY_EXISTS`, SHOULD, when the address is taken by the time
-   *   of the write. The library does not translate a repository's error: any other one reaches the
-   *   caller as an unexpected failure (500 `auth.internal` on an HTTP route).
+   *   of the write. Do not rely on the library to translate another error: it may reach the caller
+   *   as an unexpected failure (500 `auth.internal` on an HTTP route).
    */
   updateEmail(params: UpdateEmailParams): Promise<void>
 
@@ -479,8 +479,8 @@ export interface IUserRepository {
    *
    * A unique index is what stops two requests that both passed the caller's check. When the
    * write hits it, an implementation SHOULD throw `new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)`
-   * (409). The library does not translate a repository's error: any other one reaches the caller
-   * as an unexpected failure (500 `auth.internal` on an HTTP route).
+   * (409). Do not rely on the library to translate another error: it may reach the caller as an
+   * unexpected failure (500 `auth.internal` on an HTTP route).
    *
    * @param data - OAuth creation payload. See {@link CreateWithOAuthData}.
    * @returns The newly created user record with all fields populated.
