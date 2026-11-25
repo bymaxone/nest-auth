@@ -194,9 +194,9 @@ describe('invitation claim-then-write window (E2E)', () => {
   })
 
   // Scenario: a re-invite lands after a revoke has read the invitation and before it drops the
-  // index. Expected: the replacement stays indexed, and the next revoke removes it. Why: dropping
-  // the index unconditionally left the new token redeemable, out of reach of every later revoke,
-  // and let a further invite add a second live token beside it.
+  // index. Expected: the replacement stays indexed, and the next revoke removes it. Why: an index
+  // dropped without comparing it leaves the new token redeemable, out of reach of every later
+  // revoke, and lets a further invite add a second live token beside it.
   it('keeps a replacement revocable when it lands during a revoke', async () => {
     const tokens = emailedTokens()
     await invite()
@@ -230,8 +230,8 @@ describe('invitation claim-then-write window (E2E)', () => {
   })
 
   // Scenario: a re-invite lands after an acceptance has consumed the record and before it drops
-  // the index. Expected: the replacement stays indexed, so a revoke removes it. Why: the
-  // acceptance dropped whatever the index named, which was no longer the invitation it consumed.
+  // the index. Expected: the replacement stays indexed, so a revoke removes it. Why: the index can
+  // name an invitation other than the one consumed, so it is released only while it names that one.
   it('keeps a replacement revocable when it lands during an acceptance', async () => {
     const tokens = emailedTokens()
     await invite()
@@ -248,7 +248,7 @@ describe('invitation claim-then-write window (E2E)', () => {
 
   // Scenario: the address is invited again after an acceptance that was raced by a re-invite.
   // Expected: that invite supersedes the replacement, leaving one record. Why: an invite deletes
-  // only the record the index names, so a lost entry left two live tokens.
+  // only the record the index names, so a lost entry leaves two live tokens.
   it('leaves one live record after an invite that follows the race', async () => {
     const tokens = emailedTokens()
     await invite()
