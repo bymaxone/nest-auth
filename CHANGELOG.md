@@ -18,6 +18,29 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.17] - 2026-11-25
+
+A patch release.
+
+### Fixed
+
+- **An invitation that replaces another during a revoke or an acceptance stays revocable.** `revokeInvitation` and `acceptInvitation` dropped the invitee index whatever it named. An invite landing in between left a redeemable invitation that no revoke could reach, a further invite added a second one, and the revoke answered `204`. Both now drop the index only while it names the invitation they act on.
+- **A revoke follows a replacement.** A tenant or workspace revoke whose invitation is replaced while it runs reads the address again and applies the same role ceiling to what it finds. A workspace revoke reported `invitation.revoked` for the invitation it had read, with the replacement still live; it now reports the one it removes, and none when it removes none. After three replacements in a row a revoke answers `429` `auth.too_many_requests`.
+- **`@types/react` is declared as an optional peer, in any version.** The declarations of `./react` import React's types, which nothing declared. A TypeScript project that uses the subpath installs them.
+
+### Changed
+
+- The comparison of the recorded built-ins that the root guard runs at each decision does less work, with the same verdicts.
+- The documentation now says that revoking a session, or all the others, cuts every access token of the account, the caller's included, until the next refresh; and that `create`, `createWithOAuth` and `updateEmail` of a user repository should throw `AuthException` `EMAIL_ALREADY_EXISTS` when the write finds the address taken, since any other error reaches the caller as `500`.
+
+### Known limits
+
+- These guarantees cover the requests this library serves. Another backend sharing the Redis keyspace that drops an invitee index without comparing it can still leave an invitation the index does not name, and one that consumes a workspace invitation without releasing its index can make a revoke report an invitation that was already gone.
+
+### Apply to a derived backend
+
+`InvitationService.revokeInvitation` and the workspace revokes can now refuse with `TOO_MANY_REQUESTS`. A backend that shares the keyspace drops an invitee index only while it still holds the key of the invitation it acted on.
+
 ## [1.5.16] - 2026-11-25
 
 A patch release.
@@ -5643,7 +5666,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.16...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.17...HEAD
+[1.5.17]: https://github.com/bymaxone/nest-auth/compare/v1.5.16...v1.5.17
 [1.5.16]: https://github.com/bymaxone/nest-auth/compare/v1.5.15...v1.5.16
 [1.5.15]: https://github.com/bymaxone/nest-auth/compare/v1.5.14...v1.5.15
 [1.5.14]: https://github.com/bymaxone/nest-auth/compare/v1.5.13...v1.5.14
