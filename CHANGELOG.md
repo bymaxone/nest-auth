@@ -40,7 +40,7 @@ A patch release.
 - A workspace revoke that overlaps the acceptance of the same invitation can still report `invitation.revoked` while the membership stands; the `invitation.accepted` event then carries `lostConsumeRace`.
 - The workspace removal is not atomic: a workspace revoke that overlaps another write of the same address can remove a record and report nothing.
 - The role ceiling is applied to what the record holds. A tenant revoke that lands between an invite's claim of the address and the write of its record finds none, whatever the revoker's role: it releases the address, and the invite then fails with `403` `auth.insufficient_role`, or the record it has just stored is removed. Either way no invitation is left.
-- With `stringNumbers: true` the per-IP rate limiter does not limit, and `DELETE /sessions/:id` removes the session, answers that it was not found and leaves the access token of the account valid. Do not set the option.
+- With `stringNumbers: true` the per-IP rate limiter does not limit, a workspace invite or resend answers `429` although its invitation is stored, and `DELETE /sessions/:id` removes the session, answers that it was not found and leaves the access token of the account valid. Do not set the option.
 - With an ioredis `keyPrefix`, the keys a Lua script builds do not carry the prefix, so reusing a rotated refresh token does not revoke its family. Do not set `keyPrefix`; `redisNamespace` is the option that namespaces the keys.
 
 ### Apply to a derived backend
