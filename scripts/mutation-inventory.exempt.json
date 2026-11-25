@@ -52,12 +52,24 @@
     "reason": "Reads the server entry, the options interface and the log helper types with the TypeScript compiler and the README as text; it imports only node modules and typescript and executes no source under src, so the related-test lookup is right to leave it out."
   },
   {
+    "file": "src/server/services/forged-then.decisions.spec.ts",
+    "reason": "Bundles a harness with esbuild and runs each scenario in a child process of its own, because the planted `then` and the replaced constructor must outlive the first microtask and must not forge built-ins inside the test runner; a child process reports no coverage to Stryker, so the run records no test of this file and judges no mutant with it. It runs in the unit suite."
+  },
+  {
     "file": "src/server/services/lockout-reads.spec.ts",
     "reason": "Parses the service sources with the TypeScript compiler as text; it imports only node modules and typescript and executes no source under src, so the related-test lookup is right to leave it out."
   },
   {
     "file": "src/server/to-have-property-path.scan.spec.ts",
     "reason": "Parses the specs as text with the TypeScript compiler; it imports only node modules and typescript and executes no source under src, so the related-test lookup is right to leave it out."
+  },
+  {
+    "file": "src/server/utils/no-promise-statics.sources.spec.ts",
+    "reason": "Scans the files under src/server as text with the TypeScript parser; it imports only node modules and `typescript` and executes no source under src, so the related-test lookup never selects it."
+  },
+  {
+    "file": "src/server/utils/pinned-promises.sources.spec.ts",
+    "reason": "Scans the files under src/server as text with the TypeScript parser; it imports only node modules and `typescript` and executes no source under src, so the related-test lookup never selects it."
   },
   {
     "file": "src/shared/__tests__/_scaling.spec.ts",
