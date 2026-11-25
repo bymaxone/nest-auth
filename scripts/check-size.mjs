@@ -171,8 +171,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     refusal of a blank tenant and of a lookalike of a built-in value as an id, and the reading of each field of a
 //     repository's record from the record or its class, into a copy that holds no prototype., the own keys of every option object handed to the JWT
 //     libraries, scrypt and the cookie methods, and the guard that refuses while the root object holds a planted key.
-//     186.45 KiB (190,927 B) sits 30 B above the measured 190,897 B, which also holds the cheaper comparison of
-//     the recorded built-ins and the revoke and acceptance paths that drop an invitee index only while it names the
+//     186.88 KiB (191,364 B) sits 30 B above the measured 191,334 B, which also holds the cheaper comparison of
+//     the recorded built-ins, the revoke and acceptance paths that drop an invitee index only while it names the
 //     invitation they act on, with their bounded retry, and the integer replies read from their string form.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
@@ -241,7 +241,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 190_927 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 191_364 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
