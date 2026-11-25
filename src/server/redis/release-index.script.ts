@@ -30,5 +30,6 @@ export async function releaseIndex(
   indexKey: string,
   named: string
 ): Promise<boolean> {
-  return (await pinned(redis.eval(RELEASE_INDEX_SCRIPT, [indexKey], [named]))) === 1
+  // A client built with `stringNumbers` answers the count as a string.
+  return Number(await pinned(redis.eval(RELEASE_INDEX_SCRIPT, [indexKey], [named]))) === 1
 }

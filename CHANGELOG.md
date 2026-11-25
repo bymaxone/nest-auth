@@ -27,6 +27,7 @@ A patch release.
 - **An invitation that replaces another during a revoke or an acceptance stays revocable.** `revokeInvitation` and `acceptInvitation` dropped the invitee index whatever it named. An invite landing in between left a redeemable invitation that no revoke could reach, a further invite added a second one, and the revoke answered `204`. Both now drop the index only while it names the invitation they act on.
 - **A revoke follows a replacement.** A tenant or workspace revoke whose invitation is replaced while it runs reads the address again and applies the same role ceiling to what it finds. A workspace revoke reported `invitation.revoked` for the invitation it had read, with the replacement still live; it now reports the one it removes, and none when it removes none. After three replacements in a row a revoke answers `429` `auth.too_many_requests`.
 - **`@types/react` is declared as an optional peer, in any version.** The declarations of `./react` import React's types, which nothing declared. A TypeScript project that uses the subpath installs them.
+- A removal is recognised when the ioredis client is built with `stringNumbers: true`: the count of a `DEL` is read from its string too. A completed second-factor challenge was refused with such a client, because the removal of its temporary token read as none.
 
 ### Changed
 

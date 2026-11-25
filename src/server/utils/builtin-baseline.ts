@@ -484,7 +484,6 @@ function addedProtocolSymbols(): number {
   for (let index = 0; index < protocolHolders.length; index += 1) {
     const present = ownSymbols(protocolHolders[index] as object)
     const known = protocolSymbols[index] as symbol[]
-    // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is never the symbol compared, so the extra pass counts it as added
     for (let at = 0; at < present.length; at += 1) {
       const key = present[at] as symbol
       let found = false
