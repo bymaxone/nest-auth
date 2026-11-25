@@ -12,8 +12,7 @@ import { mappingOutages } from './redis-outage'
 
 /** The proxy over a client whose one method answers `answer`, read as the plain method it behaves as. */
 function methodOf(answer: unknown): () => unknown {
-  const client = new Redis({ lazyConnect: true })
-  Object.defineProperty(client, 'command', { value: (): unknown => answer })
+  const client: Redis = Object.assign(Object.create(null), { command: (): unknown => answer })
   const method: unknown = Reflect.get(mappingOutages(client), 'command')
   if (typeof method !== 'function') throw new Error('the proxy answered no method')
   return (): unknown => Reflect.apply(method, undefined, []) as unknown
@@ -108,5 +107,11 @@ describe('mappingOutages and a command that answers nothing', () => {
   // error. Why: `undefined` is not an object, so it is never read for `then`.
   it('returns undefined as it is', () => {
     expect(methodOf(undefined)()).toBeUndefined()
+  })
+
+  // Scenario: a command returns `null` synchronously. Expected: `null`, with no error. Why: `null` is an object by `typeof`, so only
+  // the check for it keeps the read of `then` from throwing on it.
+  it('returns null as it is', () => {
+    expect(methodOf(null)()).toBeNull()
   })
 })

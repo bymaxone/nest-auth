@@ -220,7 +220,7 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
-    // `clearAllMocks` keeps what a test set, so these are defaults a test before it cannot leave behind.
+    // `clearAllMocks` keeps implementations, so every test starts from these defaults whatever ran before it.
     mockRedis.readSessionOwner.mockResolvedValue({ userId: USER.id, tenantId: USER.tenantId })
     mockUserRepo.findById.mockResolvedValue({ ...USER })
     mockTokenManager.verifyIgnoringExpiry.mockReturnValue(USER)
