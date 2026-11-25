@@ -155,6 +155,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     that hears the rejection of a promise the pin refused.
 //     185.47 KiB (189,922 B) sits 30 B above the measured 189,892 B, which holds the same set. The limit follows the
 //     brotli output and not the raw size: a change that removes source can still leave the compressed output larger.
+//     185.76 KiB (190,215 B) sits 30 B above the measured 190,185 B (2026-11-25, release 1.5.16), which adds the decoy of
+//     each contract of a repository: the table of one value per reader, the cache of one decoy per contract, the loop
+//     that builds them when the module loads, and the copy a miss makes of it. A miss copies a decoy so that it costs the
+//     work a found row costs, which is the control this line pays for and which a test counts call by call.
 //     182.43 KiB sits 0.03 KiB above the measured 182.40 KiB, which holds the boundary that ends a failed read of what
 //     the host owns (the options, the records of a repository) in the library's own error, the guarded view of each
 //     repository, the contract of every repository method that says which fields of an answer are read and as which
@@ -234,7 +238,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 189_922 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 190_215 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
