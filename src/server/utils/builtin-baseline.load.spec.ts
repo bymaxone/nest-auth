@@ -96,4 +96,63 @@ describe('the baseline loaded over a runtime that differs from the usual one', (
 
     expect(loadFresh().replacedBuiltins()).toBe(0)
   })
+
+  // Scenario: `Object.getOwnPropertySymbols` is replaced before the module loads with a function that lists nothing. Then a symbol
+  // function is added to a protocol holder, and one the holder had is replaced. Expected: each is counted. Why: a reader that hides
+  // symbols must not hide the protocol the language runs from every later decision.
+  it.each([
+    ['answers an empty list', (): symbol[] => []],
+    ['answers nothing', (): undefined => undefined]
+  ])('counts protocol symbols while the replaced symbol reader %s', (_label, reader) => {
+    const held = getOwn(Object, 'getOwnPropertySymbols') as PropertyDescriptor
+    const replace = getOwn(RegExp.prototype, Symbol.replace) as PropertyDescriptor
+    const added = Symbol('added-protocol')
+    let loaded: Baseline
+    define(Object, 'getOwnPropertySymbols', { ...held, value: reader })
+    try {
+      loaded = loadFresh()
+    } finally {
+      define(Object, 'getOwnPropertySymbols', held)
+    }
+    const before = loaded.replacedBuiltins()
+    let afterAdded = -1
+    let afterReplaced = -1
+    try {
+      define(RegExp.prototype, added, { value: (): void => {}, configurable: true })
+      afterAdded = loaded.replacedBuiltins()
+      remove(RegExp.prototype, added)
+      define(RegExp.prototype, Symbol.replace, { ...replace, value: (): string => '' })
+      afterReplaced = loaded.replacedBuiltins()
+    } finally {
+      remove(RegExp.prototype, added)
+      define(RegExp.prototype, Symbol.replace, replace)
+    }
+
+    expect([afterAdded - before, afterReplaced - before]).toEqual([1, 1])
+  })
+
+  // Scenario: `Reflect.ownKeys` is replaced before the module loads with a function that lists nothing, then a symbol function is
+  // added to a protocol holder. Expected: it is counted. Why: the reader that lists more symbols is the one to compare with, so
+  // neither replaced reader hides the other's answer.
+  it('counts an added protocol symbol while the replaced key reader lists nothing', () => {
+    const held = getOwn(Reflect, 'ownKeys') as PropertyDescriptor
+    const added = Symbol('added-protocol')
+    let loaded: Baseline
+    define(Reflect, 'ownKeys', { ...held, value: (): (string | symbol)[] => [] })
+    try {
+      loaded = loadFresh()
+    } finally {
+      define(Reflect, 'ownKeys', held)
+    }
+    const before = loaded.replacedBuiltins()
+    let after = -1
+    try {
+      define(RegExp.prototype, added, { value: (): void => {}, configurable: true })
+      after = loaded.replacedBuiltins()
+    } finally {
+      remove(RegExp.prototype, added)
+    }
+
+    expect(after - before).toBe(1)
+  })
 })

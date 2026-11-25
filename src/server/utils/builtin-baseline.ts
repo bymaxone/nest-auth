@@ -421,13 +421,37 @@ recordAll(BASELINED_PROTOTYPES)
 recordAll(BASELINED_ITERATORS)
 recordAll(BASELINED_DEPENDENCIES)
 
+/** The symbol keys of `holder` as `Reflect.ownKeys` lists them. */
+function symbolsAmongKeys(holder: object): symbol[] {
+  const keys = ownKeys(holder)
+  const symbols: symbol[] = []
+  // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not a symbol and is not kept
+  for (let at = 0; at < keys.length; at += 1) {
+    const key = keys[at]
+    if (typeof key === 'symbol') symbols[symbols.length] = key
+  }
+  return symbols
+}
+
+/**
+ * The reader of the symbol keys of a protocol holder. `Object.getOwnPropertySymbols` is the cheaper one and is used while it
+ * lists every symbol `Reflect.ownKeys` does on each holder at load. A host that replaced it with one that hides symbols would
+ * otherwise hide an added symbol from every later comparison.
+ */
+let readSymbols: (holder: object) => symbol[] = ownSymbols
+for (let index = 0; index < PROTOCOL_HOLDERS.length; index += 1) {
+  const holder = BASELINED_HOLDERS[PROTOCOL_HOLDERS[index] as string] as object
+  const listed = ownSymbols(holder) as symbol[] | null | undefined
+  if ((listed?.length ?? -1) < symbolsAmongKeys(holder).length) readSymbols = symbolsAmongKeys
+}
+
 // The protocol: each symbol-keyed function of a protocol holder, and the symbols the holder had, to count one that is added.
 const protocolHolders: object[] = []
 const protocolSymbols: symbol[][] = []
 for (let index = 0; index < PROTOCOL_HOLDERS.length; index += 1) {
   const holder = BASELINED_HOLDERS[PROTOCOL_HOLDERS[index] as string] as object
   const known: symbol[] = []
-  const present = ownSymbols(holder)
+  const present = readSymbols(holder)
   // Stryker disable next-line EqualityOperator: a read one past the end of the list is `undefined`, which is not a key and which `record` does not find
   for (let at = 0; at < present.length; at += 1) {
     const key = present[at] as symbol
@@ -482,7 +506,7 @@ function plantedThens(): number {
 function addedProtocolSymbols(): number {
   let added = 0
   for (let index = 0; index < protocolHolders.length; index += 1) {
-    const present = ownSymbols(protocolHolders[index] as object)
+    const present = readSymbols(protocolHolders[index] as object)
     const known = protocolSymbols[index] as symbol[]
     for (let at = 0; at < present.length; at += 1) {
       const key = present[at] as symbol
