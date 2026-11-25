@@ -193,7 +193,7 @@ describe('the baseline loaded over a runtime that differs from the usual one', (
     spy.mockClear()
     baseline.replacedBuiltins()
 
-    expect(spy).toHaveBeenCalled()
+    expect(spy).toHaveBeenCalledWith(RegExp.prototype)
   })
 
   // Scenario: `Object.getOwnPropertySymbols` is replaced before the module loads with a function that lists one symbol more
@@ -215,7 +215,7 @@ describe('the baseline loaded over a runtime that differs from the usual one', (
     spy.mockClear()
     baseline.replacedBuiltins()
 
-    expect(spy).toHaveBeenCalled()
+    expect(spy).toHaveBeenCalledWith(RegExp.prototype)
   })
 
   // Scenario: `Reflect.ownKeys` is replaced before the module loads with a function that lists nothing, then a symbol function is
