@@ -1,6 +1,6 @@
 /**
  * @fileoverview Tests for a revoke of a workspace invitation that races another writer of the same
- * address: a replacement published between the read of the revoke and its removal.
+ * address: a replacement published while the revoke reads the invitation or before it removes it.
  *
  * @layer Test
  */
@@ -39,6 +39,33 @@ function raceTheRemoval(h: Harness, times: number, write: () => Promise<void>): 
       }
       return remove(ref, email, key)
     })
+}
+
+/**
+ * Runs `write` between the read of the index and the read of the record it names, for the first
+ * `times` record reads. Reads made by `write` itself are not preceded by it.
+ *
+ * @param h - The harness.
+ * @param times - How many record reads are preceded by the write.
+ * @param write - What the other writer does.
+ */
+function raceTheRecordRead(
+  h: Harness,
+  times: number,
+  write: () => Promise<void>
+): jest.SpyInstance {
+  const get = h.redis.get.bind(h.redis)
+  let raced = 0
+  let writing = false
+  return jest.spyOn(h.redis, 'get').mockImplementation(async (key: string) => {
+    if (!writing && raced < times && key.startsWith('winv:')) {
+      raced += 1
+      writing = true
+      await write()
+      writing = false
+    }
+    return get(key)
+  })
 }
 
 /** Invites the address again once the cooldown has passed, which replaces its live invitation. */
@@ -133,6 +160,86 @@ describe('WorkspaceInvitationService revoke against a concurrent writer', () => 
 
     await h.service.revoke(WORKSPACE_REF, OWNER, EMAIL, CONTEXT)
 
+    expect(revokedRoles(h)).toEqual([])
+  })
+})
+
+describe('WorkspaceInvitationService revoke against a writer during its read', () => {
+  beforeEach(() => {
+    jest.spyOn(Date, 'now').mockReturnValue(NOW)
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  /** A live invitation of the address, replaced during the first `times` record reads. */
+  async function replacedWhileRead(times: number, role: string): Promise<Harness> {
+    const h = build()
+    await h.service.invite(WORKSPACE_REF, OWNER, EMAIL, 'viewer', CONTEXT)
+    raceTheRecordRead(h, times, () => reinvite(h, role))
+    return h
+  }
+
+  // Scenario: a re-invite lands between the read of the index and the read of its record. Expected:
+  // the replacement is read and withdrawn, and reported. Why: the record the index named is gone,
+  // and answering success there leaves the new token acceptable.
+  it('withdraws the replacement that landed while it read the record', async () => {
+    const h = await replacedWhileRead(1, 'editor')
+
+    await h.service.revoke(WORKSPACE_REF, OWNER, EMAIL, CONTEXT)
+
+    expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).toBeNull()
+    expect(await h.store.pending(WORKSPACE_REF)).toEqual([])
+    expect(revokedRoles(h)).toEqual(['editor'])
+  })
+
+  // Scenario: that replacement grants a role the actor may not act on. Expected: it stays, and
+  // nothing is reported. Why: the ceiling applies to what is there.
+  it('leaves a replacement above the actor that landed while it read', async () => {
+    const h = await replacedWhileRead(1, 'owner')
+
+    await h.service.revoke(WORKSPACE_REF, EDITOR, EMAIL, CONTEXT)
+
+    expect((await h.store.readByEmail(WORKSPACE_REF, EMAIL))?.record?.role).toBe('owner')
+    expect(revokedRoles(h)).toEqual([])
+  })
+
+  // Scenario: the address is replaced during two reads. Expected: the third attempt removes. Why:
+  // a read overtaken by a replacement is one of the three attempts.
+  it('removes on the third attempt after two overtaken reads', async () => {
+    const h = await replacedWhileRead(2, 'viewer')
+
+    await h.service.revoke(WORKSPACE_REF, OWNER, EMAIL, CONTEXT)
+
+    expect(await h.store.readByEmail(WORKSPACE_REF, EMAIL)).toBeNull()
+    expect(revokedRoles(h)).toEqual(['viewer'])
+  })
+
+  // Scenario: the address is replaced during each of three reads. Expected:
+  // `auth.too_many_requests` and nothing reported. Why: nothing the caller asked for happened.
+  it('refuses after three overtaken reads', async () => {
+    const h = await replacedWhileRead(3, 'viewer')
+
+    expect(await code(h.service.revoke(WORKSPACE_REF, OWNER, EMAIL, CONTEXT))).toBe(
+      AUTH_ERROR_CODES.TOO_MANY_REQUESTS
+    )
+
+    expect(revokedRoles(h)).toEqual([])
+  })
+
+  // Scenario: the index names a record that is gone and nothing replaced it. Expected: success
+  // after one attempt, with no event. Why: there is nothing to withdraw.
+  it('succeeds at once when the index still names a record that is gone', async () => {
+    const h = build()
+    await h.service.invite(WORKSPACE_REF, OWNER, EMAIL, 'viewer', CONTEXT)
+    const indexed = await h.store.readByEmail(WORKSPACE_REF, EMAIL)
+    await h.redis.del(indexed?.key ?? '')
+    const read = jest.spyOn(h.store, 'readByEmail')
+
+    await h.service.revoke(WORKSPACE_REF, OWNER, EMAIL, CONTEXT)
+
+    expect(read).toHaveBeenCalledTimes(1)
     expect(revokedRoles(h)).toEqual([])
   })
 })

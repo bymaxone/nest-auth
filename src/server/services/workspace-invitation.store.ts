@@ -99,6 +99,18 @@ export class WorkspaceInvitationStore {
   }
 
   /**
+   * Whether an address's index names a record key.
+   *
+   * @param ref - The workspace.
+   * @param email - The invitee, normalized.
+   * @param key - The record key.
+   * @returns `true` while the index holds `key`.
+   */
+  async names(ref: WorkspaceRef, email: string, key: string): Promise<boolean> {
+    return (await pinned(this.redis.get(this.indexKey(ref, email)))) === key
+  }
+
+  /**
    * Writes a record, points the address's index at it and lists it as pending, retiring the record
    * the index named when it was read, all in one step.
    *

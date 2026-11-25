@@ -190,7 +190,7 @@ export class WorkspaceInvitationService {
    * @param actor - Who revokes.
    * @param rawEmail - The invitee.
    * @param context - Request metadata for the hook.
-   * @throws {AuthException} `auth.too_many_requests` when the invitation was replaced before each
+   * @throws {AuthException} `auth.too_many_requests` when the invitation was replaced during each
    *   attempt to remove it.
    */
   async revoke(
@@ -348,7 +348,7 @@ export class WorkspaceInvitationService {
    * @param ref - The workspace id `inviteAsPlatform` returned.
    * @param rawEmail - The invitee.
    * @param context - Request metadata for the hook.
-   * @throws {AuthException} `auth.too_many_requests` when the invitation was replaced before each
+   * @throws {AuthException} `auth.too_many_requests` when the invitation was replaced during each
    *   attempt to remove it.
    */
   async revokeAsPlatform(ref: WorkspaceRef, rawEmail: string, context: HookContext): Promise<void> {
@@ -366,8 +366,8 @@ export class WorkspaceInvitationService {
   /**
    * Removes the address's invitation and reports it, when `mayWithdraw` accepts what is there.
    *
-   * The report is for a removal only. `remove` answers `false` when the index stopped naming the
-   * record that was read, so the address is read again and what replaced it is judged anew.
+   * The report is for a removal only. When the index stops naming the record, before the record is
+   * read or before it is removed, the address is read again and what replaced it is judged anew.
    *
    * @param ref - The workspace.
    * @param email - The invitee, normalized.
@@ -384,7 +384,13 @@ export class WorkspaceInvitationService {
   ): Promise<void> {
     for (let attempt = 0; attempt < REVOKE_ATTEMPTS; attempt += 1) {
       const indexed = await pinned(this.store.readByEmail(ref, email))
-      if (indexed?.record == null || !mayWithdraw(indexed.record)) return
+      if (indexed === null) return
+      if (indexed.record === null) {
+        // A publish deletes the record it replaces, so a record that is gone may have a successor.
+        if (await pinned(this.store.names(ref, email, indexed.key))) return
+        continue
+      }
+      if (!mayWithdraw(indexed.record)) return
       const removed = await pinned(this.store.remove(ref, email, indexed.key))
       if (!removed) continue
       const { role } = indexed.record
