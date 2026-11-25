@@ -1328,7 +1328,10 @@ state record and answers with `Referrer-Policy: no-referrer`. On your accept pag
 the URL fragment and set `Referrer-Policy: no-referrer` there.
 
 A revoke, here and on the tenant's `POST /invitations/revoke`, whose invitation is replaced by a
-newer one while it runs reads the address again and applies the same role ceiling to what it finds.
+newer one while it runs reads the address again and applies the role ceiling to the record it finds.
+A tenant revoke that arrives while an invite of the address has not yet stored its record finds no
+role to compare: that invite fails with `403`, or the record it has just stored is removed, and no
+invitation is left.
 When the invitation is replaced before each attempt to remove it, it answers `429`
 `auth.too_many_requests`; the caller can try again.
 

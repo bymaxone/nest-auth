@@ -24,20 +24,24 @@ A patch release.
 
 ### Fixed
 
-- **An invitation that replaces another during a revoke or an acceptance stays revocable.** `revokeInvitation` and `acceptInvitation` dropped the invitee index whatever it named. An invite landing in between left a redeemable invitation that no revoke could reach, a further invite added a second one, and the revoke answered `204`. Both now drop the index only while it names the invitation they act on.
-- **A revoke follows a replacement.** A tenant or workspace revoke whose invitation is replaced while it runs reads the address again and applies the same role ceiling to what it finds. A workspace revoke reported `invitation.revoked` for the invitation it had read, with the replacement still live; it now reports the one it removes, and none when it removes none. After three replacements in a row a revoke answers `429` `auth.too_many_requests`.
+- **An invitation that replaces another during a revoke or an acceptance stays revocable.** `revokeInvitation` and `acceptInvitation` dropped the invitee index whatever it named. An invite landing in between left a redeemable invitation that no revoke could reach, a further invite added a second one, and the revoke answered `204`. Both now drop the index only while it names the invitation they act on. A revoke also deletes the record before it drops the index, so a store failure between the two leaves an index that names nothing and no redeemable record out of reach.
+- **A revoke follows a replacement.** A tenant or workspace revoke whose invitation is replaced while it runs reads the address again and applies the role ceiling to the record it finds. A workspace revoke reported `invitation.revoked` for the invitation it had read, with the replacement still live; it now reports one only when the address still named the invitation it removed. A tenant revoke logs `AUTH_INVITATION_REVOKED` only for a record it removed. After three replacements in a row a revoke answers `429` `auth.too_many_requests`.
 - **`@types/react` is declared as an optional peer, in any version.** The declarations of `./react` import React's types, which nothing declared. A TypeScript project that uses the subpath installs them.
-- A removal is recognised when the ioredis client is built with `stringNumbers: true`: the count of a `DEL` is read from its string too. A completed second-factor challenge was refused with such a client, because the removal of its temporary token read as none.
+- With an ioredis client built with `stringNumbers: true`, the count of a `DEL` is read from its string too. A completed second-factor challenge was refused with such a client, because the removal of its temporary token read as none. Other integer replies are not covered; see Known limits.
 
 ### Changed
 
-- The comparison of the recorded built-ins that the root guard runs at each decision does less work, with the same verdicts.
+- The comparison of the recorded built-ins that the root guard runs at each decision does less work, with the same verdicts. Where `Reflect.ownKeys` was replaced before the module loaded, an added or replaced protocol symbol is now still counted.
 - The documentation now says that revoking a session, or all the others, cuts every access token of the account, the caller's included, until the next refresh; and that `create`, `createWithOAuth` and `updateEmail` of a user repository should throw `AuthException` `EMAIL_ALREADY_EXISTS` when the write finds the address taken.
 
 ### Known limits
 
 - These guarantees cover the requests this library serves. Another backend sharing the Redis keyspace that drops an invitee index without comparing it can still leave an invitation the index does not name, and one that consumes a workspace invitation without releasing its index can make a revoke report an invitation that was already gone.
 - A workspace revoke that overlaps the acceptance of the same invitation can still report `invitation.revoked` while the membership stands; the `invitation.accepted` event then carries `lostConsumeRace`.
+- The workspace removal is not atomic: a workspace revoke that overlaps another write of the same address can remove a record and report nothing.
+- The role ceiling is applied to what the record holds. A tenant revoke that lands between an invite's claim of the address and the write of its record finds none, whatever the revoker's role: it releases the address, and the invite then fails with `403` `auth.insufficient_role`, or the record it has just stored is removed. Either way no invitation is left.
+- With `stringNumbers: true` other integer replies are still compared as numbers: the per-IP rate limiter does not limit, and `DELETE /sessions/:id` removes the session, answers that it was not found and leaves the access token of the account valid. Do not set the option.
+- With an ioredis `keyPrefix`, the keys a Lua script builds do not carry the prefix, so reusing a rotated refresh token does not revoke its family. Do not set `keyPrefix`; `redisNamespace` is the option that namespaces the keys.
 
 ### Apply to a derived backend
 
