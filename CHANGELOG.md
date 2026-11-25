@@ -31,7 +31,7 @@ A patch release.
 
 ### Changed
 
-- The comparison of the recorded built-ins that the root guard runs at each decision does less work, with the same verdicts. Where `Reflect.ownKeys` was replaced before the module loaded, an added or replaced protocol symbol is now still counted.
+- The comparison of the recorded built-ins that the root guard runs at each decision does less work, with the same verdicts. Where `Reflect.ownKeys` was replaced before the module loaded, an added or replaced protocol symbol is now still counted. A `getOwnPropertySymbols` replaced before the module loaded is used only if at load it lists, on each protocol holder, the symbols `Reflect.ownKeys` does.
 - The documentation now says that revoking a session, or all the others, cuts every access token of the account, the caller's included, until the next refresh; and that `create`, `createWithOAuth` and `updateEmail` of a user repository should throw `AuthException` `EMAIL_ALREADY_EXISTS` when the write finds the address taken.
 
 ### Known limits

@@ -434,15 +434,20 @@ function symbolsAmongKeys(holder: object): symbol[] {
 }
 
 /**
- * The reader of the symbol keys of a protocol holder. `Object.getOwnPropertySymbols` is the cheaper one and is used while it
- * lists every symbol `Reflect.ownKeys` does on each holder at load. A host that replaced it with one that hides symbols would
- * otherwise hide an added symbol from every later comparison.
+ * The reader of the symbol keys of a protocol holder. `Object.getOwnPropertySymbols` is the cheaper one and is used when on
+ * each holder at load it answers a list that has, position by position, every symbol `Reflect.ownKeys` lists. A host that
+ * replaced it with one that hides or substitutes a symbol would otherwise keep that symbol out of every later comparison.
  */
 let readSymbols: (holder: object) => symbol[] = ownSymbols
 for (let index = 0; index < PROTOCOL_HOLDERS.length; index += 1) {
   const holder = BASELINED_HOLDERS[PROTOCOL_HOLDERS[index] as string] as object
   const listed = ownSymbols(holder) as symbol[] | null | undefined
-  if ((listed?.length ?? -1) < symbolsAmongKeys(holder).length) readSymbols = symbolsAmongKeys
+  const expected = symbolsAmongKeys(holder)
+  if (!listed) readSymbols = symbolsAmongKeys
+  // Stryker disable next-line EqualityOperator: the pass one past the end differs only for a list with symbols the holder does not have, and then either reader counts the same added keys
+  else
+    for (let at = 0; at < expected.length; at += 1)
+      if (listed[at] !== expected[at]) readSymbols = symbolsAmongKeys
 }
 
 // The protocol: each symbol-keyed function of a protocol holder, and the symbols the holder had, to count one that is added.
