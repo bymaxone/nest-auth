@@ -15,6 +15,7 @@ import { hmacSha256 } from '../crypto/secure-token'
 import { WorkspaceAccessRefusal } from '../errors/workspace-access-refusal'
 import type { WorkspaceAuditEvent } from '../interfaces/workspace-audit.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { integerReply } from '../redis/integer-reply'
 import { runDetached } from '../utils/run-detached'
 import { pinned, PinnedAll } from '../utils/settle'
 
@@ -137,12 +138,15 @@ export class WorkspaceDeniedEventsService {
 
   /** The stored count, `0` when none is stored or, with a warning, when it is no integer. */
   private suppressedFrom(stored: string | null): number {
-    const count = Number(stored ?? 0)
-    if (Number.isInteger(count)) return count
-    this.logger.warn(
-      'The suppressed count of access.denied was not an integer and is reported as 0.'
-    )
-    return 0
+    if (stored === null) return 0
+    try {
+      return integerReply(stored)
+    } catch {
+      this.logger.warn(
+        'The suppressed count of access.denied was not an integer and is reported as 0.'
+      )
+      return 0
+    }
   }
 
   private warnOncePerWindow(windowSeconds: number): void {
