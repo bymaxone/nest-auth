@@ -391,30 +391,4 @@ describe('RedisReadinessService', () => {
       expect(warn).toHaveBeenCalledTimes(1)
     }
   )
-
-  // Scenario: a client that carries a key prefix, as a string or as bytes. Expected: refused as it
-  // is injected, before anything is sent, with the option to use instead. The prefix is not applied
-  // to the keys a script builds, so revoking every session would leave refresh tokens working.
-  it.each([
-    ['a string', 'host:'],
-    ['bytes', Buffer.from('host:')]
-  ])('refuses a client whose keyPrefix is %s', async (_kind, keyPrefix) => {
-    const target = client({ options: { commandTimeout: 500, keyPrefix } })
-
-    await expect(check(target)).rejects.toThrow(
-      '[BymaxAuthModule] BYMAX_AUTH_REDIS_CLIENT has a keyPrefix, which ioredis does not apply ' +
-        'to the keys a Lua script builds, so revoking every session would leave refresh tokens ' +
-        'working. Remove keyPrefix from the client and set the redisNamespace option instead.'
-    )
-    expect(target['ping']).not.toHaveBeenCalled()
-  })
-
-  // Scenario: the empty prefix ioredis gives every client, and a client with no options at all.
-  // Expected: accepted.
-  it.each([
-    ['is empty', { keyPrefix: '' }],
-    ['is absent with the options', undefined]
-  ])('accepts a client whose keyPrefix %s', async (_why, options) => {
-    await expect(check(client({ options }))).resolves.toBeInstanceOf(RedisReadinessService)
-  })
 })

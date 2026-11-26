@@ -53,7 +53,7 @@ const config: Config = {
     '<rootDir>/real-redis/string-replies.e2e-spec.ts',
     // A store that stops answering: the suite pauses and stops its own container.
     '<rootDir>/real-redis/redis-outage.e2e-spec.ts',
-    // A client option the Lua scripts cannot follow, refused at startup.
+    // A client with `keyPrefix`: the names the scripts build must be the ones the client writes.
     '<rootDir>/real-redis/key-prefix.e2e-spec.ts'
   ],
   testPathIgnorePatterns: ['/node_modules/'],

@@ -11,6 +11,8 @@ import { CREATE_SESSION_LUA, sessionExtraArgs } from './create-session-script'
 import type { SessionExtra } from './create-session-script'
 import { integerReply } from './integer-reply'
 import { mappingOutages } from './redis-outage'
+import type { RefreshRotationOutcome, RefreshRotationParams } from './refresh-rotation'
+import { storedNamespace } from './stored-namespace'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
 import { sessionIndexKey, tokenEpochKey } from '../constants/user-keys'
@@ -251,40 +253,6 @@ redis.call('DEL', KEYS[1])
 return #members
 `
 
-/** The rotation bundle {@link AuthRedisService.rotateRefreshSession} consumes. */
-export interface RefreshRotationParams {
-  /** Which identity plane is rotating; selects the whole prefix set. */
-  kind: 'dashboard' | 'platform'
-  /** The tenant the rotating session belongs to; part of the index key on the dashboard plane. */
-  tenantId: string | undefined
-  /** SHA-256 of the presented (old) refresh token. */
-  oldHash: string
-  /** SHA-256 of the freshly minted refresh token. */
-  newHash: string
-  /** Serialized session record to store under the new hash. */
-  newSessionJson: string
-  /** Family of the presented session; `''` when it belongs to no lineage. */
-  familyId: string
-  /**
-   * Owner of the session being rotated, for the per-user session index the script now
-   * maintains itself. Taken from the record the caller pre-read, which is what makes it the
-   * real owner: the script touches this index only on the live-rotation path, and that path
-   * is unreachable unless that pre-read found the session.
-   */
-  userId: string
-  /** Refresh-session lifetime in seconds. */
-  refreshTtl: number
-  /** Grace-pointer lifetime in seconds; `0` writes no pointer. */
-  graceTtl: number
-}
-
-/** What {@link AuthRedisService.rotateRefreshSession} found for the presented token. */
-export type RefreshRotationOutcome =
-  | { kind: 'rotated'; sessionJson: string }
-  | { kind: 'grace'; sessionJson: string }
-  | { kind: 'reused'; familyId: string }
-  | { kind: 'invalid' }
-
 /**
  * Internal Redis service for @bymax-one/nest-auth.
  *
@@ -304,6 +272,8 @@ export type RefreshRotationOutcome =
 @Injectable()
 export class AuthRedisService {
   private readonly namespace: string
+  /** The namespace in a name a script is given as an argument; see {@link storedNamespace}. */
+  private readonly stored: string
 
   /**
    * The Redis client.
@@ -332,6 +302,7 @@ export class AuthRedisService {
   ) {
     this.#redis = mappingOutages(redis)
     this.namespace = options.redisNamespace
+    this.stored = storedNamespace(redis, this.namespace)
     this.#hmacKey = options.hmacKey
   }
 
@@ -558,7 +529,7 @@ export class AuthRedisService {
           params.familyId,
           params.oldHash,
           params.newHash,
-          this.prefix(p.live),
+          `${this.stored}:${p.live}`,
           p.live,
           p.grace
         ]
@@ -726,13 +697,13 @@ export class AuthRedisService {
     // takes an empty index key and skips that step.
     const nameable = ownerId !== '' && (kind === 'platform' || (tenantId ?? '') !== '')
     const indexKey = nameable
-      ? this.prefix(sessionIndexKey(kind, ownerId, this.#hmacKey, tenantId))
+      ? `${this.stored}:${sessionIndexKey(kind, ownerId, this.#hmacKey, tenantId)}`
       : ''
     const removed = await pinned(
       this.eval(
         REVOKE_FAMILY_LUA,
         [`${p.family}:${familyId}`],
-        [this.namespace, p.live, p.detail, indexKey]
+        [this.stored, p.live, p.detail, indexKey]
       )
     )
     return checked({ removed: integerReply(removed), ownerId })
@@ -870,7 +841,7 @@ export class AuthRedisService {
        end
        return removed`,
         [setKey],
-        [this.namespace, gracePrefix]
+        [this.stored, gracePrefix]
       )
     )
     return integerReply(removed)
@@ -915,7 +886,7 @@ export class AuthRedisService {
        end
        return removed`,
         [setKey],
-        [this.namespace, ...members]
+        [this.stored, ...members]
       )
     )
     return integerReply(removed)
@@ -967,7 +938,7 @@ export class AuthRedisService {
          redis.call('DEL', KEYS[1])
        end`,
         [setKey],
-        [this.namespace, livePrefix, gracePrefix, detailPrefix]
+        [this.stored, livePrefix, gracePrefix, detailPrefix]
       )
     )
   }

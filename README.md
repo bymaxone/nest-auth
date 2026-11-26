@@ -1030,15 +1030,12 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > The paths, the outcome of each and the test that pins it are in
 > [`docs/redis-outage.md`](./docs/redis-outage.md).
 
-> [!IMPORTANT]
-> **No `keyPrefix` on the auth client.** nest-auth refuses an ioredis client with `keyPrefix`,
-> because ioredis does not apply the prefix to the keys a Lua script builds. With one,
-> `AuthService.revokeAllSessions` resolves and the account's refresh tokens keep working (password
-> reset and the MFA changes end sessions through the same script), reusing a rotated refresh token
-> does not revoke its family, and a refresh retried inside its grace window is refused. The module
-> fails at startup instead, for a standalone client and for a cluster. To namespace the keys, set the
-> `redisNamespace` option. An application that already stored keys under a prefix should read the
-> 1.5.17 CHANGELOG entry before changing either.
+> [!NOTE]
+> **`keyPrefix` on the auth client.** A string prefix is supported: keys are stored under
+> `keyPrefix`, then `redisNamespace`, then `:`, so a backend that shares the keyspace sets its own
+> namespace to the first two. A prefix given as a `Buffer` is refused at startup, and a cluster was
+> not measured. An application that ran 1.5.16 or earlier with a prefix should read the
+> `keyPrefix` entry of the 1.5.18 CHANGELOG.
 
 The breach check is opt-in for a different reason: it is the only part of the credential path
 that reaches the network, and a library should not start talking to a third party because it was
