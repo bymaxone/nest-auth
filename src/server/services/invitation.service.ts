@@ -19,9 +19,12 @@ import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { AuthResult } from '../interfaces/auth-result.interface'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
-import { logEvent, logStore } from '../observability/log-event'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { publishInvitation } from '../redis/publish-invitation.script'
+import type { InvitationPublication } from '../redis/publish-invitation.script'
 import { releaseIndex } from '../redis/release-index.script'
+import { withdrawInvitation } from '../redis/withdraw-invitation.script'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -35,7 +38,7 @@ import { checked, pinned, PinnedAll } from '../utils/settle'
 /**
  * How many times a supersede re-derives its approval before giving up.
  *
- * The rank check and the index claim are separate round trips, so a concurrent invite for the
+ * The rank check and the publish are separate round trips, so a concurrent invite for the
  * same address can move the record between them. Re-deriving is the right answer — the
  * contention is between two legitimate inviters — but an unbounded retry turns a hot address
  * into an unbounded loop, so the budget is small and exceeding it is refused.
@@ -152,7 +155,6 @@ export class InvitationService {
     // Generate a cryptographically secure single-use token (64 hex chars).
     const rawToken = generateSecureToken(32)
     const tokenHash = sha256(rawToken)
-    const tokenKey = `inv:${tokenHash}`
     const ttl = this.options.invitations.tokenTtlSeconds
 
     const stored: StoredInvitation = {
@@ -175,59 +177,19 @@ export class InvitationService {
     // and delete a pending ADMIN invitation for bob, a capability the revoke route refuses them
     // and refuses even to confirm exists.
     //
-    // The rank check and the claim must agree about WHICH invitation is being superseded. Two
-    // separate round trips do not: an outranked caller could pass the check while the index was
-    // momentarily empty, and then displace a higher-ranked invitation created in between. So
-    // the check reports the hash it approved, and the claim only proceeds if the index still
-    // holds exactly that — a compare-and-swap. Anything else means the record moved, and the
-    // approval no longer describes what is there.
-    //
-    // The index is claimed FIRST, and atomically, because it is the serialization point: it is
-    // the only handle the issuing side has on a record keyed by a token nobody here ever saw.
-    // Writing the record first and the index second left two failures. A failed index write
-    // published a token that stays redeemable for its whole TTL while `revokeInvitation` reads
-    // an absent index and answers 204 — an operator told the withdrawal succeeded over an
-    // invitation that is still live. And two concurrent invites for one address interleaved
-    // into two live `inv:` records with the index naming only the newer, which is exactly the
-    // "two live tokens for one invitee" this supersede exists to prevent.
-    //
-    // Claiming the index first inverts the failure: a crash before the record is written leaves
-    // an index naming nothing, so the invitation is simply dead — the safe direction.
-    const supersededHash = await pinned(
-      this.supersedeApprovedInvitation(inviter, normalizedEmail, tenantId, tokenHash, ttl)
+    // The rank check and the write must agree about WHICH invitation is being superseded, so the
+    // write is a compare-and-swap against the hash the check approved. It stores the record, points
+    // the index at it and deletes the superseded record in one step: a record with no index would be
+    // redeemable and out of reach of every revoke, and an index with no record gives a revoke
+    // nothing to judge.
+    await pinned(
+      this.publishOverApproved(inviter, {
+        indexKey: this.inviteeKey(normalizedEmail, tenantId),
+        tokenHash,
+        record: stringifyJson(stored),
+        ttl
+      })
     )
-    if (supersededHash !== null) {
-      await pinned(this.redis.del(`inv:${supersededHash}`))
-    }
-    await pinned(this.redis.set(tokenKey, stringifyJson(stored), ttl))
-
-    // The claim above and the write just done are two round trips, and a revoke or a later invite
-    // can move the index between them. A revoke in that gap reads an index naming a record that is
-    // not there yet and releases the index; the write can then publish a token that no index names,
-    // redeemable for its whole TTL and out of reach of every later revoke. So the claim is repeated
-    // against this invitation's OWN hash: it holds only while the index still names it. If it does
-    // not, the record is withdrawn instead of left live, and the address is reported as changed
-    // under the caller.
-    //
-    // The same compare-and-set renews the index TTL, which started at the claim: a record written
-    // later than the claim would otherwise outlive the entry that names it.
-    //
-    // A store failure on this repeat is not an answer about the index, so the record is withdrawn
-    // on that path too, best-effort, and the original failure is the one the caller sees. Either
-    // way the email below is never sent for a record this method could not stand behind.
-    let stillNamed: { claimed: boolean }
-    try {
-      stillNamed = await pinned(
-        this.claimInviteeIndex(normalizedEmail, tenantId, tokenHash, ttl, tokenHash)
-      )
-    } catch (err: unknown) {
-      await pinned(this.withdrawRecord(tokenKey))
-      throw err
-    }
-    if (!stillNamed.claimed) {
-      await pinned(this.withdrawRecord(tokenKey))
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
-    }
 
     const displayTenantName = tenantName ?? tenantId
     const expiresAt = new Date(Date.now() + ttl * 1_000)
@@ -317,8 +279,8 @@ export class InvitationService {
    * it: it can no longer be accepted either, and leaving it behind would be worse.
    *
    * @param inviter - The authenticated caller, already known to be in the tenant.
-   * @param email - The normalized invitee address.
-   * @param tenantId - The tenant the invitation belongs to.
+   * @param indexKey - The invitee index key.
+   * @returns The hash the index held, or `null` when there was no index.
    * @throws {@link AuthException} `INSUFFICIENT_ROLE` when the caller is outranked by the
    *   pending invitation. Unlike the revoke route this cannot answer silently — the caller is
    *   asking to create something, and a silent success would report an invitation that does
@@ -326,10 +288,9 @@ export class InvitationService {
    */
   private async assertMaySupersede(
     inviter: { role: string; status: string },
-    email: string,
-    tenantId: string
+    indexKey: string
   ): Promise<string | null> {
-    const tokenHash = await pinned(this.redis.get(this.inviteeKey(email, tenantId)))
+    const tokenHash = await pinned(this.redis.get(indexKey))
     if (tokenHash === null) return null
     const raw = await pinned(this.redis.get(`inv:${tokenHash}`))
     const pending = raw === null ? null : this.parseInvitation(raw)
@@ -341,100 +302,38 @@ export class InvitationService {
   }
 
   /**
-   * Approves the supersede and claims the index in one agreed step, retrying if the record
-   * moves underneath the approval.
+   * Approves the supersede and stores the invitation over what was approved, retrying if the
+   * address moves underneath the approval.
    *
-   * The rank check and the claim are separate round trips, so on their own they can disagree
+   * The rank check and the write are separate round trips, so on their own they can disagree
    * about WHICH invitation is being superseded: an outranked caller could pass the check while
    * the index was momentarily empty and then displace a higher-ranked invitation created in
-   * between. The claim is therefore a compare-and-swap against the hash the check approved —
-   * anything else means the record moved and the approval no longer describes what is there.
+   * between. The write is therefore a compare-and-swap against the hash the check approved.
    *
    * A displaced approval is re-derived rather than refused: the contention is between two
-   * legitimate inviters, and one of them losing a race is not an authorisation failure. The
+   * legitimate writers, and one of them losing a race is not an authorisation failure. The
    * retry is bounded, because an unbounded one turns a hot address into an unbounded loop.
    *
+   * A write whose reply is lost fails the invite with the invitation possibly stored and indexed:
+   * its token is not emailed, and a revoke or a new invite removes it.
+   *
    * @param inviter - The authenticated caller, already known to be in the tenant.
-   * @param email - The normalized invitee address.
-   * @param tenantId - The tenant the invitation belongs to.
-   * @param tokenHash - The new invitation's token hash.
-   * @param ttl - The invitation TTL, in seconds.
-   * @returns The displaced token hash, or `null` when there was no pending invitation.
+   * @param invitation - The invitee index, the new token's hash, the record and its lifetime.
    * @throws {@link AuthException} `INSUFFICIENT_ROLE` when the caller is outranked, or when the
    *   index kept moving for the whole retry budget — the caller has not been shown to be
    *   allowed to destroy whatever is there now.
    */
-  private async supersedeApprovedInvitation(
+  private async publishOverApproved(
     inviter: { role: string; status: string },
-    email: string,
-    tenantId: string,
-    tokenHash: string,
-    ttl: number
-  ): Promise<string | null> {
+    invitation: Omit<InvitationPublication, 'superseded'>
+  ): Promise<void> {
     for (let attempt = 0; attempt < SUPERSEDE_ATTEMPTS; attempt += 1) {
-      const approved = await pinned(this.assertMaySupersede(inviter, email, tenantId))
-      const claim = await pinned(this.claimInviteeIndex(email, tenantId, tokenHash, ttl, approved))
-      if (claim.claimed) return approved
+      const superseded = await pinned(this.assertMaySupersede(inviter, invitation.indexKey))
+      const publication = { ...invitation, superseded }
+      if (await pinned(publishInvitation(this.redis, publication))) return
     }
     logEvent(this.logger, 'AUTH_INVITATION_REFUSED', { reason: 'changed_under_rank_check' })
     throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
-  }
-
-  /**
-   * Removes the invitation record this call wrote, best-effort.
-   *
-   * Used where the call is already ending in a refusal or a failure of its own, so a failing
-   * delete must not replace that outcome: it is logged and the caller still raises the original.
-   * The raw token has not been emailed at that point, so a record that survives is one nobody
-   * holds the token for, until its TTL.
-   *
-   * @param tokenKey - The Redis key of the record written by this call.
-   */
-  private async withdrawRecord(tokenKey: string): Promise<void> {
-    try {
-      await pinned(this.redis.del(tokenKey))
-    } catch (err: unknown) {
-      logStore(this.logger, 'AUTH_STORE_DEGRADED', 'invitation_withdraw', err)
-    }
-  }
-
-  /**
-   * Atomically points the invitee index at `tokenHash`, answering with the hash it displaced.
-   *
-   * A compare-and-swap, not a plain write: the claim proceeds only when the index still holds
-   * exactly what the rank check approved. Two concurrent invites for one address therefore
-   * cannot both believe they superseded nothing — exactly one wins, and the loser is told the
-   * record moved so it can re-derive its approval against what is actually there.
-   *
-   * @param email - The normalized invitee address.
-   * @param tenantId - The tenant the invitation belongs to.
-   * @param tokenHash - The new invitation's token hash.
-   * @param ttl - The invitation TTL, in seconds.
-   * @param expected - The hash the rank check approved, or `null` for "no pending invitation".
-   * @returns Whether this call claimed the index.
-   */
-  private async claimInviteeIndex(
-    email: string,
-    tenantId: string,
-    tokenHash: string,
-    ttl: number,
-    expected: string | null
-  ): Promise<{ claimed: boolean }> {
-    // `ARGV[3]` is the empty string for "the index must be absent", which is distinguishable
-    // from any real hash because a hash is always 64 hex characters.
-    const claimed = await pinned(
-      this.redis.eval(
-        `local old = redis.call('GET', KEYS[1])
-       if (old or '') ~= ARGV[3] then return 0 end
-       redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
-       return 1`,
-        [this.inviteeKey(email, tenantId)],
-        [tokenHash, String(ttl), expected ?? '']
-      )
-    )
-    // Narrowed rather than compared straight to `1`: `eval` answers `unknown`, and a client
-    // that surfaced the Lua integer as a string would read a successful claim as contention.
-    return checked({ claimed: typeof claimed === 'number' ? claimed === 1 : claimed === '1' })
   }
 
   // ---------------------------------------------------------------------------
@@ -465,7 +364,7 @@ export class InvitationService {
    * @returns `true` when a pending invitation was removed, `false` when none was.
    * @throws {@link AuthException} `TOKEN_INVALID` when the revoker no longer exists,
    *   `INSUFFICIENT_ROLE` when they are outside the tenant or not in good standing, or
-   *   `TOO_MANY_REQUESTS` when the invitation was replaced during each attempt to remove it.
+   *   `TOO_MANY_REQUESTS` when the invitation changed during each attempt to remove it.
    */
   async revokeInvitation(revokerUserId: string, email: string, tenantId: string): Promise<boolean> {
     const normalizedEmail = normalizeEmail(email)
@@ -492,18 +391,16 @@ export class InvitationService {
   /**
    * Removes the invitation the index names, when the revoker may withdraw what is there.
    *
-   * A record that is there is deleted before its index is released, so a store failure between the
-   * two never leaves a redeemable record that nothing names. An index that names no record is
-   * released first, so that an invite about to write it fails its second claim. A release that finds
-   * the index claimed by a later invite starts over, and judges what replaced the invitation.
+   * The record and the index are removed in one step, and only while both are still what was read
+   * and judged here. Anything written to the address in between is read and judged again.
    *
    * @param revoker - The authenticated caller, in the tenant and in good standing.
    * @param indexKey - The invitee index key.
    * @param tenantId - The tenant, for the log.
    * @param revokerUserId - Who revokes, for the log.
    * @returns `true` when this call removed a pending invitation, `false` when it removed none.
-   * @throws {@link AuthException} `TOO_MANY_REQUESTS` when the invitation was replaced before the
-   *   index could be released, on every attempt.
+   * @throws {@link AuthException} `TOO_MANY_REQUESTS` when the invitation changed between the read
+   *   and the removal, on every attempt.
    */
   private async withdrawPending(
     revoker: { role: string; status: string },
@@ -511,21 +408,18 @@ export class InvitationService {
     tenantId: string,
     revokerUserId: string
   ): Promise<boolean> {
-    let withdrawn = false
     for (let attempt = 0; attempt < REVOKE_ATTEMPTS; attempt += 1) {
       const tokenHash = await pinned(this.redis.get(indexKey))
-      if (tokenHash === null) return withdrawn
+      if (tokenHash === null) return false
 
       const raw = await pinned(this.redis.get(`inv:${tokenHash}`))
-      if (raw !== null && this.refusesRevoker(revoker, raw)) return withdrawn
+      if (raw !== null && this.refusesRevoker(revoker, raw)) return false
 
-      const absent = raw === null
-      if (absent && !(await pinned(releaseIndex(this.redis, indexKey, tokenHash)))) continue
-      if (await pinned(this.redis.del(`inv:${tokenHash}`))) {
-        withdrawn = true
-        logEvent(this.logger, 'AUTH_INVITATION_REVOKED', { tenantId, actorUserId: revokerUserId })
-      }
-      if (absent || (await pinned(releaseIndex(this.redis, indexKey, tokenHash)))) return withdrawn
+      const outcome = await pinned(withdrawInvitation(this.redis, indexKey, tokenHash, raw))
+      if (outcome === 'changed') continue
+      if (outcome === 'absent') return false
+      logEvent(this.logger, 'AUTH_INVITATION_REVOKED', { tenantId, actorUserId: revokerUserId })
+      return true
     }
     throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
   }

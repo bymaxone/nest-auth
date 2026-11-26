@@ -2783,6 +2783,10 @@ tokens issued from it: every access token of the account stops verifying, the ca
 A kept session gets a new one on its next refresh; a revoked one cannot refresh. `logout` does not do
 this: it blacklists the one access token it is given.
 
+`isCurrent` is decided by the refresh token the request carries. When none reaches the route (a bearer
+client that sends none, or a refresh cookie whose path does not cover it), the listed sessions of the
+login that the access token's `sid` names are marked instead.
+
 **Responses:**
 
 ```typescript

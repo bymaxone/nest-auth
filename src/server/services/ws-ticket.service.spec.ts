@@ -14,6 +14,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { BYMAX_AUTH_OPTIONS, GUARDED_USER_REPOSITORY } from '../bymax-auth.constants'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { AccountStatusService } from './account-status.service'
 import { AuthRevocationService } from './auth-revocation.service'
 
 import { WS_TICKET_TTL_SECONDS } from '../interfaces/ws-ticket.interface'
@@ -74,7 +75,8 @@ describe('WsTicketService', () => {
         { provide: AuthRedisService, useValue: mockRedis },
         { provide: BYMAX_AUTH_OPTIONS, useValue: { blockedStatuses: ['BANNED', 'SUSPENDED'] } },
         { provide: GUARDED_USER_REPOSITORY, useValue: mockUserRepo },
-        { provide: AuthRevocationService, useValue: mockRevocation }
+        { provide: AuthRevocationService, useValue: mockRevocation },
+        { provide: AccountStatusService, useValue: { assertPlatformAccountUsable: jest.fn() } }
       ]
     }).compile()
 
@@ -188,10 +190,20 @@ describe('WsTicketService', () => {
         mfaEnabled: false,
         mfaVerified: false,
         jti: 'jti-1',
-        epoch: 0
+        epoch: 0,
+        exp: 1_700_000_900
       })
       expect(ttl).toBe(WS_TICKET_TTL_SECONDS)
       expect(result).toStrictEqual({ ticket: 't'.repeat(64), expiresIn: WS_TICKET_TTL_SECONDS })
+    })
+
+    // Scenario: a token whose `exp` has a fraction, which a JWT allows. Expected: whole seconds,
+    // rounded down. Why: the stored record is refused when `exp` is not a whole number.
+    it('should carry the expiry in whole seconds', async () => {
+      await service.issue(payload({ exp: NOW_MS / 1000 + 900.5 }))
+
+      const [snapshot] = mockRedis.mintWsTicket.mock.calls[0] as [WsTicketSnapshot, number]
+      expect(snapshot.exp).toBe(NOW_MS / 1000 + 900)
     })
 
     // Scenario: a token stamped with an epoch, and one stamped with nothing usable. Expected: the

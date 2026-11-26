@@ -18,6 +18,29 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.18] - 2026-11-26
+
+A patch release. An auth Redis client with a string `keyPrefix` starts again.
+
+### Added
+
+- **A redeemed WebSocket ticket carries `exp`, and `WsTicketService.redeem` takes an expected tenant.** `WsTicketSnapshot.exp` is the expiry of the minting access token in seconds; it is optional, and a record without it is accepted. `redeem(ticket, expectedTenantId)` refuses a ticket of another tenant with `auth.token_invalid`; the argument is optional, and a host that calls `redeem` itself has to pass it, because without it a ticket of any tenant is accepted. `WsJwtGuard` binds the tenant as before. **Apply to a derived backend:** a backend that shares the keyspace may add `exp` to its `wst:` record (see `conformance/wire-contract.json`).
+
+### Fixed
+
+- **`GET /sessions` marks the caller's session when no refresh token reaches it.** A bearer client that sends none, and a refresh cookie whose path does not cover the route, got `isCurrent: false` on every session. The `sid` of the access token now names it. A refresh token that is sent still decides alone, and revoke-all is unchanged. Cost: one more read per listed session, only when no refresh token reaches the route and the token carries a `sid`; the listing has no cap of its own. A refresh token presented again inside its grace window leaves two live sessions of one login, and both are marked. `SessionService.listSessions` takes the optional `currentSessionId`, and a failed read of a refresh record rejects the listing and is logged with the operation `session_record_read`.
+
+- **A ticket is no longer redeemed for an account that was blocked or removed after the mint.** Redemption reads the account from the repository: a blocked one is refused with the code of its status and a missing one with `auth.token_invalid`. A ticket whose `exp` has passed is refused too. Each redemption of a ticket that is still good costs one repository read. A record with no `tenantId` is checked as a platform account, and is refused with `auth.token_invalid` (`401`) where no platform repository is configured; 1.5.17 redeemed it. This library writes no such record: the mint takes the tenant from the repository's answer, and answers `500` `auth.internal` when that answer has none. **Apply to a derived backend:** a `wst:` record for a tenant account has to carry its `tenantId`.
+
+- **An ioredis client with a string `keyPrefix` is supported, and the 1.5.17 refusal is lifted.** The names the Lua scripts build now carry the prefix, so a revoke of all sessions, the revocation of a token family, the grace window and the session listing reach the keys the client wrote. No existing script changed for this. Keys are stored under `keyPrefix`, then `redisNamespace`, then `:`, so an application that moved its prefix into `redisNamespace` for 1.5.17 reads the same keys and can stay that way, and a backend that shares the keyspace sets its namespace to the two together. A `Buffer` prefix is still refused at startup. A cluster was not measured. **If the application ran 1.5.16 or earlier with a prefix:** a refresh token that survived a revoke of all sessions there still refreshes, and a later revoke of all sessions ends it only once it has been rotated. To end such tokens, delete the `rt:` and `rp:` keys under the prefix and namespace (`prt:` and `prp:` on the platform plane), which ends every other refresh token of that plane too.
+- **A tenant revoke removes the invitation and its index in one step.** One script deletes both, and only while they still are what the revoke read and judged; otherwise it reads the address again. This ends known limits of 1.5.17: a revoke whose delete failed after it had released the address could leave an invitation acceptable and out of reach of every later revoke; a revoke that found no record could delete one stored a moment later, even above the revoker's role; and a revoke could answer `429` after it had removed a record.
+- **A tenant invite stores the invitation and its index in one step, and removes the one it supersedes in the same step.** A failed command no longer leaves a record that no index names, which was redeemable and out of reach of every revoke, or an address that names no record, and a re-invite that fails to store leaves the pending invitation as it was. A revoke that runs while an invite is being stored no longer makes the invite fail with `403`: it answers for what is stored when it runs, and the invite then stores its own. If the reply to the write is lost, the invite errors with the invitation possibly stored; its token is not emailed, and a revoke or a new invite removes it. The `invitation_withdraw` value of `operation` in `AUTH_STORE_DEGRADED` is no longer emitted and left the type.
+- **An ioredis client built with `stringNumbers: true` is read correctly.** Every integer Redis answers is now read from a number or its string. This ends the effects listed as a known limit of 1.5.17: the per-IP rate limiter, the cap on `access.denied` events and the hourly cap per inviter limit again; a refresh token presented again inside its grace window is served; a workspace invite or resend no longer answers `429` for a stored invitation; `retryAfterSeconds` of a lockout is a number; the lockout counter metric counts; and `DELETE /sessions/:id` answers success and cuts the access tokens.
+
+### Apply to a derived backend
+
+In the public declarations, `WsTicketSnapshot` gains the optional `exp`, `WsTicketService.redeem` takes an optional `expectedTenantId`, the constructor of `WsTicketService` takes `AccountStatusService`, and `ListSessionsParams` gains the optional `currentSessionId`. A host that calls `redeem` itself passes the tenant it expects. For a backend that shares the keyspace, see the notes in the entries above on the `wst:` record, and set its namespace to `keyPrefix` followed by `redisNamespace` where this one uses a prefix.
+
 ## [1.5.17] - 2026-11-26
 
 A patch release. An application whose auth Redis client sets `keyPrefix` no longer starts.
@@ -5677,7 +5700,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.17...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.18...HEAD
+[1.5.18]: https://github.com/bymaxone/nest-auth/compare/v1.5.17...v1.5.18
 [1.5.17]: https://github.com/bymaxone/nest-auth/compare/v1.5.16...v1.5.17
 [1.5.16]: https://github.com/bymaxone/nest-auth/compare/v1.5.15...v1.5.16
 [1.5.15]: https://github.com/bymaxone/nest-auth/compare/v1.5.14...v1.5.15

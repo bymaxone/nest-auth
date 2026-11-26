@@ -59,6 +59,19 @@ async function put(
 
 describe('WorkspaceInvitationStore', () => {
   describe('publish', () => {
+    it.each([
+      ['1', 'published'],
+      ['2', 'full'],
+      ['0', 'lost']
+    ])('reads the outcome a client answers as the string %s', async (reply, outcome) => {
+      const { store, redis } = build()
+      jest.spyOn(redis, 'eval').mockResolvedValue(reply)
+
+      await expect(
+        store.publish(WORKSPACE_REF, EMAIL, 'winv:h1', record(), 300, 0, null)
+      ).resolves.toBe(outcome)
+    })
+
     it('writes the record, points the index at it and lists it, all with the given lifetime', async () => {
       const { store, redis, hmacKey } = build()
 

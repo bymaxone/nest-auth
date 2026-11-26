@@ -17,6 +17,7 @@ import {
 import type { StoredWorkspaceInvitation } from '../interfaces/workspace-invitation.interface'
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { integerReply } from '../redis/integer-reply'
 import { releaseIndex } from '../redis/release-index.script'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { checked, pinned, PinnedAll } from '../utils/settle'
@@ -140,13 +141,14 @@ export class WorkspaceInvitationStore {
   ): Promise<'published' | 'lost' | 'full'> {
     // Members whose record expired still count in the set, so they are dropped before it is counted.
     if (limit > 0) await pinned(this.pending(ref))
-    const outcome = await pinned(
+    const reply = await pinned(
       this.redis.eval(
         PUBLISH_SCRIPT,
         [this.indexKey(ref, email), key, this.setKey(ref), expectedKey ?? key],
         [key, stringifyJson(record), String(ttlSeconds), String(limit), expectedKey ?? '']
       )
     )
+    const outcome = integerReply(reply)
     return outcome === 1 ? 'published' : outcome === 2 ? 'full' : 'lost'
   }
 

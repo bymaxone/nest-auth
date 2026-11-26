@@ -1,18 +1,12 @@
 /**
- * @fileoverview The window between claiming the invitee index and writing the invitation record.
+ * @fileoverview Writers that overlap on one invitee address.
  *
- * `invite` claims the index first and writes the record second, so the index is the handle a
- * revoke reaches the record through. Two things can happen in between that a single-threaded
- * walk through the route never shows:
+ * `invite` stores the record and the index that names it in one step, and a revoke removes both in
+ * one step. These cases put a second request, a failing command or another writer of the keyspace
+ * at a chosen point of that flow, which a single-threaded walk through the routes never shows.
  *
- *  - a revoke reads the index, finds the claimed hash, deletes an index and a record that is not
- *    there yet, and the write then lands: a redeemable invitation that nothing names;
- *  - the index TTL starts at the claim and the record TTL at the write, so the record outlives
- *    the entry that names it.
- *
- * The other window is on the removing side: a revoke and an acceptance read the index, or consume
- * the record it names, and drop the index afterwards. A later invite of the address can claim the
- * index in between.
+ * A revoke and an acceptance also read the index, or consume the record it names, before they drop
+ * it, and a later invite of the address can claim the index in between.
  *
  * Each case forces the interleave deterministically by wrapping one command of the Redis client,
  * rather than racing two requests and hoping.
@@ -43,12 +37,11 @@ async function invitationKeys(
   }
 }
 
-describe('invitation claim-then-write window (E2E)', () => {
+describe('invitation writers that overlap (E2E)', () => {
   let boot: BootstrappedTestApp
   let app: INestApplication
   let adminToken: string
   let sent: CapturedEmail[]
-  let realSet: Redis['set']
 
   /**
    * Runs `write` once, right after the first call of `command` that names an invitation record:
@@ -99,18 +92,37 @@ describe('invitation claim-then-write window (E2E)', () => {
       .post('/invitations/accept')
       .send({ token, name: 'Invitee', password: 'InviteeSecret123!' })
 
-  /** Runs `beforeWrite` once, immediately before the invitation record is written. */
+  /** Runs `beforeWrite` once, immediately before the first command that stores a record. */
   function beforeRecordWrite(beforeWrite: () => Promise<void>): void {
-    const original = realSet.bind(boot.redis)
     let done = false
-    jest.spyOn(boot.redis, 'set').mockImplementation(((...args: unknown[]) => {
-      const key = String(args[0])
-      if (!done && key.includes(':inv:')) {
-        done = true
-        return beforeWrite().then(() => (original as (...a: unknown[]) => unknown)(...args))
-      }
-      return (original as (...a: unknown[]) => unknown)(...args)
-    }) as never)
+    for (const command of ['set', 'eval'] as const) {
+      const original = (boot.redis[command] as (...a: unknown[]) => Promise<unknown>).bind(
+        boot.redis
+      )
+      jest.spyOn(boot.redis, command).mockImplementation((async (...args: unknown[]) => {
+        if (!done && args.some((arg) => String(arg).includes(':inv:'))) {
+          done = true
+          await beforeWrite()
+        }
+        return original(...args)
+      }) as never)
+    }
+  }
+
+  /** The invitation keys counted after each command that changes one. */
+  function statesAfterEachWrite(): { records: number; indexes: number }[] {
+    const states: { records: number; indexes: number }[] = []
+    for (const command of ['set', 'del', 'eval'] as const) {
+      const original = (boot.redis[command] as (...a: unknown[]) => Promise<unknown>).bind(
+        boot.redis
+      )
+      jest.spyOn(boot.redis, command).mockImplementation((async (...args: unknown[]) => {
+        const reply = await original(...args)
+        if (args.some((arg) => String(arg).includes(':inv'))) states.push(await countKeys())
+        return reply
+      }) as never)
+    }
+    return states
   }
 
   beforeEach(async () => {
@@ -133,7 +145,6 @@ describe('invitation claim-then-write window (E2E)', () => {
       }
     )
     app = boot.app
-    realSet = boot.redis.set
     sent = boot.email.sentEmails
 
     await request(app.getHttpServer()).post('/register').send({
@@ -170,27 +181,34 @@ describe('invitation claim-then-write window (E2E)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ email: INVITEE })
 
-  // Scenario: a revoke lands after the index is claimed and before the record is written.
-  // Expected: the invitation is refused and nothing redeemable is left behind. Why: the revoke
-  // found an index naming a record that did not exist yet, deleted the index, and reported
-  // success; the write then published a token no index names, which a later revoke can never reach.
-  it('leaves no redeemable record when a revoke lands between the claim and the write', async () => {
+  // Scenario: the keyspace is read after each command of an invite and of a re-invite. Expected:
+  // an index and a record, or neither. Why: an index with no record gives a revoke nothing to
+  // judge, and a record with no index is redeemable and out of reach of every revoke.
+  it('never holds an address without its record, or a record without its address', async () => {
+    const states = statesAfterEachWrite()
+
+    await invite()
+    await invite()
+
+    expect(states.length).toBeGreaterThan(0)
+    expect(states).toEqual(states.map(() => ({ records: 1, indexes: 1 })))
+  })
+
+  // Scenario: a revoke runs to completion just before the invite stores its invitation. Expected:
+  // both answer 204 and the invitation is stored and indexed. Why: that revoke found nothing
+  // pending, so it removes nothing and the invite owes it nothing.
+  it('stores an indexed invitation when a revoke ran just before it', async () => {
+    const tokens = emailedTokens()
+    let revoked = 0
     beforeRecordWrite(async () => {
-      await revoke()
+      revoked = (await revoke()).status
     })
 
     const res = await invite()
 
-    const { records, indexes } = await invitationKeys(
-      boot.redis,
-      boot.options.redisNamespace ?? 'auth'
-    )
-    expect({ status: res.status, records: records.length, indexes: indexes.length }).toEqual({
-      status: 403,
-      records: 0,
-      indexes: 0
-    })
-    expect(sent.filter((mail) => mail.to === INVITEE)).toHaveLength(0)
+    expect([revoked, res.status]).toEqual([204, 204])
+    expect(await countKeys()).toEqual({ records: 1, indexes: 1 })
+    expect((await accept(tokens[0] as string)).status).toBe(201)
   })
 
   // Scenario: a re-invite lands after a revoke has read the invitation and before it releases the
@@ -263,14 +281,87 @@ describe('invitation claim-then-write window (E2E)', () => {
     expect(await countKeys()).toEqual({ records: 1, indexes: 1 })
   })
 
-  // Scenario: the record is written some time after the claim. Expected: the index outlives, or
-  // matches, the record it names. Why: both are given the full TTL but at different instants, so
-  // the record would otherwise expire after the index and sit redeemable with no handle on it.
-  it('keeps the index alive at least as long as the record it names', async () => {
-    beforeRecordWrite(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1_100))
+  /** Fails, once, the next `del` or script that names an invitation record. */
+  function failNextRecordRemoval(): void {
+    let failed = false
+    for (const command of ['del', 'eval'] as const) {
+      const original = (boot.redis[command] as (...a: unknown[]) => Promise<unknown>).bind(
+        boot.redis
+      )
+      jest.spyOn(boot.redis, command).mockImplementation((async (...args: unknown[]) => {
+        if (!failed && args.some((arg) => String(arg).includes(':inv:'))) {
+          failed = true
+          throw new Error('store down')
+        }
+        return original(...args)
+      }) as never)
+    }
+  }
+
+  /** Takes the stored record away, leaving the index, and returns how to put it back. */
+  async function holdRecordBack(change: object = {}): Promise<() => Promise<void>> {
+    const namespace = boot.options.redisNamespace ?? 'auth'
+    const [key] = (await invitationKeys(boot.redis, namespace)).records
+    const stored = JSON.parse((await boot.redis.get(key as string)) as string) as object
+    await boot.redis.del(key as string)
+    return async () => {
+      const record = JSON.stringify({ ...stored, ...change })
+      await boot.redis.set(key as string, record, 'EX', TTL_SECONDS)
+    }
+  }
+
+  // Scenario: a revoke reads an address whose record is not there, another writer of the keyspace
+  // then stores it, and the one command that removes the record fails. Expected: the revoke errors,
+  // the record stays indexed and trying again removes it. Why: an index released on its own leaves
+  // the emailed token acceptable with nothing that reaches it.
+  it('keeps the record revocable when its removal fails after it appeared', async () => {
+    const tokens = emailedTokens()
+    await invite()
+    const putBack = await holdRecordBack()
+    afterRecordAccess('get', async () => {
+      await putBack()
+      failNextRecordRemoval()
     })
 
+    expect((await revoke()).status).toBe(500)
+
+    expect(await countKeys()).toEqual({ records: 1, indexes: 1 })
+    expect((await revoke()).status).toBe(204)
+    expect(await countKeys()).toEqual({ records: 0, indexes: 0 })
+    expect((await accept(tokens[0] as string)).status).toBe(400)
+  })
+
+  // Scenario: a re-invite fails at the first command that would remove or replace the pending
+  // record. Expected: the pending invitation is still stored, indexed and revocable. Why: a failed
+  // re-invite must not leave the earlier token redeemable under an address that names another.
+  it('keeps the pending invitation when its replacement cannot be stored', async () => {
+    const tokens = emailedTokens()
+    await invite()
+    failNextRecordRemoval()
+
+    expect((await invite()).status).toBe(500)
+
+    expect((await revoke()).status).toBe(204)
+    expect(await countKeys()).toEqual({ records: 0, indexes: 0 })
+    expect((await accept(tokens[0] as string)).status).toBe(400)
+  })
+
+  // Scenario: the record a revoke found missing is written before the revoke removes anything, and
+  // grants a role above the revoker. Expected: it stays, indexed. Why: the ceiling applies to the
+  // record that would be removed, so one that appeared is read before it is judged.
+  it('leaves a record above the revoker that is written while the revoke is under way', async () => {
+    await invite()
+    const putBack = await holdRecordBack({ role: 'OWNER' })
+    afterRecordAccess('get', putBack)
+
+    expect((await revoke()).status).toBe(204)
+
+    expect(await countKeys()).toEqual({ records: 1, indexes: 1 })
+  })
+
+  // Scenario: an invitation is stored. Expected: the index outlives, or matches, the record it
+  // names. Why: a record that expires after its index sits redeemable with no handle on it.
+  it('keeps the index alive at least as long as the record it names', async () => {
     const res = await invite()
 
     const { records, indexes } = await invitationKeys(

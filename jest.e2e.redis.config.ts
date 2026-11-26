@@ -38,16 +38,22 @@ const config: Config = {
     '<rootDir>/invitation-claim-window.e2e-spec.ts',
     '<rootDir>/email-change-flow.e2e-spec.ts',
     '<rootDir>/ws-ticket-expiry.e2e-spec.ts',
+    // The WebSocket guard consuming a ticket: the record is read back from the server.
+    '<rootDir>/ws-guard.e2e-spec.ts',
     // The workspace membership cache: two Lua scripts and version counters whose order and
     // retention only a real server proves.
     '<rootDir>/workspace-access.e2e-spec.ts',
+    // The sweep over host reads: its workspace calls run the membership cache's scripts.
+    '<rootDir>/host-read-sweep.e2e-spec.ts',
     // Rate limiting and brute-force counters.
     '<rootDir>/rate-limit.e2e-spec.ts',
     '<rootDir>/negative-paths.e2e-spec.ts',
     '<rootDir>/platform-auth-flow.e2e-spec.ts',
+    // A client that answers integers as strings: only a real client builds that reply.
+    '<rootDir>/real-redis/string-replies.e2e-spec.ts',
     // A store that stops answering: the suite pauses and stops its own container.
     '<rootDir>/real-redis/redis-outage.e2e-spec.ts',
-    // A client option the Lua scripts cannot follow, refused at startup.
+    // A client with `keyPrefix`: the names the scripts build must be the ones the client writes.
     '<rootDir>/real-redis/key-prefix.e2e-spec.ts'
   ],
   testPathIgnorePatterns: ['/node_modules/'],

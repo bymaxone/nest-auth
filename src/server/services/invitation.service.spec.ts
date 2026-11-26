@@ -132,8 +132,8 @@ const mockRedis = {
   get: jest.fn(),
   del: jest.fn(),
   getdel: jest.fn(),
-  // The invitee index is claimed by compare-and-swap, so the script answers 1 for "claimed".
-  // The default is the ordinary case: nothing pending, and this caller wins the claim.
+  // The invitation is published by compare-and-swap, so the script answers 1 for "stored".
+  // The default is the ordinary case: nothing pending, and this caller's write is accepted.
   eval: jest.fn().mockResolvedValue(1)
 }
 
@@ -192,6 +192,13 @@ const TEST_HEADERS: Record<string, string | string[] | undefined> = {
 
 const ACTED = { tenantId: 'tenant-1', actorUserId: 'inviter-1' } as const
 
+/** What the first publish script was given: its keys, the judged hash, the record and its TTL. */
+function published(): { keys: string[]; judged: string; record: string; ttl: number } {
+  const [, keys, args] = mockRedis.eval.mock.calls[0] as [string, string[], string[]]
+  const [judged = '', , record = '', ttl = ''] = args
+  return { keys, judged, record, ttl: Number(ttl) }
+}
+
 describe('InvitationService', () => {
   let service: InvitationService
 
@@ -222,7 +229,6 @@ describe('InvitationService', () => {
   describe('invite', () => {
     beforeEach(() => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
-      mockRedis.set.mockResolvedValue('OK')
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
     })
 
@@ -257,11 +263,8 @@ describe('InvitationService', () => {
     it('should store token in Redis and send invitation email on success', async () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      // One `set` — the invitation record. The invitee index is claimed through the atomic
-      // read-and-set, so it is not a second `set`.
-      expect(mockRedis.set).toHaveBeenCalledTimes(1)
-      // Two scripts: the claim before the record is written and the repeat after it.
-      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
+      // One script stores the record and its index, so there is no separate `set`.
+      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
@@ -279,7 +282,7 @@ describe('InvitationService', () => {
         response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
       })
 
-      expect(mockRedis.set).not.toHaveBeenCalled()
+      expect(mockRedis.eval).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
     })
 
@@ -292,14 +295,14 @@ describe('InvitationService', () => {
       await expect(
         service.invite('inviter-1', 'invited@example.com', 'admin', 'other-tenant')
       ).rejects.toThrow(AuthException)
-      expect(mockRedis.set).not.toHaveBeenCalled()
+      expect(mockRedis.eval).not.toHaveBeenCalled()
     })
 
     // Verifies that the Redis key uses the inv:{sha256} prefix with a 64-char hex hash.
     it('should store the invitation under a key matching /^inv:[0-9a-f]{64}$/', async () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      const [key] = mockRedis.set.mock.calls[0] as [string, string, number]
+      const key = published().keys[1]
       expect(key).toMatch(/^inv:[0-9a-f]{64}$/)
     })
 
@@ -307,7 +310,7 @@ describe('InvitationService', () => {
     it('should store the invitation with the configured tokenTtlSeconds as TTL', async () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      const [, , ttl] = mockRedis.set.mock.calls[0] as [string, string, number]
+      const { ttl } = published()
       expect(ttl).toBe(mockOptions.invitations.tokenTtlSeconds)
     })
 
@@ -315,7 +318,7 @@ describe('InvitationService', () => {
     it('should store correct invitation data as JSON with all required fields', async () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      const [, raw] = mockRedis.set.mock.calls[0] as [string, string, number]
+      const raw = published().record
       const stored = JSON.parse(raw) as Record<string, unknown>
       expect(stored['email']).toBe('invited@example.com')
       expect(stored['role']).toBe('member')
@@ -328,7 +331,7 @@ describe('InvitationService', () => {
     it('should normalize email to lowercase and trim whitespace before storing', async () => {
       await service.invite('inviter-1', '  UPPER@EXAMPLE.COM  ', 'member', 'tenant-1')
 
-      const [, raw] = mockRedis.set.mock.calls[0] as [string, string, number]
+      const raw = published().record
       const stored = JSON.parse(raw) as { email: string }
       expect(stored.email).toBe('upper@example.com')
     })
@@ -1053,8 +1056,8 @@ describe('InvitationService', () => {
         service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
       ).resolves.toBe(true)
 
-      expect(mockRedis.eval).toHaveBeenCalledWith(expect.any(String), [INDEX_KEY], [TOKEN_HASH])
-      expect(mockRedis.del).toHaveBeenCalledWith(`inv:${TOKEN_HASH}`)
+      const keys = [INDEX_KEY, `inv:${TOKEN_HASH}`]
+      expect(mockRedis.eval).toHaveBeenCalledWith(expect.any(String), keys, expect.any(Array))
       // The record is READ under the same key it is deleted under, or the role check below
       // would be reading someone else's invitation — or nothing at all, which reads as
       // "unparseable" and withdraws without a role check.
@@ -1191,23 +1194,24 @@ describe('InvitationService', () => {
     it('drops the previous invitation for the same address', async () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
       // The pending invitation the supersede will displace: readable for the rank check, and
-      // returned by the atomic index claim as the hash that was displaced.
+      // returned by the index as the hash the publish script is asked to displace.
       mockRedis.get.mockResolvedValue('c'.repeat(64))
       mockRedis.eval.mockResolvedValue(1)
-      mockRedis.set.mockResolvedValue('OK')
       mockRedis.del.mockResolvedValue(true)
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      // The claim is a compare-and-swap against the hash the rank check approved, so the two
-      // steps cannot disagree about WHICH invitation is being superseded.
-      expect(mockRedis.eval).toHaveBeenCalledWith(
-        expect.stringContaining('~= ARGV[3]'),
-        [`invidx:tenant-1:${hmacSha256('invited@example.com', HMAC_KEY)}`],
-        expect.arrayContaining([expect.any(String), expect.any(String), 'c'.repeat(64)])
-      )
-      expect(mockRedis.del).toHaveBeenCalledWith(`inv:${'c'.repeat(64)}`)
+      // The write is a compare-and-swap against the hash the rank check approved, so the two steps
+      // cannot disagree about WHICH invitation is being superseded, and it deletes that one.
+      expect(published()).toMatchObject({
+        keys: [
+          `invidx:tenant-1:${hmacSha256('invited@example.com', HMAC_KEY)}`,
+          expect.stringMatching(/^inv:[0-9a-f]{64}$/),
+          `inv:${'c'.repeat(64)}`
+        ],
+        judged: 'c'.repeat(64)
+      })
     })
 
     // …and does not delete anything when the invitee had no pending invitation.
@@ -1215,7 +1219,6 @@ describe('InvitationService', () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
       mockRedis.get.mockResolvedValue(null)
       mockRedis.eval.mockResolvedValue(1)
-      mockRedis.set.mockResolvedValue('OK')
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'fresh@example.com', 'member', 'tenant-1')
@@ -1233,21 +1236,19 @@ describe('InvitationService', () => {
         Promise.resolve(key.startsWith('invidx:') ? 'c'.repeat(64) : null)
       )
       mockRedis.eval.mockResolvedValue(1)
-      mockRedis.set.mockResolvedValue('OK')
-      mockRedis.del.mockResolvedValue(true)
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
-      expect(mockRedis.del).toHaveBeenCalledWith(`inv:${'c'.repeat(64)}`)
+      expect(published().keys[2]).toBe(`inv:${'c'.repeat(64)}`)
     })
 
-    // The rank check and the index claim are separate round trips, so on their own they can
+    // The rank check and the publish are separate round trips, so on their own they can
     // disagree about WHICH invitation is being superseded: an outranked caller passes the check
     // while the index is momentarily empty, then displaces a higher-ranked invitation created
-    // in between. The claim is a compare-and-swap against the hash the check approved, so a
-    // record that moved makes the claim fail and the approval is re-derived against what is
+    // in between. The publish is a compare-and-swap against the hash the check approved, so a
+    // record that moved makes the publish fail and the approval is re-derived against what is
     // actually there — where the rank check now sees the ADMIN invitation and refuses.
     it('refuses when the pending invitation changes under the rank check', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'member' })
@@ -1285,41 +1286,38 @@ describe('InvitationService', () => {
 
     // Contention between two callers who are BOTH allowed to supersede is not an authorisation
     // failure, so the approval is re-derived and the retry proceeds rather than refusing.
-    it('re-derives its approval and proceeds when it loses one claim', async () => {
+    it('re-derives its approval and proceeds when it loses one write', async () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
       mockRedis.get.mockResolvedValue('c'.repeat(64))
-      // Lose the first claim, win the second.
+      // Refuse the first write, accept the second.
       mockRedis.eval.mockResolvedValueOnce(0).mockResolvedValue(1)
-      mockRedis.set.mockResolvedValue('OK')
       mockRedis.del.mockResolvedValue(true)
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      // The lost claim, the won one, and the repeat after the record is written.
-      expect(mockRedis.eval).toHaveBeenCalledTimes(3)
+      // The refused write and the accepted one.
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
     // `eval` is typed `unknown`, and a client that surfaces the Lua integer reply as a string
-    // is within its rights. Comparing straight to `1` would read every successful claim as
+    // is within its rights. Comparing straight to `1` would read every accepted write as
     // contention on such a client — three lost passes, then a refusal, for an invitation that
-    // was in fact claimed each time. Both spellings must mean the same thing here.
+    // was in fact stored each time. Both spellings must mean the same thing here.
     it.each([
       ['a numeric reply', 1],
       ['a string reply', '1']
-    ])('accepts %s from the claim script', async (_case, reply) => {
+    ])('accepts %s from the publish script', async (_case, reply) => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
       mockRedis.get.mockResolvedValue('c'.repeat(64))
       mockRedis.eval.mockResolvedValue(reply)
-      mockRedis.set.mockResolvedValue('OK')
       mockRedis.del.mockResolvedValue(true)
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      // The claim and its repeat after the write, both read in the same spelling.
-      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
+      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
@@ -1331,7 +1329,7 @@ describe('InvitationService', () => {
     it('refuses once the retry budget is exhausted, without minting anything', async () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
       mockRedis.get.mockResolvedValue('c'.repeat(64))
-      // Every claim loses — the index keeps moving between the rank check and the swap.
+      // Every write is refused — the index keeps moving between the rank check and the swap.
       mockRedis.eval.mockResolvedValue(0)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
@@ -1343,7 +1341,6 @@ describe('InvitationService', () => {
 
       // Bounded, and the bound is the constant — not "eventually gives up".
       expect(mockRedis.eval).toHaveBeenCalledTimes(3)
-      expect(mockRedis.set).not.toHaveBeenCalled()
       expect(mockRedis.del).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
       // This refusal is answered with the same `insufficient_role` an ordinary rank failure gets, so the
@@ -1409,9 +1406,8 @@ describe('InvitationService', () => {
         Promise.resolve(key.startsWith('invidx:') ? 'c'.repeat(64) : null)
       )
       // Stated rather than inherited: `clearAllMocks` resets calls but keeps implementations, so
-      // an earlier test's losing claim would otherwise decide this one.
+      // an earlier test's refused write would otherwise decide this one.
       mockRedis.eval.mockResolvedValue(1)
-      mockRedis.set.mockResolvedValue('OK')
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
@@ -1427,7 +1423,6 @@ describe('InvitationService', () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
       mockRedis.get.mockResolvedValue(null)
       mockRedis.eval.mockResolvedValue(1)
-      mockRedis.set.mockResolvedValue('OK')
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'fresh@example.com', 'member', 'tenant-1')
@@ -1437,27 +1432,25 @@ describe('InvitationService', () => {
     })
 
     // `expected` is the hash the rank check approved, and the empty string is what "there was
-    // nothing pending" has to serialize to — the Lua compares `(old or '') ~= ARGV[3]`, so an
+    // nothing pending" has to serialize to — the Lua compares `(redis.call('GET', KEYS[1]) or '') ~= ARGV[1]`, so an
     // empty index reads as `''` on the Redis side. Any other placeholder never matches, and the
-    // very first invitation for an address could never claim its own index entry.
-    it('claims an empty index with an empty expected value', async () => {
+    // very first invitation for an address could never write its own index entry.
+    it('publishes over an empty index with an empty expected value', async () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
       mockRedis.get.mockResolvedValue(null)
       mockRedis.eval.mockResolvedValue(1)
-      mockRedis.set.mockResolvedValue('OK')
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'fresh@example.com', 'member', 'tenant-1')
 
-      const argv = (mockRedis.eval.mock.calls[0] as [string, string[], string[]])[2]
-      expect(argv[2]).toBe('')
+      expect(published().judged).toBe('')
     })
 
-    // The claim is read back from an `unknown`, and a client that surfaces the Lua integer as a
+    // The reply is read from an `unknown`, and a client that surfaces the Lua integer as a
     // string has to be read the same way. Treating any string as success is the dangerous
-    // direction: a lost claim would be reported as won, and the invitation minted on an approval
+    // direction: a refused write would be reported as accepted, and the invitation minted on an approval
     // that no longer describes the index.
-    it('reads a lost claim reported as the string "0" as a loss', async () => {
+    it('reads a refused write reported as the string "0" as a loss', async () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
       mockRedis.get.mockResolvedValue('c'.repeat(64))
       mockRedis.eval.mockResolvedValue('0')
@@ -1470,13 +1463,12 @@ describe('InvitationService', () => {
       expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
     })
 
-    // …and the same reply as the string "1" is a win, so the narrowing is not just "refuse
+    // …and the same reply as the string "1" is accepted, so the narrowing is not just "refuse
     // everything that is not a number".
-    it('reads a won claim reported as the string "1" as a win', async () => {
+    it('reads an accepted write reported as the string "1" as a win', async () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
       mockRedis.get.mockResolvedValue(null)
       mockRedis.eval.mockResolvedValue('1')
-      mockRedis.set.mockResolvedValue('OK')
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await expect(

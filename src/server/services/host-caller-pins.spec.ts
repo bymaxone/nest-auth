@@ -161,7 +161,7 @@ describe('the host awaits what an exported service returns', () => {
   it('does not redeem a ticket that was never issued', async () => {
     const forgedSnapshot = { sub: 'admin', tenantId: 't1', role: 'ADMIN', jti: 'x', epoch: 0 }
     const { options, redis } = hostStore('eval', forgedSnapshot)
-    const service = new WsTicketService(redis, options, {} as never, {} as never)
+    const service = new WsTicketService(redis, options, {} as never, {} as never, {} as never)
 
     let outcome: unknown
     try {

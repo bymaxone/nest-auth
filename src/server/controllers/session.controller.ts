@@ -97,12 +97,11 @@ export class SessionController {
    * Lists all active sessions for the authenticated user.
    *
    * Reads the `sess:{userId}` SET, fetches detail records for each session, and
-   * marks the caller's session as `isCurrent: true` if a valid refresh token is
-   * present in the request. Sessions with missing or stale detail records are
-   * silently excluded and cleaned up asynchronously.
+   * marks the caller's session as `isCurrent: true`. Sessions with missing or stale
+   * detail records are silently excluded and cleaned up asynchronously.
    *
    * @param user - Verified JWT payload from the access token.
-   * @param req - Incoming request (used to extract the refresh token for `isCurrent` detection).
+   * @param req - Incoming request, read for the refresh token.
    * @returns Array of {@link SessionInfo} sorted newest-first.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.listSessions)
@@ -114,14 +113,15 @@ export class SessionController {
     @Req() req: Request
   ): Promise<SessionInfo[]> {
     const rawRefresh = this.tokenDelivery.extractRefreshToken(req)
-    // When no refresh token is present (e.g. access-token-only requests),
-    // isCurrent will be false for all sessions — this is the correct behaviour.
+    // Without a refresh token (a bearer client that sends none, or a refresh cookie whose path
+    // does not cover this route) the `sid` of the access token names the session instead.
     const currentHash = rawRefresh ? sha256(rawRefresh) : undefined
     return await pinned(
       this.sessionService.listSessions({
         userId: user.sub,
         tenantId: user.tenantId,
-        currentSessionHash: currentHash
+        currentSessionHash: currentHash,
+        currentSessionId: user.sid
       })
     )
   }

@@ -145,7 +145,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = 'e40c01ae250ee25f1b2233a053436a02a9f816eee29930fda7658e98dbfc967c'
+const CONTRACT_SHA256 = '1605016731c3e93ba2eb1157759670457952343f847fa1de699bd280fdc50f9c'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -160,11 +160,9 @@ const MINIMAL_OPTIONS = {
 describe('cross-implementation conformance', () => {
   // Verifies the shared contract has not changed without the change being declared here.
   //
-  // Everything else in this suite checks that THIS library matches the contract; nothing checked
-  // that the contract itself had not moved. This catches an unaccompanied byte change — a
-  // forgotten constant, a reformat, a merge resolving it differently. It does NOT catch
-  // divergence from rust-auth: see the constant's own doc comment for why two local hashes
-  // cannot, and what would.
+  // The rest of this suite checks this library against the contract; this checks that the contract
+  // did not move by accident. It does NOT catch divergence from rust-auth: see the constant's own
+  // doc comment for why two local hashes cannot, and what would.
   it('holds the shared wire contract at its declared bytes', () => {
     expect(createHash('sha256').update(contractSource).digest('hex')).toBe(CONTRACT_SHA256)
   })
@@ -1117,7 +1115,8 @@ describe('cross-implementation conformance', () => {
         'mfaEnabled',
         'mfaVerified',
         'jti',
-        'epoch'
+        'epoch',
+        'exp'
       ])
     })
 
@@ -1150,7 +1149,8 @@ describe('cross-implementation conformance', () => {
         mfaEnabled: false,
         mfaVerified: false,
         jti: 'jti-1',
-        epoch: 0
+        epoch: 0,
+        exp: 1_700_000_900
       }
 
       const ticket = await service.mintWsTicket(snapshot, WS_TICKET_TTL_SECONDS)

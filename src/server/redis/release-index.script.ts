@@ -5,6 +5,7 @@
  */
 
 import type { AuthRedisService } from './auth-redis.service'
+import { integerReply } from './integer-reply'
 import { pinned } from '../utils/settle'
 
 /** Deletes the index in `KEYS[1]` only while it still holds `ARGV[1]`, the value the caller read. */
@@ -30,6 +31,5 @@ export async function releaseIndex(
   indexKey: string,
   named: string
 ): Promise<boolean> {
-  // A client built with `stringNumbers` answers the count as a string.
-  return Number(await pinned(redis.eval(RELEASE_INDEX_SCRIPT, [indexKey], [named]))) === 1
+  return integerReply(await pinned(redis.eval(RELEASE_INDEX_SCRIPT, [indexKey], [named]))) === 1
 }

@@ -8,8 +8,8 @@
  */
 
 import { serializeSession } from './serialize-session'
-import type { RefreshRotationParams } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
+import type { RefreshRotationParams } from '../redis/refresh-rotation'
 
 /** The identity plane a session belongs to. */
 type Plane = 'dashboard' | 'platform'

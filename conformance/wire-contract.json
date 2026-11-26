@@ -1201,12 +1201,14 @@
         "mfaEnabled",
         "mfaVerified",
         "jti",
-        "epoch"
+        "epoch",
+        "exp"
       ],
+      "exp": "optional; when present a non-negative integer, the expiry of the minting access token in seconds since the Unix epoch, and a record is not redeemed from that instant on; a record without it is accepted",
       "tenantId": "omitted from the record entirely when the ticket is not tenant-scoped",
       "jti": "string, non-empty; the jti of the access token that minted the ticket — the key of the per-token blacklist rv:{jti}",
       "epoch": "non-negative integer; the token epoch stamped on the minting access token, 0 when it carried none",
-      "$comment": "A verified-identity SNAPSHOT, never a token: no signature, no expiry of its own. The socket it authorizes cannot be turned back into a session. Redemption is a single-use GETDEL, so a captured upgrade URL is worthless once the socket opens. jti and epoch are identifiers, not credentials: they are the two keys the revocation channels are read by, so redemption is refused exactly when the minting token would be — blacklisted, or stamped below the user's current epoch. A record missing either, or carrying them malformed, is not a ticket."
+      "$comment": "A verified-identity SNAPSHOT, never a token: no signature, no lifetime of its own beyond the TTL of its key. The socket it authorizes cannot be turned back into a session. Redemption is a single-use GETDEL, so a captured upgrade URL is worthless once the socket opens. jti and epoch are identifiers, not credentials: they are the two keys the revocation channels are read by, so redemption is refused exactly when the minting token would be — blacklisted, or stamped below the user's current epoch. A record missing either, or carrying them malformed, is not a ticket, and neither is one carrying a malformed exp."
     },
     "logoutPending": {
       "key": "lp:{sha256(refreshToken)} on the dashboard plane, plp:{sha256(refreshToken)} on the platform plane",
