@@ -10,7 +10,8 @@
  * A ticket is the other answer: opaque, single-use, ~30 seconds, and worth nothing once
  * redeemed. It is minted only from a session that is already authenticated, in good standing
  * and MFA-satisfied, so the ticket can never carry more authority than the session that asked
- * for it.
+ * for it. Redemption asks again what can have changed since: the expiry of that token, its
+ * revocation and the account's status.
  *
  * @layer Service
  */
@@ -27,6 +28,7 @@ import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 import { WS_TICKET_TTL_SECONDS } from '../interfaces/ws-ticket.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { readStampedEpoch } from '../utils'
+import { AccountStatusService } from './account-status.service'
 import { AuthRevocationService } from './auth-revocation.service'
 import { logEvent } from '../observability/log-event'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
@@ -47,7 +49,8 @@ export class WsTicketService {
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     @Inject(GUARDED_USER_REPOSITORY) private readonly userRepo: IUserRepository,
-    @Inject(AuthRevocationService) private readonly revocation: AuthRevocationService
+    @Inject(AuthRevocationService) private readonly revocation: AuthRevocationService,
+    @Inject(AccountStatusService) private readonly accountStatus: AccountStatusService
   ) {}
 
   /**
@@ -55,9 +58,9 @@ export class WsTicketService {
    *
    * The caller is responsible for having run the authentication, status and MFA guards — the
    * payload reaching here is what those guards admitted. Nothing from the token itself is
-   * copied into the ticket beyond the identity it proved and the two keys its revocation is read
-   * by (`jti`, `epoch`): no expiry, no signature, nothing that could be replayed against the REST
-   * surface.
+   * copied into the ticket beyond the identity it proved, the two keys its revocation is read
+   * by (`jti`, `epoch`) and its expiry: no signature, nothing that could be replayed against the
+   * REST surface.
    *
    * A ticket expires no later than the access token that minted it. A logout blacklists the
    * token's `jti` only for the token's remaining life, so a ticket given longer than that would
@@ -99,7 +102,8 @@ export class WsTicketService {
       mfaEnabled: payload.mfaEnabled,
       mfaVerified: payload.mfaVerified,
       jti: payload.jti,
-      epoch: readStampedEpoch(payload)
+      epoch: readStampedEpoch(payload),
+      exp: Math.floor(payload.exp)
     }
 
     // Measured last, after every await above: Redis applies the TTL from the moment it receives
@@ -164,16 +168,26 @@ export class WsTicketService {
   }
 
   /**
-   * Redeems a ticket at the handshake, consuming it.
+   * Redeems a ticket at the handshake, consuming it, and refuses one that no longer holds.
+   *
+   * A socket is authenticated once and not revalidated by this library, so the minting token's
+   * expiry and revocation and the account's status are all asked here. The status is read from
+   * the repository for a snapshot with a tenant, not from the status cache, and from the platform
+   * account for one without.
+   *
+   * A refusal consumes the ticket like a success does.
    *
    * @param ticket - The raw ticket from the upgrade request.
+   * @param expectedTenantId - The tenant this connection belongs to. A host that calls this
+   *   itself must pass it: without it a ticket of any tenant is accepted. {@link WsJwtGuard}
+   *   binds the tenant on its own, under `enforceTenantBinding`.
    * @returns The identity the socket is authorized as.
-   * @throws {@link AuthException} `auth.token_invalid` when the ticket is unknown, expired,
-   *   already redeemed, or minted by a session that has since been revoked — a logout or a bulk
-   *   revocation between the mint and the upgrade. These are deliberately indistinguishable to the
-   *   caller.
+   * @throws {@link AuthException} `auth.token_invalid` when the ticket is unknown, already
+   *   redeemed or expired, was minted by a session since revoked, names another tenant than the
+   *   expected one, or its account is gone — deliberately indistinguishable to the caller — and
+   *   the `auth.*` code of the status when the account is blocked.
    */
-  async redeem(ticket: string): Promise<WsTicketSnapshot> {
+  async redeem(ticket: string, expectedTenantId?: string): Promise<WsTicketSnapshot> {
     const snapshot = ticket ? await pinned(this.redis.redeemWsTicket(ticket)) : null
     if (!snapshot) {
       // Worth a line: a ticket that will not redeem is either a replay of a captured upgrade
@@ -182,11 +196,30 @@ export class WsTicketService {
       logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'unknown_or_used' })
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
+    // The record's own lifetime ends before the token does; this holds where another writer of
+    // the keyspace, or its clock, did not keep that.
+    if (snapshot.exp !== undefined && snapshot.exp * 1000 <= Date.now()) {
+      logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'expired' })
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+    if (expectedTenantId !== undefined && snapshot.tenantId !== expectedTenantId) {
+      logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'tenant_mismatch' })
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+    await pinned(this.assertSessionStands(snapshot))
+    await pinned(this.assertAccountUsable(snapshot))
+    return checked(snapshot)
+  }
 
-    // The ticket outlives the request that minted it, and the socket it opens is authenticated
-    // once and never revalidated, so the session behind it is checked here against the same two
-    // channels a bearer token is. The platform plane is named for a snapshot with no tenant, the way
-    // the epoch key itself is.
+  /**
+   * Refuses a snapshot whose minting session has been revoked, through the same two channels a
+   * bearer token is held to. The platform plane is named for a snapshot with no tenant, the way
+   * the epoch key itself is.
+   *
+   * @param snapshot - The redeemed snapshot.
+   * @throws {@link AuthException} `auth.token_invalid`.
+   */
+  private async assertSessionStands(snapshot: WsTicketSnapshot): Promise<void> {
     const revoked = await pinned(
       this.revocation.isAccessTokenRevoked(
         {
@@ -202,6 +235,30 @@ export class WsTicketService {
       logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'session_revoked' })
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
-    return checked(snapshot)
+  }
+
+  /**
+   * Refuses a snapshot whose account is gone or blocked now.
+   *
+   * @param snapshot - The redeemed snapshot.
+   * @throws {@link AuthException} as {@link redeem} documents.
+   */
+  private async assertAccountUsable(snapshot: WsTicketSnapshot): Promise<void> {
+    const { sub, tenantId } = snapshot
+    if (tenantId === undefined) {
+      await pinned(this.accountStatus.assertPlatformAccountUsable(sub))
+      return
+    }
+    const user = await pinned(this.userRepo.findById({ id: sub, tenantId }))
+    if (!user) {
+      logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'account_gone' })
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+    try {
+      assertNotBlocked(user.status, this.options.blockedStatuses)
+    } catch (error) {
+      logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'account_blocked' })
+      throw error
+    }
   }
 }

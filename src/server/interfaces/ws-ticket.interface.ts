@@ -20,7 +20,7 @@ export const WS_TICKET_TTL_SECONDS = 30
  * The identity a redeemed ticket authorizes a socket as.
  *
  * A snapshot, never a token: it is what the access JWT already proved at mint time, frozen for
- * the socket's lifetime. It carries no signature, no expiry of its own, and nothing that can be
+ * the socket's lifetime. It carries no signature and nothing that can be
  * presented back to the REST surface — a leaked snapshot buys an attacker a socket, not a
  * session. It does carry the minting token's `jti` and `epoch`, the two keys the revocation
  * channels are read by, so that redeeming it can be refused exactly when that token would be.
@@ -56,4 +56,11 @@ export interface WsTicketSnapshot {
    * whose epoch is below the user's current one belongs to a session a bulk revocation ended.
    */
   epoch: number
+  /**
+   * The expiry of the access token that minted the ticket, in seconds since the Unix epoch.
+   * Optional: a record written without it is accepted. A logout is remembered only until the token
+   * expires, so past this instant {@link AuthRevocationService.isAccessTokenRevoked} no longer
+   * reports it: a transport that stays open should end by then.
+   */
+  exp?: number
 }

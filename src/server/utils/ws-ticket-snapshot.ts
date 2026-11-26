@@ -6,6 +6,11 @@
 
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 
+/** Whether a value is a non-negative whole number of seconds. */
+function isWholeSeconds(value: unknown): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
 /**
  * Whether an unknown value is a well-formed {@link WsTicketSnapshot}.
  *
@@ -35,6 +40,7 @@ export function isWsTicketSnapshot(value: unknown): value is WsTicketSnapshot {
     typeof record['epoch'] === 'number' &&
     Number.isSafeInteger(record['epoch']) &&
     record['epoch'] >= 0 &&
+    (record['exp'] === undefined || isWholeSeconds(record['exp'])) &&
     (record['tenantId'] === undefined || typeof record['tenantId'] === 'string')
   )
 }

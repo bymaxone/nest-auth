@@ -23,9 +23,9 @@ const socket = new WebSocket(`wss://api.example.com/socket?ticket=${ticket}`)
 The ticket is opaque, 32 bytes of CSPRNG output, and lives at most 30 seconds, ending a second before the access
 token that minted it does at the latest: `expiresIn` in the response is that capped lifetime in seconds, so a client
 schedules its upgrade by it, and a token with no life left mints nothing. Only `sha256(ticket)` is
-ever a Redis key, and the stored value is a verified-identity **snapshot** — no signature, no
-expiry of its own — so a redeemed ticket authorizes a socket and cannot be turned back into a
-session. It carries the `jti` and `epoch` of the access token that minted it, the two keys the
+ever a Redis key, and the stored value is a verified-identity **snapshot** — no signature — so a
+redeemed ticket authorizes a socket and cannot be turned back into a session. It carries the
+`jti` and `epoch` of the access token that minted it, the two keys the
 revocation channels are read by, and redemption is refused when that token has been blacklisted by
 a logout or stamped below the user's current epoch (sign-out-everywhere, password change, MFA
 reset): a ticket does not outlive the session that asked for it. A logout blacklists only
@@ -35,11 +35,26 @@ kind is not; it is refused only after a later epoch bump (a password reset or ch
 enable, disable or reset, or revoking another session or all of them). Minting requires an authenticated session in good standing that has already
 satisfied MFA, so a ticket never carries more authority than the request that asked for it.
 
+Redemption also reads the account as it is then, from your repository and not from the status
+cache: an account that is gone is refused with `auth.token_invalid`, and a blocked one with the
+code of its status, as a bearer token's is. The snapshot's `role` and `status` stay those of the
+mint.
+
+The snapshot carries `exp`, the expiry of the minting access token in seconds, and a ticket is
+refused from that instant on. A record written without it by another backend is accepted. A
+logout is remembered only until the token it was given expires, so
+`AuthRevocationService.isAccessTokenRevoked`, asked about a redeemed identity after `exp`, no
+longer reports that logout: end or re-authenticate a long-lived socket by then.
+
+**If you call `WsTicketService.redeem` yourself, pass the tenant the connection belongs to** as the
+second argument. A ticket of another tenant is then refused with `auth.token_invalid`; without the
+argument a ticket of any tenant is accepted. A refused ticket is consumed. `WsJwtGuard` does not
+need this: it binds the tenant itself, as described below.
+
 Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;
-both channels are accepted, and a ticket wins when both are present. `WsJwtGuard` checks
-signature, token type and revocation on the Bearer path but not account status or MFA; where the
-socket must also refuse a blocked account or an unfinished second factor, authorize with
-`AuthTokenVerifierService.verifyAccessToken` (see
+both channels are accepted, and a ticket wins when both are present. On the Bearer path
+`WsJwtGuard` runs `AuthTokenVerifierService.verifyAccessToken` with the account status and the MFA
+policy (see
 [Authorising a long-lived transport](./server-services.md#authorising-a-long-lived-transport--authtokenverifierservice)).
 
 **Tenant binding on the socket.** With `enforceTenantBinding` on, `WsJwtGuard` re-resolves the

@@ -18,7 +18,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **A redeemed WebSocket ticket carries `exp`, and `WsTicketService.redeem` takes an expected tenant.** `WsTicketSnapshot.exp` is the expiry of the minting access token in seconds; it is optional, and a record without it is accepted. `redeem(ticket, expectedTenantId)` refuses a ticket of another tenant with `auth.token_invalid`; the argument is optional, and a host that calls `redeem` itself has to pass it, because without it a ticket of any tenant is accepted. `WsJwtGuard` binds the tenant as before. **Apply to a derived backend:** a backend that shares the keyspace may add `exp` to its `wst:` record (see `conformance/wire-contract.json`).
+
 ### Fixed
+
+- **A ticket is no longer redeemed for an account that was blocked or removed after the mint.** Redemption reads the account from the repository: a blocked one is refused with the code of its status and a missing one with `auth.token_invalid`. A ticket whose `exp` has passed is refused too. Each redemption of a ticket that is still good costs one repository read.
 
 - **An ioredis client with a string `keyPrefix` is supported, and the 1.5.17 refusal is lifted.** The names the Lua scripts build now carry the prefix, so a revoke of all sessions, the revocation of a token family, the grace window and the session listing reach the keys the client wrote. No existing script changed for this. Keys are stored under `keyPrefix`, then `redisNamespace`, then `:`, so an application that moved its prefix into `redisNamespace` for 1.5.17 reads the same keys and can stay that way, and a backend that shares the keyspace sets its namespace to the two together. A `Buffer` prefix is still refused at startup. A cluster was not measured. **If the application ran 1.5.16 or earlier with a prefix:** a refresh token that survived a revoke of all sessions there still refreshes, and a later revoke of all sessions ends it only once it has been rotated. To end such tokens, delete the `rt:` and `rp:` keys under the prefix and namespace (`prt:` and `prp:` on the platform plane), which ends every other refresh token of that plane too.
 - **A tenant revoke removes the invitation and its index in one step.** One script deletes both, and only while they still are what the revoke read and judged; otherwise it reads the address again. This ends three known limits of 1.5.17: a revoke whose delete failed after it had released the address could leave an invitation acceptable and out of reach of every later revoke; a revoke that found no record could delete one stored a moment later, even above the revoker's role; and a revoke could answer `429` after it had removed a record.
