@@ -1019,7 +1019,8 @@ export class AuthRedisService {
    * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
    * @param kind - Which identity plane to read. **Required** — the default was removed because
    *   a positional plane beside a positional tenant is a transposition nobody notices.
-   * @returns The stored epoch, or `0` when none is stored or the value is unreadable.
+   * @returns The stored epoch, or `0` when none is stored or it is negative.
+   * @throws {@link AuthException} `auth.internal` when the stored value is no integer.
    */
   async getUserTokenEpoch(
     userId: string,
@@ -1027,12 +1028,9 @@ export class AuthRedisService {
     kind: 'dashboard' | 'platform'
   ): Promise<number> {
     const raw = await pinned(this.get(tokenEpochKey(kind, userId, this.#hmacKey, tenantId)))
-    // `Number(null)` is 0, which is exactly the "never bumped" default, so an absent key needs
-    // no branch of its own. Anything that is not a whole number — a corrupt value, a float —
-    // reads as 0 too: comparing a stamped epoch against NaN is always false, which would
-    // silently disable bulk revocation for that user. A negative value clamps up for the same reason.
-    const parsed = Number(raw)
-    return Number.isInteger(parsed) ? Math.max(0, parsed) : 0
+    // An absent key is a user never bumped. A stored value that is no integer is refused: read as
+    // `0` it would switch bulk revocation off for that user.
+    return raw === null ? 0 : Math.max(0, integerReply(raw))
   }
 
   /**

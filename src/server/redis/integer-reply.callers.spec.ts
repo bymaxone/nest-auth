@@ -26,11 +26,21 @@ const OPTIONS: ResolvedOptions = Object.assign(Object.create(null), {
   bruteForce: { maxAttempts: 5, windowSeconds: 60 }
 })
 
-/** The service over a client on which every integer command and script answers `reply`. */
+/** The service over a client on which `get`, every integer command and every script answer `reply`. */
 function answering(reply: unknown): AuthRedisService {
   const client: Redis = Object.create(null)
   const answer = (): Promise<unknown> => Promise.resolve(reply)
-  for (const command of ['del', 'incr', 'ttl', 'sadd', 'srem', 'sismember', 'exists', 'eval']) {
+  for (const command of [
+    'del',
+    'incr',
+    'ttl',
+    'sadd',
+    'srem',
+    'sismember',
+    'exists',
+    'eval',
+    'get'
+  ]) {
     Object.assign(client, { [command]: answer })
   }
   Object.assign(client, { smembers: (): Promise<string[]> => Promise.resolve([]) })
@@ -119,6 +129,11 @@ const callers: [string, (s: AuthRedisService) => Promise<unknown>][] = [
   ]
 ]
 
+const storedReaders: [string, (s: AuthRedisService) => Promise<unknown>][] = [
+  ['BruteForceService.isLockedOut', (s) => new BruteForceService(s, OPTIONS).isLockedOut('id')],
+  ['getUserTokenEpoch', (s) => s.getUserTokenEpoch('u1', 't1', 'dashboard')]
+]
+
 const refused = { response: { error: { code: AUTH_ERROR_CODES.INTERNAL } } }
 
 describe('a reply that spells no integer', () => {
@@ -151,4 +166,12 @@ describe('a reply that spells no integer', () => {
       await expect(guard.canActivate(context)).rejects.toMatchObject(refused)
     }
   )
+
+  // Scenario: a stored counter holds no integer. Expected: `auth.internal`. Why: read leniently,
+  // a lockout counter says not locked and an epoch of `0` revokes nothing.
+  describe.each(storedReaders)('stored under a counter read by %s', (_reader, call) => {
+    it.each([['OK'], [''], ['1.5'], ['5abc']])('is refused when it is %p', async (stored) => {
+      await expect(call(answering(stored))).rejects.toMatchObject(refused)
+    })
+  })
 })

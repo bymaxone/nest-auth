@@ -385,6 +385,21 @@ describe('WorkspaceDeniedEventsService', () => {
     expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'accessDenied', how: 'rejected' })
   })
 
+  // Scenario: the stored suppressed count is no integer. Expected: the event carries `0`, never
+  // `NaN`, and one warning says so.
+  it.each([['OK'], ['1.5']])('reports a suppressed count of %p as zero', async (stored) => {
+    const { service, redis, emit } = build()
+    jest.spyOn(redis, 'getdel').mockResolvedValue(stored)
+
+    await deny(service)
+
+    expect(emit.mock.calls[0]?.[0]).toMatchObject({ suppressedCount: 0 })
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(
+      'The suppressed count of access.denied was not an integer and is reported as 0.'
+    )
+  })
+
   it('survives a failure while reading the suppressed count', async () => {
     const { service, redis, emit } = build({ max: 1, windowSeconds: 60 })
     jest.spyOn(redis, 'getdel').mockRejectedValue(new Error('redis down'))

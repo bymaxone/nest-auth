@@ -1098,15 +1098,9 @@ describe('AuthRedisService', () => {
       expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
     })
 
-    // Verifies a corrupt or negative stored value reads as 0 rather than NaN. Comparing
-    // against NaN is always false, which would silently disable bulk revocation for that user.
-    it('should return 0 when the stored epoch is unusable', async () => {
-      mockRedis.get.mockResolvedValue('not-a-number')
-      expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
-
-      mockRedis.get.mockResolvedValue('1.5')
-      expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
-
+    // A negative value clamps to 0. One that is no integer is refused, in
+    // `integer-reply.callers.spec.ts`.
+    it('should return 0 when the stored epoch is negative', async () => {
       mockRedis.get.mockResolvedValue('-2')
       expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
     })

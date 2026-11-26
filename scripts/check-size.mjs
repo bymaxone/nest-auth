@@ -179,6 +179,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     187.17 KiB (191,664 B) sits 30 B above the measured 191,634 B, which also holds the Lua key names under
 //     `keyPrefix`, the string forms of integer replies, the one-step invitation scripts, the websocket ticket
 //     checks at redeem and the current-session fallback of the listing.
+//     187.50 KiB (191,998 B) sits 30 B above the measured 191,968 B, which also holds the refusal of a reply
+//     or stored counter that is no integer and of a tenantless socket ticket before any read.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
@@ -246,7 +248,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 191_664 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 191_998 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },

@@ -105,7 +105,7 @@ export class WorkspaceDeniedEventsService {
         await pinned(this.redis.incrWithFixedTtl(suppressedKey, SUPPRESSED_COUNT_TTL_SECONDS))
         return
       }
-      suppressedCount = Number((await pinned(this.redis.getdel(suppressedKey))) ?? 0)
+      suppressedCount = this.suppressedFrom(await pinned(this.redis.getdel(suppressedKey)))
     } catch {
       this.warnOncePerWindow(limits.windowSeconds)
       return
@@ -133,6 +133,16 @@ export class WorkspaceDeniedEventsService {
         sanitizedHeaders: {}
       }
     )
+  }
+
+  /** The stored count, `0` when none is stored or, with a warning, when it is no integer. */
+  private suppressedFrom(stored: string | null): number {
+    const count = Number(stored ?? 0)
+    if (Number.isInteger(count)) return count
+    this.logger.warn(
+      'The suppressed count of access.denied was not an integer and is reported as 0.'
+    )
+    return 0
   }
 
   private warnOncePerWindow(windowSeconds: number): void {

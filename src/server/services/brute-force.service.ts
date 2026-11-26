@@ -7,6 +7,7 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthMetricsTally } from '../observability/auth-metrics-tally'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { integerReply } from '../redis/integer-reply'
 import { pinned, PinnedAll } from '../utils/settle'
 
 /**
@@ -67,13 +68,12 @@ export class BruteForceService {
    * @param identifier - The value to check. Must not contain `:` or newline characters
    *   and must be at most 512 bytes. Use a hashed value for PII inputs.
    * @returns `true` if the identifier is locked out, `false` otherwise.
+   * @throws {@link AuthException} `auth.internal` when the stored counter is no integer.
    */
   async isLockedOut(identifier: string): Promise<boolean> {
     this.validateIdentifier(identifier)
     const raw = await pinned(this.redis.get(`${LOCKOUT_PREFIX}${identifier}`))
-    if (raw === null) return false
-    const count = parseInt(raw, 10)
-    return !isNaN(count) && count >= this.maxAttempts
+    return raw !== null && integerReply(raw) >= this.maxAttempts
   }
 
   /**
