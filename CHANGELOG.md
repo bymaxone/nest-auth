@@ -18,6 +18,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.18] - 2026-11-26
+
+A patch release. An auth Redis client with a string `keyPrefix` starts again.
+
 ### Added
 
 - **A redeemed WebSocket ticket carries `exp`, and `WsTicketService.redeem` takes an expected tenant.** `WsTicketSnapshot.exp` is the expiry of the minting access token in seconds; it is optional, and a record without it is accepted. `redeem(ticket, expectedTenantId)` refuses a ticket of another tenant with `auth.token_invalid`; the argument is optional, and a host that calls `redeem` itself has to pass it, because without it a ticket of any tenant is accepted. `WsJwtGuard` binds the tenant as before. **Apply to a derived backend:** a backend that shares the keyspace may add `exp` to its `wst:` record (see `conformance/wire-contract.json`).
@@ -5692,7 +5696,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.17...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.18...HEAD
+[1.5.18]: https://github.com/bymaxone/nest-auth/compare/v1.5.17...v1.5.18
 [1.5.17]: https://github.com/bymaxone/nest-auth/compare/v1.5.16...v1.5.17
 [1.5.16]: https://github.com/bymaxone/nest-auth/compare/v1.5.15...v1.5.16
 [1.5.15]: https://github.com/bymaxone/nest-auth/compare/v1.5.14...v1.5.15
