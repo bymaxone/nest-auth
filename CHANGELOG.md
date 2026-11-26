@@ -37,6 +37,10 @@ A patch release. An auth Redis client with a string `keyPrefix` starts again.
 - **A tenant invite stores the invitation and its index in one step, and removes the one it supersedes in the same step.** A failed command no longer leaves a record that no index names, which was redeemable and out of reach of every revoke, or an address that names no record, and a re-invite that fails to store leaves the pending invitation as it was. A revoke that runs while an invite is being stored no longer makes the invite fail with `403`: it answers for what is stored when it runs, and the invite then stores its own. If the reply to the write is lost, the invite errors with the invitation possibly stored; its token is not emailed, and a revoke or a new invite removes it. The `invitation_withdraw` value of `operation` in `AUTH_STORE_DEGRADED` is no longer emitted and left the type.
 - **An ioredis client built with `stringNumbers: true` is read correctly.** Every integer Redis answers is now read from a number or its string. This ends the effects listed as a known limit of 1.5.17: the per-IP rate limiter, the cap on `access.denied` events and the hourly cap per inviter limit again; a refresh token presented again inside its grace window is served; a workspace invite or resend no longer answers `429` for a stored invitation; `retryAfterSeconds` of a lockout is a number; the lockout counter metric counts; and `DELETE /sessions/:id` answers success and cuts the access tokens.
 
+### Apply to a derived backend
+
+In the public declarations, `WsTicketSnapshot` gains the optional `exp`, `WsTicketService.redeem` takes an optional `expectedTenantId`, the constructor of `WsTicketService` takes `AccountStatusService`, and `ListSessionsParams` gains the optional `currentSessionId`. A host that calls `redeem` itself passes the tenant it expects. For a backend that shares the keyspace, see the notes in the entries above on the `wst:` record, and set its namespace to `keyPrefix` followed by `redisNamespace` where this one uses a prefix.
+
 ## [1.5.17] - 2026-11-25
 
 A patch release. An application whose auth Redis client sets `keyPrefix` no longer starts.
