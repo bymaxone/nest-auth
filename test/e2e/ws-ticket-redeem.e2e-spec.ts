@@ -33,7 +33,9 @@ describe('redeeming a WebSocket ticket (E2E)', () => {
   })
 
   /** Registers an account and mints a ticket from the session that opens. */
-  async function ticketFor(email: string): Promise<{ userId: string; ticket: string }> {
+  async function ticketFor(
+    email: string
+  ): Promise<{ userId: string; ticket: string; accessToken: string }> {
     const registered = await request(boot.app.getHttpServer())
       .post('/register')
       .send({ email, password: PASSWORD, name: 'Redeem', tenantId: TENANT })
@@ -42,15 +44,19 @@ describe('redeeming a WebSocket ticket (E2E)', () => {
       .post('/ws-ticket')
       .set('Authorization', `Bearer ${body.accessToken}`)
     expect(minted.status).toBe(200)
-    return { userId: body.user.id, ticket: (minted.body as { ticket: string }).ticket }
+    const { ticket } = minted.body as { ticket: string }
+    return { userId: body.user.id, ticket, accessToken: body.accessToken }
   }
 
   it('hands back the expiry of the minting token', async () => {
-    const { ticket } = await ticketFor('ws-redeem-exp@example.com')
+    const { ticket, accessToken } = await ticketFor('ws-redeem-exp@example.com')
+    const claims = JSON.parse(
+      Buffer.from(accessToken.split('.')[1] ?? '', 'base64url').toString('utf8')
+    ) as { exp: number }
 
     const identity = await boot.app.get(WsTicketService).redeem(ticket, TENANT)
 
-    expect(identity.exp).toBeGreaterThan(Math.floor(Date.now() / 1000))
+    expect(identity.exp).toBe(claims.exp)
   })
 
   it('refuses an account suspended after the mint', async () => {
