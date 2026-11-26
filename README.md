@@ -1337,10 +1337,10 @@ the URL fragment and set `Referrer-Policy: no-referrer` there.
 A revoke, here and on the tenant's `POST /invitations/revoke`, whose invitation is replaced by a
 newer one while it is read or before it is removed reads the address again and applies the role
 ceiling to the record it finds.
-A tenant revoke that arrives after an invite has claimed the address and before it stored its record
-finds no role to compare: that invite fails with `403`, or the record it has just stored is removed,
-even one above the revoker's role, and no invitation is left.
-When the invitation is replaced during each attempt to remove it, it answers `429`
+A tenant revoke removes the record and the invitee index in one step, so a failed one leaves both.
+One that arrives after an invite has claimed the address and before it stored its record finds no
+role to compare: it releases the address, and that invite fails with `403`.
+When the invitation changes during each attempt to remove it, it answers `429`
 `auth.too_many_requests`; the caller can try again.
 
 ### Frontend

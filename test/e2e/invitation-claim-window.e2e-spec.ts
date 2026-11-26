@@ -263,6 +263,75 @@ describe('invitation claim-then-write window (E2E)', () => {
     expect(await countKeys()).toEqual({ records: 1, indexes: 1 })
   })
 
+  /** Fails, once, the first command of a revoke that would remove an invitation record. */
+  function failNextRecordRemoval(): void {
+    let failed = false
+    for (const command of ['del', 'eval'] as const) {
+      const original = (boot.redis[command] as (...a: unknown[]) => Promise<unknown>).bind(
+        boot.redis
+      )
+      jest.spyOn(boot.redis, command).mockImplementation((async (...args: unknown[]) => {
+        if (!failed && args.some((arg) => String(arg).includes(':inv:'))) {
+          failed = true
+          throw new Error('store down')
+        }
+        return original(...args)
+      }) as never)
+    }
+  }
+
+  // Scenario: a revoke reads a claimed address with no record yet, the invite then writes and
+  // completes, and the one command that removes the record fails. Expected: the revoke errors, the
+  // record stays indexed and trying again removes it. Why: an index released on its own leaves the
+  // emailed token acceptable with nothing that reaches it.
+  it('keeps the record revocable when its removal fails after the invite completed', async () => {
+    const tokens = emailedTokens()
+    let release!: () => void
+    let held!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const atWrite = new Promise<void>((resolve) => (held = resolve))
+    beforeRecordWrite(() => {
+      held()
+      return gate
+    })
+    const invited = invite().then((res) => res)
+    await atWrite
+    afterRecordAccess('get', async () => {
+      release()
+      await invited
+      failNextRecordRemoval()
+    })
+
+    const first = await revoke()
+
+    expect([first.status, (await invited).status]).toEqual([500, 204])
+    expect(await countKeys()).toEqual({ records: 1, indexes: 1 })
+    expect((await revoke()).status).toBe(204)
+    expect(await countKeys()).toEqual({ records: 0, indexes: 0 })
+    expect((await accept(tokens[0] as string)).status).toBe(400)
+  })
+
+  // Scenario: the record a revoke found missing is written before the revoke removes anything, and
+  // grants a role above the revoker. Expected: it stays, indexed. Why: the ceiling applies to the
+  // record that would be removed, so one that appeared is read before it is judged.
+  it('leaves a record above the revoker that is written while the revoke is under way', async () => {
+    await invite()
+    const namespace = boot.options.redisNamespace ?? 'auth'
+    const [key] = (await invitationKeys(boot.redis, namespace)).records
+    const above = JSON.stringify({
+      ...(JSON.parse((await boot.redis.get(key as string)) as string) as object),
+      role: 'OWNER'
+    })
+    await boot.redis.del(key as string)
+    afterRecordAccess('get', async () => {
+      await boot.redis.set(key as string, above, 'EX', TTL_SECONDS)
+    })
+
+    expect((await revoke()).status).toBe(204)
+
+    expect(await countKeys()).toEqual({ records: 1, indexes: 1 })
+  })
+
   // Scenario: the record is written some time after the claim. Expected: the index outlives, or
   // matches, the record it names. Why: both are given the full TTL but at different instants, so
   // the record would otherwise expire after the index and sit redeemable with no handle on it.

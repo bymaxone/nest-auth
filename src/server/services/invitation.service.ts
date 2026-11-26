@@ -23,6 +23,7 @@ import { logEvent, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { integerReply } from '../redis/integer-reply'
 import { releaseIndex } from '../redis/release-index.script'
+import { withdrawInvitation } from '../redis/withdraw-invitation.script'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -464,7 +465,7 @@ export class InvitationService {
    * @returns `true` when a pending invitation was removed, `false` when none was.
    * @throws {@link AuthException} `TOKEN_INVALID` when the revoker no longer exists,
    *   `INSUFFICIENT_ROLE` when they are outside the tenant or not in good standing, or
-   *   `TOO_MANY_REQUESTS` when the invitation was replaced during each attempt to remove it.
+   *   `TOO_MANY_REQUESTS` when the invitation changed during each attempt to remove it.
    */
   async revokeInvitation(revokerUserId: string, email: string, tenantId: string): Promise<boolean> {
     const normalizedEmail = normalizeEmail(email)
@@ -491,18 +492,16 @@ export class InvitationService {
   /**
    * Removes the invitation the index names, when the revoker may withdraw what is there.
    *
-   * A record that is there is deleted before its index is released, so a store failure between the
-   * two never leaves a redeemable record that nothing names. An index that names no record is
-   * released first, so that an invite about to write it fails its second claim. A release that finds
-   * the index claimed by a later invite starts over, and judges what replaced the invitation.
+   * The record and the index are removed in one step, and only while both are still what was read
+   * and judged here. Anything written to the address in between is read and judged again.
    *
    * @param revoker - The authenticated caller, in the tenant and in good standing.
    * @param indexKey - The invitee index key.
    * @param tenantId - The tenant, for the log.
    * @param revokerUserId - Who revokes, for the log.
    * @returns `true` when this call removed a pending invitation, `false` when it removed none.
-   * @throws {@link AuthException} `TOO_MANY_REQUESTS` when the invitation was replaced before the
-   *   index could be released, on every attempt.
+   * @throws {@link AuthException} `TOO_MANY_REQUESTS` when the invitation changed between the read
+   *   and the removal, on every attempt.
    */
   private async withdrawPending(
     revoker: { role: string; status: string },
@@ -510,21 +509,18 @@ export class InvitationService {
     tenantId: string,
     revokerUserId: string
   ): Promise<boolean> {
-    let withdrawn = false
     for (let attempt = 0; attempt < REVOKE_ATTEMPTS; attempt += 1) {
       const tokenHash = await pinned(this.redis.get(indexKey))
-      if (tokenHash === null) return withdrawn
+      if (tokenHash === null) return false
 
       const raw = await pinned(this.redis.get(`inv:${tokenHash}`))
-      if (raw !== null && this.refusesRevoker(revoker, raw)) return withdrawn
+      if (raw !== null && this.refusesRevoker(revoker, raw)) return false
 
-      const absent = raw === null
-      if (absent && !(await pinned(releaseIndex(this.redis, indexKey, tokenHash)))) continue
-      if (await pinned(this.redis.del(`inv:${tokenHash}`))) {
-        withdrawn = true
-        logEvent(this.logger, 'AUTH_INVITATION_REVOKED', { tenantId, actorUserId: revokerUserId })
-      }
-      if (absent || (await pinned(releaseIndex(this.redis, indexKey, tokenHash)))) return withdrawn
+      const outcome = await pinned(withdrawInvitation(this.redis, indexKey, tokenHash, raw))
+      if (outcome === 'changed') continue
+      if (outcome === 'absent') return false
+      logEvent(this.logger, 'AUTH_INVITATION_REVOKED', { tenantId, actorUserId: revokerUserId })
+      return true
     }
     throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
   }
