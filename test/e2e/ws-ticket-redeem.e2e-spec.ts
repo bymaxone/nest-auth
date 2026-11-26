@@ -114,7 +114,9 @@ describe('minting a WebSocket ticket for an answer without a tenant (E2E)', () =
     const findById = users.findById.bind(users)
     users.findById = async (ref) => {
       const found = await findById(ref)
-      return found === null ? null : ({ ...found, tenantId } as unknown as typeof found)
+      return found === null
+        ? null
+        : Object.defineProperty({ ...found }, 'tenantId', { value: tenantId, enumerable: true })
     }
     const boot = await bootstrapTestApp(
       {},

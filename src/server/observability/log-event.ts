@@ -66,6 +66,7 @@ export type StoreOperation =
   | 'reset_issue'
   | 'session_cleanup'
   | 'session_detail_read'
+  | 'session_record_read'
   | 'session_detail_rotation'
   | 'workspace_cache_read'
   | 'workspace_cache_write'

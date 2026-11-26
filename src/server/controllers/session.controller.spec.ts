@@ -151,6 +151,18 @@ describe('SessionController', () => {
       expect(mockSessionService.listSessions).not.toHaveBeenCalledWith(JWT_PAYLOAD.sub, rawToken)
     })
 
+    // Verifies that the session named by the access token reaches the service.
+    it('should forward the sid of the access token as currentSessionId', async () => {
+      mockTokenDelivery.extractRefreshToken.mockReturnValue(null)
+      mockSessionService.listSessions.mockResolvedValue([])
+
+      await controller.listSessions({ ...JWT_PAYLOAD, sid: 'family-1' }, mockReq as Request)
+
+      expect(mockSessionService.listSessions).toHaveBeenCalledWith(
+        expect.objectContaining({ currentSessionId: 'family-1' })
+      )
+    })
+
     // Verifies that undefined is forwarded as currentHash when no refresh token is present in the request.
     it('should forward undefined as currentHash when no refresh token is present', async () => {
       mockTokenDelivery.extractRefreshToken.mockReturnValue(null)

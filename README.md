@@ -1510,7 +1510,7 @@ A Nest `Logger` calls the host logger and discards what it returns, so a host lo
 The fields that name a step come from sets the library owns, typed in the code and listed here; none is ever text a host or a store wrote.
 
 - **`hook`** of `AUTH_HOOK_FAILED`: `beforeRegister`, `afterRegister`, `beforeLogin`, `afterLogin`, `afterLogout`, `afterPlatformLogout`, `onLoginFailed`, `onLockout`, `onRefreshTokenReuseDetected`, `afterMfaEnabled`, `afterMfaDisabled`, `afterMfaRecoveryCodesRegenerated`, `onNewSession`, `afterEmailVerified`, `afterPasswordReset`, `onOAuthLogin`, `afterInvitationAccepted`, `onSessionEvicted`, `onApiKeyRequest`, `beforeWorkspaceCreate`, `onWorkspaceEvent`, `updateLastLogin`, `accessDenied`, `maxSessionsResolver`.
-- **`operation`** of `AUTH_STORE_FAILED` and `AUTH_STORE_DEGRADED`: `account_status_cache_write`, `api_key_last_used_flush`, `api_key_lookup`, `cache_invalidation`, `dead_member_prune`, `grace_pointer_prune`, `logout_marker_clear`, `logout_owner_keep`, `mfa_lock_release`, `mfa_reencryption`, `new_session_user_lookup`, `rehash_on_verify`, `resend_cooldown_release`, `reset_account_lookup`, `reset_cooldown_release`, `reset_cooldown_store`, `reset_issue`, `session_cleanup`, `session_detail_read`, `session_detail_rotation`, `workspace_cache_read`, `workspace_cache_write`.
+- **`operation`** of `AUTH_STORE_FAILED` and `AUTH_STORE_DEGRADED`: `account_status_cache_write`, `api_key_last_used_flush`, `api_key_lookup`, `cache_invalidation`, `dead_member_prune`, `grace_pointer_prune`, `logout_marker_clear`, `logout_owner_keep`, `mfa_lock_release`, `mfa_reencryption`, `new_session_user_lookup`, `rehash_on_verify`, `resend_cooldown_release`, `reset_account_lookup`, `reset_cooldown_release`, `reset_cooldown_store`, `reset_issue`, `session_cleanup`, `session_detail_read`, `session_detail_rotation`, `session_record_read`, `workspace_cache_read`, `workspace_cache_write`.
 - **`kind`** of `AUTH_DELIVERY_FAILED`: `passwordResetToken`, `passwordResetOtp`, `emailVerificationOtp`, `passwordChanged`, `emailChangeVerification`, `emailChanged`, `mfaEnabled`, `mfaDisabled`, `newSessionAlert`, `invitation`, `workspaceInvitation`, `email_verification_otp`, `password_changed_notice`, `password_reset_token`, `password_reset_otp`, `mfa_enabled_notice`, `mfa_disabled_notice`, `mfa_reset_notice`, `email_change_notice`.
 
 ---
@@ -1728,6 +1728,10 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | GET    | `/oauth/:provider/callback`    | Public + `@SkipMfa()`              | Handle OAuth callback, exchange code, issue tokens          |
 
 > **Revoking one session cuts every access token of the account, the caller's included.**
+> `GET /sessions` marks `isCurrent` by the refresh token the request carries. When none reaches it (a
+> bearer client that sends none, or a refresh cookie whose path does not cover the route), it marks the
+> sessions of the login the access token's `sid` names.
+
 > `DELETE /sessions/:id` and `POST /sessions/revoke-all` advance the account's token epoch, because
 > a session cannot be traced to the access tokens issued from it. The caller's next request answers
 > `401` until the client refreshes; every session that was kept refreshes normally, and a revoked

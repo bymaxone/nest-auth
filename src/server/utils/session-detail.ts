@@ -10,6 +10,7 @@
  */
 
 import { parseJson, stringifyJson } from './captured-builtins'
+import { sessionId } from '../constants/session-id'
 import type { SessionExtra } from '../redis/create-session-script'
 
 /** The longest IP, and on the platform plane the longest device text, kept in a detail record. */
@@ -114,6 +115,20 @@ export function platformSessionExtra(
     key: `psd:${tokenHash}`,
     value: platformSessionDetail(ip, userAgent, Date.now()),
     ttl
+  }
+}
+
+/**
+ * Reads the family a refresh session record belongs to.
+ *
+ * @param raw - The `rt:{hash}` value.
+ * @returns The record's `familyId` when it has the shape of one, otherwise `undefined`.
+ */
+export function storedFamilyId(raw: string): string | undefined {
+  try {
+    return sessionId((parseJson(raw) as Record<string, unknown>)['familyId'])
+  } catch {
+    return undefined
   }
 }
 

@@ -5,7 +5,9 @@ import {
   BYMAX_AUTH_OPTIONS,
   GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { readListedSession } from './session-listing'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { sessionId } from '../constants/session-id'
 import { sessionIndexKey } from '../constants/user-keys'
 import { sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -21,11 +23,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { hostEntityOf } from '../utils/host-read'
 import { toSafeUser } from '../utils/mfa-safe-user'
 import { runDetached } from '../utils/run-detached'
-import {
-  parseStoredDetail,
-  parseUserAgent,
-  type StoredSessionDetail
-} from '../utils/session-detail'
+import { parseUserAgent, type StoredSessionDetail } from '../utils/session-detail'
 import { allOf, awaiting, checked, detached, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst } from '../utils/settle-writes'
 
@@ -113,22 +111,6 @@ export interface SessionInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Private types
-// ---------------------------------------------------------------------------
-
-/**
- * What reading one index member's session detail came to.
- *
- * `stale` is a data state, an absent or malformed record, and the member is only a candidate for
- * pruning. `failed` is an infrastructure fault: the session may be live, so the listing that
- * could not show it has to say so instead of omitting it.
- */
-type MemberRead =
-  | { kind: 'session'; info: SessionInfo }
-  | { kind: 'stale'; member: string }
-  | { kind: 'failed'; member: string; error: unknown }
-
-// ---------------------------------------------------------------------------
 // SessionService
 // ---------------------------------------------------------------------------
 
@@ -172,6 +154,12 @@ export interface ListSessionsParams {
    * header does — cannot assign to the narrower one.
    */
   currentSessionHash?: string | undefined
+  /**
+   * The `sid` of the caller's verified access token. It is used only when `currentSessionHash`
+   * is absent: each listed session whose refresh record names this family comes back with
+   * `isCurrent: true`, at the cost of one more read per listed session.
+   */
+  currentSessionId?: string | undefined
 }
 
 /**
@@ -341,7 +329,7 @@ export class SessionService {
    *
    * Reads all `rt:`-prefixed members from `sess:{userId}`, fetches the
    * corresponding `sd:{hash}` detail records, and marks the caller's own
-   * session via `isCurrent`. A member whose detail record is missing or malformed
+   * session via `isCurrent` (see {@link ListSessionsParams} for what names it). A member whose detail record is missing or malformed
    * is excluded from the result. A member whose record cannot be read at all is not
    * left out quietly: the call rejects, because a session missing from the list is
    * one the caller cannot revoke. Either way the member is offered to a
@@ -353,12 +341,13 @@ export class SessionService {
    *
    * @param params - See {@link ListSessionsParams}.
    * @returns Array of {@link SessionInfo} sorted newest-first.
-   * @throws The store's error when a session's detail record cannot be read.
+   * @throws The store's error when a record the listing needs cannot be read.
    */
   async listSessions({
     userId,
     tenantId,
-    currentSessionHash
+    currentSessionHash,
+    currentSessionId
   }: ListSessionsParams): Promise<SessionInfo[]> {
     this.assertTenant(tenantId)
     // Drop the grace members whose pointers have already expired, before reading the index.
@@ -370,8 +359,10 @@ export class SessionService {
 
     const members = await pinned(this.redis.smembers(this.indexKey(userId, tenantId)))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
+    const caller = { hash: currentSessionHash, familyId: sessionId(currentSessionId) }
+    const store = { redis: this.redis, logger: this.logger }
     const { value: reads } = await awaiting(
-      allOf(rtMembers.map((member) => this.readSession(member, currentSessionHash)))
+      allOf(rtMembers.map((member) => readListedSession(store, member, caller)))
     )
 
     const results: SessionInfo[] = []
@@ -400,50 +391,6 @@ export class SessionService {
     raiseFirst(failures)
 
     return checked(newestFirst(results))
-  }
-
-  /**
-   * Reads one index member's session detail and shapes it for the listing.
-   *
-   * @param member - The `rt:{hash}` index member.
-   * @param currentSessionHash - Hash of the caller's own refresh token, when it sent one.
-   * @returns The session, or why this member is not one: a data state or a read fault.
-   */
-  private async readSession(
-    member: string,
-    currentSessionHash: string | undefined
-  ): Promise<MemberRead> {
-    const hash = member.slice(3)
-    let raw: string | null
-
-    try {
-      raw = await pinned(this.redis.get(`sd:${hash}`))
-    } catch (error: unknown) {
-      // A read that throws is an infrastructure fault, not a stale member. The guarded prune
-      // still sees the member as a candidate, and only this line says which one happened, so a
-      // Redis outage does not read as a tidy-up.
-      logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_detail_read', error)
-      return checked({ kind: 'failed', member, error })
-    }
-
-    const detail = raw === null ? null : parseStoredDetail(raw)
-    if (detail === null) return checked({ kind: 'stale', member })
-
-    return checked({
-      kind: 'session',
-      info: {
-        id: hash.slice(0, 8),
-        sessionHash: hash,
-        device: detail.device,
-        ip: detail.ip,
-        // '' fallback: timingSafeCompare returns false on length mismatch,
-        // so no hash (always 64 chars) will ever match the empty string.
-        // Stryker disable next-line StringLiteral: a 64-char session hash never length-matches the fallback sentinel, so timingSafeCompare returns false identically for '' or any other non-matching fallback
-        isCurrent: timingSafeCompare(hash, currentSessionHash ?? ''),
-        createdAt: detail.createdAt,
-        lastActivityAt: detail.lastActivityAt
-      }
-    })
   }
 
   /**

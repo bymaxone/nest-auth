@@ -114,14 +114,15 @@ export class SessionController {
     @Req() req: Request
   ): Promise<SessionInfo[]> {
     const rawRefresh = this.tokenDelivery.extractRefreshToken(req)
-    // When no refresh token is present (e.g. access-token-only requests),
-    // isCurrent will be false for all sessions — this is the correct behaviour.
+    // Without a refresh token (a bearer client that sends none, or a refresh cookie whose path
+    // does not cover this route) the `sid` of the access token names the session instead.
     const currentHash = rawRefresh ? sha256(rawRefresh) : undefined
     return await pinned(
       this.sessionService.listSessions({
         userId: user.sub,
         tenantId: user.tenantId,
-        currentSessionHash: currentHash
+        currentSessionHash: currentHash,
+        currentSessionId: user.sid
       })
     )
   }
