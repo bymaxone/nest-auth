@@ -3,6 +3,8 @@
  * @fileoverview The keys and arguments `publishInvitation` sends, and how it reads the reply.
  *
  * The script also runs here, for real, against the in-memory Redis.
+ *
+ * @layer Test
  */
 
 import RedisMock from 'ioredis-mock'

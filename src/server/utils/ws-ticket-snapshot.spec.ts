@@ -1,6 +1,8 @@
 /**
  * @fileoverview The optional expiry of a stored WebSocket ticket. The required fields are covered
  * through `redeemWsTicket` in `auth-redis.service.spec.ts`.
+ *
+ * @layer Test
  */
 
 import { isWsTicketSnapshot } from './ws-ticket-snapshot'

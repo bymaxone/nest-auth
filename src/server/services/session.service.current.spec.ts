@@ -1,6 +1,8 @@
 /**
  * @fileoverview Which listed session is the caller's: by the refresh token when one is presented,
  * otherwise by the session identifier of the access token.
+ *
+ * @layer Test
  */
 
 import { Test } from '@nestjs/testing'

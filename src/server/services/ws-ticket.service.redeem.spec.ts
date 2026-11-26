@@ -1,6 +1,8 @@
 /**
  * @fileoverview What {@link WsTicketService.redeem} checks beyond the minting token's revocation:
  * the token's expiry, the tenant the caller expects and the account as it stands now.
+ *
+ * @layer Test
  */
 
 import { Logger } from '@nestjs/common'
