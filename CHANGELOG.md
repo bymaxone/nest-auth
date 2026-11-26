@@ -18,7 +18,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
-## [1.5.17] - 2026-11-25
+## [1.5.17] - 2026-11-26
 
 A patch release. An application whose auth Redis client sets `keyPrefix` no longer starts.
 
