@@ -35,7 +35,7 @@ const hashOf = (refreshToken: string): string =>
 
 /** The refresh token a response put in its cookie. */
 const cookieToken = (res: request.Response): string => {
-  const set = res.headers['set-cookie'] as unknown as string[]
+  const set = [res.headers['set-cookie']].flat().map(String)
   const found = set.find((c) => c.startsWith('refresh_token='))
   return decodeURIComponent(String(found).split(';')[0]!.slice('refresh_token='.length))
 }
