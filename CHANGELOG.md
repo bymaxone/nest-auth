@@ -25,7 +25,7 @@ A patch release. A Redis reply that should be an integer and is not now fails th
 ### Fixed
 
 - **A reply that spells no integer is no longer read as `0`.** A `nil`, an `OK`, a fraction or a missing reply to an integer command or script counted as zero: the rate limiter stayed under its limit, and a lockout reported no time left. Such a reply now fails the call with `auth.internal` (HTTP 500). A number, and the decimal string a client built with `stringNumbers: true` answers, read as before.
-- **A stored counter that holds no integer is no longer read as "nothing counted".** `BruteForceService.isLockedOut` answered not locked for it, and `AuthRedisService.getUserTokenEpoch` answered `0`, under which no token of that user is bulk-revoked. Both now fail with `auth.internal`; an absent key reads as before. A suppressed count of `access.denied` that holds no integer is reported as `0`, not `NaN`, with a warning.
+- **A stored counter that holds no integer is no longer read as "nothing counted".** `BruteForceService.isLockedOut` could answer not locked for it, and `AuthRedisService.getUserTokenEpoch` answered `0`, under which no token of that user is bulk-revoked. Both now fail with `auth.internal`; an absent key reads as before. A suppressed count of `access.denied` that holds no integer is reported as `0`, with a warning.
 - **A tenantless WebSocket ticket is refused before the platform account is read.** `WsJwtGuard` admits dashboard sockets only, and read the platform account of such a ticket before refusing it. `WsTicketService.redeem` takes an optional third argument, `{ requireTenant: true }`, which the guard passes.
 
 ### Apply to a derived backend
