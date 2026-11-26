@@ -14,7 +14,7 @@ import { assertTenantBinding } from '../utils/assert-tenant-binding'
 import type { HandshakeLike } from '../utils/handshake-request'
 import { pinned, PinnedMethods } from '../utils/settle'
 
-/** The socket this guard admits is a dashboard one, so a tenantless ticket is refused unread. */
+/** The guard admits dashboard sockets, so a tenantless ticket is refused before any other read. */
 const DASHBOARD_TICKET = { requireTenant: true } as const
 
 /** Minimal shape of a WebSocket client as seen during the handshake. */

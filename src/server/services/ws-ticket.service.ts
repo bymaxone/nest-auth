@@ -186,8 +186,9 @@ export class WsTicketService {
    * @returns The identity the socket is authorized as.
    * @throws {@link AuthException} `auth.token_invalid` when the ticket is unknown, already
    *   redeemed or expired, was minted by a session since revoked, names another tenant than the
-   *   expected one, or its account is gone — deliberately indistinguishable to the caller — and
-   *   the `auth.*` code of the status when the account is blocked.
+   *   expected one or none where one is required, or its account is gone — deliberately
+   *   indistinguishable to the caller — and the `auth.*` code of the status when the account is
+   *   blocked.
    */
   async redeem(
     ticket: string,
@@ -212,7 +213,7 @@ export class WsTicketService {
       logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'tenant_mismatch' })
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
-    // No event: the caller asked for one plane, and the guard that does answers the refusal.
+    // No event: the caller asked for one plane.
     if (options?.requireTenant === true && !snapshot.tenantId) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
