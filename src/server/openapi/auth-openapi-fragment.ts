@@ -247,7 +247,7 @@ export const OPERATIONS: Readonly<
   sessions: {
     // Measured against the controller rather than inferred from the guard stack, and the three
     // differ. `listSessions` reads the refresh token to mark which session is the caller's own
-    // and answers 200 without it (every `isCurrent` reads false). `revokeAllSessions` refuses
+    // and answers 200 without it. `revokeAllSessions` refuses
     // without it — it revokes everything EXCEPT the current session, so a request that cannot
     // name the current one would sign the caller out, and it answers `auth.session_not_found`
     // instead. `revokeSession` names its target in the path and reads no refresh token at all.
