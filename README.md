@@ -1339,7 +1339,7 @@ newer one while it is read or before it is removed reads the address again and a
 ceiling to the record it finds.
 A tenant invite stores the record and the invitee index in one step, and a tenant revoke removes
 them in one step, so a failed command never leaves one without the other.
-When the invitation changes during each attempt to remove it, it answers `429`
+When the invitation changes during each attempt to remove it, the revoke answers `429`
 `auth.too_many_requests`; the caller can try again.
 
 ### Frontend
@@ -1727,11 +1727,11 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | GET    | `/oauth/:provider`             | Public + `@SkipMfa()`              | Initiate OAuth authorization redirect                       |
 | GET    | `/oauth/:provider/callback`    | Public + `@SkipMfa()`              | Handle OAuth callback, exchange code, issue tokens          |
 
-> **Revoking one session cuts every access token of the account, the caller's included.**
 > `GET /sessions` marks `isCurrent` by the refresh token the request carries. When none reaches it (a
 > bearer client that sends none, or a refresh cookie whose path does not cover the route), it marks the
 > sessions of the login the access token's `sid` names.
 
+> **Revoking one session cuts every access token of the account, the caller's included.**
 > `DELETE /sessions/:id` and `POST /sessions/revoke-all` advance the account's token epoch, because
 > a session cannot be traced to the access tokens issued from it. The caller's next request answers
 > `401` until the client refreshes; every session that was kept refreshes normally, and a revoked

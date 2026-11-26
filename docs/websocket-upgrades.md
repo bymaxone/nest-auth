@@ -49,7 +49,7 @@ longer reports that logout: end or re-authenticate a long-lived socket by then.
 **If you call `WsTicketService.redeem` yourself, pass the tenant the connection belongs to** as the
 second argument. A ticket of another tenant is then refused with `auth.token_invalid`; without the
 argument a ticket of any tenant is accepted. A refused ticket is consumed. `WsJwtGuard` does not
-need this: it binds the tenant itself, as described below.
+need this: under `enforceTenantBinding` it binds the tenant itself, as described below.
 
 Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;
 both channels are accepted, and a ticket wins when both are present. On the Bearer path
