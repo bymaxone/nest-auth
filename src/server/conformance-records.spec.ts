@@ -462,9 +462,11 @@ describe('wire contract: invitation record', () => {
 
     await service.invite('user-1', 'invited@example.com', 'member', 'tenant-1')
 
-    const key = firstCallArg(mockRedis.set, 0) as string
+    // The record goes out with its index in one script: second key, third argument.
+    const [, key] = firstCallArg(mockRedis.eval, 1) as string[]
+    const [, , record] = firstCallArg(mockRedis.eval, 2) as string[]
     expect(key).toMatch(new RegExp(`^${prefixOf('invitation')}:[0-9a-f]{64}$`))
-    expect(keysOf(firstCallArg(mockRedis.set, 1))).toEqual(sorted([...fields, ...optionalFields]))
+    expect(keysOf(record)).toEqual(sorted([...fields, ...optionalFields]))
   })
 })
 

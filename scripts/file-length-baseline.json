@@ -17,7 +17,7 @@
     "src/server/redis/auth-redis.service.ts": 1182,
     "src/server/services/auth.service.spec.ts": 3599,
     "src/server/services/auth.service.ts": 1439,
-    "src/server/services/invitation.service.spec.ts": 1554,
+    "src/server/services/invitation.service.spec.ts": 1546,
     "src/server/services/mfa.service.spec.ts": 4609,
     "src/server/services/password-reset.service.spec.ts": 2608,
     "src/server/services/password-reset.service.ts": 940,

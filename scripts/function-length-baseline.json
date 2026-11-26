@@ -36,7 +36,7 @@
     "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"register\"]]": 101,
     "[\"src/server/services/email-change.service.ts\",[\"member\",\"EmailChangeService\",\"requestChange\"]]": 66,
     "[\"src/server/services/invitation.service.ts\",[\"member\",\"InvitationService\",\"acceptInvitation\"]]": 132,
-    "[\"src/server/services/invitation.service.ts\",[\"member\",\"InvitationService\",\"invite\"]]": 143,
+    "[\"src/server/services/invitation.service.ts\",[\"member\",\"InvitationService\",\"invite\"]]": 102,
     "[\"src/server/services/mfa-integration.spec.ts\",[\"container\",\"describe\",\"MFA — integration smoke tests\"],[\"test\",\"it\",\"1. full flow: setup → verifyAndEnable → challenge (TOTP) succeeds end-to-end\"]]": 58,
     "[\"src/server/services/mfa-integration.spec.ts\",[\"container\",\"describe\",\"MFA — integration smoke tests\"],[\"test\",\"it\",\"3. recovery code works as an alternative to TOTP in challenge\"]]": 56,
     "[\"src/server/services/mfa.service.spec.ts\",[\"container\",\"describe\",\"MfaService\"],[\"container\",\"describe\",\"disable\"],[\"test\",\"it\",\"should use platformUserRepo.updateMfa when context is platform\"]]": 59,

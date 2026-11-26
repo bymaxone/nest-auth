@@ -53,7 +53,6 @@ export type StoreOperation =
   | 'cache_invalidation'
   | 'dead_member_prune'
   | 'grace_pointer_prune'
-  | 'invitation_withdraw'
   | 'logout_marker_clear'
   | 'logout_owner_keep'
   | 'mfa_lock_release'
