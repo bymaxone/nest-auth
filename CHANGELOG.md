@@ -20,10 +20,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [1.5.17] - 2026-11-25
 
-A patch release.
+A patch release. An application whose auth Redis client sets `keyPrefix` no longer starts.
 
 ### Fixed
 
+- **An ioredis client with `keyPrefix` is refused at startup, standalone or cluster.** ioredis does not apply the prefix to the keys a Lua script builds. With one, `AuthService.revokeAllSessions` resolved and the account's refresh tokens kept working (password reset and the MFA changes end sessions through the same script), reusing a rotated refresh token did not revoke its family, and a refresh retried inside its grace window was refused. Remove `keyPrefix` from the client; `redisNamespace` is the option that namespaces the keys.
 - **An invitation that replaces another during a revoke or an acceptance stays revocable.** `revokeInvitation` and `acceptInvitation` dropped the invitee index whatever it named. An invite landing in between left a redeemable invitation that no revoke could reach, a further invite added a second one, and the revoke answered `204`. Both now drop the index only while it names the invitation they act on. A revoke that finds the record also deletes it before it drops the index, so a store failure between the two leaves an index that names nothing and no redeemable record out of reach.
 - **A revoke follows a replacement.** A tenant or workspace revoke whose invitation is replaced while it is read or before it is removed reads the address again and applies the role ceiling to the record it finds. A workspace revoke overtaken while it read answered success with the replacement still live; one overtaken before its removal reported `invitation.revoked` for the invitation it had read. It now reports one only when the address still named the invitation it removed. A tenant revoke logs `AUTH_INVITATION_REVOKED` only for a record it removed. When the invitation is replaced during each attempt to remove it, a revoke answers `429` `auth.too_many_requests`.
 - **`@types/react` is declared as an optional peer, in any version.** The declarations of `./react` import React's types, which nothing declared. A TypeScript project that uses the subpath installs them.
@@ -44,7 +45,6 @@ A patch release.
 - In that case the revoke deletes after it has released the address. If the deletion fails, the revoke errors. Where the invite had confirmed its claim, a revoke that errored this way leaves the invitation acceptable: its emailed token still works until it expires, and retrying the revoke does not remove it. Where it had not, no token is emailed, and the record stays only if the invite's removal of its own record fails too.
 - A tenant revoke whose third attempt removes a record and then finds the address naming another invitation answers `429`, although that removal happened and was logged. Trying again is safe: it acts on what the address then names.
 - With `stringNumbers: true` the per-IP rate limiter and the cap on `access.denied` events do not limit, a refresh token presented again inside its grace window is refused, a workspace invite or resend answers `429` although its invitation is stored, the `retryAfterSeconds` of a lockout is a string, the lockout counter metric stays at zero, the hourly cap per inviter never refuses, and `DELETE /sessions/:id` removes the session, answers that it was not found and leaves the access token of the account valid. Do not set the option.
-- With an ioredis `keyPrefix`, the keys a Lua script builds do not carry the prefix, so reusing a rotated refresh token does not revoke its family. Do not set `keyPrefix`; `redisNamespace` is the option that namespaces the keys.
 
 ### Apply to a derived backend
 
