@@ -14,13 +14,13 @@ import { AuthException } from '../errors/auth-exception'
  * every limit.
  *
  * @param reply - What the command or script answered.
- * @returns The integer.
- * @throws {@link AuthException} `auth.internal` for a reply that spells no integer.
+ * @returns The integer, within the safe integer range.
+ * @throws {@link AuthException} `auth.internal` for a reply that spells no safe integer.
  */
 export function integerReply(reply: unknown): number {
   // A string counts only when it is the decimal form of its number, so `''` is not `0`.
   const value = typeof reply === 'string' && `${Number(reply)}` === reply ? Number(reply) : reply
-  if (Number.isInteger(value)) return value as number
+  if (Number.isSafeInteger(value)) return value as number
   throw new AuthException(AUTH_ERROR_CODES.INTERNAL, undefined, {
     cause: new Error('Redis answered a reply that is not an integer')
   })

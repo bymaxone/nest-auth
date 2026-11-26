@@ -14,7 +14,8 @@ describe('integerReply', () => {
     ['zero', 0, 0],
     ['a negative number', -2, -2],
     ['a string', '12', 12],
-    ['a negative string', '-1', -1]
+    ['a negative string', '-1', -1],
+    ['the largest safe integer', '9007199254740991', Number.MAX_SAFE_INTEGER]
   ])('reads %s', (_label, reply, expected) => {
     expect(integerReply(reply)).toBe(expected)
   })
@@ -22,6 +23,9 @@ describe('integerReply', () => {
   // Scenario: a reply that spells no integer. Expected: `auth.internal`, never a number.
   it.each([
     ['a string spelling no number', 'OK'],
+    ['an exponent string', '1e+21'],
+    ['an integer past the safe range', 2 ** 53],
+    ['a string past the safe range', '9007199254740992'],
     ['an empty string', ''],
     ['a blank string', ' '],
     ['a padded string', ' 1'],
