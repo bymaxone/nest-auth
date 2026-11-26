@@ -41,7 +41,7 @@ A patch release. An auth Redis client with a string `keyPrefix` starts again.
 
 In the public declarations, `WsTicketSnapshot` gains the optional `exp`, `WsTicketService.redeem` takes an optional `expectedTenantId`, the constructor of `WsTicketService` takes `AccountStatusService`, and `ListSessionsParams` gains the optional `currentSessionId`. A host that calls `redeem` itself passes the tenant it expects. For a backend that shares the keyspace, see the notes in the entries above on the `wst:` record, and set its namespace to `keyPrefix` followed by `redisNamespace` where this one uses a prefix.
 
-## [1.5.17] - 2026-11-25
+## [1.5.17] - 2026-11-26
 
 A patch release. An application whose auth Redis client sets `keyPrefix` no longer starts.
 
