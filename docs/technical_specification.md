@@ -2778,6 +2778,11 @@ export class ResetPasswordDto {
 | `DELETE` | `/:id`        | JWT  | `JwtAuthGuard`, `UserStatusGuard` | —    | Revokes a specific session     |
 | `POST`   | `/revoke-all` | JWT  | `JwtAuthGuard`, `UserStatusGuard` | —    | Revokes all except the current |
 
+Both revocations advance the account's token epoch, because a session cannot be traced to the access
+tokens issued from it: every access token of the account stops verifying, the caller's own included.
+A kept session gets a new one on its next refresh; a revoked one cannot refresh. `logout` does not do
+this: it blacklists the one access token it is given.
+
 **Responses:**
 
 ```typescript
@@ -2843,6 +2848,13 @@ export class PlatformLoginDto {
 | `POST` | `/`       | JWT            | `JwtAuthGuard`, `UserStatusGuard` | `CreateInvitationDto` | Creates and sends invitation (tenantId extracted from JWT) |
 | `POST` | `/revoke` | JWT            | `JwtAuthGuard`, `UserStatusGuard` | `RevokeInvitationDto` | Revokes a pending invitation (tenantId extracted from JWT) |
 | `POST` | `/accept` | Public + token | —                                 | `AcceptInvitationDto` | Accepts invitation and creates account                     |
+
+A revoke whose invitation is replaced while it is read or before it is removed reads the address again
+and applies the role ceiling to the record it finds. A tenant revoke that finds the address claimed and no record yet
+releases the address, whatever the revoker's role: the invite in flight fails with `403`, or the record
+it has just stored is removed, even one above the revoker's role. When the invitation is replaced during
+each attempt to remove it, it answers `429` `auth.too_many_requests`. An index naming another
+invitation than the one being removed or accepted is left in place.
 
 **DTO:**
 
@@ -4380,7 +4392,8 @@ role, the owner at any role. A suspended member is still a member. An invitation
 a role, is stored as a digest of its token, and is accepted either by the signed-in account it was
 addressed to or by creating that account. Acceptance takes effect at the membership write and the
 token is spent after it. Inviting, resending and revoking answer `204` whatever the address, so they do not reveal whether
-an address has an account.
+an address has an account. A revoke answers `429` when the invitation was replaced
+before each attempt to remove it.
 
 ### 22.3a Deleting an account
 

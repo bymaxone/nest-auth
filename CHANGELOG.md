@@ -18,6 +18,40 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.17] - 2026-11-25
+
+A patch release. An application whose auth Redis client sets `keyPrefix` no longer starts.
+
+### Fixed
+
+- **An ioredis client with `keyPrefix` is refused at startup, standalone or cluster.** ioredis does not apply the prefix to the keys a Lua script builds. With one, `AuthService.revokeAllSessions` resolved and the account's refresh tokens kept working (password reset and the MFA changes end sessions through the same script), reusing a rotated refresh token did not revoke its family, and a refresh retried inside its grace window was refused. Remove `keyPrefix` from the client; `redisNamespace` is the option that namespaces the keys.
+- **An invitation that replaces another during a revoke or an acceptance stays revocable.** `revokeInvitation` and `acceptInvitation` dropped the invitee index whatever it named. An invite landing in between left a redeemable invitation that no revoke could reach, a further invite added a second one, and the revoke answered `204`. Both now drop the index only while it names the invitation they act on. A revoke that finds the record also deletes it before it drops the index, so a store failure between the two leaves an index that names nothing and no redeemable record out of reach.
+- **A revoke follows a replacement.** A tenant or workspace revoke whose invitation is replaced while it is read or before it is removed reads the address again and applies the role ceiling to the record it finds. A workspace revoke overtaken while it read answered success with the replacement still live; one overtaken before its removal reported `invitation.revoked` for the invitation it had read. It now reports one only when the address still named the invitation it removed. A tenant revoke logs `AUTH_INVITATION_REVOKED` only for a record it removed. When the invitation is replaced during each attempt to remove it, a revoke answers `429` `auth.too_many_requests`.
+- **`@types/react` is declared as an optional peer, in any version.** The declarations of `./react` import React's types, which nothing declared. A TypeScript project that uses the subpath installs them.
+- With an ioredis client built with `stringNumbers: true`, the count of a `DEL` is read from its string too. A completed second-factor challenge was refused with such a client, because the removal of its temporary token read as none. Other integer replies are not covered; see Known limits.
+
+### Changed
+
+- The comparison of the recorded built-ins that the root guard runs at each decision does less work, with the same verdicts. Where only `Reflect.ownKeys` was replaced before the module loaded, with one that lists no symbol, an added or replaced protocol symbol is now still counted. A `getOwnPropertySymbols` replaced before the module loaded is used only if at load it lists, on each protocol holder, the symbols `Reflect.ownKeys` does. Measured on Node 24.21.0 on an Apple M4 Max, plain node over the built package, with `ioredis-mock` in place of Redis and the HTTP client in the same process sending one request at a time, in six rounds with 1.5.15, 1.5.16 and this version alternated in separate processes, under a one-minute load average of about 9 to 10, CPU per request taken over 300 requests and requests per second over 3000: against 1.5.16, `me` costs 0.16 to 0.29 ms less CPU per request, a refresh 0.35 to 1.05 ms less, and the process completes 1.3 to 1.6 times more `me` requests per second. Against 1.5.15, a refresh still costs 0.13 to 0.65 ms more CPU, and it completes 1.4 to 2.3 times fewer `me` requests per second.
+- The documentation now says that revoking a session, or all the others, cuts every access token of the account, the caller's included, until the next refresh; and that `create`, `createWithOAuth` and `updateEmail` of a user repository should throw `AuthException` `EMAIL_ALREADY_EXISTS` when the write finds the address taken.
+
+### Known limits
+
+- These guarantees cover the requests this library serves. Another backend sharing the Redis keyspace that drops an invitee index without comparing it can still leave an invitation the index does not name, and one that consumes a workspace invitation without releasing its index can make a revoke report an invitation that was already gone.
+- A workspace revoke that overlaps the acceptance of the same invitation can still report `invitation.revoked` while the membership stands; the `invitation.accepted` event then carries `lostConsumeRace`.
+- The workspace removal is not atomic: a workspace revoke that overlaps another write of the same address can remove a record and report nothing.
+- The role ceiling is applied to what the record holds. A tenant revoke that reads the address between an invite's claim of it and the write of its record finds none, whatever the revoker's role, also on a later attempt after a replacement: it releases the address and deletes the record if it has been stored by then, even one above the revoker's role, logging that removal as `AUTH_INVITATION_REVOKED`. An invite that had not yet confirmed its claim then fails with `403` `auth.insufficient_role` and removes its own record; one that had already confirmed it has succeeded, and its emailed token no longer works. Either way no invitation is left.
+- A tenant revoke now deletes the record before it releases the address, so the stretch between reading the record and releasing the address is longer. A replacement that claims the address inside it makes the revoke try again, and that later attempt can take it as above.
+- In that case the revoke deletes after it has released the address. If the deletion fails, the revoke errors. Where the invite had confirmed its claim, a revoke that errored this way leaves the invitation acceptable: its emailed token still works until it expires, and retrying the revoke does not remove it. Where it had not, no token is emailed, and the record stays only if the invite's removal of its own record fails too.
+- A tenant revoke whose last attempt removes a record and then finds the address naming another invitation answers `429`, although that removal happened and was logged. Trying again is safe: it acts on what the address then names.
+- With `stringNumbers: true` the per-IP rate limiter and the cap on `access.denied` events do not limit, a refresh token presented again inside its grace window is refused, a workspace invite or resend answers `429` although its invitation is stored, the `retryAfterSeconds` of a lockout is a string, the lockout counter metric stays at zero, the hourly cap per inviter never refuses, and `DELETE /sessions/:id` removes the session, answers that it was not found and leaves the access token of the account valid. Do not set the option.
+
+### Apply to a derived backend
+
+`InvitationService.revokeInvitation` and the workspace revokes can now refuse with `TOO_MANY_REQUESTS`. A backend that shares the keyspace drops an invitee index only while it still names the invitation it acted on.
+
+An auth Redis client with `keyPrefix` is refused at startup. Its keys are stored under `keyPrefix`, then `redisNamespace`, then `:`. To keep their names, remove `keyPrefix` and set `redisNamespace` to the prefix followed by the namespace it had (`auth` when it was not set): a live session then still refreshes and a logged-out access token stays refused. Removing the prefix alone refused the session and accepted the logged-out access token again. A refresh token that outlived a revoke-all made under the prefix also outlives the move, and a later revoke-all does not end it. Deleting the `rt:` and `rp:` keys of the new namespace (`prt:` and `prp:` on the platform plane) ends such tokens, along with every other refresh token of that plane.
+
 ## [1.5.16] - 2026-11-25
 
 A patch release.
@@ -5643,7 +5677,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.16...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.17...HEAD
+[1.5.17]: https://github.com/bymaxone/nest-auth/compare/v1.5.16...v1.5.17
 [1.5.16]: https://github.com/bymaxone/nest-auth/compare/v1.5.15...v1.5.16
 [1.5.15]: https://github.com/bymaxone/nest-auth/compare/v1.5.14...v1.5.15
 [1.5.14]: https://github.com/bymaxone/nest-auth/compare/v1.5.13...v1.5.14

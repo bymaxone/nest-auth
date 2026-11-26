@@ -88,12 +88,158 @@ describe('the baseline loaded over a runtime that differs from the usual one', (
   })
 
   // Scenario: a listed built-in that can be neither assigned nor redefined when the module loads. Expected: the import does not
-  // throw, nothing is counted and the entry is not compared, since nothing can replace it. This case is the last, and the change
-  // it makes to `WeakMap.prototype.set` is permanent for this file.
+  // throw, nothing is counted and the entry is not compared, since nothing can replace it. The change it makes to
+  // `WeakMap.prototype.set` is permanent for this file.
   it('loads with a listed built-in that cannot be replaced', () => {
     const held = getOwn(WeakMap.prototype, 'set') as PropertyDescriptor
     define(WeakMap.prototype, 'set', { ...held, writable: false, configurable: false })
 
     expect(loadFresh().replacedBuiltins()).toBe(0)
+  })
+
+  // Scenario: `Object.getOwnPropertySymbols` is replaced before the module loads with a function that lists nothing. Then a symbol
+  // function is added to a protocol holder, and one the holder had is replaced. Expected: each is counted. Why: a reader that hides
+  // symbols must not hide the protocol the language runs from every later decision.
+  it.each([
+    ['answers an empty list', (): symbol[] => []],
+    ['answers nothing', (): undefined => undefined]
+  ])('counts protocol symbols while the replaced symbol reader %s', (_label, reader) => {
+    const held = getOwn(Object, 'getOwnPropertySymbols') as PropertyDescriptor
+    const replace = getOwn(RegExp.prototype, Symbol.replace) as PropertyDescriptor
+    const added = Symbol('added-protocol')
+    let loaded: Baseline
+    define(Object, 'getOwnPropertySymbols', { ...held, value: reader })
+    try {
+      loaded = loadFresh()
+    } finally {
+      define(Object, 'getOwnPropertySymbols', held)
+    }
+    const before = loaded.replacedBuiltins()
+    let afterAdded = -1
+    let afterReplaced = -1
+    try {
+      define(RegExp.prototype, added, { value: (): void => {}, configurable: true })
+      afterAdded = loaded.replacedBuiltins()
+      remove(RegExp.prototype, added)
+      define(RegExp.prototype, Symbol.replace, { ...replace, value: (): string => '' })
+      afterReplaced = loaded.replacedBuiltins()
+    } finally {
+      remove(RegExp.prototype, added)
+      define(RegExp.prototype, Symbol.replace, replace)
+    }
+
+    expect([afterAdded - before, afterReplaced - before]).toEqual([1, 1])
+  })
+
+  // Scenario: `Object.getOwnPropertySymbols` is replaced before the module loads with a function that lists another symbol where
+  // `RegExp.prototype` has `Symbol.match`, so the count is the same. Then `Symbol.match` is replaced. Expected: it is counted.
+  // Why: the symbols are compared one by one, not by how many there are.
+  it('counts a replaced protocol function whose key the symbol reader swaps for another', () => {
+    const native = Object.getOwnPropertySymbols
+    const held = getOwn(Object, 'getOwnPropertySymbols') as PropertyDescriptor
+    const match = getOwn(RegExp.prototype, Symbol.match) as PropertyDescriptor
+    const other = Symbol('listed-instead')
+    const swap = (value: object): symbol[] =>
+      native(value).map((key) => (value === RegExp.prototype && key === Symbol.match ? other : key))
+    let baseline: Baseline
+    define(Object, 'getOwnPropertySymbols', { ...held, value: swap })
+    try {
+      baseline = loadFresh()
+    } finally {
+      define(Object, 'getOwnPropertySymbols', held)
+    }
+    const before = baseline.replacedBuiltins()
+    try {
+      define(RegExp.prototype, Symbol.match, { ...match, value: (): null => null })
+
+      expect(baseline.replacedBuiltins() - before).toBe(1)
+    } finally {
+      define(RegExp.prototype, Symbol.match, match)
+    }
+  })
+
+  // Scenario: `Object.getOwnPropertySymbols` is replaced before the module loads with a function that answers nothing for
+  // `Number.prototype`, which has no symbol key, and the real list for every other holder. Expected: the module loads and
+  // counts nothing. Why: an answer that is no list is not used, whatever the holder has.
+  it('loads when the symbol reader answers nothing for a holder without symbol keys', () => {
+    const native = Object.getOwnPropertySymbols
+    const held = getOwn(Object, 'getOwnPropertySymbols') as PropertyDescriptor
+    const silent = (value: object): symbol[] | undefined =>
+      value === Number.prototype ? undefined : native(value)
+    let baseline: Baseline
+    define(Object, 'getOwnPropertySymbols', { ...held, value: silent })
+    try {
+      baseline = loadFresh()
+    } finally {
+      define(Object, 'getOwnPropertySymbols', held)
+    }
+
+    expect(baseline.replacedBuiltins()).toBe(0)
+  })
+
+  // Scenario: `Object.getOwnPropertySymbols` is replaced before the module loads with a function that counts its calls and
+  // answers as the native one. Expected: the comparison calls it. Why: the cheaper reader is used when it lists every symbol.
+  it('reads the symbol keys with the symbol reader when it lists every one', () => {
+    const native = Object.getOwnPropertySymbols
+    const held = getOwn(Object, 'getOwnPropertySymbols') as PropertyDescriptor
+    const spy = jest.fn((value: object): symbol[] => native(value))
+    let baseline: Baseline
+    define(Object, 'getOwnPropertySymbols', { ...held, value: spy })
+    try {
+      baseline = loadFresh()
+    } finally {
+      define(Object, 'getOwnPropertySymbols', held)
+    }
+    spy.mockClear()
+    baseline.replacedBuiltins()
+
+    expect(spy.mock.calls.map(([holder]) => holder)).toContain(RegExp.prototype)
+  })
+
+  // Scenario: `Object.getOwnPropertySymbols` is replaced before the module loads with a function that lists one symbol more
+  // than `RegExp.prototype` has. Expected: the comparison calls it. Why: it lists every symbol the holder has, so it is used.
+  it('keeps a symbol reader that lists a symbol beyond those the holder has', () => {
+    const native = Object.getOwnPropertySymbols
+    const held = getOwn(Object, 'getOwnPropertySymbols') as PropertyDescriptor
+    const extra = Symbol('beyond')
+    const spy = jest.fn((value: object): symbol[] =>
+      value === RegExp.prototype ? [...native(value), extra] : native(value)
+    )
+    let baseline: Baseline
+    define(Object, 'getOwnPropertySymbols', { ...held, value: spy })
+    try {
+      baseline = loadFresh()
+    } finally {
+      define(Object, 'getOwnPropertySymbols', held)
+    }
+    spy.mockClear()
+    baseline.replacedBuiltins()
+
+    expect(spy.mock.calls.map(([holder]) => holder)).toContain(RegExp.prototype)
+  })
+
+  // Scenario: `Reflect.ownKeys` is replaced before the module loads with a function that lists nothing, then a symbol function is
+  // added to a protocol holder. Expected: it is counted. Why: a key reader that lists no symbol gives nothing to hold the
+  // symbol reader to, so the symbol reader stays in use.
+  it('counts an added protocol symbol while the replaced key reader lists nothing', () => {
+    const held = getOwn(Reflect, 'ownKeys') as PropertyDescriptor
+    const added = Symbol('added-protocol')
+    let loaded: Baseline
+    define(Reflect, 'ownKeys', { ...held, value: (): (string | symbol)[] => [] })
+    try {
+      loaded = loadFresh()
+    } finally {
+      define(Reflect, 'ownKeys', held)
+    }
+    const before = loaded.replacedBuiltins()
+    let after = -1
+    try {
+      define(RegExp.prototype, added, { value: (): void => {}, configurable: true })
+      after = loaded.replacedBuiltins()
+    } finally {
+      remove(RegExp.prototype, added)
+    }
+
+    expect(after - before).toBe(1)
   })
 })

@@ -157,7 +157,7 @@ describe('AuthRedisService', () => {
       ['several keys removed', 3, true],
       ['nothing to remove', 0, false],
       ['a negative count', -1, false],
-      ['a string reply', '1', false],
+      ['a numeric string reply', '1', true],
       ['a nil reply', null, false],
       ['an unexpected shape', {}, false]
     ])('reports %s as %s', async (_label, reply, expected) => {

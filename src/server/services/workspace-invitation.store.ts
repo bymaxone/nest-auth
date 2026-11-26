@@ -17,6 +17,7 @@ import {
 import type { StoredWorkspaceInvitation } from '../interfaces/workspace-invitation.interface'
 import type { WorkspaceRef } from '../interfaces/workspace-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { releaseIndex } from '../redis/release-index.script'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { checked, pinned, PinnedAll } from '../utils/settle'
 import { isStoredWorkspaceName } from '../utils/workspace-name'
@@ -58,13 +59,6 @@ if ARGV[5] ~= '' then
 end
 return 1`
 
-/** Deletes the index only while it still names the given record key. */
-const RELEASE_INDEX_SCRIPT = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0`
-
 /** Reads and writes workspace invitation records; it makes no authorization decision. */
 @PinnedAll()
 @Injectable()
@@ -102,6 +96,18 @@ export class WorkspaceInvitationStore {
   ): Promise<{ key: string; record: StoredWorkspaceInvitation | null } | null> {
     const key = await pinned(this.redis.get(this.indexKey(ref, email)))
     return checked(key === null ? null : { key, record: await pinned(this.readKey(key)) })
+  }
+
+  /**
+   * Whether an address's index names a record key.
+   *
+   * @param ref - The workspace.
+   * @param email - The invitee, normalized.
+   * @param key - The record key.
+   * @returns `true` while the index holds `key`.
+   */
+  async names(ref: WorkspaceRef, email: string, key: string): Promise<boolean> {
+    return (await pinned(this.redis.get(this.indexKey(ref, email)))) === key
   }
 
   /**
@@ -156,10 +162,7 @@ export class WorkspaceInvitationStore {
   async remove(ref: WorkspaceRef, email: string, key: string): Promise<boolean> {
     await pinned(this.redis.del(key))
     await pinned(this.redis.srem(this.setKey(ref), key))
-    const released = await pinned(
-      this.redis.eval(RELEASE_INDEX_SCRIPT, [this.indexKey(ref, email)], [key])
-    )
-    return released === 1
+    return await pinned(releaseIndex(this.redis, this.indexKey(ref, email), key))
   }
 
   /**

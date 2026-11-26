@@ -1,5 +1,5 @@
 /**
- * @fileoverview The startup check of the Redis connection every guard and flow here depends on.
+ * @fileoverview The startup checks of the Redis client every guard and flow here depends on.
  *
  * @layer Service
  */
@@ -39,6 +39,26 @@ function commandTimeoutOf(client: unknown): number | undefined {
     ?.commandTimeout
   const found = typeof own === 'number' ? own : nested
   return typeof found === 'number' ? found : undefined
+}
+
+/**
+ * Refuses a client built with a `keyPrefix`. ioredis prefixes the keys a command declares, not the
+ * ones a Lua script builds from its arguments, so the scripts that end sessions would miss them.
+ *
+ * A standalone client carries the option in `options.keyPrefix`, and a cluster copies the one of
+ * its node options there. The test is the truthiness ioredis applies the prefix on.
+ *
+ * @param client - The client the host supplied.
+ * @throws {Error} When the client has a key prefix.
+ */
+function refuseKeyPrefix(client: unknown): void {
+  const options = (client as { options?: { keyPrefix?: unknown } }).options
+  if (!options?.keyPrefix) return
+  throw new Error(
+    '[BymaxAuthModule] BYMAX_AUTH_REDIS_CLIENT has a keyPrefix, which ioredis does not apply ' +
+      'to the keys a Lua script builds, so revoking every session would leave refresh tokens ' +
+      'working. Remove keyPrefix from the client and set the redisNamespace option instead.'
+  )
 }
 
 /**
@@ -96,7 +116,9 @@ function pause(ms: number): Promise<void> {
 export class RedisReadinessService implements OnApplicationBootstrap {
   private readonly logger = new Logger(RedisReadinessService.name)
 
-  constructor(@Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: Redis) {}
+  constructor(@Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: Redis) {
+    refuseKeyPrefix(redis)
+  }
 
   /**
    * Waits for a client that is on its way to `ready`, and refuses one that has ended. A client in

@@ -1053,7 +1053,7 @@ describe('InvitationService', () => {
         service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
       ).resolves.toBe(true)
 
-      expect(mockRedis.del).toHaveBeenCalledWith(INDEX_KEY)
+      expect(mockRedis.eval).toHaveBeenCalledWith(expect.any(String), [INDEX_KEY], [TOKEN_HASH])
       expect(mockRedis.del).toHaveBeenCalledWith(`inv:${TOKEN_HASH}`)
       // The record is READ under the same key it is deleted under, or the role check below
       // would be reading someone else's invitation — or nothing at all, which reads as

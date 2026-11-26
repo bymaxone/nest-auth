@@ -380,9 +380,9 @@ export class AuthRedisService {
   async del(key: string): Promise<boolean> {
     // Redis answers `DEL` with the number of keys it removed. Returning it lets a caller that
     // needs exactly-once semantics — consuming an MFA temp token, say — tell "I removed it"
-    // from "someone else already had". Callers that only want the key gone can ignore it.
+    // from "someone else already had". The count is a string under `stringNumbers`.
     const removed = await pinned(this.#redis.del(this.prefix(key)))
-    return typeof removed === 'number' && removed > 0
+    return Number(removed) > 0
   }
 
   /**

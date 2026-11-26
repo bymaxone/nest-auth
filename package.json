@@ -1,6 +1,6 @@
 {
   "name": "@bymax-one/nest-auth",
-  "version": "1.5.16",
+  "version": "1.5.17",
   "description": "Full-stack authentication and authorization package for NestJS, React and Next.js — JWT, MFA, OAuth, sessions, multi-tenant SaaS ready",
   "author": "Bymax One <support@bymax.one>",
   "license": "MIT",
@@ -132,6 +132,7 @@
     "@nestjs/throttler": "^6.0.0",
     "@nestjs/websockets": "^11.0.0",
     "@types/express": "^5.0.0",
+    "@types/react": "*",
     "class-transformer": "^0.5.0",
     "class-validator": "^0.14.0 || ^0.15.0",
     "express": "^5.0.0",
@@ -171,6 +172,9 @@
       "optional": true
     },
     "@types/express": {
+      "optional": true
+    },
+    "@types/react": {
       "optional": true
     },
     "ioredis": {

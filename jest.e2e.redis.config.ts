@@ -46,7 +46,9 @@ const config: Config = {
     '<rootDir>/negative-paths.e2e-spec.ts',
     '<rootDir>/platform-auth-flow.e2e-spec.ts',
     // A store that stops answering: the suite pauses and stops its own container.
-    '<rootDir>/real-redis/redis-outage.e2e-spec.ts'
+    '<rootDir>/real-redis/redis-outage.e2e-spec.ts',
+    // A client option the Lua scripts cannot follow, refused at startup.
+    '<rootDir>/real-redis/key-prefix.e2e-spec.ts'
   ],
   testPathIgnorePatterns: ['/node_modules/'],
   // The container, the Docker client and one ioredis connection per bootstrap leave handles

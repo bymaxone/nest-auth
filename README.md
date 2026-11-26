@@ -151,6 +151,7 @@ pnpm add cookie-parser
 
 # React subpath (optional)
 pnpm add react
+pnpm add -D @types/react # a TypeScript project: the subpath's declarations import React's types
 
 # Next.js subpath (optional)
 pnpm add next react server-only
@@ -1029,6 +1030,16 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > The paths, the outcome of each and the test that pins it are in
 > [`docs/redis-outage.md`](./docs/redis-outage.md).
 
+> [!IMPORTANT]
+> **No `keyPrefix` on the auth client.** nest-auth refuses an ioredis client with `keyPrefix`,
+> because ioredis does not apply the prefix to the keys a Lua script builds. With one,
+> `AuthService.revokeAllSessions` resolves and the account's refresh tokens keep working (password
+> reset and the MFA changes end sessions through the same script), reusing a rotated refresh token
+> does not revoke its family, and a refresh retried inside its grace window is refused. The module
+> fails at startup instead, for a standalone client and for a cluster. To namespace the keys, set the
+> `redisNamespace` option. An application that already stored keys under a prefix should read the
+> 1.5.17 CHANGELOG entry before changing either.
+
 The breach check is opt-in for a different reason: it is the only part of the credential path
 that reaches the network, and a library should not start talking to a third party because it was
 upgraded. Wire it explicitly:
@@ -1325,6 +1336,15 @@ the token travels in a POST body, never in a query string. The one exception is 
 start, `GET /oauth/:provider?workspaceInvitation=<token>`: it stores only the token's sha256 in the
 state record and answers with `Referrer-Policy: no-referrer`. On your accept page, put the token in
 the URL fragment and set `Referrer-Policy: no-referrer` there.
+
+A revoke, here and on the tenant's `POST /invitations/revoke`, whose invitation is replaced by a
+newer one while it is read or before it is removed reads the address again and applies the role
+ceiling to the record it finds.
+A tenant revoke that arrives after an invite has claimed the address and before it stored its record
+finds no role to compare: that invite fails with `403`, or the record it has just stored is removed,
+even one above the revoker's role, and no invitation is left.
+When the invitation is replaced during each attempt to remove it, it answers `429`
+`auth.too_many_requests`; the caller can try again.
 
 ### Frontend
 
@@ -1710,6 +1730,12 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | POST   | `/password/change`             | `JwtAuthGuard` + `UserStatusGuard` | Change the password, proving the current one                |
 | GET    | `/oauth/:provider`             | Public + `@SkipMfa()`              | Initiate OAuth authorization redirect                       |
 | GET    | `/oauth/:provider/callback`    | Public + `@SkipMfa()`              | Handle OAuth callback, exchange code, issue tokens          |
+
+> **Revoking one session cuts every access token of the account, the caller's included.**
+> `DELETE /sessions/:id` and `POST /sessions/revoke-all` advance the account's token epoch, because
+> a session cannot be traced to the access tokens issued from it. The caller's next request answers
+> `401` until the client refreshes; every session that was kept refreshes normally, and a revoked
+> one cannot.
 
 > **The platform plane never uses a refresh cookie.** `extractPlatformRefreshToken` reads
 > `req.body.refreshToken` in every `tokenDelivery` mode, and the access token is always the

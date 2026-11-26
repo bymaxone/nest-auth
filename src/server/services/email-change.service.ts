@@ -278,10 +278,11 @@ export class EmailChangeService implements OnModuleInit {
   /**
    * Refuses an address the account already has, or that another account in the tenant holds.
    *
-   * Answering `EMAIL_ALREADY_EXISTS` does disclose that an address is registered — the same
-   * disclosure `register` and invitation acceptance already make, and the same one the caller
-   * could obtain there. Withholding it here would buy nothing while leaving a user who typos
-   * into a colleague's address waiting on a message that never comes, with no way to tell why.
+   * Answering `EMAIL_ALREADY_EXISTS` discloses that an address is registered in the caller's
+   * tenant. Where `register` is mounted it discloses the same; where accounts are created by
+   * invitation only, this route is itself a way for a signed-in user to learn it, behind that
+   * user's password and the route's throttle. Withholding it would leave a user who typos into
+   * a colleague's address waiting on a message that never comes, with no way to tell why.
    *
    * The account's own current address is refused through the same code: it is a change that
    * changes nothing, and letting it through would send a verification for a move that is not

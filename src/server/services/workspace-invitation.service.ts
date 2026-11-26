@@ -53,6 +53,9 @@ import { pageInvitations } from '../utils/workspace-invitation-page'
 import type { InvitationPage } from '../utils/workspace-invitation-page'
 import { normalizeWorkspaceName } from '../utils/workspace-name'
 
+/** How often a revoke reads an address again when its invitation is replaced under it. */
+const REVOKE_ATTEMPTS = 3
+
 /** A live invitation and the key it is stored under. */
 interface LiveInvitation {
   key: string
@@ -180,12 +183,15 @@ export class WorkspaceInvitationService {
 
   /**
    * Withdraws a pending invitation. An address with none, or one the actor may not act on, is
-   * answered like a success and changes nothing.
+   * answered like a success and changes nothing. An invitation that replaces the one being
+   * withdrawn is read again and held to the same ceiling.
    *
    * @param ref - The workspace.
    * @param actor - Who revokes.
    * @param rawEmail - The invitee.
    * @param context - Request metadata for the hook.
+   * @throws {AuthException} `auth.too_many_requests` when the invitation was replaced during each
+   *   attempt to remove it.
    */
   async revoke(
     ref: WorkspaceRef,
@@ -193,20 +199,14 @@ export class WorkspaceInvitationService {
     rawEmail: string,
     context: HookContext
   ): Promise<void> {
-    const email = normalizeEmail(rawEmail)
-    const indexed = await pinned(this.store.readByEmail(ref, email))
-    if (indexed?.record == null || !this.members.mayActOn(actor.role, indexed.record.role)) return
-    await pinned(this.store.remove(ref, email, indexed.key))
-    this.events.emit(
-      {
-        type: 'invitation.revoked',
-        ...ref,
-        actorUserId: actor.userId,
-        email,
-        role: indexed.record.role,
-        at: new Date(Date.now()).toISOString()
-      },
-      context
+    await pinned(
+      this.withdraw(
+        ref,
+        normalizeEmail(rawEmail),
+        (record) => this.members.mayActOn(actor.role, record.role),
+        actor.userId,
+        context
+      )
     )
   }
 
@@ -342,28 +342,66 @@ export class WorkspaceInvitationService {
 
   /**
    * Withdraws a platform bootstrap invitation. An address with none, or with an ordinary member
-   * invitation, is answered like a success and changes nothing.
+   * invitation, is answered like a success and changes nothing. A replacement of the invitation
+   * being withdrawn is read again and removed only if it is a bootstrap one too.
    *
    * @param ref - The workspace id `inviteAsPlatform` returned.
    * @param rawEmail - The invitee.
    * @param context - Request metadata for the hook.
+   * @throws {AuthException} `auth.too_many_requests` when the invitation was replaced during each
+   *   attempt to remove it.
    */
   async revokeAsPlatform(ref: WorkspaceRef, rawEmail: string, context: HookContext): Promise<void> {
-    const email = normalizeEmail(rawEmail)
-    const indexed = await pinned(this.store.readByEmail(ref, email))
-    if (indexed?.record?.kind !== 'bootstrap') return
-    await pinned(this.store.remove(ref, email, indexed.key))
-    this.events.emit(
-      {
-        type: 'invitation.revoked',
-        ...ref,
-        actorUserId: null,
-        email,
-        role: indexed.record.role,
-        at: new Date(Date.now()).toISOString()
-      },
-      context
+    await pinned(
+      this.withdraw(
+        ref,
+        normalizeEmail(rawEmail),
+        (record) => record.kind === 'bootstrap',
+        null,
+        context
+      )
     )
+  }
+
+  /**
+   * Removes the address's invitation and reports it, when `mayWithdraw` accepts what is there.
+   *
+   * The report is for a removal only. When the index stops naming the record, before the record is
+   * read or before it is removed, the address is read again and what replaced it is judged anew.
+   *
+   * @param ref - The workspace.
+   * @param email - The invitee, normalized.
+   * @param mayWithdraw - Whether this caller may remove the record it is shown.
+   * @param actorUserId - Who revokes, or `null` for the platform.
+   * @param context - Request metadata for the hook.
+   */
+  private async withdraw(
+    ref: WorkspaceRef,
+    email: string,
+    mayWithdraw: (record: StoredWorkspaceInvitation) => boolean,
+    actorUserId: string | null,
+    context: HookContext
+  ): Promise<void> {
+    for (let attempt = 0; attempt < REVOKE_ATTEMPTS; attempt += 1) {
+      const indexed = await pinned(this.store.readByEmail(ref, email))
+      if (indexed === null) return
+      if (indexed.record === null) {
+        // A publish deletes the record it replaces, so a record that is gone may have a successor.
+        if (await pinned(this.store.names(ref, email, indexed.key))) return
+        continue
+      }
+      if (!mayWithdraw(indexed.record)) return
+      const removed = await pinned(this.store.remove(ref, email, indexed.key))
+      if (!removed) continue
+      const { role } = indexed.record
+      const at = new Date(Date.now()).toISOString()
+      this.events.emit(
+        { type: 'invitation.revoked', ...ref, actorUserId, email, role, at },
+        context
+      )
+      return
+    }
+    throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
   }
 
   /** Counts one invitation against the inviter's hour, refusing the twenty-first. */

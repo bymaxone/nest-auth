@@ -121,6 +121,9 @@ export class InvitationController {
    * end state and gets it; reporting the difference would turn this into an oracle for
    * "does this address have a pending invitation".
    *
+   * Answers `429` `auth.too_many_requests` when the invitation was replaced during each of the
+   * attempts to remove it.
+   *
    * @param dto - Validated payload naming the invited address.
    * @param user - Verified JWT payload from the access token.
    */
