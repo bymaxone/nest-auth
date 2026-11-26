@@ -15,6 +15,7 @@ import type { SessionAlertInfo } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logHook, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { integerReply } from '../redis/integer-reply'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { describeChannelStatus } from '../utils/describe-error'
 import { hostEntityOf } from '../utils/host-read'
@@ -471,9 +472,7 @@ export class SessionService {
       )
     )
 
-    const revoked = typeof result === 'number' ? result : 0
-
-    if (revoked === 0) {
+    if (integerReply(result) === 0) {
       throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
     }
   }

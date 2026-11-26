@@ -18,6 +18,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **An ioredis client built with `stringNumbers: true` is read correctly.** Every integer Redis answers is now read from a number or its string. This ends the effects listed as a known limit of 1.5.17: the per-IP rate limiter, the cap on `access.denied` events and the hourly cap per inviter limit again; a refresh token presented again inside its grace window is served; a workspace invite or resend no longer answers `429` for a stored invitation; `retryAfterSeconds` of a lockout is a number; the lockout counter metric counts; and `DELETE /sessions/:id` answers success and cuts the access tokens.
+
 ## [1.5.17] - 2026-11-25
 
 A patch release. An application whose auth Redis client sets `keyPrefix` no longer starts.

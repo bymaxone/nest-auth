@@ -9,6 +9,7 @@ import type { Redis } from 'ioredis'
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import { CREATE_SESSION_LUA, sessionExtraArgs } from './create-session-script'
 import type { SessionExtra } from './create-session-script'
+import { integerReply } from './integer-reply'
 import { mappingOutages } from './redis-outage'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
@@ -380,9 +381,9 @@ export class AuthRedisService {
   async del(key: string): Promise<boolean> {
     // Redis answers `DEL` with the number of keys it removed. Returning it lets a caller that
     // needs exactly-once semantics — consuming an MFA temp token, say — tell "I removed it"
-    // from "someone else already had". The count is a string under `stringNumbers`.
+    // from "someone else already had".
     const removed = await pinned(this.#redis.del(this.prefix(key)))
-    return Number(removed) > 0
+    return integerReply(removed) > 0
   }
 
   /**
@@ -414,7 +415,7 @@ export class AuthRedisService {
    * @returns The value of the key after the increment.
    */
   async incr(key: string): Promise<number> {
-    return checked(await pinned(this.#redis.incr(this.prefix(key))))
+    return checked(integerReply(await pinned(this.#redis.incr(this.prefix(key)))))
   }
 
   /**
@@ -435,7 +436,7 @@ export class AuthRedisService {
    *   does not exist.
    */
   async ttl(key: string): Promise<number> {
-    return checked(await pinned(this.#redis.ttl(this.prefix(key))))
+    return checked(integerReply(await pinned(this.#redis.ttl(this.prefix(key)))))
   }
 
   // ---------------------------------------------------------------------------
@@ -450,7 +451,7 @@ export class AuthRedisService {
    * @returns `1` if the member was added, `0` if it already existed.
    */
   async sadd(setKey: string, member: string): Promise<number> {
-    return checked(await pinned(this.#redis.sadd(this.prefix(setKey), member)))
+    return checked(integerReply(await pinned(this.#redis.sadd(this.prefix(setKey), member))))
   }
 
   /**
@@ -461,7 +462,7 @@ export class AuthRedisService {
    * @returns `1` if the member was removed, `0` if it did not exist.
    */
   async srem(setKey: string, member: string): Promise<number> {
-    return checked(await pinned(this.#redis.srem(this.prefix(setKey), member)))
+    return checked(integerReply(await pinned(this.#redis.srem(this.prefix(setKey), member))))
   }
 
   /**
@@ -483,7 +484,7 @@ export class AuthRedisService {
    */
   async sismember(setKey: string, member: string): Promise<boolean> {
     const result = await pinned(this.#redis.sismember(this.prefix(setKey), member))
-    return result === 1
+    return integerReply(result) === 1
   }
 
   // ---------------------------------------------------------------------------
@@ -654,11 +655,7 @@ export class AuthRedisService {
         [params.newSessionJson, String(params.refreshTtl), params.familyId, p.live, params.newHash]
       )
     )
-    // Narrowed rather than compared straight to `1`. `eval` answers `unknown`, and a client
-    // that surfaced the Lua integer reply as a string would make `=== 1` false — reporting a
-    // successful write as a sweep, and refusing a rotation whose session was already stored.
-    // The other script call sites in this file narrow for the same reason.
-    return typeof written === 'number' ? written === 1 : written === '1'
+    return integerReply(written) === 1
   }
 
   /**
@@ -688,7 +685,7 @@ export class AuthRedisService {
     }
     if (typeof familyId !== 'string' || familyId === '') return true
     const present = await pinned(this.#redis.exists(this.prefix(`${familyPrefix}:${familyId}`)))
-    return present === 1
+    return integerReply(present) === 1
   }
 
   /**
@@ -738,7 +735,7 @@ export class AuthRedisService {
         [this.namespace, p.live, p.detail, indexKey]
       )
     )
-    return checked({ removed: typeof removed === 'number' ? removed : 0, ownerId })
+    return checked({ removed: integerReply(removed), ownerId })
   }
 
   /**
@@ -876,10 +873,7 @@ export class AuthRedisService {
         [this.namespace, gracePrefix]
       )
     )
-    // Narrowed rather than cast: `eval` answers `unknown`, and a client that surfaced the Lua
-    // integer reply as a string would make a numeric read `NaN`.
-    if (typeof removed === 'number') return removed
-    return typeof removed === 'string' ? Number(removed) : 0
+    return integerReply(removed)
   }
 
   /**
@@ -924,9 +918,7 @@ export class AuthRedisService {
         [this.namespace, ...members]
       )
     )
-    // Narrowed rather than cast, for the reason given on `pruneExpiredGraceMembers`.
-    if (typeof removed === 'number') return removed
-    return typeof removed === 'string' ? Number(removed) : 0
+    return integerReply(removed)
   }
 
   /**
@@ -1030,7 +1022,7 @@ export class AuthRedisService {
         [String(ttl)]
       )
     )
-    return typeof result === 'number' ? result : 0
+    return integerReply(result)
   }
 
   // ---------------------------------------------------------------------------
@@ -1164,7 +1156,7 @@ export class AuthRedisService {
         [String(TOKEN_EPOCH_RETENTION_SECONDS)]
       )
     )
-    return typeof result === 'number' ? result : 0
+    return integerReply(result)
   }
 
   // ---------------------------------------------------------------------------

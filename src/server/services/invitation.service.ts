@@ -21,6 +21,7 @@ import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { integerReply } from '../redis/integer-reply'
 import { releaseIndex } from '../redis/release-index.script'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
@@ -432,9 +433,7 @@ export class InvitationService {
         [tokenHash, String(ttl), expected ?? '']
       )
     )
-    // Narrowed rather than compared straight to `1`: `eval` answers `unknown`, and a client
-    // that surfaced the Lua integer as a string would read a successful claim as contention.
-    return checked({ claimed: typeof claimed === 'number' ? claimed === 1 : claimed === '1' })
+    return checked({ claimed: integerReply(claimed) === 1 })
   }
 
   // ---------------------------------------------------------------------------
