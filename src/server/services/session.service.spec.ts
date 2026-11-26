@@ -1760,8 +1760,8 @@ describe('SessionService', () => {
       ).resolves.toBeUndefined()
     })
 
-    // Verifies that treats non-number Lua return values as 0 (SESSION_NOT_FOUND).
-    it('treats non-number Lua return values as 0 (SESSION_NOT_FOUND)', async () => {
+    // A reply that is no count is a fault of the store, not a session that was not found.
+    it('refuses a non-number Lua return value as auth.internal', async () => {
       const hash = sha256('non-number-lua')
       mockRedis.eval.mockResolvedValue(null)
 
@@ -1771,7 +1771,7 @@ describe('SessionService', () => {
       } catch (e) {
         thrown = e
       }
-      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.INTERNAL)
     })
 
     // Verifies that throws SESSION_NOT_FOUND when a valid hash belongs to a different user (BOLA).

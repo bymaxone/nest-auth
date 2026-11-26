@@ -18,6 +18,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.19] - 2026-11-26
+
+A patch release. A Redis reply that should be an integer and is not now fails the call.
+
+### Fixed
+
+- **A reply that spells no integer is no longer read as `0`.** A `nil`, an `OK`, a fraction or a missing reply to an integer command or script counted as zero: the rate limiter and the brute-force counters stayed under their limits, and a lockout reported no time left. Such a reply now fails the call with `auth.internal` (HTTP 500). A number, and the decimal string a client built with `stringNumbers: true` answers, read as before. **Apply to a derived backend:** nothing to change against Redis. A test double or a proxy in front of Redis has to answer an integer to `DEL`, `INCR`, `TTL`, `SADD`, `SREM`, `SISMEMBER` and to the scripts that return one; one that answered nothing used to pass.
+- **A tenantless WebSocket ticket is refused before the platform account is read.** `WsJwtGuard` admits dashboard sockets only, and read the platform account of such a ticket before refusing it. `WsTicketService.redeem` takes an optional third argument, `{ requireTenant: true }`, which the guard passes. **Apply to a derived backend:** at the guard, a tenantless ticket of a blocked platform account now answers `auth.token_invalid` instead of the code of the status. A direct call of `redeem` without the argument behaves as before.
+
 ## [1.5.18] - 2026-11-26
 
 A patch release. An auth Redis client with a string `keyPrefix` starts again.

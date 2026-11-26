@@ -31,6 +31,9 @@ const OPTIONS = {
   blockedStatuses: ['BANNED']
 }
 
+// A script that removed one key, as Redis answers it.
+const answersOne = (): Promise<number> => Promise.resolve(1)
+
 /** The service with a hook that fails the way `fail` says, and the account it creates. */
 async function serviceWith(
   afterInvitationAccepted: (() => unknown) | null
@@ -75,7 +78,7 @@ async function serviceWith(
       },
       {
         provide: AuthRedisService,
-        useValue: { getdel: jest.fn().mockResolvedValue(stored), eval: jest.fn() }
+        useValue: { getdel: jest.fn().mockResolvedValue(stored), eval: answersOne }
       }
     ]
   }).compile()

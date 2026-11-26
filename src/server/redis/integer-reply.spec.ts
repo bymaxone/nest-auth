@@ -5,21 +5,51 @@
  */
 
 import { integerReply } from './integer-reply'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 
 describe('integerReply', () => {
-  // Scenario: each shape a client or script can answer. Expected: the integer it spells, else 0.
+  // Scenario: each way a client or script spells an integer. Expected: that integer.
   it.each([
     ['a number', 3, 3],
+    ['zero', 0, 0],
     ['a negative number', -2, -2],
     ['a string', '12', 12],
-    ['a negative string', '-1', -1],
-    ['a string spelling no number', 'OK', 0],
-    ['a fraction', '1.5', 0],
-    ['a nil reply', null, 0],
-    ['no reply', undefined, 0],
-    ['a boolean', true, 0],
-    ['an array', ['1'], 0]
+    ['a negative string', '-1', -1]
   ])('reads %s', (_label, reply, expected) => {
     expect(integerReply(reply)).toBe(expected)
+  })
+
+  // Scenario: a reply that spells no integer. Expected: `auth.internal`, never a number.
+  it.each([
+    ['a string spelling no number', 'OK'],
+    ['an empty string', ''],
+    ['a blank string', ' '],
+    ['a padded string', ' 1'],
+    ['a hexadecimal string', '0x1'],
+    ['a fraction', '1.5'],
+    ['a fractional number', 1.5],
+    ['a nil reply', null],
+    ['no reply', undefined],
+    ['a boolean', true],
+    ['an array', ['1']]
+  ])('refuses %s', (_label, reply) => {
+    expect(() => integerReply(reply)).toThrow(
+      expect.objectContaining({
+        response: { error: expect.objectContaining({ code: AUTH_ERROR_CODES.INTERNAL }) }
+      })
+    )
+  })
+
+  // Scenario: an operator reads the refusal. Expected: the cause names what was wrong.
+  it('carries a cause that names the reply', () => {
+    let thrown: unknown
+    try {
+      integerReply('OK')
+    } catch (error) {
+      thrown = error
+    }
+    expect((thrown as Error).cause).toEqual(
+      new Error('Redis answered a reply that is not an integer')
+    )
   })
 })

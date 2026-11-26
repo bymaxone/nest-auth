@@ -125,6 +125,40 @@ describe('WsTicketService.redeem against the present', () => {
     expect(userRepo.findById).not.toHaveBeenCalled()
   })
 
+  // Scenario: a dashboard caller redeems a snapshot with no tenant. Expected: refused, and nothing
+  // is read for it. Why: the socket is refused either way, so the reads buy nothing.
+  it.each([
+    ['no tenant', platformSnapshot()],
+    ['an empty tenant', snapshot({ tenantId: '' })]
+  ])('refuses %s before any read when a tenant is required', async (_label, stored) => {
+    redis.redeemWsTicket.mockResolvedValue(stored)
+
+    await expect(service.redeem('t', undefined, { requireTenant: true })).rejects.toMatchObject(
+      refusedAs(AUTH_ERROR_CODES.TOKEN_INVALID)
+    )
+    expect(revocation.isAccessTokenRevoked).not.toHaveBeenCalled()
+    expect(accountStatus.assertPlatformAccountUsable).not.toHaveBeenCalled()
+    expect(userRepo.findById).not.toHaveBeenCalled()
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it.each([[{}], [{ requireTenant: false }], [undefined]])(
+    'checks the platform account of a tenantless snapshot under %p',
+    async (options) => {
+      redis.redeemWsTicket.mockResolvedValue(platformSnapshot())
+
+      await service.redeem('t', undefined, options)
+
+      expect(accountStatus.assertPlatformAccountUsable).toHaveBeenCalledWith('user-9')
+    }
+  )
+
+  it('admits a snapshot with a tenant when one is required', async () => {
+    await expect(service.redeem('t', undefined, { requireTenant: true })).resolves.toStrictEqual(
+      snapshot()
+    )
+  })
+
   it.each([
     ['ended a second ago', NOW_SECONDS - 1],
     ['ends now', NOW_SECONDS]
