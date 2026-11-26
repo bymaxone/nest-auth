@@ -207,6 +207,14 @@ function tokenEpochFor(userId: string, tenantId: string): string {
   return `ep:${createHmac('sha256', hmacKey).update(subject).digest('hex')}`
 }
 
+/**
+ * The key as the server holds it. Against a real Redis each bootstrap has a namespace of its own,
+ * so a key seeded under a fixed one is never read.
+ */
+function storedKey(boot: BootstrappedTestApp, suffix: string): string {
+  return `${boot.options.redisNamespace ?? 'auth'}:${suffix}`
+}
+
 describe('WsJwtGuard under a real handshake (E2E)', () => {
   let boot: BootstrappedTestApp
   let app: INestApplication
@@ -450,9 +458,10 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
   // downstream tenant check silently compares against `undefined`.
   it('refuses a ticket that redeems to a snapshot with no tenant', async () => {
     const ticket = 'a'.repeat(64)
+    const key = storedKey(boot, `wst:${sha256(ticket)}`)
 
     await boot.redis.set(
-      `auth:wst:${sha256(ticket)}`,
+      key,
       JSON.stringify({
         sub: 'platform-admin-1',
         role: 'SUPER_ADMIN',
@@ -465,6 +474,8 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
     const result = await whoami(port, { ticket })
 
     expect(result.ok).toBe(false)
+    // The redemption takes the record, so its absence shows the refusal came after reading it.
+    await expect(boot.redis.get(key)).resolves.toBeNull()
   })
 
   // Revocation reaches the socket. A logout kills the HTTP session, and a WebSocket opened with
@@ -532,7 +543,7 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
     const id = (registered.body.user as { id: string }).id
     const ticket = await mintTicket(token)
 
-    await boot.redis.set(`auth:${tokenEpochFor(id, 'tenant-1')}`, '99')
+    await boot.redis.set(storedKey(boot, tokenEpochFor(id, 'tenant-1')), '99')
 
     const after = await whoami(port, { ticket })
     expect(after.ok).toBe(false)
@@ -565,7 +576,7 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
     const before = await whoami(port, { token: accessToken })
     expect(before.ok).toBe(true)
 
-    await boot.redis.set(`auth:${tokenEpochFor(userId, 'tenant-1')}`, '99')
+    await boot.redis.set(storedKey(boot, tokenEpochFor(userId, 'tenant-1')), '99')
 
     const after = await whoami(port, { token: accessToken })
     expect(after.ok).toBe(false)

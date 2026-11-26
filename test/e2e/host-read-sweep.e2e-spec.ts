@@ -43,6 +43,7 @@ import {
   createMockRedis,
   createMockUserRepository,
   createRedis,
+  realRedisNamespace,
   JWT_SECRET,
   MFA_ENCRYPTION_KEY
 } from './setup'
@@ -213,9 +214,14 @@ async function apiKeyHarness(
   }
 }
 
-/** The resolved options of a module with workspaces enabled. */
+/**
+ * The resolved options of a module with workspaces enabled. Against a real Redis each call has a
+ * namespace of its own: a membership cached by an earlier pass would answer without reading a row.
+ */
 function workspaceOptions(): ReturnType<typeof resolveOptions> {
+  const namespace = realRedisNamespace()
   return resolveOptions({
+    ...(namespace === undefined ? {} : { redisNamespace: namespace }),
     jwt: { secret: JWT_SECRET },
     roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
     rateLimit: { clientIpSource: 'peer' },
@@ -225,6 +231,9 @@ function workspaceOptions(): ReturnType<typeof resolveOptions> {
     }
   })
 }
+
+/** The clients `accessService` opened, one a pass; a real connection stays open until closed. */
+const accessClients: ReturnType<typeof createRedis>[] = []
 
 /** The access service over the guarded workspace and membership repositories, one of whose rows answers through the traps. */
 function accessService(
@@ -264,8 +273,10 @@ function accessService(
     { find: async (): Promise<unknown> => answer(row.membership, which === 'membership') },
     MEMBERSHIP_REPOSITORY_CONTRACT
   )
+  const client = createRedis()
+  accessClients.push(client)
   return new WorkspaceAccessService(
-    new AuthRedisService(createRedis(), options),
+    new AuthRedisService(client, options),
     workspaces as never,
     memberships as never,
     options
@@ -274,6 +285,10 @@ function accessService(
 
 describe('the host-read sweep', () => {
   jest.setTimeout(300_000)
+
+  afterAll(() => {
+    for (const client of accessClients) client.disconnect()
+  })
 
   // Scenario: the options the host returns from the factory. Expected: every read that throws ends in the
   // library's configuration error with the fault as its cause. Why: the options are read by property access in
