@@ -193,10 +193,11 @@ describe('invitation claim-then-write window (E2E)', () => {
     expect(sent.filter((mail) => mail.to === INVITEE)).toHaveLength(0)
   })
 
-  // Scenario: a re-invite lands after a revoke has read the invitation and before it drops the
-  // index. Expected: the replacement stays indexed, and the next revoke removes it. Why: an index
-  // dropped without comparing it leaves the new token redeemable, out of reach of every later
-  // revoke, and lets a further invite add a second live token beside it.
+  // Scenario: a re-invite lands after a revoke has read the invitation and before it releases the
+  // index. Expected: the release leaves the replacement indexed, and the same revoke reads the
+  // address again and removes it. Why: an index dropped without comparing it leaves the new token
+  // redeemable, out of reach of every later revoke, and lets a further invite add a second live
+  // token beside it.
   it('keeps a replacement revocable when it lands during a revoke', async () => {
     const tokens = emailedTokens()
     await invite()
