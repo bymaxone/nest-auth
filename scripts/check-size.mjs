@@ -180,7 +180,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     `keyPrefix`, the string forms of integer replies, the one-step invitation scripts, the websocket ticket
 //     checks at redeem and the current-session fallback of the listing.
 //     187.45 KiB (191,951 B) sits 30 B above the measured 191,921 B, which also holds the refusal of a reply
-//     or stored counter that is no integer and of a tenantless socket ticket before any read.
+//     or stored counter that is no integer and of a tenantless socket ticket before any other read.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
