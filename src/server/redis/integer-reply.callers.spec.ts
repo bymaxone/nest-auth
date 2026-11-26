@@ -139,14 +139,14 @@ describe('a reply that spells no integer', () => {
     async (reply) => {
       const reflector = Object.assign(new Reflector(), { get: () => ({ limit: 3, ttl: 60_000 }) })
       const guard = new AuthRateLimitGuard(reflector, OPTIONS, answering(reply))
-      const context = {
+      const context: ExecutionContext = Object.assign(Object.create(null), {
         getHandler: () => function login(): void {},
         getClass: () => class AuthController {},
         switchToHttp: () => ({
           getRequest: () => ({ socket: { remoteAddress: '198.51.100.9' } }),
           getResponse: () => ({ setHeader: jest.fn() })
         })
-      } as unknown as ExecutionContext
+      })
 
       await expect(guard.canActivate(context)).rejects.toMatchObject(refused)
     }

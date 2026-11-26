@@ -13,7 +13,7 @@
     "src/server/oauth/oauth.controller.spec.ts": 1078,
     "src/server/oauth/oauth.service.spec.ts": 1534,
     "src/server/providers/default-auth-email.provider.spec.ts": 1201,
-    "src/server/redis/auth-redis.service.spec.ts": 1363,
+    "src/server/redis/auth-redis.service.spec.ts": 1362,
     "src/server/redis/auth-redis.service.ts": 1182,
     "src/server/services/auth.service.spec.ts": 3599,
     "src/server/services/auth.service.ts": 1439,
