@@ -97,12 +97,11 @@ export class SessionController {
    * Lists all active sessions for the authenticated user.
    *
    * Reads the `sess:{userId}` SET, fetches detail records for each session, and
-   * marks the caller's session as `isCurrent: true` if a valid refresh token is
-   * present in the request. Sessions with missing or stale detail records are
-   * silently excluded and cleaned up asynchronously.
+   * marks the caller's session as `isCurrent: true`. Sessions with missing or stale
+   * detail records are silently excluded and cleaned up asynchronously.
    *
    * @param user - Verified JWT payload from the access token.
-   * @param req - Incoming request (used to extract the refresh token for `isCurrent` detection).
+   * @param req - Incoming request, read for the refresh token.
    * @returns Array of {@link SessionInfo} sorted newest-first.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.listSessions)
