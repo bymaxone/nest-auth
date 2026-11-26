@@ -50,6 +50,8 @@ A patch release. An application whose auth Redis client sets `keyPrefix` no long
 
 `InvitationService.revokeInvitation` and the workspace revokes can now refuse with `TOO_MANY_REQUESTS`. A backend that shares the keyspace drops an invitee index only while it still names the invitation it acted on.
 
+An auth Redis client with `keyPrefix` is refused at startup. Its keys are stored under `keyPrefix`, then `redisNamespace`, then `:`. To keep their names, remove `keyPrefix` and set `redisNamespace` to the prefix followed by the namespace it had (`auth` when it was not set): a live session then still refreshes and a logged-out access token stays refused. Removing the prefix alone refused the session and accepted the logged-out access token again. A refresh token that outlived a revoke-all made under the prefix also outlives the move, and a later revoke-all does not end it. Deleting the `rt:` and `rp:` keys of the new namespace (`prt:` and `prp:` on the platform plane) ends such tokens, along with every other refresh token of that plane.
+
 ## [1.5.16] - 2026-11-25
 
 A patch release.

@@ -1037,7 +1037,8 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > reset and the MFA changes end sessions through the same script), reusing a rotated refresh token
 > does not revoke its family, and a refresh retried inside its grace window is refused. The module
 > fails at startup instead, for a standalone client and for a cluster. To namespace the keys, set the
-> `redisNamespace` option.
+> `redisNamespace` option. An application that already stored keys under a prefix should read the
+> 1.5.17 CHANGELOG entry before changing either.
 
 The breach check is opt-in for a different reason: it is the only part of the credential path
 that reaches the network, and a library should not start talking to a third party because it was
