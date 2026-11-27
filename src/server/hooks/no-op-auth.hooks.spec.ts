@@ -1,6 +1,11 @@
 import { Test } from '@nestjs/testing'
 
-import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type {
+  BeforeRegisterResult,
+  HookContext,
+  IAuthHooks,
+  OAuthLoginResult
+} from '../interfaces/auth-hooks.interface'
 import type { OAuthProfile } from '../interfaces/oauth-provider.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
 import { NoOpAuthHooks } from './no-op-auth.hooks'
@@ -66,8 +71,8 @@ describe('NoOpAuthHooks', () => {
     })
 
     // Verifies that the no-op hook does not reject any registration regardless of the input data.
-    it('should return { allowed: true } regardless of input', () => {
-      const result = hooks.beforeRegister(
+    it('should return { allowed: true } regardless of input', async () => {
+      const result = await hooks.beforeRegister(
         { email: 'blocked@blacklist.com', name: 'Attacker', tenantId: 'tenant-x' },
         CONTEXT
       )
@@ -113,9 +118,9 @@ describe('NoOpAuthHooks', () => {
     })
 
     // Verifies that when the existing user email does not match the profile email, the hook returns { action: 'reject' }.
-    it('should return { action: "reject" } when existing user email does not match profile email', () => {
+    it('should return { action: "reject" } when existing user email does not match profile email', async () => {
       const mismatchedUser: SafeAuthUser = { ...EXISTING_USER, email: 'other@example.com' }
-      const result = hooks.onOAuthLogin(PROFILE, mismatchedUser, CONTEXT)
+      const result = await hooks.onOAuthLogin(PROFILE, mismatchedUser, CONTEXT)
       expect(result.action).toBe('reject')
       // Assert the exact reason text — `toBeDefined()` alone passes for an empty
       // string and lets a `reason: '' ` mutation survive.
@@ -145,6 +150,29 @@ describe('NoOpAuthHooks', () => {
     it('should not implement afterLogout (no-op by omission)', () => {
       const hooksAsInterface = hooks as IAuthHooks
       expect(hooksAsInterface.afterLogout).toBeUndefined()
+    })
+  })
+})
+
+describe('NoOpAuthHooks as a base class', () => {
+  // The assertion is the compilation: `pnpm typecheck` fails when a subclass may not be async.
+  it('lets a subclass override its methods with async ones', async () => {
+    class Remote extends NoOpAuthHooks {
+      override async beforeRegister(): Promise<BeforeRegisterResult> {
+        return { allowed: false }
+      }
+
+      override async onOAuthLogin(): Promise<OAuthLoginResult> {
+        return { action: 'reject' }
+      }
+    }
+    const hooks: IAuthHooks = new Remote()
+
+    await expect(
+      hooks.beforeRegister?.({ email: 'a@b.c', name: 'A', tenantId: 't1' }, CONTEXT)
+    ).resolves.toEqual({ allowed: false })
+    await expect(hooks.onOAuthLogin?.(PROFILE, null, CONTEXT)).resolves.toEqual({
+      action: 'reject'
     })
   })
 })

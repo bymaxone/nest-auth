@@ -29,6 +29,7 @@ import type { AuthWorkspace, WorkspaceRef } from '../interfaces/workspace-reposi
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
 import { hasRole } from '../utils/roles.util'
 import { checked, pinned, PinnedAll } from '../utils/settle'
+import { reportAfter } from '../utils/settle-writes'
 
 /** The most rows one page may hold. */
 export const MAX_PAGE_SIZE = 100
@@ -313,8 +314,7 @@ export class MembershipService {
         audit: event
       })
     )
-    await pinned(this.settle(result, ref, [userId]))
-    this.events.emit(event, context)
+    await pinned(this.settle(result, ref, [userId], () => this.events.emit(event, context)))
   }
 
   /**
@@ -412,8 +412,9 @@ export class MembershipService {
       })
     )
     if (result === 'target_not_member') throw invalid('userId', 'userId must be an active member')
-    await pinned(this.settle(result, ref, [fromUserId, toUserId]))
-    this.events.emit(event, context)
+    await pinned(
+      this.settle(result, ref, [fromUserId, toUserId], () => this.events.emit(event, context))
+    )
   }
 
   /**
@@ -578,24 +579,30 @@ export class MembershipService {
         audit: event
       })
     )
-    await pinned(this.settle(result, ref, [userId]))
-    this.events.emit(event, context)
+    await pinned(this.settle(result, ref, [userId], () => this.events.emit(event, context)))
   }
 
   /**
-   * Turns a guarded write's outcome into an error, or ends the affected members' cached access.
-   * A bump that fails throws, so the change is never reported as done.
+   * Turns a guarded write's outcome into an error, or ends the affected members' cached access and
+   * reports the change. A bump that fails throws to the caller, and the change it follows is still
+   * reported, because it was written.
    */
   private async settle(
     result: MemberChangeResult,
     ref: WorkspaceRef,
-    userIds: string[]
+    userIds: string[],
+    report: () => void
   ): Promise<void> {
     if (result === 'not_found') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     if (result === 'last_owner') throw new AuthException(AUTH_ERROR_CODES.LAST_OWNER)
     if (result === 'actor_changed') {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
     }
+    await pinned(reportAfter(() => this.dropCachedAccess(ref, userIds), report))
+  }
+
+  /** Ends the cached access of each of these members, one at a time. */
+  private async dropCachedAccess(ref: WorkspaceRef, userIds: string[]): Promise<void> {
     for (const userId of userIds) {
       await pinned(this.access.invalidateMembership({ ...ref, userId }))
     }

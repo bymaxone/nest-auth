@@ -45,7 +45,7 @@ export class NoOpAuthHooks implements IAuthHooks {
   beforeRegister(
     _data: { email: string; name: string; tenantId: string },
     _context: HookContext
-  ): BeforeRegisterResult {
+  ): BeforeRegisterResult | Promise<BeforeRegisterResult> {
     return { allowed: true }
   }
 
@@ -62,7 +62,7 @@ export class NoOpAuthHooks implements IAuthHooks {
     profile: OAuthProfile,
     existingUser: SafeAuthUser | null,
     _context: HookContext
-  ): OAuthLoginResult {
+  ): OAuthLoginResult | Promise<OAuthLoginResult> {
     if (existingUser === null) {
       return { action: 'create' }
     }

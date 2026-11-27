@@ -107,3 +107,28 @@ describe('SessionService with a hook that throws synchronously', () => {
     ])
   })
 })
+
+describe('SessionService calling a hook of a class', () => {
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  it('calls onNewSession on the hooks object, so the method can read its own fields', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    class Recording {
+      readonly seen: string[] = []
+
+      onNewSession(user: { id: string }): void {
+        this.seen.push(user.id)
+      }
+    }
+    const hooks = new Recording()
+    const service = build(hooks as never, [])
+
+    await service.createSession(PARAMS)
+    await flush()
+
+    expect(hooks.seen).toEqual(['user-1'])
+    expect(eventsReceived(error)).toEqual([])
+  })
+})

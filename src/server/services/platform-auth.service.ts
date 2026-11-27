@@ -22,12 +22,14 @@ import type {
   RotatedTokenResult
 } from '../interfaces/auth-result.interface'
 import type {
+  AuthPlatformUser,
   IPlatformUserRepository,
   SafeAuthPlatformUser
 } from '../interfaces/platform-user-repository.interface'
 import { logEvent, logHook } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { platformUserAsSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
 import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
@@ -172,8 +174,27 @@ export class PlatformAuthService {
 
     // Fire-and-forget: a slow or failing DB update must not block the auth response.
     this.touchLastLogin(admin.id)
+    this.runAfterLogin(admin, ip, userAgent)
 
     return checked(result)
+  }
+
+  /** Tells the host of a sign-in that needed no second factor, without making the login wait. */
+  private runAfterLogin(admin: AuthPlatformUser, ip: string, userAgent: string): void {
+    if (!this.hooks?.afterLogin) return
+    const afterLogin = this.hooks.afterLogin.bind(this.hooks)
+    runDetached(
+      this.logger,
+      () =>
+        afterLogin(platformUserAsSafeUser(admin), {
+          plane: 'platform',
+          userId: admin.id,
+          ip,
+          userAgent,
+          sanitizedHeaders: {}
+        }),
+      'afterLogin'
+    )
   }
 
   /** Records the time of a login without making the login wait for it; a failure is logged, never raised. */

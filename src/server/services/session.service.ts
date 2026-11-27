@@ -292,7 +292,7 @@ export class SessionService {
 
     // Fire onNewSession hook — fire-and-forget; errors must not propagate.
     if (this.hooks?.onNewSession) {
-      const { onNewSession } = this.hooks
+      const onNewSession = this.hooks.onNewSession.bind(this.hooks)
       const minimalSessionInfo: SessionAlertInfo = {
         device,
         ip,

@@ -1056,7 +1056,11 @@ export class AuthService {
       runDetached(
         this.logger,
         () =>
-          afterEmailVerified(toSafeUser(user), { ...createEmptyHookContext(), plane: 'dashboard' }),
+          // The record was read before the write above, so the flag is set to what was written.
+          afterEmailVerified(toSafeUser({ ...user, emailVerified: true }), {
+            ...createEmptyHookContext(),
+            plane: 'dashboard'
+          }),
         'afterEmailVerified'
       )
     }

@@ -69,6 +69,12 @@ export interface HookContext {
    * and all keys are normalized to lowercase.
    */
   sanitizedHeaders: Record<string, string | string[] | undefined>
+  /**
+   * `true` only on the {@link IAuthHooks.beforeWorkspaceCreate} call made before an invitation
+   * signup creates its account. The `user` of that call is provisional: its `id` is empty, so it
+   * cannot be looked up. Absent on every other call.
+   */
+  accountPending?: boolean
 }
 
 /**
@@ -482,6 +488,11 @@ export interface IAuthHooks {
    * `workspaces.allowCreate` first, an invitation acceptance does not. A refusal answers
    * `403 auth.forbidden`; `reason` is returned to the caller, so keep it free of anything
    * sensitive. A hook that throws refuses the creation too.
+   *
+   * On an invitation signup (by password or through an OAuth provider) the call comes before the
+   * account exists, so that a refusal leaves no account behind: `context.accountPending` is `true`
+   * and `user` is provisional, with an empty `id`, `role` and `status`. Test the flag rather than
+   * looking the user up by id.
    *
    * @param user - The identity creating the workspace.
    * @param data - What it asked for: the trimmed name.

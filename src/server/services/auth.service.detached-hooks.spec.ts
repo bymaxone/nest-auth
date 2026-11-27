@@ -35,9 +35,13 @@ const RESULT = { user: { id: 'user-1' }, accessToken: 'a', rawRefreshToken: 'r' 
 const REQUEST = { ip: '1.2.3.4', headers: { 'user-agent': 'jest' } } as Partial<Request> as Request
 
 /** Every collaborator is a mock that answers the way a successful flow needs. */
-function build(hooks: Record<string, jest.Mock>, existing = true): AuthService {
+function build(
+  hooks: Record<string, jest.Mock>,
+  existing: boolean | typeof USER = true
+): AuthService {
+  const found = existing === true ? USER : existing || null
   const userRepo = {
-    findByEmail: jest.fn().mockResolvedValue(existing ? USER : null),
+    findByEmail: jest.fn().mockResolvedValue(found),
     findById: jest.fn().mockResolvedValue(USER),
     create: jest.fn().mockResolvedValue(USER),
     updateLastLogin: jest.fn().mockResolvedValue(undefined),
@@ -140,5 +144,28 @@ describe('AuthService with a hook that throws synchronously', () => {
     expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterEmailVerified', how: 'threw' }, [
       'hook broke'
     ])
+  })
+})
+
+describe('AuthService afterEmailVerified payload', () => {
+  beforeEach(() => {
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  it('hands the hook the account as the verification left it', async () => {
+    const hooks = { afterEmailVerified: jest.fn() }
+    const service = build(hooks, { ...USER, emailVerified: false })
+
+    await service.verifyEmail('tenant-1', 'user@example.com', '123456', REQUEST)
+
+    expect(hooks.afterEmailVerified).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'user-1', emailVerified: true }),
+      expect.objectContaining({ plane: 'dashboard' })
+    )
+    expect(hooks.afterEmailVerified.mock.calls[0][0]).not.toHaveProperty('passwordHash')
   })
 })

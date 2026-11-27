@@ -85,7 +85,7 @@ const users = {
 const hooks = { onOAuthLogin: jest.fn(), afterLogin: jest.fn() }
 const redis = { set: jest.fn(), getdel: jest.fn() }
 const tokens = { issueTokens: jest.fn(), issueMfaTempToken: jest.fn() }
-const accepts = { prepareOAuth: jest.fn(), completeOAuth: jest.fn() }
+const accepts = { prepareOAuth: jest.fn(), judgeNewAccount: jest.fn(), completeOAuth: jest.fn() }
 
 /** The service under test, with the resolved options a case needs and the accept service or none. */
 async function build(
@@ -137,6 +137,7 @@ describe('OAuthService with workspace invitations', () => {
     tokens.issueTokens.mockResolvedValue({ user: USER, accessToken: 'a', rawRefreshToken: 'r' })
     accepts.prepareOAuth.mockResolvedValue(LOADED)
     accepts.completeOAuth.mockResolvedValue({ workspaceId: 'w1', role: 'viewer' })
+    accepts.judgeNewAccount.mockResolvedValue(false)
   })
 
   describe('initiating a flow', () => {
@@ -255,7 +256,8 @@ describe('OAuthService with workspace invitations', () => {
         LOADED,
         USER,
         true,
-        expect.objectContaining({ tenantId: 'tenant-1', email: PROFILE.email, userId: USER.id })
+        expect.objectContaining({ tenantId: 'tenant-1', email: PROFILE.email, userId: USER.id }),
+        false
       )
     })
 
@@ -280,7 +282,14 @@ describe('OAuthService with workspace invitations', () => {
 
       await callback(service, stored({ workspaceInvitation: HASH }))
 
-      expect(accepts.completeOAuth).toHaveBeenCalledWith(LOADED, USER, false, expect.anything())
+      expect(accepts.judgeNewAccount).not.toHaveBeenCalled()
+      expect(accepts.completeOAuth).toHaveBeenCalledWith(
+        LOADED,
+        USER,
+        false,
+        expect.anything(),
+        false
+      )
     })
 
     it('refuses before the hook or any account is touched when the invitation cannot be honoured', async () => {
@@ -355,6 +364,61 @@ describe('OAuthService with workspace invitations', () => {
         AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN
       )
       expect(users.createWithOAuth).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('the host judging a workspace before the account exists', () => {
+    it('is asked about the account to be created, before it is, and completion is told', async () => {
+      const service = await build()
+      accepts.judgeNewAccount.mockResolvedValue(true)
+
+      await callback(service, stored({ workspaceInvitation: HASH }))
+
+      expect(accepts.judgeNewAccount).toHaveBeenCalledWith(
+        LOADED,
+        { email: PROFILE.email, name: PROFILE.name },
+        expect.objectContaining({ tenantId: 'tenant-1', email: PROFILE.email })
+      )
+      expect(accepts.judgeNewAccount.mock.calls[0]?.[2]).not.toHaveProperty('userId')
+      expect(accepts.judgeNewAccount.mock.invocationCallOrder[0]).toBeLessThan(
+        users.createWithOAuth.mock.invocationCallOrder[0] as number
+      )
+      expect(accepts.completeOAuth.mock.calls[0]?.[4]).toBe(true)
+    })
+
+    it('names the account after the address when the profile carries no name', async () => {
+      const service = await build()
+      plugin.fetchProfile.mockResolvedValue({ ...PROFILE, name: undefined })
+
+      await callback(service, stored({ workspaceInvitation: HASH }))
+
+      expect(accepts.judgeNewAccount.mock.calls[0]?.[1]).toEqual({
+        email: PROFILE.email,
+        name: 'invitee'
+      })
+    })
+
+    it('creates no account when the host refuses', async () => {
+      const service = await build()
+      accepts.judgeNewAccount.mockRejectedValue(new Error('refused'))
+
+      await expect(callback(service, stored({ workspaceInvitation: HASH }))).rejects.toThrow(
+        'refused'
+      )
+
+      expect(users.createWithOAuth).not.toHaveBeenCalled()
+      expect(accepts.completeOAuth).not.toHaveBeenCalled()
+    })
+
+    it('is not asked for an address that already has an account', async () => {
+      const service = await build()
+      users.findByEmail.mockResolvedValue(USER)
+
+      expect(await code(callback(service, stored({ workspaceInvitation: HASH })))).toBe(
+        AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH
+      )
+
+      expect(accepts.judgeNewAccount).not.toHaveBeenCalled()
     })
   })
 

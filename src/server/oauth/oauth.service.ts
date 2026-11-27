@@ -68,6 +68,8 @@ const OAUTH_STATE_TTL_SECONDS = 600
 
 /** A vetted invitation, waiting for the account its flow signs in. */
 interface PendingInvitation {
+  /** Asks the host about the account the flow is about to create; refuses by throwing. */
+  judgeNewAccount(account: { email: string; name: string }, context: HookContext): Promise<void>
   /** Writes the membership for `user` and spends the token; `created` is whether the flow made the account. */
   complete(user: AuthUser, created: boolean, context: HookContext): Promise<void>
 }
@@ -314,7 +316,10 @@ export class OAuthService {
     }
 
     const authUser = await pinned(
-      this.resolveAccount({ provider, tenantId, profile, hookResult, existingAuthUser }, invitation)
+      this.resolveAccount(
+        { provider, tenantId, profile, hookResult, existingAuthUser, hookContext },
+        invitation
+      )
     )
 
     this.assertMaySignIn(authUser)
@@ -596,13 +601,15 @@ export class OAuthService {
    * @param provider - The provider name.
    * @param tenantId - The tenant the flow resolved to.
    * @param profile - The provider's profile.
+   * @param beforeCreate - Told what is about to be created; throwing creates nothing.
    * @returns The created account.
    * @throws `AuthException(OAUTH_EMAIL_MISMATCH)` when the address already belongs to an account.
    */
   private async createAccount(
     provider: string,
     tenantId: string,
-    profile: OAuthProfile
+    profile: OAuthProfile,
+    beforeCreate: (account: { email: string; name: string }) => Promise<unknown>
   ): Promise<AuthUser> {
     // `String.prototype.split` always returns at least one element on a
     // non-empty input (which `@IsEmail` has already validated), so the
@@ -625,6 +632,8 @@ export class OAuthService {
       logEvent(this.logger, 'AUTH_OAUTH_CREATE_REFUSED')
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
     }
+
+    await pinned(beforeCreate({ email: profile.email, name: derivedName }))
 
     const created = await pinned(
       this.userRepo.createWithOAuth({
@@ -694,7 +703,8 @@ export class OAuthService {
    * vetted invitation; linking and signing in an existing account are not sign-ups.
    *
    * @param flow - What the callback resolved: the provider, the tenant, the verified profile, the
-   *   hook's decision and the account already linked to this identity, or `null`.
+   *   hook's decision, the account already linked to this identity, or `null`, and the context the
+   *   hooks are given.
    * @param invitation - The invitation the flow carries, or `null`.
    * @returns The account the flow signs in.
    * @throws `AuthException` for a rejected flow, a closed registration, a `link` with no account
@@ -707,6 +717,7 @@ export class OAuthService {
       profile: OAuthProfile
       hookResult: OAuthLoginResult
       existingAuthUser: AuthUser | null
+      hookContext: HookContext
     },
     invitation: PendingInvitation | null
   ): Promise<AuthUser> {
@@ -716,7 +727,13 @@ export class OAuthService {
         if (invitation === null && this.options.registration === 'invitation-only') {
           throw new AuthException(AUTH_ERROR_CODES.REGISTRATION_CLOSED)
         }
-        return checked(await pinned(this.createAccount(provider, tenantId, profile)))
+        return checked(
+          await pinned(
+            this.createAccount(provider, tenantId, profile, async (account) =>
+              invitation?.judgeNewAccount(account, flow.hookContext)
+            )
+          )
+        )
       case 'link':
         return checked(await pinned(this.linkAccount(provider, profile, existingAuthUser)))
       case 'reject':
@@ -749,9 +766,13 @@ export class OAuthService {
         emailVerified: profile.emailVerified
       })
     )
+    let hostAsked = false
     return checked({
+      judgeNewAccount: async (account, context): Promise<void> => {
+        hostAsked = await pinned(accepts.judgeNewAccount(loaded, account, context))
+      },
       complete: async (user, created, context): Promise<void> => {
-        await pinned(accepts.completeOAuth(loaded, user, created, context))
+        await pinned(accepts.completeOAuth(loaded, user, created, context, hostAsked))
       }
     })
   }
