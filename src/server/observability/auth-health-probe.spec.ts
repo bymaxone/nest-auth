@@ -166,7 +166,8 @@ describe('AuthHealthProbe', () => {
     const recovered = probe.ping()
     expect(asked).toHaveBeenCalledTimes(2)
     stuck.resolve('LOADING')
-    await Promise.resolve()
+    // A turn of the event loop, so that everything the late answer sets off has run.
+    await new Promise((resolve) => setImmediate(resolve))
     const sharedWithFresh = probe.ping()
     expect(asked).toHaveBeenCalledTimes(2)
     fresh.resolve('PONG')
