@@ -1013,8 +1013,7 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > `{ error: { code, message, details: null } }`; nothing of the store reaches the body, and no
 > `Retry-After` is sent, because nothing here knows when Redis returns. It is the fail-closed
 > behaviour, and a client may retry. A Redis outage is a timeout, a closed or refused connection,
-> or a server that answers it cannot serve (`READONLY` after a failover, `LOADING`, `MASTERDOWN`,
-> `CLUSTERDOWN`, `TRYAGAIN`); one function classifies them, and any other failure of a Redis call (a script that
+> or a server that answers it cannot serve; one function classifies them, and any other failure of a Redis call (a script that
 > is not loaded, a key of the wrong type, an aborted command) is a defect: it becomes an
 > `AuthException` carrying `auth.internal` (HTTP 500), with or without `AuthExceptionFilter`, with no
 > `cause`. The library logs it as `AUTH_STORE_FAILED` with `operation` `redis:<family>` (or `redis`)
