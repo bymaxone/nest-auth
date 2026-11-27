@@ -37,7 +37,7 @@ command is no longer printed.
   **Apply to a derived backend:** code that caught the ioredis `ReplyError` from a call of the
   library, or read its message, now receives an `AuthException` with no `cause`. Raised inside the
   OAuth callback handler, past its rate limit, it now redirects to a set `errorRedirectUrl` with
-  `error=auth.internal`. A step that goes on without Redis still does, and now has this error line
+  `error=internal`. A step that goes on without Redis still does, and now has this error line
   for a refused command. Outages are unchanged: they answer `auth.service_unavailable` (503) with
   the ioredis error as `cause`.
 

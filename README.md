@@ -1020,7 +1020,7 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > ioredis error names the command it failed. The library logs it as `AUTH_STORE_FAILED` with
 > `operation` `redis:<family>` and `detail` `ReplyError`, and nothing else of the key or the command.
 > In the OAuth callback, past its rate limit, it redirects to a set `errorRedirectUrl` with
-> `error=auth.internal`.
+> `error=internal`.
 >
 > The 503 is an `AuthException` whose `cause` is the ioredis error, so a host filter that logs 5xx
 > answers (nest-core's, for one) records the real reason; `isServiceUnavailable(error)`, exported from
@@ -1029,7 +1029,7 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > writes no log line for it: your readiness probe, not the request log, is the signal that Redis is
 > down, so put a Redis health check next to it. Two answers keep their meaning: a password-reset
 > request refused because the cooldown store cannot answer is the same `503` for every address, and the
-> OAuth callback redirects to your `errorRedirectUrl` with `error=auth.service_unavailable` when you
+> OAuth callback redirects to your `errorRedirectUrl` with `error=service_unavailable` when you
 > configured one. A failure to cache an answer the library can recompute (the workspace membership
 > cache, the denied-access counter, the session limit) is still absorbed, not refused.
 > The paths, the outcome of each and the test that pins it are in

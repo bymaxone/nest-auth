@@ -4,7 +4,7 @@
  * Each case rejects one raw client command the way a real ioredis client does when the store does
  * not answer, calls the public method that issues it, and asserts the library's `503
  * auth.service_unavailable` with the client's error on `cause`. A reply error that is a mistake
- * stays the error it is.
+ * answers `auth.internal`.
  */
 
 import { Logger } from '@nestjs/common'
