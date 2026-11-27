@@ -18,6 +18,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Changed
+
+- The `cause` of the 503 an outage answers is named after the class of the client's error and the
+  kind of the outage: `Error (timeout)`, `Error (closed)`,
+  `MaxRetriesPerRequestError (unreachable)`, `ReplyError (unavailable)`. The class alone did not tell
+  a timeout from a closed connection.
+
+  **Apply to a derived backend:** a log search, an alert or a host filter that compares
+  `cause.name` with a class name alone (`Error`, `ReplyError`, `MaxRetriesPerRequestError`) must match
+  the start of the name instead. Printed by Node, the cause reads `[ReplyError (unavailable): redis:rl]`
+  where it read `[Error [ReplyError]: redis:rl]`.
+
 ## [1.5.21] - 2026-11-27
 
 A patch release. The error of a failed `AuthRedisService` call, with the command it names, no longer
@@ -48,7 +60,7 @@ leaves the library.
   **Apply to a derived backend:** code that read the client's `message`, `code` or `command` from the
   `cause` of the 503 no longer finds them. `isServiceUnavailable` and the response are unchanged.
 
-## [1.5.20] - 2026-11-26
+## [1.5.20] - 2026-11-27
 
 A patch release. An OTP record whose attempt counter is unreadable is now refused.
 
@@ -64,7 +76,7 @@ A patch release. An OTP record whose attempt counter is unreadable is now refuse
   the same records gets this rule on the rust-auth side only from a version carrying the same
   script.
 
-## [1.5.19] - 2026-11-26
+## [1.5.19] - 2026-11-27
 
 A patch release. A Redis reply that should be an integer and is not now fails the call.
 

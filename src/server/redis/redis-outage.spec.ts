@@ -184,8 +184,38 @@ describe('mappingOutages', () => {
     )
   })
 
+  // Scenario: each way the store can fail to answer. Expected: the cause is named after the class of
+  // the client's error and the kind of the outage, so an operator can tell them apart.
+  it.each(OUTAGES)(
+    'names the cause of $label after its class and kind',
+    async ({ error, kind }) => {
+      const target = client()
+      ;(target['get'] as jest.Mock).mockRejectedValue(error)
+
+      const cause = (await rejectionOf(view(target)['get']?.('k'))).cause as Error
+
+      expect(cause.name).toBe(`${(error as Error).name} (${kind})`)
+    }
+  )
+
+  // Scenario: a server that is out of memory, busy with a script, or that wants a password. Expected:
+  // `auth.internal`, because the wire contract names the replies that are outages and these are not.
+  it.each(['OOM', 'BUSY', 'NOAUTH'])('answers a %s reply as auth.internal', async (word) => {
+    const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    const target = client()
+    ;(target['get'] as jest.Mock).mockRejectedValue(named('ReplyError', `${word} refused`))
+
+    const rejection = await rejectionOf(view(target)['get']?.('k'))
+
+    expect(rejection.getResponse()).toEqual(
+      new AuthException(AUTH_ERROR_CODES.INTERNAL).getResponse()
+    )
+    logged.mockRestore()
+  })
+
   // Scenario: an outage whose error carries the command. Expected: the cause is named after the
-  // class of that error and says the family of the key, and holds nothing else of it.
+  // class of that error and the kind of the outage, says the family of the key, and holds nothing
+  // else of it.
   it('keeps only the class and the family of the error behind an outage', async () => {
     const target = client()
     const key = `${NAMESPACE}:lf:${SECRET}`
@@ -198,9 +228,9 @@ describe('mappingOutages', () => {
 
     expect(cause).not.toBe(original)
     expect({ name: cause.name, message: cause.message, stack: cause.stack }).toEqual({
-      name: 'ReplyError',
+      name: 'ReplyError (unavailable)',
       message: 'redis:lf',
-      stack: 'ReplyError: redis:lf'
+      stack: 'ReplyError (unavailable): redis:lf'
     })
     expect(cause).not.toHaveProperty('command')
     expect(inspect(cause, { depth: 6 })).not.toContain(SECRET)

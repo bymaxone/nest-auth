@@ -4,8 +4,8 @@
  * Every authentication decision here awaits Redis. When the store cannot answer, the request has
  * nothing to decide with: it is refused, and what the client can act on is that the refusal is
  * temporary. The answer is `AuthException(SERVICE_UNAVAILABLE)`, whose body carries the library
- * code and nothing of the store, and whose `cause` holds the class of the client's error and the family
- * of the key.
+ * code and nothing of the store, and whose `cause` holds the class of the client's error, the kind of
+ * the outage and the family of the key.
  *
  * @layer Service
  */
@@ -135,25 +135,26 @@ function errorClassOf(error: unknown): string {
 /**
  * Raises what a failed call of the client is answered with: the typed 503 for an outage, and
  * `auth.internal` for everything else, which is logged. The error ioredis raises can carry the command
- * it failed, keys and values included, so it goes no further: the class and the family of the key are
- * all that is kept of it.
+ * it failed, keys and values included, so it goes no further: the class, the kind of an outage and the
+ * family of the key are all that is kept of it.
  *
  * @param error - Whatever the call rejected with.
  * @param operation - The store the command was for.
  * @returns Never: it throws.
  * @throws {AuthException} `SERVICE_UNAVAILABLE` for an outage, with a `cause` named after the class of
- *   the error and carrying the family as its message; `INTERNAL`, with no `cause`, for anything else.
+ *   the error and the kind of outage, carrying the family as its message; `INTERNAL`, with no `cause`, for anything else.
  */
 function refuseStoreError(error: unknown, operation: StoreOperation): never {
   const kind = errorClassOf(error)
-  if (redisOutageKindOf(error) === undefined) {
+  const outage = redisOutageKindOf(error)
+  if (outage === undefined) {
     logEvent(logger, 'AUTH_STORE_FAILED', { operation, detail: kind })
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
   }
   const cause = new Error(operation)
-  cause.name = kind
+  cause.name = `${kind} (${outage})`
   // The stack of a new error was written before the name was set.
-  cause.stack = `${kind}: ${operation}`
+  cause.stack = `${cause.name}: ${operation}`
   throw new AuthException(AUTH_ERROR_CODES.SERVICE_UNAVAILABLE, undefined, { cause })
 }
 

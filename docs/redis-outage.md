@@ -20,10 +20,12 @@ body.
 - Status `503`. The code is in `AUTH_ERROR_CODES.SERVICE_UNAVAILABLE`, its status in
   `AUTH_ERROR_STATUS`, and both are pinned in `conformance/wire-contract.json`, which
   rust-auth shares.
-- The exception's `cause` is a new `Error` whose `name` is the class of the client's error and whose
-  `message` is `redis` or `redis:<family>`, the family of the key. The client's error is not kept: it
+- The exception's `cause` is a new `Error` whose `name` is the class of the client's error and the
+  kind of the outage (`Error (timeout)`, `MaxRetriesPerRequestError (unreachable)`, the kinds of the
+  table below) and whose `message` is `redis` or `redis:<family>`, the family of the key. The client's
+  error is not kept: it
   can carry the command it failed, keys and arguments included, and Nest's logger prints a `cause`.
-  A host filter that logs 5xx answers records the class and the family; the library's own `AuthExceptionFilter` writes no line for an
+  A host filter that logs 5xx answers can record the class, the kind and the family; the library's own `AuthExceptionFilter` writes no line for an
   `AuthException`, so the operator's signal is a Redis health check beside the readiness probe.
 - No `Retry-After`. Nothing in the library knows when Redis returns, and a fixed number would be a
   guess. The one `Retry-After` the library sends, on a rate-limit refusal, is a real window.
@@ -48,6 +50,11 @@ it, with no `cause`, and logs `AUTH_STORE_FAILED` with `operation` `redis` or `r
 `detail` the class of the error (`Error` when it names none), so the client's error goes no further.
 Pinned by `redis-outage.spec` and, for a reply error, by
 `test/e2e/real-redis/reply-error.e2e-spec.ts`, with and without `AuthExceptionFilter`.
+
+`OOM`, `BUSY` and `NOAUTH` are not in the table, so they answer `500 auth.internal` and log
+`AUTH_STORE_FAILED`. The reply prefixes that count are the ones `serviceUnavailable.outage` of
+`conformance/wire-contract.json` lists, which rust-auth shares, so the list changes in both libraries
+or in neither. Pinned by `redis-outage.spec`.
 
 `READONLY` is an outage on purpose. After a failover a client still attached to the demoted node is
 told it cannot serve writes right now; that clears when the client reconnects to the new primary.
@@ -122,7 +129,7 @@ did. Pinned by `AuthProvider.outage.spec.tsx`.
 
 ## Known and out of scope
 
-These were found while mapping the paths. None is changed here; each has its own task.
+None of these is changed here.
 
 - `token-manager.service.ts` and `session.service.ts` write after the session is already live, so a
   failure there answers an error for a login that left a live session.
@@ -130,3 +137,6 @@ These were found while mapping the paths. None is changed here; each has its own
   transition's result.
 - `account-status.service.ts` fails a request when only the cache fill failed, after the repository
   read succeeded.
+- ioredis rejects what is left of a partly answered pipeline or transaction with an `AbortError` when
+  the connection closes, which includes the pipelines `enableAutoPipelining` builds on the host's
+  client. An `AbortError` is not an outage here, so such a request answers `500 auth.internal`, not 503. Read in ioredis 6.0.0; not reproduced against a server.

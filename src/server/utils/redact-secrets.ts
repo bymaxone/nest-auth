@@ -78,14 +78,6 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   // concatenation — linear work over text a REMOTE controls, run inside a failure handler, where a
   // relay is free to reject with megabytes. Callers that hold no secret are ordinary (the opaque
   // description passes none at all), so this is the common path rather than a corner of it.
-  // Equivalence, stated before the directive so the directive itself stays adjacent to the line it
-  // means: the FALSE mutant — never taking this return — produces the identical string, because
-  // the scan below over an empty list copies the input character for character. No behavioural
-  // test can separate them; what changes is the work done, which is the whole point. The TRUE
-  // mutant is NOT equivalent and is not disabled: taking the return unconditionally would publish
-  // every secret, and the redaction tests kill it.
-  //
-  // Stryker disable next-line ConditionalExpression
   if (present.length === 0) return value
 
   // The marker is written INTO the output, so it is subject to the same contract as everything
@@ -118,16 +110,9 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   let out = ''
   let index = 0
 
-  // `<=` here is equivalent and no test separates the two. The extra iteration it allows lands on
-  // `index === value.length`, where `startsWith` is false for every non-empty secret and `charAt`
-  // returns the empty string, so the buffer is unchanged and the loop exits on the next check.
-  // Same output, one wasted comparison.
-  //
-  // The directive sits on its own line immediately above the target. It was measured to bind from
-  // the end of a multi-line comment too, but `next-line` counting past a wrapped explanation is a
-  // documented way to silently disable nothing, and adjacency costs a line.
-  // Stryker disable next-line EqualityOperator
-  while (index < value.length) {
+  // What is left to read. A value with no `length`, which only a caller outside the types can pass,
+  // leaves `NaN` here and is not scanned: this function must not throw out of a `catch`.
+  while (value.length - index) {
     const matched = longestMatchAt(value, present, index)
 
     if (matched === 0) {
