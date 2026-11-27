@@ -273,7 +273,7 @@ export class WorkspaceInvitationAcceptService {
    * @param loaded - The invitation being accepted.
    * @param account - The address and name the account is about to be created with.
    * @param context - Request metadata for the hook, without a user id.
-   * @returns Whether the host was asked, which {@link completeOAuth} is then told. `false` for a
+   * @returns Whether the host was asked, which keeps it from being asked twice. `false` for a
    *   member invitation, and for a bootstrap invitation whose workspace already exists.
    * @throws {AuthException} `auth.forbidden` naming `name` when the hook refuses.
    */

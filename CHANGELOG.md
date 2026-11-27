@@ -20,12 +20,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Changed
 
-- On an invitation signup, by password or through an OAuth provider, `beforeWorkspaceCreate` is
+- On an invitation signup that creates a workspace, by password or through an OAuth provider, `beforeWorkspaceCreate` is
   called before the account is created, so a refusal leaves no account behind. The hook receives a
   provisional user with an empty `id`, `role` and `status`, and `context.accountPending: true`, a
   new optional field of `HookContext`.
 
-  **Apply to a derived backend:** on invitation signup the hook now runs before the account exists;
+  **Apply to a derived backend:** on such a signup the hook now runs before the account exists;
   check `context.accountPending` instead of looking the user up by id. A hook that looks up the
   empty id and refuses when it finds nothing now refuses every such signup.
 
@@ -55,10 +55,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - A workspace created by accepting a bootstrap invitation reports `workspace.created` to
   `onWorkspaceEvent`, as well as `invitation.accepted`.
 - A membership or workspace change that committed is reported to `onWorkspaceEvent` even when
-  dropping the cached access afterwards fails. The call still fails with that error.
+  dropping the cached access afterwards fails. The call still fails.
 - `onNewSession` is called on the hooks object, so a method that reads `this` works.
-- `afterEmailVerified` receives the user with `emailVerified: true`, not the record as read before
-  the write.
+- `afterEmailVerified` receives the user with `emailVerified: true`.
 
 ## [1.5.22] - 2026-11-27
 

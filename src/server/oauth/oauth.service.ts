@@ -83,7 +83,7 @@ function toSafeUser(user: AuthUser): SafeAuthUser {
 /**
  * What the hooks of a callback are told: the tenant and the address the flow resolved to, which
  * come from the server-side state record and the provider's profile, never from the callback
- * request. The hook is the only place a deployment can enforce tenant membership.
+ * request. `onOAuthLogin` is the only place a deployment can enforce tenant membership.
  */
 function callbackHookContext(
   tenantId: string,

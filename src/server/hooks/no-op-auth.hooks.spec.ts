@@ -155,7 +155,7 @@ describe('NoOpAuthHooks', () => {
 })
 
 describe('NoOpAuthHooks as a base class', () => {
-  // The assertion is the compilation: `pnpm typecheck` fails when a subclass may not be async.
+  // The compilation is the point: `pnpm typecheck` fails when a subclass may not be async.
   it('lets a subclass override its methods with async ones', async () => {
     class Remote extends NoOpAuthHooks {
       override async beforeRegister(): Promise<BeforeRegisterResult> {

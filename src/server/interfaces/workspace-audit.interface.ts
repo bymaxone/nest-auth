@@ -37,7 +37,8 @@ interface WorkspaceAuditBase {
  * own store), `access.denied` (a refused request writes nothing) and `workspace.switched`
  * (switching only remembers the last workspace). `invitation.accepted` is persisted only when
  * `IMembershipRepository.create` added the membership. A bootstrap acceptance that creates the
- * workspace persists `workspace.created` instead, and the hook receives both that and `invitation.accepted`.
+ * workspace persists `workspace.created` instead, and the hook receives that
+ * as well as `invitation.accepted`.
  */
 export type WorkspaceAuditEvent =
   | (WorkspaceAuditBase & {

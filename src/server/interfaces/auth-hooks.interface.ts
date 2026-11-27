@@ -484,13 +484,13 @@ export interface IAuthHooks {
   /**
    * Called before a workspace is created, and able to refuse it (a plan, a quota, an approval).
    *
-   * Runs after the per-user limit and before the workspace is written; the create route checks
-   * `workspaces.allowCreate` first, an invitation acceptance does not. A refusal answers
+   * Runs before the workspace is written, after the per-user limit except on the signup below; the
+   * create route checks `workspaces.allowCreate` first, an invitation acceptance does not. A refusal answers
    * `403 auth.forbidden`; `reason` is returned to the caller, so keep it free of anything
    * sensitive. A hook that throws refuses the creation too.
    *
-   * On an invitation signup (by password or through an OAuth provider) the call comes before the
-   * account exists, so that a refusal leaves no account behind: `context.accountPending` is `true`
+   * On an invitation signup that creates a workspace (by password or through an OAuth provider)
+   * the call comes before the account exists, so that a refusal leaves no account behind: `context.accountPending` is `true`
    * and `user` is provisional, with an empty `id`, `role` and `status`. Test the flag rather than
    * looking the user up by id.
    *

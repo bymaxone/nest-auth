@@ -17,7 +17,7 @@ import { checked, pinned } from '../utils/settle'
 
 /** A vetted invitation, waiting for the account its flow signs in. */
 export interface PendingInvitation {
-  /** Asks the host about the account the flow is about to create; refuses by throwing. */
+  /** Told of an account the flow is about to create, for the host to judge; refuses by throwing. */
   judgeNewAccount(account: { email: string; name: string }, context: HookContext): Promise<void>
   /** Writes the membership for `user` and spends the token; `created` is whether the flow made the account. */
   complete(user: AuthUser, created: boolean, context: HookContext): Promise<void>
