@@ -70,6 +70,13 @@ describe('the verify script and the attempt counter', () => {
     await expect(redis.exists(KEY)).resolves.toBe(0)
   })
 
+  // The record as `store` leaves it: the in-memory Redis keeps the type a script wrote.
+  it('verifies the record the store script writes', async () => {
+    await service.store('reset', 'who', CODE, 60)
+
+    await expect(service.verify('reset', 'who', CODE)).resolves.toBeUndefined()
+  })
+
   // A wrong guess below the ceiling is counted.
   it('counts a wrong guess', async () => {
     await recordWith('4')

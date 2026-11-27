@@ -113,7 +113,7 @@ describe('OtpService', () => {
       // The record carries the keyed fingerprint, never the plaintext code, so a Redis reader
       // cannot reverse the six-digit keyspace.
       expect(mockRedis.eval).toHaveBeenCalledWith(
-        expect.stringContaining("redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', 0)"),
+        expect.stringContaining("redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', '0')"),
         ['otp:email_verification:user-hash'],
         [fingerprint('user-hash', '123456'), '600']
       )

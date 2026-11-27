@@ -181,8 +181,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     checks at redeem and the current-session fallback of the listing.
 //     187.35 KiB (191,847 B) sits 30 B above the measured 191,817 B, which also holds the refusal of a reply
 //     or stored counter that is no integer and of a tenantless socket ticket before any other read.
-//     187.55 KiB (192,051 B) sits 30 B above the measured 192,021 B, which also holds the verify script's
-//     refusal of an unreadable attempt counter.
+//     187.55 KiB (192,051 B) is the measured bundle with no headroom left; it also holds the verify
+//     script's refusal of an unreadable attempt counter.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)

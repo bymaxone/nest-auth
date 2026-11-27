@@ -72,7 +72,7 @@ function verifyScript(
  * TTL — and an OTP that never expires is an OTP an attacker can grind against forever.
  */
 const OTP_STORE_LUA = `
-redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', 0)
+redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', '0')
 redis.call('EXPIRE', KEYS[1], ARGV[2])
 `
 
