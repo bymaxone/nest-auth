@@ -172,34 +172,23 @@ export class PlatformAuthService {
     const result = await pinned(this.tokenManager.issuePlatformTokens(safeAdmin, ip, userAgent))
     logEvent(this.logger, 'AUTH_LOGIN_SUCCEEDED', { ...PASSWORD_LOGIN, userId: admin.id })
 
-    // Fire-and-forget: a slow or failing DB update must not block the auth response.
-    this.touchLastLogin(admin.id)
-    this.runAfterLogin(admin, ip, userAgent)
+    // Fire-and-forget: neither a slow repository nor a slow hook may block the auth response.
+    this.recordLogin(admin, ip, userAgent)
 
     return checked(result)
   }
 
-  /** Tells the host of a sign-in that needed no second factor, without making the login wait. */
-  private runAfterLogin(admin: AuthPlatformUser, ip: string, userAgent: string): void {
+  /**
+   * Records a sign-in that needed no second factor: the time of the login, and the host's
+   * `afterLogin`. The login waits for neither; a failure is logged, never raised.
+   */
+  private recordLogin(admin: AuthPlatformUser, ip: string, userAgent: string): void {
+    const { id } = admin
+    runDetached(this.logger, () => this.platformUserRepo.updateLastLogin(id), 'updateLastLogin')
     if (!this.hooks?.afterLogin) return
     const afterLogin = this.hooks.afterLogin.bind(this.hooks)
-    runDetached(
-      this.logger,
-      () =>
-        afterLogin(platformUserAsSafeUser(admin), {
-          plane: 'platform',
-          userId: admin.id,
-          ip,
-          userAgent,
-          sanitizedHeaders: {}
-        }),
-      'afterLogin'
-    )
-  }
-
-  /** Records the time of a login without making the login wait for it; a failure is logged, never raised. */
-  private touchLastLogin(id: string): void {
-    runDetached(this.logger, () => this.platformUserRepo.updateLastLogin(id), 'updateLastLogin')
+    const context = { plane: 'platform' as const, userId: id, ip, userAgent, sanitizedHeaders: {} }
+    runDetached(this.logger, () => afterLogin(platformUserAsSafeUser(admin), context), 'afterLogin')
   }
 
   // ---------------------------------------------------------------------------

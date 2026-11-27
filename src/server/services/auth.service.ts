@@ -1052,15 +1052,11 @@ export class AuthService {
     logEvent(this.logger, 'AUTH_EMAIL_VERIFIED', { userId: user.id, tenantId })
 
     if (this.hooks?.afterEmailVerified) {
-      const afterEmailVerified = this.hooks.afterEmailVerified.bind(this.hooks)
+      const notify = this.hooks.afterEmailVerified.bind(this.hooks)
+      const verified = toSafeUser({ ...user, emailVerified: true }) // as written above
       runDetached(
         this.logger,
-        () =>
-          // The record was read before the write above, so the flag is set to what was written.
-          afterEmailVerified(toSafeUser({ ...user, emailVerified: true }), {
-            ...createEmptyHookContext(),
-            plane: 'dashboard'
-          }),
+        () => notify(verified, { ...createEmptyHookContext(), plane: 'dashboard' }),
         'afterEmailVerified'
       )
     }
