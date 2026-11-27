@@ -6,9 +6,8 @@
  * are used or permitted.
  *
  * @remarks
- * The plugin pattern allows new providers (Google, GitHub, GitLab, etc.) to be
- * registered without modifying the core auth module. Each plugin is responsible
- * for its own authorize URL construction, code exchange, and profile normalization.
+ * Each plugin is responsible for its own authorize URL construction, code exchange, and profile
+ * normalization.
  *
  * @layer Interface
  */
