@@ -205,6 +205,6 @@ describe('a Redis outage printed by the host (E2E, real Redis)', () => {
     expectAuthError(res, 'auth.service_unavailable')
     expect(errors.text()).not.toContain('printed:rl:')
     expect(errors.text()).not.toContain('args')
-    expect(errors.text()).toContain('Error [ReplyError]: redis:rl')
+    expect(errors.text()).toContain('[ReplyError (unavailable): redis:rl]')
   })
 })

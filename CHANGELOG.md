@@ -27,7 +27,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
   **Apply to a derived backend:** a log search, an alert or a host filter that compares
   `cause.name` with a class name alone (`Error`, `ReplyError`, `MaxRetriesPerRequestError`) must match
-  the start of the name instead.
+  the start of the name instead. Printed by Node, the cause reads `[ReplyError (unavailable): redis:rl]`
+  where it read `[Error [ReplyError]: redis:rl]`.
 
 ## [1.5.21] - 2026-11-27
 
