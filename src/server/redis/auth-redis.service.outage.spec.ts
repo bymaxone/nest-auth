@@ -3,13 +3,15 @@
  *
  * Each case rejects one raw client command the way a real ioredis client does when the store does
  * not answer, calls the public method that issues it, and asserts the library's `503
- * auth.service_unavailable` with the client's error on `cause`. A reply error that is a mistake
- * stays the error it is.
+ * auth.service_unavailable`, with a `cause` that holds the class of the client's error and the family
+ * of the key. A reply error that is a mistake answers `auth.internal`.
  */
 
+import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from './auth-redis.service'
 
@@ -60,8 +62,8 @@ describe('AuthRedisService under a Redis outage', () => {
     ['eval', () => service.eval('return 1', [], [])]
   ]
 
-  // Scenario: the store does not answer in time. Expected: the typed 503, the client's error as
-  // its cause, and no store text in the body.
+  // Scenario: the store does not answer in time. Expected: the typed 503, a cause that says the
+  // class and no more of the client's error, and no store text in the body.
   it.each(CALLS)('maps a timeout of %s to the typed 503', async (command, call) => {
     const timeout = new Error('Command timed out')
     client[command]?.mockRejectedValue(timeout)
@@ -70,7 +72,8 @@ describe('AuthRedisService under a Redis outage', () => {
 
     expect(rejection).toBeInstanceOf(AuthException)
     expect(rejection.getStatus()).toBe(503)
-    expect(rejection.cause).toBe(timeout)
+    expect(rejection.cause).not.toBe(timeout)
+    expect(rejection.cause).toMatchObject({ name: 'Error', message: 'redis' })
     expect(JSON.stringify(rejection.getResponse())).not.toContain('timed out')
   })
 
@@ -81,15 +84,24 @@ describe('AuthRedisService under a Redis outage', () => {
     await expect(service.get('k')).rejects.toMatchObject({ status: 503 })
   })
 
-  // Scenario: Redis replies with a script error, which is a bug and not an outage. Expected: the
-  // same error object, so it is not answered as "try again".
-  it('leaves a reply error that is a mistake as it is', async () => {
+  // Scenario: the store answers a command with an error. Expected: `auth.internal` with no cause,
+  // because the error ioredis raises names the command it failed.
+  it('answers a reply error that is a mistake as auth.internal', async () => {
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
     const mistake = Object.assign(new Error('NOSCRIPT No matching script. Please use EVAL.'), {
       name: 'ReplyError'
     })
     client['eval']?.mockRejectedValue(mistake)
 
-    await expect(service.eval('return 1', [], [])).rejects.toBe(mistake)
+    const rejection = (await service
+      .eval('return 1', [], [])
+      .catch((error: unknown) => error)) as AuthException
+
+    expect(rejection.getResponse()).toEqual(
+      new AuthException(AUTH_ERROR_CODES.INTERNAL).getResponse()
+    )
+    expect(rejection.cause).toBeUndefined()
+    jest.restoreAllMocks()
   })
 
   // Scenario: the store answers. Expected: the value, so the wrapper changes nothing when Redis is

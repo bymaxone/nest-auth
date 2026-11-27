@@ -18,6 +18,36 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.21] - 2026-11-27
+
+A patch release. The error of a failed `AuthRedisService` call, with the command it names, no longer
+leaves the library.
+
+### Fixed
+
+- A Redis reply error that is not an outage (a key of the wrong type, a counter holding a value
+  Redis cannot increment, a script the server rejects) reached the application as the ioredis error,
+  which names the command it failed, keys and arguments included. In an application without
+  `AuthExceptionFilter`, the request answered Nest's own 500 body and Nest's log printed that
+  command; the rate-limit counter, the login lockout counter and the token epoch were measured. Any
+  rejection of an `AuthRedisService` call that is not an outage, an `AbortError` or an error class the
+  library does not know included, is now an `AuthException` with `auth.internal` (HTTP 500) and no
+  `cause`, logged as `AUTH_STORE_FAILED` with `operation: 'redis:<family>'`
+  (`redis` when the key has no family) and `detail` the class of the error.
+
+  **Apply to a derived backend:** code that caught an error of the ioredis client from a call of the
+  library, or read its message, now receives an `AuthException` with no `cause`. Raised inside the
+  OAuth callback handler, past its rate limit, it now redirects to a set `errorRedirectUrl` with
+  `error=internal`. A step that goes on without Redis still does, and now has this error line.
+
+- The 503 of a Redis outage kept the ioredis error as its `cause`. A reply such as `READONLY` names
+  the command it failed, and Nest's logger prints a `cause` with it, so a host that logged the
+  exception printed keys and arguments. The `cause` is now a new `Error` whose `name` is the class of
+  the client's error and whose `message` is `redis:<family>` or `redis`.
+
+  **Apply to a derived backend:** code that read the client's `message`, `code` or `command` from the
+  `cause` of the 503 no longer finds them. `isServiceUnavailable` and the response are unchanged.
+
 ## [1.5.20] - 2026-11-26
 
 A patch release. An OTP record whose attempt counter is unreadable is now refused.
@@ -5732,7 +5762,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.20...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.21...HEAD
+[1.5.21]: https://github.com/bymaxone/nest-auth/compare/v1.5.20...v1.5.21
 [1.5.20]: https://github.com/bymaxone/nest-auth/compare/v1.5.19...v1.5.20
 [1.5.19]: https://github.com/bymaxone/nest-auth/compare/v1.5.18...v1.5.19
 [1.5.18]: https://github.com/bymaxone/nest-auth/compare/v1.5.17...v1.5.18

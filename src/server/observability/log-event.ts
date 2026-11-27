@@ -45,8 +45,10 @@ export function logEvent(
 export type HookStep =
   keyof IAuthHooks | 'updateLastLogin' | 'accessDenied' | 'maxSessionsResolver' | 'onApiKeyRequest'
 
-/** The named steps whose failure is reported as a store or repository event; the set is closed. */
+/** The named steps whose failure is reported as a store or repository event. */
 export type StoreOperation =
+  | 'redis'
+  | `redis:${string}`
   | 'account_status_cache_write'
   | 'api_key_last_used_flush'
   | 'api_key_lookup'

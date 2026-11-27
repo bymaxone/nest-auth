@@ -1014,17 +1014,23 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > `Retry-After` is sent, because nothing here knows when Redis returns. It is the fail-closed
 > behaviour, and a client may retry. A Redis outage is a timeout, a closed or refused connection,
 > or a server that answers it cannot serve (`READONLY` after a failover, `LOADING`, `MASTERDOWN`,
-> `CLUSTERDOWN`); one function classifies them, and any other Redis reply error (a script that is
-> not loaded, a key of the wrong type) is a defect and stays `500 auth.internal`.
+> `CLUSTERDOWN`); one function classifies them, and any other failure of a Redis call (a script that
+> is not loaded, a key of the wrong type, an aborted command) is a defect: it becomes an
+> `AuthException` carrying `auth.internal` (HTTP 500), with or without `AuthExceptionFilter`, with no
+> `cause`. The library logs it as `AUTH_STORE_FAILED` with `operation` `redis:<family>` (or `redis`)
+> and `detail` the class of the error, and nothing else of the key or the command. In the OAuth callback, past its
+> rate limit, it redirects to a set `errorRedirectUrl` with `error=internal`.
 >
-> The 503 is an `AuthException` whose `cause` is the ioredis error, so a host filter that logs 5xx
-> answers (nest-core's, for one) records the real reason; `isServiceUnavailable(error)`, exported from
+> The 503 is an `AuthException` whose `cause` is a new `Error` named after the class of the client's
+> error, with `redis:<family>` (or `redis`) as its message. The client's error is not kept, because it
+> can carry the command it failed and Nest's logger prints a `cause`. A host filter that logs 5xx
+> answers (nest-core's, for one) records that class and family; `isServiceUnavailable(error)`, exported from
 > the package, tells that 503 apart from every other `AuthException` and narrows it, so a host filter
 > or interceptor can handle it without comparing codes. The library's own `AuthExceptionFilter`
 > writes no log line for it: your readiness probe, not the request log, is the signal that Redis is
 > down, so put a Redis health check next to it. Two answers keep their meaning: a password-reset
 > request refused because the cooldown store cannot answer is the same `503` for every address, and the
-> OAuth callback redirects to your `errorRedirectUrl` with `error=auth.service_unavailable` when you
+> OAuth callback, past its rate limit, redirects to your `errorRedirectUrl` with `error=service_unavailable` when you
 > configured one. A failure to cache an answer the library can recompute (the workspace membership
 > cache, the denied-access counter, the session limit) is still absorbed, not refused.
 > The paths, the outcome of each and the test that pins it are in
@@ -1510,7 +1516,7 @@ A Nest `Logger` calls the host logger and discards what it returns, so a host lo
 The fields that name a step come from sets the library owns, typed in the code and listed here; none is ever text a host or a store wrote.
 
 - **`hook`** of `AUTH_HOOK_FAILED`: `beforeRegister`, `afterRegister`, `beforeLogin`, `afterLogin`, `afterLogout`, `afterPlatformLogout`, `onLoginFailed`, `onLockout`, `onRefreshTokenReuseDetected`, `afterMfaEnabled`, `afterMfaDisabled`, `afterMfaRecoveryCodesRegenerated`, `onNewSession`, `afterEmailVerified`, `afterPasswordReset`, `onOAuthLogin`, `afterInvitationAccepted`, `onSessionEvicted`, `onApiKeyRequest`, `beforeWorkspaceCreate`, `onWorkspaceEvent`, `updateLastLogin`, `accessDenied`, `maxSessionsResolver`.
-- **`operation`** of `AUTH_STORE_FAILED` and `AUTH_STORE_DEGRADED`: `account_status_cache_write`, `api_key_last_used_flush`, `api_key_lookup`, `cache_invalidation`, `dead_member_prune`, `grace_pointer_prune`, `logout_marker_clear`, `logout_owner_keep`, `mfa_lock_release`, `mfa_reencryption`, `new_session_user_lookup`, `rehash_on_verify`, `resend_cooldown_release`, `reset_account_lookup`, `reset_cooldown_release`, `reset_cooldown_store`, `reset_issue`, `session_cleanup`, `session_detail_read`, `session_detail_rotation`, `session_record_read`, `workspace_cache_read`, `workspace_cache_write`.
+- **`operation`** of `AUTH_STORE_FAILED` and `AUTH_STORE_DEGRADED`: `account_status_cache_write`, `api_key_last_used_flush`, `api_key_lookup`, `cache_invalidation`, `dead_member_prune`, `grace_pointer_prune`, `logout_marker_clear`, `logout_owner_keep`, `mfa_lock_release`, `mfa_reencryption`, `new_session_user_lookup`, `redis` (a failed call of the Redis store that is not an outage; written `redis:<family>`, such as `redis:rl`, `redis:lf` or `redis:ep`, when the first key the command names has a family), `rehash_on_verify`, `resend_cooldown_release`, `reset_account_lookup`, `reset_cooldown_release`, `reset_cooldown_store`, `reset_issue`, `session_cleanup`, `session_detail_read`, `session_detail_rotation`, `session_record_read`, `workspace_cache_read`, `workspace_cache_write`.
 - **`kind`** of `AUTH_DELIVERY_FAILED`: `passwordResetToken`, `passwordResetOtp`, `emailVerificationOtp`, `passwordChanged`, `emailChangeVerification`, `emailChanged`, `mfaEnabled`, `mfaDisabled`, `newSessionAlert`, `invitation`, `workspaceInvitation`, `email_verification_otp`, `password_changed_notice`, `password_reset_token`, `password_reset_otp`, `mfa_enabled_notice`, `mfa_disabled_notice`, `mfa_reset_notice`, `email_change_notice`.
 
 ---

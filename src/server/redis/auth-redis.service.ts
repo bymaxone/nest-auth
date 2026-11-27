@@ -300,7 +300,7 @@ export class AuthRedisService {
     @Inject(BYMAX_AUTH_REDIS_CLIENT) redis: Redis,
     @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions
   ) {
-    this.#redis = mappingOutages(redis)
+    this.#redis = mappingOutages(redis, options.redisNamespace)
     this.namespace = options.redisNamespace
     this.stored = storedNamespace(redis, this.namespace)
     this.#hmacKey = options.hmacKey
