@@ -358,9 +358,12 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
   settle(service.resolveAccess(ref), showAccess)
 } else if (scenario === 'redis') {
   // A client whose command fails after the root was compromised: the proxy refuses, and the command's rejection must stay handled.
-  const client = mappingOutages({
-    get: (): Promise<never> => failingRead()
-  } as never)
+  const client = mappingOutages(
+    {
+      get: (): Promise<never> => failingRead()
+    } as never,
+    'auth'
+  )
   settle(client.get('key'), () => 'answered')
 } else if (scenario === 'bare-redis') {
   // The client of the store plants a `then` that answers an absent value while it makes the promise the library returns. A promise
@@ -442,9 +445,12 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
     },
     configurable: true
   })
-  const client = mappingOutages({
-    get: (): Promise<never> => failingRead()
-  } as never)
+  const client = mappingOutages(
+    {
+      get: (): Promise<never> => failingRead()
+    } as never,
+    'auth'
+  )
   void (async (): Promise<void> => {
     try {
       await client.get('key')
@@ -456,17 +462,20 @@ if (scenario === 'late-dashboard' || scenario === 'late-platform') {
 } else if (scenario === 'then-throws') {
   // A command answers a rejecting promise whose own `then` is an accessor that throws. Reading it is what `isThenable` does, so the
   // rejection has to be marked handled before that read, or the process ends on it.
-  const client = mappingOutages({
-    get: (): Promise<never> => {
-      const failing = Promise.reject(new Error('the store failed'))
-      Object.defineProperty(failing, 'then', {
-        get(): never {
-          throw new Error('then read')
-        }
-      })
-      return failing
-    }
-  } as never)
+  const client = mappingOutages(
+    {
+      get: (): Promise<never> => {
+        const failing = Promise.reject(new Error('the store failed'))
+        Object.defineProperty(failing, 'then', {
+          get(): never {
+            throw new Error('then read')
+          }
+        })
+        return failing
+      }
+    } as never,
+    'auth'
+  )
   try {
     client.get('key')
     report('answered')

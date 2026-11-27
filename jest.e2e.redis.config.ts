@@ -47,6 +47,8 @@ const config: Config = {
     '<rootDir>/host-read-sweep.e2e-spec.ts',
     // The OTP attempt counter as the verify script reads it, an empty string included.
     '<rootDir>/real-redis/otp-attempts.e2e-spec.ts',
+    // A command the server answers with a reply error, which names the command that failed.
+    '<rootDir>/real-redis/reply-error.e2e-spec.ts',
     // Rate limiting and brute-force counters.
     '<rootDir>/rate-limit.e2e-spec.ts',
     '<rootDir>/negative-paths.e2e-spec.ts',

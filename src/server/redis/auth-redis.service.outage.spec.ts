@@ -7,9 +7,11 @@
  * stays the error it is.
  */
 
+import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from './auth-redis.service'
 
@@ -81,15 +83,24 @@ describe('AuthRedisService under a Redis outage', () => {
     await expect(service.get('k')).rejects.toMatchObject({ status: 503 })
   })
 
-  // Scenario: Redis replies with a script error, which is a bug and not an outage. Expected: the
-  // same error object, so it is not answered as "try again".
-  it('leaves a reply error that is a mistake as it is', async () => {
+  // Scenario: the store answers a command with an error. Expected: `auth.internal` with no cause,
+  // because the error ioredis raises names the command it failed.
+  it('answers a reply error that is a mistake as auth.internal', async () => {
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
     const mistake = Object.assign(new Error('NOSCRIPT No matching script. Please use EVAL.'), {
       name: 'ReplyError'
     })
     client['eval']?.mockRejectedValue(mistake)
 
-    await expect(service.eval('return 1', [], [])).rejects.toBe(mistake)
+    const rejection = (await service
+      .eval('return 1', [], [])
+      .catch((error: unknown) => error)) as AuthException
+
+    expect(rejection.getResponse()).toEqual(
+      new AuthException(AUTH_ERROR_CODES.INTERNAL).getResponse()
+    )
+    expect(rejection.cause).toBeUndefined()
+    jest.restoreAllMocks()
   })
 
   // Scenario: the store answers. Expected: the value, so the wrapper changes nothing when Redis is

@@ -47,6 +47,8 @@ export type HookStep =
 
 /** The named steps whose failure is reported as a store or repository event; the set is closed. */
 export type StoreOperation =
+  | 'redis'
+  | `redis:${string}`
   | 'account_status_cache_write'
   | 'api_key_last_used_flush'
   | 'api_key_lookup'

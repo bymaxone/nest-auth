@@ -183,6 +183,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     or stored counter that is no integer and of a tenantless socket ticket before any other read.
 //     187.58 KiB (192,081 B) sits 30 B above the measured 192,051 B, which also holds the verify script's
 //     refusal of an unreadable attempt counter.
+//     187.70 KiB (192,202 B) sits 30 B above the measured 192,172 B, which also holds the `auth.internal`
+//     answer and the log line of a command Redis refuses.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
@@ -250,7 +252,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 192_081 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 192_202 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },

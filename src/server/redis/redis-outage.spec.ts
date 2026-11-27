@@ -9,6 +9,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { Logger } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -179,6 +180,9 @@ describe('isServiceUnavailable', () => {
 })
 
 describe('mappingOutages', () => {
+  const NAMESPACE = 'app:auth'
+  const SECRET = '9f2c4e1ab7'
+
   /** A client of arbitrary methods, as the proxy sees one. */
   function client(): Record<string, unknown> {
     return {
@@ -190,7 +194,7 @@ describe('mappingOutages', () => {
   }
   /** The proxy over a fake client. */
   function proxy(target: object): Redis {
-    return mappingOutages(target as Redis)
+    return mappingOutages(target as Redis, NAMESPACE)
   }
   /** The proxy read as the plain method table it behaves as. */
   function view(target: object): Record<string, (...args: unknown[]) => unknown> {
@@ -215,13 +219,89 @@ describe('mappingOutages', () => {
     expect(rejection.cause).toBe(original)
   })
 
-  // Scenario: a rejection that is not an outage. Expected: the same error object.
+  // Scenario: a rejection that is neither an outage nor a reply of the server. Expected: the same
+  // error object.
   it('passes any other rejection through untouched', async () => {
     const target = client()
-    const other = named('ReplyError', 'NOSCRIPT No matching script. Please use EVAL.')
+    const other = named('Error', 'boom')
     ;(target['get'] as jest.Mock).mockRejectedValue(other)
 
     await expect(view(target)['get']?.('k')).rejects.toBe(other)
+  })
+
+  // Scenario: the server answers a command with an error, which ioredis raises with the command it
+  // failed. Expected: `auth.internal` with no cause, and one log line naming the family of the key
+  // and the class of the error.
+  it.each([
+    ['get', [`${NAMESPACE}:ep:${SECRET}`], 'redis:ep'],
+    ['eval', ['return 1', 1, `${NAMESPACE}:rl:route:${SECRET}`, '60'], 'redis:rl'],
+    ['get', [`${NAMESPACE}:pw_reset:${SECRET}`], 'redis:pw_reset'],
+    ['eval', ['return 1', 0, SECRET], 'redis'],
+    ['get', [`other:rl:${SECRET}`], 'redis'],
+    ['get', [`${NAMESPACE}:${SECRET}`], 'redis'],
+    ['get', [`${NAMESPACE}:Not-a-family:${SECRET}`], 'redis'],
+    ['get', [`${NAMESPACE}:x.rl:${SECRET}`], 'redis'],
+    ['get', [], 'redis']
+  ] as const)(
+    'answers a refused %s of %j as auth.internal under %s',
+    async (method, args, store) => {
+      const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const target: Record<string, unknown> = { [method]: jest.fn() }
+      const refused = Object.assign(named('ReplyError', `WRONGTYPE ${SECRET}`), {
+        command: { name: method, args }
+      })
+      ;(target[method] as jest.Mock).mockRejectedValue(refused)
+
+      const call: unknown = view(target)[method]?.(...args)
+      const rejection = (await Promise.resolve(call).catch(
+        (error: unknown) => error
+      )) as AuthException
+
+      expect(rejection.getResponse()).toEqual(
+        new AuthException(AUTH_ERROR_CODES.INTERNAL).getResponse()
+      )
+      expect(rejection.cause).toBeUndefined()
+      expect(logged.mock.calls).toEqual([
+        [expect.objectContaining({ event: 'AUTH_STORE_FAILED', operation: store })]
+      ])
+      expect(logged.mock.calls[0]?.[0]).toHaveProperty('detail', 'ReplyError')
+      expect(JSON.stringify(logged.mock.calls)).not.toContain(SECRET)
+      logged.mockRestore()
+    }
+  )
+
+  // Scenario: a reply error that says the server cannot serve the command now. Expected: the typed
+  // 503 with the cause, not the answer of a refused command, and nothing logged.
+  it('keeps a READONLY reply an outage', async () => {
+    const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    const target = client()
+    const original = named('ReplyError', 'READONLY the server cannot serve this now')
+    ;(target['get'] as jest.Mock).mockRejectedValue(original)
+
+    const rejection = (await Promise.resolve(view(target)['get']?.('k')).catch(
+      (error: unknown) => error
+    )) as AuthException
+
+    expect(isServiceUnavailable(rejection)).toBe(true)
+    expect(rejection.cause).toBe(original)
+    expect(logged).not.toHaveBeenCalled()
+    logged.mockRestore()
+  })
+
+  // Scenario: the line of a refused command. Expected: written under the name of the service whose
+  // calls pass here, which is what a host filters its log by.
+  it('logs a refused command as AuthRedisService', async () => {
+    const written = jest.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const failed = jest.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const target = client()
+    ;(target['get'] as jest.Mock).mockRejectedValue(named('ReplyError', 'ERR refused'))
+
+    await expect(view(target)['get']?.('k')).rejects.toBeInstanceOf(AuthException)
+
+    const text = [...written.mock.calls, ...failed.mock.calls].map(([chunk]) => chunk).join('')
+    written.mockRestore()
+    failed.mockRestore()
+    expect(text).toContain('[AuthRedisService]')
   })
 
   // Scenario: a command that succeeds. Expected: its value, with the arguments it was given and

@@ -13,7 +13,7 @@ import { mappingOutages } from './redis-outage'
 /** The proxy over a client whose one method answers `answer`, read as the plain method it behaves as. */
 function methodOf(answer: unknown): () => unknown {
   const client: Redis = Object.assign(Object.create(null), { command: (): unknown => answer })
-  const method: unknown = Reflect.get(mappingOutages(client), 'command')
+  const method: unknown = Reflect.get(mappingOutages(client, 'auth'), 'command')
   if (typeof method !== 'function') throw new Error('the proxy answered no method')
   return (): unknown => Reflect.apply(method, undefined, []) as unknown
 }

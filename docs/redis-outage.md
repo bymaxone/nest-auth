@@ -40,7 +40,10 @@ the other two client configurations a host may use.
 | `unavailable` | reply error `READONLY` · `LOADING` · `MASTERDOWN` · `CLUSTERDOWN` · `TRYAGAIN`                     | Redis answered that it cannot serve this command now    |
 
 A reply error that is a mistake (`NOSCRIPT`, `WRONGTYPE`, `ERR ...`) is **not** an outage: it is a
-defect, stays the error it is, and is answered as `500 auth.internal`.
+defect. The same boundary raises `AuthException(auth.internal)` for it, with no `cause`, and logs
+`AUTH_STORE_FAILED` with `operation` `redis:<family>` and `detail` `ReplyError`: the ioredis error
+names the command it failed, keys and arguments included, so it goes no further. Pinned by
+`test/e2e/real-redis/reply-error.e2e-spec.ts`, with and without `AuthExceptionFilter`.
 
 `READONLY` is an outage on purpose. After a failover a client still attached to the demoted node is
 told it cannot serve writes right now; that clears when the client reconnects to the new primary.
