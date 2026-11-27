@@ -21,17 +21,11 @@
 export function trimSlashes(value: string, leading = true): string {
   let start = 0
   let end = value.length
-  // Stryker disable ConditionalExpression,EqualityOperator
-  // Both bounds are equivalent to `true` here, and both comparisons are equivalent one step
-  // looser: the character test is what actually stops each loop, because an index past either
-  // end reads `undefined`, which is never `'/'`. Verified by running all four mutants against
-  // '', '/', '//', '///', '/a/', 'a', '/api/' and '////a////' in both `leading` modes: every one
-  // returns what the guarded form returns. The bounds stay because a loop whose only terminator
-  // is an out-of-range read is a worse thing to leave for the next reader.
+  // `charAt` answers `''` past either end, which stops each loop. When the whole value is slashes `end`
+  // finishes below `start`, and `slice` answers `''` for that.
   if (leading) {
-    while (start < end && value[start] === '/') start += 1
+    while (value.charAt(start) === '/') start += 1
   }
-  while (end > start && value[end - 1] === '/') end -= 1
-  // Stryker restore ConditionalExpression,EqualityOperator
+  while (value.charAt(end - 1) === '/') end -= 1
   return value.slice(start, end)
 }

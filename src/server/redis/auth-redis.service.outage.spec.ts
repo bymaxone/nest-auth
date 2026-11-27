@@ -73,7 +73,7 @@ describe('AuthRedisService under a Redis outage', () => {
     expect(rejection).toBeInstanceOf(AuthException)
     expect(rejection.getStatus()).toBe(503)
     expect(rejection.cause).not.toBe(timeout)
-    expect(rejection.cause).toMatchObject({ name: 'Error', message: 'redis' })
+    expect(rejection.cause).toMatchObject({ name: 'Error (timeout)', message: 'redis' })
     expect(JSON.stringify(rejection.getResponse())).not.toContain('timed out')
   })
 

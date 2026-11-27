@@ -18,6 +18,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Changed
+
+- The `cause` of the 503 an outage answers is named after the class of the client's error and the
+  kind of the outage: `Error (timeout)`, `Error (closed)`,
+  `MaxRetriesPerRequestError (unreachable)`, `ReplyError (unavailable)`. The class alone did not tell
+  a timeout from a closed connection.
+
+  **Apply to a derived backend:** a log search, an alert or a host filter that compares
+  `cause.name` with a class name alone (`Error`, `ReplyError`, `MaxRetriesPerRequestError`) matches
+  the start of the name instead.
+
 ## [1.5.21] - 2026-11-27
 
 A patch release. The error of a failed `AuthRedisService` call, with the command it names, no longer

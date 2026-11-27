@@ -57,7 +57,7 @@
     "[\"src/server/services/token-manager.service.ts\",[\"member\",\"TokenManagerService\",\"reissueTokens\"]]": 65,
     "[\"src/server/services/token-manager.service.ts\",[\"member\",\"TokenManagerService\",\"rotateFromGrace\"]]": 55,
     "[\"src/server/services/token-manager.service.ts\",[\"member\",\"TokenManagerService\",\"rotatePlatformFromGrace\"]]": 52,
-    "[\"src/server/utils/redact-secrets.ts\",[\"fn\",\"redactSecrets\"]]": 113,
+    "[\"src/server/utils/redact-secrets.ts\",[\"fn\",\"redactSecrets\"]]": 98,
     "[\"test/e2e/hooks-lifecycle.e2e-spec.ts\",[\"fn\",\"bootstrapWithSpy\"]]": 53,
     "[\"test/e2e/mfa-disable-flow.e2e-spec.ts\",[\"container\",\"describe\",\"mfa disable flow (E2E)\"],[\"container\",\"describe\",\"happy path — a subsequent login no longer issues an mfaTempToken\"],[\"test\",\"it\",\"should issue access + refresh tokens directly on /login after disable\"]]": 57,
     "[\"test/e2e/mfa-disable-flow.e2e-spec.ts\",[\"fn\",\"enableMfa\"]]": 53,

@@ -322,15 +322,6 @@ export function describeError(error: unknown, secrets: readonly string[]): strin
  * @returns A single-line description carrying nothing the channel authored.
  */
 export function describeChannelStatus(error: unknown): string {
-  // Equivalence, stated before the directive so the directive itself stays adjacent to the line it
-  // means: no test can kill a non-empty list here, and the reason is this function's own guarantee
-  // rather than a gap in the suite. The line it produces is composed entirely of text this library
-  // authored — the `<error>` stand-in, the `<-` join, and for a thrown non-Error a `typeof`, which
-  // is one of a fixed set of words and the same for every value of its type. Nothing else at all,
-  // so there is no channel-written substring for any secret to match. That is precisely
-  // why the parameter is gone from the signature: a caller has nothing to name. Where naming IS
-  // load-bearing the function is `describeError`, and its list is pinned by tests.
-  //
-  // Stryker disable next-line ArrayDeclaration
+  // Stryker disable next-line ArrayDeclaration: under 'drop' the line is built only from this module's stand-ins and a `typeof`, so no secret list changes it
   return describe(error, [], 'drop')
 }

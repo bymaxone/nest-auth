@@ -9,6 +9,20 @@
 import { redactSecrets } from './redact-secrets'
 
 describe('redactSecrets', () => {
+  // Scenario: nothing to look for, over text a remote controls. Expected: the text comes back without
+  // being walked a character at a time, which is work a channel could otherwise buy with a long reply.
+  it('does not walk the text when there is nothing to look for', () => {
+    const text = 'a reply quoted by a remote'
+    const walked = jest.spyOn(String.prototype, 'charAt')
+
+    const result = redactSecrets(text, [])
+    const reads = walked.mock.contexts.filter((context) => String(context) === text).length
+    walked.mockRestore()
+
+    expect(result).toBe(text)
+    expect(reads).toBe(0)
+  })
+
   // The type says `readonly string[]` and that is not a guarantee at a boundary this library does
   // not own: a consumer calling from JavaScript, or an object cast anywhere along the way, can put
   // `undefined` in the array. Reading `.length` off it threw a `TypeError` — out of a `catch`
