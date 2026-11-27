@@ -1029,7 +1029,7 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > writes no log line for it: your readiness probe, not the request log, is the signal that Redis is
 > down, so put a Redis health check next to it. Two answers keep their meaning: a password-reset
 > request refused because the cooldown store cannot answer is the same `503` for every address, and the
-> OAuth callback redirects to your `errorRedirectUrl` with `error=service_unavailable` when you
+> OAuth callback, past its rate limit, redirects to your `errorRedirectUrl` with `error=service_unavailable` when you
 > configured one. A failure to cache an answer the library can recompute (the workspace membership
 > cache, the denied-access counter, the session limit) is still absorbed, not refused.
 > The paths, the outcome of each and the test that pins it are in
