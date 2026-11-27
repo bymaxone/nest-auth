@@ -128,6 +128,49 @@ export interface OAuthLoginResult {
 }
 
 /**
+ * Why sessions were revoked, as reported to {@link IAuthHooks.onSessionsRevoked}.
+ *
+ * - `logout`: the owner signed out.
+ * - `session_revoked`: one named session was revoked.
+ * - `other_sessions_revoked`: every session but the current one was revoked.
+ * - `all_sessions_revoked`: every session was revoked by the caller's request.
+ * - `account_unavailable`: a refresh found the account missing or blocked.
+ * - `password_changed` / `password_reset`: the password was replaced.
+ * - `mfa_enabled` / `mfa_disabled`: the second factor changed.
+ * - `session_evicted`: the session limit pushed out a session.
+ * - `refresh_reuse`: a consumed refresh token was replayed and its family was revoked.
+ */
+export type SessionRevocationReason =
+  | 'logout'
+  | 'session_revoked'
+  | 'other_sessions_revoked'
+  | 'all_sessions_revoked'
+  | 'account_unavailable'
+  | 'password_changed'
+  | 'password_reset'
+  | 'mfa_enabled'
+  | 'mfa_disabled'
+  | 'session_evicted'
+  | 'refresh_reuse'
+
+/** What {@link IAuthHooks.onSessionsRevoked} is told about one revocation. */
+export interface SessionsRevokedEvent {
+  /** The account whose sessions were revoked. */
+  userId: string
+  /** The account's tenant. Absent on the platform plane, and for a session record that names none. */
+  tenantId?: string
+  /** The identity plane of the account. */
+  plane: 'dashboard' | 'platform'
+  /** Why the sessions were revoked. */
+  reason: SessionRevocationReason
+  /**
+   * SHA-256 hashes of the revoked refresh sessions, when the operation names them. Absent when it
+   * does not, as for a revocation of every session: read that as "any session of this account".
+   */
+  sessionIds?: string[]
+}
+
+/**
  * Optional lifecycle hooks that consumers can implement to extend the default
  * authentication behaviour of @bymax-one/nest-auth.
  *
@@ -461,6 +504,19 @@ export interface IAuthHooks {
     evictedSessionHash: string,
     context: HookContext
   ): Promise<void> | void
+  /**
+   * Called after every revocation of refresh sessions, on both identity planes, whatever caused it.
+   * The other hooks of the same moments, such as `afterLogout` or `onSessionEvicted`, still fire.
+   *
+   * Runs after the store has deleted the sessions, and is not awaited: a rejection or a throw is
+   * logged and changes nothing. It also runs when the sessions were deleted and a later write of
+   * the same operation was refused, so the operation can report a failure after the event. Treat it
+   * as idempotent: a retried operation can report the same account again.
+   *
+   * @param event - Whose sessions, on which plane, why, and which ones when known.
+   */
+  onSessionsRevoked?(event: SessionsRevokedEvent): Promise<void> | void
+
   /**
    * Called once for every request guarded by a service API key, refusals included.
    *

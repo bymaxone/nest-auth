@@ -110,7 +110,9 @@ export type {
   ApiKeyDenyReason,
   HookContext,
   IAuthHooks,
-  OAuthLoginResult
+  OAuthLoginResult,
+  SessionRevocationReason,
+  SessionsRevokedEvent
 } from './interfaces/auth-hooks.interface'
 export type {
   BymaxAuthModuleOptions,
