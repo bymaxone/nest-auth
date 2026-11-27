@@ -30,7 +30,7 @@ import type {
   IPlatformUserRepository,
   SafeAuthPlatformUser
 } from '../interfaces/platform-user-repository.interface'
-import { logEvent, logHook } from '../observability/log-event'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { platformUserAsSafeUser } from '../utils/mfa-safe-user'

@@ -50,7 +50,7 @@ export function announceSessionsRevoked(
  * @param revocation - The account, its plane and why its sessions are ending.
  */
 export async function revokeEverySession(
-  redis: AuthRedisService,
+  redis: Pick<AuthRedisService, 'invalidateUserSessions' | 'bumpUserTokenEpoch'>,
   hooks: IAuthHooks | null,
   logger: Logger,
   revocation: Omit<SessionsRevokedEvent, 'sessionIds'>

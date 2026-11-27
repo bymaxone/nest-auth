@@ -63,14 +63,6 @@ describe('SessionService', () => {
     expect(events()).toEqual([revoked('session_revoked', [other])])
   })
 
-  // Scenario: the removal a flow announces itself. Expected: no event from it.
-  it('removes a session without announcing', async () => {
-    await sessions().removeSession(target)
-
-    expect(redis.eval).toHaveBeenCalledTimes(1)
-    expect(events()).toEqual([])
-  })
-
   // Scenario: the epoch write after the removal is refused. Expected: announced all the same.
   it('announces another session even when the epoch write is refused', async () => {
     redis.bumpUserTokenEpoch.mockRejectedValue(new Error('refused'))

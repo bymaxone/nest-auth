@@ -16,13 +16,14 @@ const entries = [
 ]
 
 /** A store that refuses to delete the keys named. */
-function store(refused: string[] = []): AuthRedisService {
+function store(refused: string[] = []): Pick<AuthRedisService, 'del' | 'srem'> {
   return {
     del: jest.fn(async (key: string) => {
       if (refused.includes(key)) throw new Error('refused')
+      return true
     }),
     srem: jest.fn(async () => 1)
-  } as unknown as AuthRedisService
+  }
 }
 
 describe('evictSessions', () => {

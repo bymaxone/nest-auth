@@ -16,6 +16,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { removeStoredSession } from '../utils/remove-session'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -31,6 +32,7 @@ import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import { eventsReceived, expectEvent, serialized } from '../__tests__/log-events'
 
+jest.mock('../utils/remove-session', () => ({ removeStoredSession: jest.fn() }))
 // Mock the anti-enumeration sleep so timing-normalization delays are observable and instant.
 jest.mock('../utils/sleep', () => ({ sleep: jest.fn().mockResolvedValue(undefined) }))
 
@@ -154,7 +156,6 @@ const mockAccountStatus = {
 
 const mockSessionService = {
   createSession: jest.fn(),
-  removeSession: jest.fn(),
   rotateSession: jest.fn()
 }
 
@@ -2979,21 +2980,20 @@ describe('AuthService', () => {
       })
     })
 
-    // Verifies that logout calls sessionService.removeSession with the user id and the sha256 hash of the refresh token.
-    it('logout: calls sessionService.removeSession for the session hash', async () => {
+    it('logout: calls removeStoredSession for the session hash', async () => {
       // Arrange
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.set.mockResolvedValue(undefined)
       mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti1', exp: 9_999_999_999 })
-      mockSessionService.removeSession.mockResolvedValue(undefined)
+      jest.mocked(removeStoredSession).mockResolvedValue(undefined)
       mockHooks.afterLogout.mockResolvedValue(undefined)
 
       // Act
       await sessionEnabledService.logout('access.jwt', 'raw-refresh-token')
 
       // Assert
-      expect(mockSessionService.removeSession).toHaveBeenCalledTimes(1)
-      expect(mockSessionService.removeSession).toHaveBeenCalledWith({
+      expect(removeStoredSession).toHaveBeenCalledTimes(1)
+      expect(removeStoredSession).toHaveBeenCalledWith(mockRedis, mockOptions.hmacKey, {
         userId: USER.id,
         tenantId: USER.tenantId,
         sessionHash: expect.stringMatching(/^[a-f0-9]{64}$/)
@@ -3016,20 +3016,20 @@ describe('AuthService', () => {
       const owner = await sessionEnabledService.logout('access.jwt', 'raw-refresh-token')
 
       expect(owner).toBe(USER.id)
-      expect(mockSessionService.removeSession).not.toHaveBeenCalled()
+      expect(removeStoredSession).not.toHaveBeenCalled()
       // The record itself is gone, which is what ends the session.
       expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^rt:[0-9a-f]{64}$/))
     })
 
-    // Verifies that logout completes without throwing when removeSession rejects with SESSION_NOT_FOUND.
-    it('logout: swallows SESSION_NOT_FOUND from sessionService.removeSession', async () => {
+    // Verifies that logout completes without throwing when removeStoredSession rejects with SESSION_NOT_FOUND.
+    it('logout: swallows SESSION_NOT_FOUND from removeStoredSession', async () => {
       // Arrange
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.set.mockResolvedValue(undefined)
       mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti2', exp: 9_999_999_999 })
-      mockSessionService.removeSession.mockRejectedValue(
-        new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
-      )
+      jest
+        .mocked(removeStoredSession)
+        .mockRejectedValue(new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND))
       mockHooks.afterLogout.mockResolvedValue(undefined)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
@@ -3045,14 +3045,14 @@ describe('AuthService', () => {
       warnSpy.mockRestore()
     })
 
-    // Verifies that logout logs a warning when removeSession rejects with any error code other than SESSION_NOT_FOUND.
-    it('logout: logs warn for non-SESSION_NOT_FOUND errors from sessionService.removeSession', async () => {
+    // Verifies that logout logs a warning when removeStoredSession rejects with any error code other than SESSION_NOT_FOUND.
+    it('logout: logs warn for non-SESSION_NOT_FOUND errors from removeStoredSession', async () => {
       // Arrange
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.set.mockResolvedValue(undefined)
       mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti3', exp: 9_999_999_999 })
       const otherError = new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-      mockSessionService.removeSession.mockRejectedValue(otherError)
+      jest.mocked(removeStoredSession).mockRejectedValue(otherError)
       mockHooks.afterLogout.mockResolvedValue(undefined)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
@@ -3067,13 +3067,13 @@ describe('AuthService', () => {
       warnSpy.mockRestore()
     })
 
-    // Verifies that a non-AuthException rejection from removeSession triggers the warn path just like an unknown-code AuthException.
-    it('logout: logs warn when removeSession rejects with a non-AuthException error', async () => {
+    // Verifies that a non-AuthException rejection from removeStoredSession triggers the warn path just like an unknown-code AuthException.
+    it('logout: logs warn when removeStoredSession rejects with a non-AuthException error', async () => {
       // Arrange — plain Error covers the `err instanceof AuthException` false branch
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.set.mockResolvedValue(undefined)
       mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti4', exp: 9_999_999_999 })
-      mockSessionService.removeSession.mockRejectedValue(new Error('unexpected redis failure'))
+      jest.mocked(removeStoredSession).mockRejectedValue(new Error('unexpected redis failure'))
       mockHooks.afterLogout.mockResolvedValue(undefined)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 

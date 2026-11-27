@@ -22,13 +22,18 @@ import type { SessionAlertInfo } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logHook, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { integerReply } from '../redis/integer-reply'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { deleteGracePointers } from '../utils/delete-grace-pointers'
 import { describeChannelStatus } from '../utils/describe-error'
 import { evictSessions } from '../utils/evict-sessions'
 import { hostEntityOf } from '../utils/host-read'
 import { toSafeUser } from '../utils/mfa-safe-user'
+import {
+  assertSessionHash,
+  assertTenant,
+  removeStoredSession,
+  SESSION_HASH_RE
+} from '../utils/remove-session'
 import { runDetached } from '../utils/run-detached'
 import { parseUserAgent, type StoredSessionDetail } from '../utils/session-detail'
 import { announceSessionsRevoked } from '../utils/session-revocation'
@@ -41,32 +46,6 @@ import { raiseFirst } from '../utils/settle-writes'
 
 /** Maximum stored IP length — IPv6 max is 45 characters. Truncated before Redis storage. */
 const MAX_IP_LENGTH = 45
-
-/** Regex for a valid SHA-256 hex session hash (64 lowercase hex characters). */
-const SESSION_HASH_RE = /^[a-f0-9]{64}$/
-
-/**
- * Lua script for atomic session revocation.
- *
- * Performs SISMEMBER check and all deletions in a single round-trip to
- * prevent TOCTOU race conditions between the ownership check and deletion.
- *
- * KEYS[1] = `sess:{userId}` (auto-namespaced by AuthRedisService)
- * KEYS[2] = `rt:{sessionHash}` (auto-namespaced)
- * KEYS[3] = `sd:{sessionHash}` (auto-namespaced)
- * ARGV[1] = `rt:{sessionHash}` (SET member value — stored WITHOUT namespace, matching
- *   the format written by `TokenManagerService.sadd('sess:{userId}', 'rt:{hash}')`)
- *
- * Returns: 1 if revoked, 0 if the session was not a member of the SET.
- */
-const REVOKE_SESSION_LUA = `
-local is_member = redis.call('SISMEMBER', KEYS[1], ARGV[1])
-if is_member == 0 then return 0 end
-redis.call('DEL', KEYS[2])
-redis.call('SREM', KEYS[1], ARGV[1])
-redis.call('DEL', KEYS[3])
-return 1
-`
 
 /**
  * Lua script for atomic session detail rotation.
@@ -240,34 +219,6 @@ export class SessionService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Refuses a dashboard tenant that names nothing, at the public boundary.
-   *
-   * Every method on this service takes the tenant as a REQUIRED named field, and all of them are
-   * exported — the object form replaced the positional one precisely so a `string` tenant could
-   * not be transposed with a `string` user id or session hash. Naming it removes the transposition
-   * but not the empty string: a caller can still pass `''`, and that is what this refuses.
-   *
-   * `userSubject` cannot enforce it instead: the rotation scripts must be
-   * called with the empty PLACEHOLDER identity to discover a grace pointer, so the innermost
-   * builder has to stay total, and an empty key in a script's KEYS array is not "no key" — the
-   * `eval` wrapper prefixes it into a real key named `auth:`.
-   *
-   * So the refusal lives here, where a caller can actually be wrong. `''` derived
-   * `dashboard:0::{userId}`, swept and bumped keys nobody writes, and returned normally — a
-   * revocation reported as done while every session and access token it named stayed valid.
-   *
-   * @param tenantId - The tenant supplied by the caller.
-   * @throws {@link AuthException} `VALIDATION` when it is blank.
-   */
-  private assertTenant(tenantId: string): void {
-    if (tenantId === '') {
-      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
-        { field: 'tenantId', message: 'tenantId is required to name a session index' }
-      ])
-    }
-  }
-
-  /**
    * Records a new session in Redis and enforces the concurrent session limit.
    *
    * The device and activity record under `sd:{hash}` is written with the session itself, by
@@ -294,7 +245,7 @@ export class SessionService {
     ip,
     userAgent
   }: CreateSessionParams): Promise<string> {
-    this.assertTenant(tenantId)
+    assertTenant(tenantId)
     const hash = sha256(rawRefreshToken)
     const device = parseUserAgent(userAgent)
 
@@ -359,7 +310,7 @@ export class SessionService {
     currentSessionHash,
     currentSessionId
   }: ListSessionsParams): Promise<SessionInfo[]> {
-    this.assertTenant(tenantId)
+    assertTenant(tenantId)
     // Drop the grace members whose pointers have already expired, before reading the index.
     // A rotation adds one per refresh and only a revoke-all ever removed them, so an account
     // that refreshes and never signs out again accumulates them without bound — and this
@@ -416,35 +367,10 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    await pinned(this.removeSession({ userId, tenantId, sessionHash }))
-    this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
-  }
-
-  /**
-   * The store removal alone, without `onSessionsRevoked`: for a flow that announces the
-   * revocation itself, once, under its own reason.
-   *
-   * @internal Call {@link revokeSession} to revoke a session.
-   * @param params - See {@link RevokeSessionParams}.
-   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
-   */
-  async removeSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    this.assertTenant(tenantId)
-    this.assertValidSessionHash(sessionHash)
-
-    // Atomic Lua script: ownership check (SISMEMBER) + all deletions in one
-    // round-trip to eliminate TOCTOU between the membership check and DEL/SREM.
-    const result = await pinned(
-      this.redis.eval(
-        REVOKE_SESSION_LUA,
-        [this.indexKey(userId, tenantId), `rt:${sessionHash}`, `sd:${sessionHash}`],
-        [`rt:${sessionHash}`]
-      )
+    await pinned(
+      removeStoredSession(this.redis, this.options.hmacKey, { userId, tenantId, sessionHash })
     )
-
-    if (integerReply(result) === 0) {
-      throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
-    }
+    this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
   }
 
   /**
@@ -472,12 +398,14 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeOtherSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    // No `assertTenant` here: `removeSession` on the next line performs the identical check
+    // No `assertTenant` here: `removeStoredSession` on the next line performs the identical check
     // before touching anything, so a guard at this level is unreachable code that reads as
     // defence. Measured — deleting it left all 133 tests in this suite green, which is what an
     // equivalent mutant looks like. Removed rather than suppressed: a `Stryker disable` would
     // have preserved the duplication and added a comment defending it.
-    await pinned(this.removeSession({ userId, tenantId, sessionHash }))
+    await pinned(
+      removeStoredSession(this.redis, this.options.hmacKey, { userId, tenantId, sessionHash })
+    )
     // After the revoke, not before: a failure above leaves the epoch untouched and the
     // operation visibly incomplete, rather than the reverse — every device losing its access
     // token for a session that is in fact still alive.
@@ -519,8 +447,8 @@ export class SessionService {
    *   the predecessor of one.
    */
   async resolveLiveSession({ userId, tenantId, sessionHash }: LiveSessionParams): Promise<string> {
-    this.assertTenant(tenantId)
-    this.assertValidSessionHash(sessionHash, 'sessionHash')
+    assertTenant(tenantId)
+    assertSessionHash(sessionHash, 'sessionHash')
 
     return await pinned(
       this.resolveLiveMember(
@@ -567,8 +495,8 @@ export class SessionService {
     currentSessionHash,
     reason = 'other_sessions_revoked'
   }: RevokeAllExceptCurrentParams): Promise<void> {
-    this.assertTenant(tenantId)
-    this.assertValidSessionHash(currentSessionHash, 'currentSessionHash')
+    assertTenant(tenantId)
+    assertSessionHash(currentSessionHash, 'currentSessionHash')
 
     const members = await pinned(this.redis.smembers(this.indexKey(userId, tenantId)))
     const keptHash = await pinned(this.resolveLiveMember(members, currentSessionHash))
@@ -603,7 +531,13 @@ export class SessionService {
       if (timingSafeCompare(hash, keptHash)) continue
 
       try {
-        await pinned(this.removeSession({ userId, tenantId, sessionHash: hash }))
+        await pinned(
+          removeStoredSession(this.redis, this.options.hmacKey, {
+            userId,
+            tenantId,
+            sessionHash: hash
+          })
+        )
         revoked.push(hash)
       } catch (err: unknown) {
         // SESSION_NOT_FOUND is expected when a concurrent logout already removed
@@ -649,8 +583,8 @@ export class SessionService {
     ip: string,
     userAgent: string
   ): Promise<void> {
-    this.assertValidSessionHash(oldHash, 'oldHash')
-    this.assertValidSessionHash(newHash, 'newHash')
+    assertSessionHash(oldHash, 'oldHash')
+    assertSessionHash(newHash, 'newHash')
 
     // Guard against a programming error where the same hash is supplied for both
     // arguments. timingSafeCompare is used because session hashes are derived from
@@ -721,41 +655,6 @@ export class SessionService {
       // Old detail missing or unparseable — fall back to current timestamp.
     }
     return createdAt
-  }
-
-  /**
-   * Asserts that a session hash string is a valid 64-character lowercase hex string.
-   *
-   * Rejects malformed inputs before they reach Redis to prevent unexpected key
-   * construction and to avoid leaking timing information via Redis operations on
-   * attacker-controlled key names.
-   *
-   * @remarks
-   * **This used to answer `SESSION_NOT_FOUND`, and that was wrong.** The stated reason was to stop
-   * callers enumerating valid hash formats — but the format is not a secret. It is 64 hex
-   * characters, `SessionInfo.sessionHash` publishes it on every listed session, and the route's
-   * own documentation describes it. Nothing is protected by hiding it, and the pairing had a real
-   * cost: a consumer sending a malformed hash got the same answer as one sending a hash that had
-   * already been revoked, so a UI bug read as a race between the session list and the click. That
-   * is measured, not hypothetical — it cost a consumer session twenty minutes chasing a race that
-   * cannot happen.
-   *
-   * A malformed hash is a caller error and now says so. A well-formed hash that names nothing
-   * still answers `SESSION_NOT_FOUND`, which is where the no-enumeration argument does apply:
-   * that one really would tell the caller whether a session exists.
-   *
-   * @param sessionHash - The session hash to validate.
-   * @throws {@link AuthException} `VALIDATION` when the value is not 64 lowercase hex characters.
-   */
-  private assertValidSessionHash(sessionHash: string, field = 'sessionHash'): void {
-    if (!SESSION_HASH_RE.test(sessionHash)) {
-      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
-        {
-          field,
-          message: `${field} must be 64 lowercase hexadecimal characters`
-        }
-      ])
-    }
   }
 
   /**

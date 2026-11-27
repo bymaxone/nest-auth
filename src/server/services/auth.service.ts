@@ -34,7 +34,7 @@ import type {
   IUserRepository,
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
-import { logEvent, logHook, logStore, logDelivery } from '../observability/log-event'
+import { logEvent, logStore, logDelivery } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { announceLogout } from '../utils/announce-logout'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
@@ -44,10 +44,11 @@ import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
 import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
+import { removeStoredSession } from '../utils/remove-session'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
-import { announceSessionsRevoked, revokeEverySession } from '../utils/session-revocation'
+import { revokeEverySession } from '../utils/session-revocation'
 import { detached, checked, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst, settleWrites } from '../utils/settle-writes'
 import { sleep } from '../utils/sleep'
@@ -617,13 +618,9 @@ export class AuthService {
   }
 
   /**
-   * Cleans up the session's metadata through `SessionService.revokeSession()`.
-   *
-   * It performs an atomic SISMEMBER ownership check before deleting `sd:{hash}` and SREMing from
-   * `sess:{userId}`. The `rt:{hash}` DEL already ran — revokeSession's internal DEL is a no-op
-   * (Redis DEL is idempotent when the key is absent). SESSION_NOT_FOUND means the session was
-   * evicted, already revoked, or the refresh token does not belong to this user — in all cases
-   * authentication is already invalidated.
+   * Removes the session's detail record and index member. The `rt:{hash}` DEL already ran.
+   * SESSION_NOT_FOUND means the session was evicted, already revoked, or is not this account's —
+   * in all cases authentication is already invalidated.
    *
    * The tenant is REQUIRED to name the index, and it comes off the record rather than from the
    * caller. A record without one is a pre-upgrade write: the contract lists `tenantId` among the
@@ -643,7 +640,9 @@ export class AuthService {
   ): Promise<void> {
     if (!this.options.sessions.enabled || !userId || tenantId === undefined) return
     try {
-      await pinned(this.sessionService.removeSession({ userId, tenantId, sessionHash }))
+      await pinned(
+        removeStoredSession(this.redis, this.options.hmacKey, { userId, tenantId, sessionHash })
+      )
     } catch (err: unknown) {
       const errCode =
         err instanceof AuthException

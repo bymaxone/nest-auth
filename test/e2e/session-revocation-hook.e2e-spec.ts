@@ -19,6 +19,8 @@ import type { IAuthHooks } from '../../src/server/interfaces/auth-hooks.interfac
 import type { SessionsRevokedEvent } from '../../src/server/interfaces/auth-hooks.interface'
 import { AuthRedisService } from '../../src/server/redis/auth-redis.service'
 import { AuthService } from '../../src/server/services/auth.service'
+import { MfaService } from '../../src/server/services/mfa.service'
+import { PasswordResetService } from '../../src/server/services/password-reset.service'
 import { PasswordService } from '../../src/server/services/password.service'
 import { PlatformAuthService } from '../../src/server/services/platform-auth.service'
 import { SessionService } from '../../src/server/services/session.service'
@@ -571,5 +573,106 @@ describe('onSessionsRevoked (E2E)', () => {
         reason: 'refresh_reuse'
       })
     })
+  })
+
+  // A host can call any of these directly. A method that revokes without the hook, or fires it
+  // twice, breaks what the hook promises; a method added to these classes has to join a list here.
+  describe('exported revocation methods', () => {
+    beforeEach(() => start())
+
+    /** The methods of a class whose name says they end sessions or credentials. */
+    const revoking = (type: { prototype: object }): string[] =>
+      Object.getOwnPropertyNames(type.prototype)
+        .filter((name) => /^(revoke|remove|logout|reset|disable|change)/.test(name))
+        .sort()
+
+    it('are the ones these rows know about', () => {
+      // `removeOthers` and the `resetWith*` methods are private steps of a listed method.
+      expect(revoking(SessionService)).toEqual([
+        'removeOthers',
+        'revokeAllExceptCurrent',
+        'revokeOtherSession',
+        'revokeSession'
+      ])
+      expect(revoking(AuthService)).toEqual([
+        'logout',
+        'revokeAllSessions',
+        'revokeSessionMetadata'
+      ])
+      expect(revoking(PlatformAuthService)).toEqual(['logout', 'revokeAllPlatformSessions'])
+      expect(revoking(MfaService)).toEqual(['disable', 'resetMfa'])
+      expect(revoking(PasswordResetService)).toEqual([
+        'changePassword',
+        'resetPassword',
+        'resetWithOtp',
+        'resetWithToken',
+        'resetWithVerifiedToken'
+      ])
+    })
+
+    it.each<[string, (account: Account) => Promise<unknown>]>([
+      [
+        'AuthService.logout',
+        (a) => boot.app.get(AuthService).logout(a.accessToken, a.refreshToken)
+      ],
+      [
+        'AuthService.revokeAllSessions',
+        (a) => boot.app.get(AuthService).revokeAllSessions({ userId: a.userId, tenantId: TENANT })
+      ],
+      [
+        'SessionService.revokeSession',
+        (a) => boot.app.get(SessionService).revokeSession(target(a))
+      ],
+      [
+        'SessionService.revokeOtherSession',
+        (a) => boot.app.get(SessionService).revokeOtherSession(target(a))
+      ],
+      [
+        'SessionService.revokeAllExceptCurrent',
+        (a) =>
+          boot.app.get(SessionService).revokeAllExceptCurrent({
+            userId: a.userId,
+            tenantId: TENANT,
+            currentSessionHash: hashOf(a.refreshToken)
+          })
+      ],
+      ['MfaService.resetMfa', (a) => resetEnrolled(a)]
+    ])('%s fires exactly once', async (_name, revoke) => {
+      const account = await register()
+
+      await revoke(account)
+
+      await onlyEvent()
+    })
+
+    const target = (a: Account): { userId: string; tenantId: string; sessionHash: string } => ({
+      userId: a.userId,
+      tenantId: TENANT,
+      sessionHash: hashOf(a.refreshToken)
+    })
+
+    /** Gives the account a second factor to remove, then removes it administratively. */
+    async function resetEnrolled(a: Account): Promise<void> {
+      await boot.repo.updateMfa({
+        id: a.userId,
+        tenantId: TENANT,
+        data: { mfaEnabled: true, mfaSecret: 'sealed', mfaRecoveryCodes: [] }
+      })
+      await boot.app.get(MfaService).resetMfa(a.userId, 'dashboard', TENANT)
+    }
+
+    it.each(['logout', 'revokeAllPlatformSessions'] as const)(
+      'PlatformAuthService.%s fires exactly once',
+      async (method) => {
+        const tokens = await platformLogin()
+        const platform = boot.app.get(PlatformAuthService)
+
+        await (method === 'logout'
+          ? platform.logout(tokens.accessToken, tokens.refreshToken)
+          : platform.revokeAllPlatformSessions(ADMIN_ID))
+
+        await onlyEvent()
+      }
+    )
   })
 })

@@ -14,15 +14,21 @@ const logger = new Logger('test')
 const base: SessionsRevokedEvent = { userId: 'u1', plane: 'dashboard', reason: 'logout' }
 
 /** A store whose two writes record the order they ran in. */
-function store(calls: string[], fail?: 'delete' | 'epoch'): AuthRedisService {
-  const write = (name: 'delete' | 'epoch') => async (): Promise<void> => {
+function store(
+  calls: string[],
+  fail?: 'delete' | 'epoch'
+): Pick<AuthRedisService, 'invalidateUserSessions' | 'bumpUserTokenEpoch'> {
+  const write = (name: 'delete' | 'epoch'): void => {
     calls.push(name)
     if (fail === name) throw new Error(`${name} refused`)
   }
   return {
-    invalidateUserSessions: jest.fn(write('delete')),
-    bumpUserTokenEpoch: jest.fn(write('epoch'))
-  } as unknown as AuthRedisService
+    invalidateUserSessions: jest.fn(async () => write('delete')),
+    bumpUserTokenEpoch: jest.fn(async () => {
+      write('epoch')
+      return 1
+    })
+  }
 }
 
 describe('announceSessionsRevoked', () => {

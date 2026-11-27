@@ -27,7 +27,7 @@ import type { AuthUser, IUserRepository } from '../interfaces/user-repository.in
 import { logEvent, logDelivery } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { answerResetRequest } from '../utils/answer-reset-request'
-import { parseJson, stringifyJson } from '../utils/captured-builtins'
+import { stringifyJson } from '../utils/captured-builtins'
 import { classifyResetProof } from '../utils/classify-reset-proof'
 import { describeChannelStatus } from '../utils/describe-error'
 import { toSafeUser } from '../utils/mfa-safe-user'

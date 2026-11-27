@@ -42,7 +42,7 @@ export interface ReusedFamily {
  * worse than an empty object a consumer can see is empty.
  */
 export async function endReusedFamily(
-  redis: AuthRedisService,
+  redis: Pick<AuthRedisService, 'revokeFamily'>,
   hooks: IAuthHooks | null,
   logger: Logger,
   { kind, outcome, ip, userAgent }: ReusedFamily

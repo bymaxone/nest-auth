@@ -13,10 +13,10 @@ import type { AuthRedisService } from '../redis/auth-redis.service'
 const presented = { outcome: { familyId: 'f1' }, ip: '10.0.0.1', userAgent: 'agent' }
 
 /** A store whose family belongs to `ownerId` in `tenantId`. */
-function store(ownerId: string, tenantId?: string): AuthRedisService {
+function store(ownerId: string, tenantId?: string): Pick<AuthRedisService, 'revokeFamily'> {
   return {
     revokeFamily: jest.fn(async () => ({ removed: 1, ownerId, tenantId }))
-  } as unknown as AuthRedisService
+  }
 }
 
 describe('endReusedFamily', () => {

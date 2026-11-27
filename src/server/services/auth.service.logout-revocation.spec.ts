@@ -20,6 +20,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { removeStoredSession } from '../utils/remove-session'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -30,6 +31,8 @@ import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
+
+jest.mock('../utils/remove-session', () => ({ removeStoredSession: jest.fn() }))
 
 const JWT_SECRET = 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long'
 const HMAC_KEY = createHash('sha256')
@@ -42,7 +45,7 @@ const JTI = 'jti-under-test'
 
 const mockRedis = { readSessionOwner: jest.fn(), set: jest.fn(), del: jest.fn(), get: jest.fn() }
 const mockTokenManager = { verifyIgnoringExpiry: jest.fn() }
-const mockSessionService = { removeSession: jest.fn() }
+const mockSessionService = {}
 const mockHooks = { afterLogout: jest.fn() }
 
 const mockOptions = {
@@ -69,7 +72,7 @@ describe('AuthService.logout — refused revocation writes', () => {
     mockRedis.readSessionOwner.mockResolvedValue({ userId: 'user-1', tenantId: 'tenant-1' })
     mockRedis.set.mockResolvedValue(undefined)
     mockRedis.del.mockResolvedValue(undefined)
-    mockSessionService.removeSession.mockResolvedValue(undefined)
+    jest.mocked(removeStoredSession).mockResolvedValue(undefined)
     mockHooks.afterLogout.mockResolvedValue(undefined)
     mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
       jti: JTI,
@@ -108,7 +111,7 @@ describe('AuthService.logout — refused revocation writes', () => {
 
     expect(mockRedis.del).toHaveBeenCalledWith(`rt:${HASH}`)
     expect(mockRedis.del).toHaveBeenCalledWith(`rp:${HASH}`)
-    expect(mockSessionService.removeSession).toHaveBeenCalledTimes(1)
+    expect(removeStoredSession).toHaveBeenCalledTimes(1)
   })
 
   // Scenario: the store refuses the refresh-key delete. Expected: logout rejects, and the
@@ -411,7 +414,7 @@ describe('AuthService.logout — refused revocation writes', () => {
   // sessions list, and that behaviour is unchanged.
   it('should still complete when only the session index cleanup is refused', async () => {
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
-    mockSessionService.removeSession.mockRejectedValue(STORE_REFUSED)
+    jest.mocked(removeStoredSession).mockRejectedValue(STORE_REFUSED)
 
     await expect(service.logout('access.jwt', RAW_REFRESH)).resolves.toBe('user-1')
 

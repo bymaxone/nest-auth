@@ -24,28 +24,34 @@ export interface EvictionRequest {
 }
 
 /**
+ * What `onSessionEvicted` receives beside the account and the session.
+ *
+ * Names the account as well as the request. An eviction context must carry tenant-qualified
+ * identity: a repository id is unique only within a tenant, so a consumer disconnecting sockets on
+ * a bare id reaches another tenant's user. Both values are part of the request, so there is nothing
+ * to look up.
+ */
+function evictionContext({
+  userId,
+  tenantId,
+  ip,
+  userAgent
+}: Omit<EvictionRequest, 'index'>): HookContext {
+  return { plane: 'dashboard', userId, tenantId, ip, userAgent, sanitizedHeaders: {} }
+}
+
+/**
  * Removes the sessions the limit pushed out. Each removed one fires `onSessionEvicted`; the whole
  * pass then fires `onSessionsRevoked` once.
  */
 export async function evictSessions(
-  redis: AuthRedisService,
+  redis: Pick<AuthRedisService, 'del' | 'srem'>,
   hooks: IAuthHooks | null,
   logger: Logger,
   { userId, tenantId, ip, userAgent, index }: EvictionRequest,
   toEvict: ReadonlyArray<{ member: string; memberHash: string }>
 ): Promise<void> {
-  // Names the account as well as the request. An eviction context must carry tenant-qualified
-  // identity: a repository id is unique only within a tenant, so a consumer disconnecting sockets
-  // on a bare id reaches another tenant's user. Both values are part of the request, so there is
-  // nothing to look up.
-  const context: HookContext = {
-    plane: 'dashboard',
-    userId,
-    tenantId,
-    ip,
-    userAgent,
-    sanitizedHeaders: {}
-  }
+  const context = evictionContext({ userId, tenantId, ip, userAgent })
 
   const evicted: string[] = []
   for (const entry of toEvict) {

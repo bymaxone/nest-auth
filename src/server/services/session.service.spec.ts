@@ -1849,7 +1849,7 @@ describe('SessionService', () => {
     // A blank tenant is refused here, in this method's own suite, rather than only through the
     // shared table below.
     //
-    // The table asserts the same thing and Stryker still reported `this.assertTenant(tenantId)`
+    // The table asserts the same thing and Stryker still reported `assertTenant(tenantId)`
     // as deletable: under `coverageAnalysis: "perTest"` the mutant is only re-tested against the
     // cases the dry run attributed to it, and the table's cases — arrow functions built once at
     // module scope — were not among them. Deleting the call and running the suite by hand DOES
@@ -2035,12 +2035,8 @@ describe('SessionService', () => {
       const otherHash = sha256('other-auth-err')
       mockRedis.smembers.mockResolvedValue([`rt:${currentHash}`, `rt:${otherHash}`])
 
-      // Simulate removeSession throwing a different AuthException
-      // We do that by making the hash invalid — but revokeAllExceptCurrent validates currentHash
-      // and calls removeSession with member hashes. Let's use a spy instead.
-      const revokeSpy = jest
-        .spyOn(service, 'removeSession')
-        .mockRejectedValue(new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID))
+      // The store's removal throws an AuthException carrying another code.
+      mockRedis.eval.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID))
 
       await expect(
         service.revokeAllExceptCurrent({
@@ -2049,8 +2045,6 @@ describe('SessionService', () => {
           currentSessionHash: currentHash
         })
       ).rejects.toBeInstanceOf(AuthException)
-
-      revokeSpy.mockRestore()
     })
 
     // With no live session there is none to keep, so the call is refused rather than answering
