@@ -225,8 +225,8 @@ export type RemoveAllMembershipsResult =
 /**
  * The membership port a host implements.
  *
- * Every method carries the full key of what it names, and every mutating one receives the audit
- * event for its change and persists it in the same transaction. A result other than `'ok'` means
+ * Every method carries the full key of what it names. One whose input has an `audit` field receives
+ * the event for its change there and persists it in the same transaction. A result other than `'ok'` means
  * nothing was written: no change and no audit row, so a refused write leaves no trace of an event
  * that did not happen. The audit event a call receives names the same tenant, workspace and member
  * as the key of that call, and is stored as given. Reads the library uses to decide

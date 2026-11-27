@@ -498,8 +498,8 @@ export interface IAuthHooks {
    * Called with an audit event: after a workspace or membership change has committed, after an
    * invitation was sent, resent, revoked or accepted, and for a refused access or a workspace switch.
    *
-   * Informational and best-effort: it never delays or fails the operation, and it can be lost if
-   * the process dies before the call. The repository gets no audit row for `member.invited`,
+   * Informational and best-effort: it never delays or fails the operation, and it can be lost, for
+   * instance if the process dies before the call. The repository gets no audit row for `member.invited`,
    * `invitation.resent`, `invitation.revoked`, `access.denied` or `workspace.switched`, and gets
    * one for `invitation.accepted` only when `IMembershipRepository.create` added the membership.
    *

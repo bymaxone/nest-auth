@@ -26,10 +26,10 @@ interface WorkspaceAuditBase {
 /**
  * One audited event of a workspace, its memberships or its invitations.
  *
- * Every mutating repository method receives the event for its own change in an `audit` field and
- * must persist it in the SAME transaction as the change, so the audit row cannot be missing for a
+ * A repository method whose input has an `audit` field receives the event for its own change there
+ * and must persist it in the SAME transaction as the change, so the audit row cannot be missing for a
  * change that happened or present for one that did not. After the write commits, the library fans
- * the event out to a hook; that fan-out is best-effort and can be lost if the process dies between
+ * the event out to a hook; that fan-out is best-effort and can be lost, for instance if the process dies between
  * the commit and the call, which is why the persisted row is the record.
  *
  * Some events ride on no repository write that takes an `audit` field, so they go to the hook only:

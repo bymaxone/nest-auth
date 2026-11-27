@@ -28,7 +28,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   fires for every recorded session, the retry of a failed logout does fire `afterLogout`, the
   hooks object is registered under `BYMAX_AUTH_HOOKS`, and several `onWorkspaceEvent` events have no
   audit row in the repository. **Apply:** a host that reads its audit rows as the full history of a
-  workspace has to record those events from the hook.
+  workspace can get those events only from the hook, which is best-effort.
 
 ## [1.5.22] - 2026-11-27
 
