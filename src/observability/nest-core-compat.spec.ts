@@ -147,7 +147,8 @@ describe('observability against @bymax-one/nest-core', () => {
     expect(indicator.name).toBe('auth-redis')
     await expect(indicator.check()).resolves.toStrictEqual({ status: 'up' })
     await expect(indicator.check()).resolves.toStrictEqual({ status: 'down' })
-    await expect(indicator.check()).rejects.toThrow('ECONNREFUSED')
+    // The rejection is the probe's own: the address the client's error named is not carried to the aggregator.
+    await expect(indicator.check()).rejects.toThrow(/^The authentication store failed the PING\.$/)
   })
 
   // Scenario: the aggregator aborts the signal it gave the check while the store has not answered. Expected:
