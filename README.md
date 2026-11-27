@@ -1022,10 +1022,9 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > rate limit, it redirects to a set `errorRedirectUrl` with `error=internal`.
 >
 > The 503 is an `AuthException` whose `cause` is a new `Error` named after the class of the client's
-> error and the kind of the outage (`Error (timeout)`; the kinds are `timeout`, `closed`,
-> `unreachable` and `unavailable`), with `redis:<family>` (or `redis`) as its message. The client's error is not kept, because it
+> error and the kind of the outage (`Error (timeout)`), with `redis:<family>` (or `redis`) as its message. The client's error is not kept, because it
 > can carry the command it failed and Nest's logger prints a `cause`. A host filter that logs 5xx
-> answers (nest-core's, for one) records that class, kind and family; `isServiceUnavailable(error)`, exported from
+> answers records that class, kind and family; `isServiceUnavailable(error)`, exported from
 > the package, tells that 503 apart from every other `AuthException` and narrows it, so a host filter
 > or interceptor can handle it without comparing codes. The library's own `AuthExceptionFilter`
 > writes no log line for it: your readiness probe, not the request log, is the signal that Redis is
