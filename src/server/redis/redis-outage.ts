@@ -145,14 +145,14 @@ function errorClassOf(error: unknown): string {
  *   the error and the kind of outage, carrying the family as its message; `INTERNAL`, with no `cause`, for anything else.
  */
 function refuseStoreError(error: unknown, operation: StoreOperation): never {
-  const errorClass = errorClassOf(error)
-  const kind = redisOutageKindOf(error)
-  if (kind === undefined) {
-    logEvent(logger, 'AUTH_STORE_FAILED', { operation, detail: errorClass })
+  const kind = errorClassOf(error)
+  const outage = redisOutageKindOf(error)
+  if (outage === undefined) {
+    logEvent(logger, 'AUTH_STORE_FAILED', { operation, detail: kind })
     throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
   }
   const cause = new Error(operation)
-  cause.name = `${errorClass} (${kind})`
+  cause.name = `${kind} (${outage})`
   // The stack of a new error was written before the name was set.
   cause.stack = `${cause.name}: ${operation}`
   throw new AuthException(AUTH_ERROR_CODES.SERVICE_UNAVAILABLE, undefined, { cause })
