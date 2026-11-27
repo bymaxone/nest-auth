@@ -35,6 +35,7 @@ describe('integerReply', () => {
     ['a nil reply', null],
     ['no reply', undefined],
     ['a boolean', true],
+    ['a symbol, which no number can be made of', Symbol('1')],
     ['an array', ['1']]
   ])('refuses %s', (_label, reply) => {
     expect(() => integerReply(reply)).toThrow(

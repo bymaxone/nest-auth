@@ -126,6 +126,8 @@ describe('WorkspaceDeniedEventsService', () => {
 
     await deny(service)
 
+    // No stored count is the ordinary case, not a malformed one.
+    expect(warn).not.toHaveBeenCalled()
     expect(emit).toHaveBeenCalledTimes(1)
     expect(emit.mock.calls[0]?.[0]).toMatchObject({
       type: 'access.denied',

@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { BruteForceService } from './brute-force.service'
@@ -197,7 +198,9 @@ describe('BruteForceService', () => {
     // Verifies that an identifier exceeding 512 bytes is rejected to prevent memory exhaustion.
     it('should throw AuthException when identifier exceeds 512 bytes', async () => {
       const longId = 'a'.repeat(513)
-      await expect(service.isLockedOut(longId)).rejects.toThrow(AuthException)
+      await expect(service.isLockedOut(longId)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.FORBIDDEN } }
+      })
     })
 
     // Scenario: an identifier with forbidden characters is rejected; expected: the developer
