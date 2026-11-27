@@ -266,6 +266,17 @@ describe('beforeWorkspaceCreate for an account an OAuth flow is about to create'
     expect(await unspent(h)).toBe(true)
   })
 
+  it('answers that the host was not asked when the bootstrap workspace exists', async () => {
+    const h = await bootstrapSignup(jest.fn())
+    const loaded = await h.service.prepareOAuth(sha256(TOKEN), 't1', {
+      email: EMAIL,
+      emailVerified: true
+    })
+    h.workspaces.findById.mockResolvedValue(workspaceRow())
+
+    await expect(h.service.judgeNewAccount(loaded, account, asked)).resolves.toBe(false)
+  })
+
   it('asks nothing for a member invitation', async () => {
     const beforeWorkspaceCreate = jest.fn()
     const h = build(false, { beforeWorkspaceCreate })
