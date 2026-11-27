@@ -1017,8 +1017,8 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > `CLUSTERDOWN`); one function classifies them, and any other failure of a Redis call (a script that
 > is not loaded, a key of the wrong type, an aborted command) is a defect: it becomes an
 > `AuthException` carrying `auth.internal` (HTTP 500), with or without `AuthExceptionFilter`, with no
-> `cause`. The library logs it as `AUTH_STORE_FAILED` with `operation` `redis:<family>` and `detail`
-> the class of the error, and nothing else of the key or the command. In the OAuth callback, past its
+> `cause`. The library logs it as `AUTH_STORE_FAILED` with `operation` `redis:<family>` (or `redis`)
+> and `detail` the class of the error, and nothing else of the key or the command. In the OAuth callback, past its
 > rate limit, it redirects to a set `errorRedirectUrl` with `error=internal`.
 >
 > The 503 is an `AuthException` whose `cause` is a new `Error` named after the class of the client's

@@ -20,8 +20,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [1.5.21] - 2026-11-27
 
-A patch release. The error of a failed Redis call, with the command it names, no longer leaves the
-library.
+A patch release. The error of a failed `AuthRedisService` call, with the command it names, no longer
+leaves the library.
 
 ### Fixed
 
@@ -30,9 +30,9 @@ library.
   which names the command it failed, keys and arguments included. In an application without
   `AuthExceptionFilter`, the request answered Nest's own 500 body and Nest's log printed that
   command; the rate-limit counter, the login lockout counter and the token epoch were measured. Any
-  rejection of a Redis call that is not an outage, an `AbortError` or an error class the library does
-  not know included, is now an `AuthException` with `auth.internal` (HTTP 500) and no `cause`, raised
-  from `AuthRedisService` and logged as `AUTH_STORE_FAILED` with `operation: 'redis:<family>'`
+  rejection of an `AuthRedisService` call that is not an outage, an `AbortError` or an error class the
+  library does not know included, is now an `AuthException` with `auth.internal` (HTTP 500) and no
+  `cause`, logged as `AUTH_STORE_FAILED` with `operation: 'redis:<family>'`
   (`redis` when the key has no family) and `detail` the class of the error.
 
   **Apply to a derived backend:** code that caught an error of the ioredis client from a call of the
