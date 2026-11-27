@@ -1,6 +1,8 @@
 /**
  * The invitation an OAuth flow carries, from the moment the provider has answered until the
  * account it signs in is known.
+ *
+ * @layer OAuth
  */
 
 import type { StoredOAuthState } from './oauth-state'
