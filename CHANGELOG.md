@@ -39,8 +39,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
   **Apply to a derived backend:** a check, an alert or a log search that reads the class, the message
   or a property of the rejection (`ReplyError`, `Connection is closed.`, `command`) must match
-  `The authentication store failed the PING` instead. The rejection for a store that does not answer
-  in time is unchanged.
+  `The authentication store failed the PING` instead. The probe's own timeout and abort rejection is
+  unchanged.
 
 ## [1.5.22] - 2026-11-27
 

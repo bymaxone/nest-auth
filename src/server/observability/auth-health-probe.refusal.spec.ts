@@ -1,6 +1,6 @@
 /**
  * @fileoverview What the readiness probe rejects with when the client's call fails: the client's error can hold
- * the command it failed and its arguments, so none of it is carried. A real client talks to a loopback server
+ * the command it failed and its arguments, so the error is dropped. A real client talks to a loopback server
  * that refuses its handshake.
  *
  * @layer Test
@@ -52,7 +52,7 @@ describe('AuthHealthProbe refusals', () => {
     jest.restoreAllMocks()
   })
 
-  /** A client with a password, connected to a loopback server that answers with `answer`. */
+  /** A client with a password for a loopback server that answers with `answer`. */
   async function clientOf(answer: Answer): Promise<Redis> {
     server = createServer((socket) => {
       sockets.push(socket)
@@ -82,7 +82,7 @@ describe('AuthHealthProbe refusals', () => {
     throw new Error('resolved')
   }
 
-  /** The rejection holds the library's message and nothing of the client's error. */
+  /** The rejection has this message, and no property, `cause` or password. */
   function expectOnly(error: Error, message: string): void {
     expect(error.message).toBe(message)
     expect(Object.keys(error)).toEqual([])
@@ -105,7 +105,7 @@ describe('AuthHealthProbe refusals', () => {
     expectOnly(error, `The authentication store failed the PING ${code.exec(error.message)?.[0]}.`)
   })
 
-  // Scenario: the client fails the call in each of the ways it can, with the password planted where an error of the
+  // Scenario: the client's call rejects with an error, with the password planted where an error of the
   // client can hold text. Expected: a reply code or a kind of outage when the error names one, and otherwise neither.
   it.each([
     ['a reply code', 'ReplyError', `OOM ${PASSWORD}`, ' (OOM)'],
