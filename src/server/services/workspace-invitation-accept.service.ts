@@ -186,7 +186,8 @@ export class WorkspaceInvitationAcceptService {
    * account write ran since {@link prepareOAuth}: an invitation revoked, replaced or expired in
    * that time is refused. The membership is written first and the token spent after, as for
    * every acceptance, and a bootstrap invitation applies
-   * the owner cap and the host's `beforeWorkspaceCreate` before it creates the workspace.
+   * the owner cap, and asks the host's `beforeWorkspaceCreate` unless `hostAsked`, before it
+   * creates the workspace.
    *
    * @param loaded - What {@link prepareOAuth} returned.
    * @param user - The account the flow signed in.

@@ -20,7 +20,27 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Changed
 
-- Documentation only; no behaviour changed. The README has a table of every `IAuthHooks` method,
+- On an invitation signup, by password or through an OAuth provider, `beforeWorkspaceCreate` is
+  called before the account is created, so a refusal leaves no account behind. The hook receives a
+  provisional user with an empty `id`, `role` and `status`, and `context.accountPending: true`, a
+  new optional field of `HookContext`.
+
+  **Apply to a derived backend:** on invitation signup the hook now runs before the account exists;
+  check `context.accountPending` instead of looking the user up by id. A hook that looks up the
+  empty id and refuses when it finds nothing now refuses every such signup.
+
+- A platform password login that needs no MFA now calls `afterLogin`, with `plane: 'platform'`.
+
+  **Apply to a derived backend:** an `afterLogin` that assumes a dashboard user must read
+  `context.plane`.
+
+- `NoOpAuthHooks.beforeRegister` and `onOAuthLogin` are typed to return a value or a promise, so a
+  subclass can override them with `async` methods.
+
+  **Apply to a derived backend:** code that calls one of these two methods on a `NoOpAuthHooks`
+  and reads the result at once, `super.beforeRegister(...)` included, must `await` it.
+
+- Documentation. The README has a table of every `IAuthHooks` method,
   when it is called and what a throw does. It no longer says OAuth is extensible through a plugin
   interface, and the `OAuthProviderPlugin` documentation says that registering a provider is not
   supported. Several hook comments that did not match the code are corrected: the `reason` of
@@ -29,6 +49,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   hooks object is registered under `BYMAX_AUTH_HOOKS`, and several `onWorkspaceEvent` events have no
   audit row in the repository. **Apply:** a host that reads its audit rows as the full history of a
   workspace can get those events only from the hook, which is best-effort.
+
+### Fixed
+
+- A workspace created by accepting a bootstrap invitation reports `workspace.created` to
+  `onWorkspaceEvent`, as well as `invitation.accepted`.
+- A membership or workspace change that committed is reported to `onWorkspaceEvent` even when
+  dropping the cached access afterwards fails. The call still fails with that error.
+- `onNewSession` is called on the hooks object, so a method that reads `this` works.
+- `afterEmailVerified` receives the user with `emailVerified: true`, not the record as read before
+  the write.
 
 ## [1.5.22] - 2026-11-27
 
