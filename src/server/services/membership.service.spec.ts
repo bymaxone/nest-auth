@@ -296,7 +296,7 @@ describe('MembershipService', () => {
       expect(events.emit).not.toHaveBeenCalled()
     })
 
-    it('fails, and reports nothing, when the bump fails', async () => {
+    it('fails when the bump fails, and still reports the change it wrote', async () => {
       const { service, memberships, access, events } = build()
       memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
       access.invalidateMembership.mockRejectedValue(new Error('redis down'))
@@ -304,7 +304,10 @@ describe('MembershipService', () => {
       await expect(
         service.changeRole(WORKSPACE_REF, 'u2', 'editor', OWNER, CONTEXT)
       ).rejects.toThrow('redis down')
-      expect(events.emit).not.toHaveBeenCalled()
+      expect(events.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'member.role_changed', userId: 'u2' }),
+        CONTEXT
+      )
     })
   })
 
@@ -356,6 +359,21 @@ describe('MembershipService', () => {
         AUTH_ERROR_CODES.LAST_OWNER
       )
       expect(access.invalidateMembership).not.toHaveBeenCalled()
+    })
+
+    it('fails when the bump fails, and still reports the removal it wrote', async () => {
+      const { service, memberships, access, events } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
+      access.invalidateMembership.mockRejectedValue(new Error('redis down'))
+
+      await expect(service.remove(WORKSPACE_REF, 'u2', EDITOR, CONTEXT)).rejects.toThrow(
+        'redis down'
+      )
+
+      expect(events.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'member.removed', userId: 'u2' }),
+        CONTEXT
+      )
     })
   })
 
@@ -582,6 +600,21 @@ describe('MembershipService', () => {
         [{ ...WORKSPACE_REF, userId: 'u2' }]
       ])
       expect(events.emit).toHaveBeenCalledWith(audit, CONTEXT)
+    })
+
+    it('fails when a bump fails, and still reports the transfer it wrote', async () => {
+      const { service, memberships, access, events } = build()
+      memberships['find']?.mockResolvedValue(member('u2', 'viewer'))
+      access.invalidateMembership.mockRejectedValue(new Error('redis down'))
+
+      await expect(
+        service.transferOwnership(WORKSPACE_REF, OWNER, 'u2', 'editor', CONTEXT)
+      ).rejects.toThrow('redis down')
+
+      expect(events.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'ownership.transferred', toUserId: 'u2' }),
+        CONTEXT
+      )
     })
 
     it('keeps both as owners when no demotion is asked', async () => {

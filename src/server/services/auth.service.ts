@@ -1052,11 +1052,11 @@ export class AuthService {
     logEvent(this.logger, 'AUTH_EMAIL_VERIFIED', { userId: user.id, tenantId })
 
     if (this.hooks?.afterEmailVerified) {
-      const afterEmailVerified = this.hooks.afterEmailVerified.bind(this.hooks)
+      const notify = this.hooks.afterEmailVerified.bind(this.hooks)
+      const verified = toSafeUser({ ...user, emailVerified: true }) // as written above
       runDetached(
         this.logger,
-        () =>
-          afterEmailVerified(toSafeUser(user), { ...createEmptyHookContext(), plane: 'dashboard' }),
+        () => notify(verified, { ...createEmptyHookContext(), plane: 'dashboard' }),
         'afterEmailVerified'
       )
     }

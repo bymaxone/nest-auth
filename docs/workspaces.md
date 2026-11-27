@@ -4,7 +4,12 @@ Hooks, events, account deletion, invitations through OAuth and the threat model 
 
 ## Hooks and events
 
-`beforeWorkspaceCreate(user, { name }, context)` can refuse a creation. `onWorkspaceEvent(event,
+`beforeWorkspaceCreate(user, { name }, context)` can refuse a creation. On an invitation signup that creates a workspace, by
+password or through an OAuth provider, it is called before the account exists, so that a refusal
+leaves no account behind: `context.accountPending` is `true`, and `user` is provisional, with an
+empty `id`, `role` and `status`. Test the flag rather than looking the user up by id.
+
+`onWorkspaceEvent(event,
 context)` receives, after what it reports has happened, `workspace.created`, `.renamed`,
 `.deletion_scheduled`, `.restored` and `.deleted`; `member.invited`, `invitation.resent`,
 `.revoked` and `.accepted`; `member.role_changed`, `.removed` and `.left`; `ownership.transferred`;
@@ -12,8 +17,10 @@ context)` receives, after what it reports has happened, `workspace.created`, `.r
 `reason`). It is best-effort and informational. The repository gets no audit row for
 `member.invited`, `invitation.resent`, `invitation.revoked`, `access.denied` or
 `workspace.switched`, and gets one for `invitation.accepted` only when
-`IMembershipRepository.create` added the membership. A bootstrap acceptance persists
-`workspace.created` and reports `invitation.accepted` to the hook, not `workspace.created`.
+`IMembershipRepository.create` added the membership. A bootstrap acceptance that creates the workspace persists
+`workspace.created` and reports `workspace.created` to the hook, as well as the `invitation.accepted` of every acceptance.
+A membership or workspace change that committed is reported even when dropping the cached access
+afterwards fails; the call still fails.
 
 ## Deleting an account
 

@@ -66,3 +66,24 @@ export function settleAfter(
     raiseFirst(await pinned(settleWrites(followUps)))
   }
 }
+
+/**
+ * Runs a write that follows one already made, and reports the earlier one whether or not it fails.
+ *
+ * For a cache invalidation after a committed change: the change exists either way, so the host is
+ * told of it, and the failure still reaches the caller.
+ *
+ * @param followUp - The write that follows the committed one.
+ * @param report - Tells the host of the committed change. It must not throw.
+ * @throws What `followUp` raised.
+ */
+export async function reportAfter(
+  followUp: () => Promise<unknown>,
+  report: () => void
+): Promise<void> {
+  try {
+    await pinned(followUp())
+  } finally {
+    report()
+  }
+}

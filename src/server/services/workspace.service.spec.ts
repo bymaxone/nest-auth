@@ -443,14 +443,17 @@ describe('WorkspaceService', () => {
       )
     })
 
-    it('fails, and reports nothing, when the access bump fails', async () => {
+    it('fails when the access bump fails, and still reports the change it wrote', async () => {
       const { service, access, events } = build()
       access.invalidateWorkspace.mockRejectedValue(new Error('redis down'))
 
       await expect(service.scheduleDeletion(WORKSPACE_REF, ACTOR, CONTEXT)).rejects.toThrow(
         'redis down'
       )
-      expect(events.emit).not.toHaveBeenCalled()
+      expect(events.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'workspace.deletion_scheduled' }),
+        CONTEXT
+      )
     })
   })
 
@@ -504,6 +507,19 @@ describe('WorkspaceService', () => {
       expect(workspaces.updateStatus).not.toHaveBeenCalled()
     })
 
+    it('fails when the access bump fails, and still reports the restore it wrote', async () => {
+      const { service, workspaces, access, events } = build()
+      workspaces.findById.mockResolvedValue(pending(null))
+      access.invalidateWorkspace.mockRejectedValue(new Error('redis down'))
+
+      await expect(service.restore(WORKSPACE_REF, ACTOR, CONTEXT)).rejects.toThrow('redis down')
+
+      expect(events.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'workspace.restored' }),
+        CONTEXT
+      )
+    })
+
     it('maps a refused write to an error and does not report it', async () => {
       const { service, workspaces, events } = build()
       workspaces.findById.mockResolvedValue(pending(null))
@@ -555,6 +571,19 @@ describe('WorkspaceService', () => {
         }
       })
       expect(access.invalidateWorkspace).toHaveBeenCalledWith(WORKSPACE_REF)
+    })
+
+    it('fails when the access bump fails, and still reports the deletion it wrote', async () => {
+      const { service, workspaces, access, events } = build()
+      workspaces.findById.mockResolvedValue(pending(null))
+      access.invalidateWorkspace.mockRejectedValue(new Error('redis down'))
+
+      await expect(service.finalizeDeletion(WORKSPACE_REF)).rejects.toThrow('redis down')
+
+      expect(events.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'workspace.deleted' }),
+        expect.anything()
+      )
     })
 
     it.each([

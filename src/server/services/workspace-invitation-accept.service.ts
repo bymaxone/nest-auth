@@ -50,6 +50,7 @@ import { normalizeEmail } from '../utils/normalize-email'
 import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 import { checked, pinned, PinnedAll } from '../utils/settle'
+import { reportAfter } from '../utils/settle-writes'
 
 /** What a signed-in acceptance answers: where the caller now belongs, and as what. */
 export interface AcceptedInvitation {
@@ -185,13 +186,15 @@ export class WorkspaceInvitationAcceptService {
    * account write ran since {@link prepareOAuth}: an invitation revoked, replaced or expired in
    * that time is refused. The membership is written first and the token spent after, as for
    * every acceptance, and a bootstrap invitation applies
-   * the owner cap and the host's `beforeWorkspaceCreate` before it creates the workspace.
+   * the owner cap, and asks the host's `beforeWorkspaceCreate` unless `hostAsked`, before it
+   * creates the workspace.
    *
    * @param loaded - What {@link prepareOAuth} returned.
    * @param user - The account the flow signed in.
    * @param created - Whether the flow created the account, which is when the host's
    *   after-acceptance hook runs.
    * @param context - Request metadata for the hooks.
+   * @param hostAsked - What {@link judgeNewAccount} answered, when the flow called it.
    * @returns The workspace joined and the role held there.
    * @throws {AuthException} The refusals of {@link accept} for the account, and
    *   `auth.workspace_limit_reached` or `auth.forbidden` for a bootstrap invitation the account may
@@ -201,13 +204,14 @@ export class WorkspaceInvitationAcceptService {
     loaded: LoadedInvitation,
     user: AuthUser,
     created: boolean,
-    context: HookContext
+    context: HookContext,
+    hostAsked = false
   ): Promise<AcceptedInvitation> {
     const current = await pinned(this.loadByHash(loaded.tokenHash))
     if (user.tenantId !== current.record.tenantId) throw invalidToken()
     assertAddress(current.record, user.email, user.emailVerified)
     await pinned(this.assertStillGrantable(current.record))
-    const accepted = await pinned(this.finish(current, user, context))
+    const accepted = await pinned(this.finish(current, user, context, hostAsked))
     if (created) {
       runDetached(
         this.logger,
@@ -241,20 +245,53 @@ export class WorkspaceInvitationAcceptService {
     // Judged before anything is written or spent: a refused password is the invitee's mistake to
     // correct, and the invitation must still be there when they do.
     await pinned(this.passwords.assertAcceptable(dto.password, 'password'))
-    const created = await pinned(this.createAccount(dto, email, tenantId))
-    const context: HookContext = {
+    const requested: HookContext = {
       plane: 'dashboard',
       tenantId,
-      userId: created.id,
       ip: request.ip,
       userAgent: request.userAgent,
       sanitizedHeaders: sanitizeHeaders(request.headers)
     }
-    const accepted = await pinned(this.finish(loaded, created, context))
+    // Asked before the account is written, so a refusal leaves nothing behind.
+    const hostAsked = await pinned(
+      this.judgeNewAccount(loaded, { email, name: dto.name }, requested)
+    )
+    const created = await pinned(this.createAccount(dto, email, tenantId))
+    const context: HookContext = { ...requested, userId: created.id }
+    const accepted = await pinned(this.finish(loaded, created, context, hostAsked))
     return checked({
       result: await pinned(this.signIn(toSafeUser(created), request, context)),
       accepted
     })
+  }
+
+  /**
+   * Asks the host's `beforeWorkspaceCreate` about a bootstrap invitation whose account is about to
+   * be created, so that a refusal leaves no account behind. The hook receives a provisional
+   * account with an empty id, and `context.accountPending`.
+   *
+   * @param loaded - The invitation being accepted.
+   * @param account - The address and name the account is about to be created with.
+   * @param context - Request metadata for the hook, without a user id.
+   * @returns Whether the host was asked, which keeps it from being asked twice. `false` for a
+   *   member invitation, and for a bootstrap invitation whose workspace already exists.
+   * @throws {AuthException} `auth.forbidden` naming `name` when the hook refuses.
+   */
+  async judgeNewAccount(
+    loaded: LoadedInvitation,
+    account: { email: string; name: string },
+    context: HookContext
+  ): Promise<boolean> {
+    const { record } = loaded
+    if (record.kind !== 'bootstrap') return false
+    if ((await pinned(this.workspaces.findById(refOf(record)))) !== null) return false
+    await pinned(
+      this.assertHostAllows(record, provisionalUser(record.tenantId, account), {
+        ...context,
+        accountPending: true
+      })
+    )
+    return true
   }
 
   /**
@@ -354,25 +391,29 @@ export class WorkspaceInvitationAcceptService {
   private async finish(
     loaded: LoadedInvitation,
     user: AuthUser,
-    context: HookContext
+    context: HookContext,
+    hostAsked = false
   ): Promise<AcceptedInvitation> {
     const { record } = loaded
     const ref = refOf(record)
-    const role = await pinned(this.join(record, user, context))
+    const role = await pinned(this.join(record, user, context, hostAsked))
     const spent = await pinned(this.store.remove(ref, record.email, loaded.key))
-    await pinned(this.access.invalidateMembership({ ...ref, userId: user.id }))
-    this.events.emit(
-      {
-        type: 'invitation.accepted',
-        ...ref,
-        actorUserId: user.id,
-        email: record.email,
-        role,
-        userId: user.id,
-        at: new Date(Date.now()).toISOString(),
-        ...(spent ? {} : { lostConsumeRace: true })
-      },
-      context
+    const accepted = { ...ref, actorUserId: user.id, email: record.email, role, userId: user.id }
+    // The membership is written, so the host is told of it even if the cache cannot be told.
+    await pinned(
+      reportAfter(
+        () => this.access.invalidateMembership({ ...ref, userId: user.id }),
+        () =>
+          this.events.emit(
+            {
+              type: 'invitation.accepted',
+              ...accepted,
+              at: new Date(Date.now()).toISOString(),
+              ...(spent ? {} : { lostConsumeRace: true })
+            },
+            context
+          )
+      )
     )
     return checked({ workspaceId: record.workspaceId, role })
   }
@@ -385,12 +426,13 @@ export class WorkspaceInvitationAcceptService {
   private async join(
     record: StoredWorkspaceInvitation,
     user: AuthUser,
-    context: HookContext
+    context: HookContext,
+    hostAsked: boolean
   ): Promise<string> {
     const ref = refOf(record)
     const at = new Date(Date.now()).toISOString()
     if (record.kind === 'bootstrap')
-      return checked(await pinned(this.createOwned(record, user, at, context)))
+      return checked(await pinned(this.createOwned(record, user, at, context, hostAsked)))
     const created = await pinned(
       this.memberships.create({
         ...ref,
@@ -423,7 +465,8 @@ export class WorkspaceInvitationAcceptService {
     record: BootstrapInvitationRecord,
     user: AuthUser,
     at: string,
-    context: HookContext
+    context: HookContext,
+    hostAsked: boolean
   ): Promise<string> {
     const ref = refOf(record)
     const existing = await pinned(this.workspaces.findById(ref))
@@ -435,7 +478,9 @@ export class WorkspaceInvitationAcceptService {
       if (member?.status !== 'active' || member.role !== record.role) throw invalidToken()
       return record.role
     }
-    await pinned(this.assertMayOwnAnother(record, user, context))
+    await pinned(this.assertUnderOwnerCap(record, user.id))
+    if (!hostAsked) await pinned(this.assertHostAllows(record, toSafeUser(user), context))
+    const audit = { type: 'workspace.created' as const, ...ref, actorUserId: user.id, at }
     const created = await pinned(
       this.workspaces.createWithOwner({
         ...ref,
@@ -443,45 +488,51 @@ export class WorkspaceInvitationAcceptService {
         ownerUserId: user.id,
         ownerRole: record.role,
         maxWorkspacesPerUser: this.group.maxWorkspacesPerUser,
-        audit: { type: 'workspace.created', ...ref, actorUserId: user.id, at }
+        audit
       })
     )
     if (created.status === 'limit_reached') {
       throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED)
     }
+    this.events.emit(audit, context)
     return record.role
   }
 
   /**
-   * Applies to a bootstrap acceptance what the create route applies to a workspace the account
-   * creates itself, except the self-serve switch: the owner cap, then the host's
-   * `beforeWorkspaceCreate`. The platform has already decided that this account may own a
-   * workspace, but the host's plan or quota may have changed since, and the acceptance can land
+   * Refuses a bootstrap acceptance by an account already at the owner cap. The platform has decided
+   * that this account may own a workspace, but the cap still applies, and the acceptance can land
    * days after the invitation. A refusal does not spend the token.
    *
-   * @throws {AuthException} `auth.workspace_limit_reached` at the cap, `auth.forbidden` naming
-   *   `name` with the hook's reason when the hook refuses.
+   * @throws {AuthException} `auth.workspace_limit_reached` at the cap.
    */
-  private async assertMayOwnAnother(
+  private async assertUnderOwnerCap(
     record: BootstrapInvitationRecord,
-    user: AuthUser,
-    context: HookContext
+    userId: string
   ): Promise<void> {
     const { maxWorkspacesPerUser } = this.group
-    if (maxWorkspacesPerUser > 0) {
-      const owned = await pinned(
-        this.memberships.countOwned({
-          tenantId: record.tenantId,
-          userId: user.id,
-          ownerRole: record.role
-        })
-      )
-      if (owned >= maxWorkspacesPerUser) {
-        throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED)
-      }
+    if (maxWorkspacesPerUser <= 0) return
+    const owned = await pinned(
+      this.memberships.countOwned({ tenantId: record.tenantId, userId, ownerRole: record.role })
+    )
+    if (owned >= maxWorkspacesPerUser) {
+      throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED)
     }
+  }
+
+  /**
+   * Applies the host's `beforeWorkspaceCreate` to a bootstrap acceptance, as the create route does
+   * to a workspace the account creates itself: the host's plan or quota may have changed since the
+   * invitation. A refusal does not spend the token.
+   *
+   * @throws {AuthException} `auth.forbidden` naming `name` with the hook's reason.
+   */
+  private async assertHostAllows(
+    record: BootstrapInvitationRecord,
+    user: SafeAuthUser,
+    context: HookContext
+  ): Promise<void> {
     const verdict = await pinned(
-      this.hooks.beforeWorkspaceCreate?.(toSafeUser(user), { name: record.workspaceName }, context)
+      this.hooks.beforeWorkspaceCreate?.(user, { name: record.workspaceName }, context)
     )
     if (verdict !== undefined && !verdict.allowed) {
       throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN, [
@@ -549,4 +600,23 @@ function isInGoodStanding(user: { status: string }, blocked: readonly string[]):
   } catch {
     return false
   }
+}
+
+/**
+ * The account an invitation signup is about to create, as `beforeWorkspaceCreate` is shown it. It
+ * has an empty id, no role and no status, so a check that looks it up finds nothing.
+ */
+function provisionalUser(tenantId: string, account: { email: string; name: string }): SafeAuthUser {
+  return Object.freeze({
+    id: '',
+    email: account.email,
+    name: account.name,
+    tenantId,
+    role: '',
+    status: '',
+    emailVerified: true,
+    mfaEnabled: false,
+    lastLoginAt: null,
+    createdAt: new Date(Date.now())
+  })
 }

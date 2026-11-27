@@ -20,6 +20,7 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import type { Request, Response } from 'express'
 
+import { vetInvitation, type PendingInvitation } from './oauth-invitation'
 import { isStoredOAuthState, type StoredOAuthState } from './oauth-state'
 import { OAUTH_PLUGINS } from './oauth.constants'
 import { pluginDeadlineMs, withDeadline } from './plugin-deadline'
@@ -50,10 +51,7 @@ import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { CREDENTIAL_PROVED, TokenManagerService } from '../services/token-manager.service'
-import {
-  WorkspaceInvitationAcceptService,
-  type LoadedInvitation
-} from '../services/workspace-invitation-accept.service'
+import { WorkspaceInvitationAcceptService } from '../services/workspace-invitation-accept.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
 import { cookieOptions } from '../utils/dependency-options'
@@ -65,12 +63,6 @@ import { awaiting, checked, pinned, PinnedAll } from '../utils/settle'
 
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
 const OAUTH_STATE_TTL_SECONDS = 600
-
-/** A vetted invitation, waiting for the account its flow signs in. */
-interface PendingInvitation {
-  /** Writes the membership for `user` and spends the token; `created` is whether the flow made the account. */
-  complete(user: AuthUser, created: boolean, context: HookContext): Promise<void>
-}
 
 /**
  * URL-safe base64 (RFC 4648 §5) — no padding, `+` → `-`, `/` → `_`.
@@ -86,6 +78,22 @@ function base64url(input: Buffer): string {
 function toSafeUser(user: AuthUser): SafeAuthUser {
   const { passwordHash: _ph, mfaSecret: _ms, mfaRecoveryCodes: _mrc, ...safe } = user
   return safe
+}
+
+/**
+ * What the hooks of a callback are told: the tenant and the address the flow resolved to, which
+ * come from the server-side state record and the provider's profile, never from the callback
+ * request. `onOAuthLogin` is the only place a deployment can enforce tenant membership.
+ */
+function callbackHookContext(
+  tenantId: string,
+  email: string,
+  ip: string,
+  userAgent: string,
+  headers: Record<string, string | string[] | undefined>
+): HookContext {
+  const sanitizedHeaders = sanitizeHeaders(headers)
+  return { plane: 'dashboard', tenantId, email, ip, userAgent, sanitizedHeaders }
 }
 
 /**
@@ -283,7 +291,7 @@ export class OAuthService {
     const record = await pinned(this.consumeState(provider, state, stateCookie))
     const { tenantId, codeVerifier } = record
     const profile = await pinned(this.fetchProfile(plugin, provider, code, codeVerifier))
-    const invitation = await pinned(this.vetInvitation(record, profile))
+    const invitation = await pinned(vetInvitation(this.invitations, record, profile))
 
     // Look up an existing user linked to this OAuth identity.
     const existingAuthUser = await pinned(
@@ -293,17 +301,7 @@ export class OAuthService {
     // Strip credential fields before passing to the hook.
     const existingUser: SafeAuthUser | null = existingAuthUser ? toSafeUser(existingAuthUser) : null
 
-    // The hook is told which tenant and which address the flow resolved to: it is the only place
-    // a deployment can enforce tenant membership. Both come from the server-side state record and
-    // the verified profile, never from the callback request.
-    const hookContext: HookContext = {
-      plane: 'dashboard',
-      tenantId,
-      email: profile.email,
-      ip,
-      userAgent,
-      sanitizedHeaders: sanitizeHeaders(headers)
-    }
+    const hookContext = callbackHookContext(tenantId, profile.email, ip, userAgent, headers)
 
     // Run the onOAuthLogin hook — required for account resolution strategy.
     // Null hooks or a missing onOAuthLogin method both result in OAUTH_FAILED,
@@ -314,7 +312,10 @@ export class OAuthService {
     }
 
     const authUser = await pinned(
-      this.resolveAccount({ provider, tenantId, profile, hookResult, existingAuthUser }, invitation)
+      this.resolveAccount(
+        { provider, tenantId, profile, hookResult, existingAuthUser, hookContext },
+        invitation
+      )
     )
 
     this.assertMaySignIn(authUser)
@@ -596,13 +597,15 @@ export class OAuthService {
    * @param provider - The provider name.
    * @param tenantId - The tenant the flow resolved to.
    * @param profile - The provider's profile.
+   * @param beforeCreate - Told what is about to be created; throwing creates nothing.
    * @returns The created account.
    * @throws `AuthException(OAUTH_EMAIL_MISMATCH)` when the address already belongs to an account.
    */
   private async createAccount(
     provider: string,
     tenantId: string,
-    profile: OAuthProfile
+    profile: OAuthProfile,
+    beforeCreate: (account: { email: string; name: string }) => Promise<unknown>
   ): Promise<AuthUser> {
     // `String.prototype.split` always returns at least one element on a
     // non-empty input (which `@IsEmail` has already validated), so the
@@ -626,6 +629,7 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
     }
 
+    await pinned(beforeCreate({ email: profile.email, name: derivedName }))
     const created = await pinned(
       this.userRepo.createWithOAuth({
         email: profile.email,
@@ -694,7 +698,8 @@ export class OAuthService {
    * vetted invitation; linking and signing in an existing account are not sign-ups.
    *
    * @param flow - What the callback resolved: the provider, the tenant, the verified profile, the
-   *   hook's decision and the account already linked to this identity, or `null`.
+   *   hook's decision, the account already linked to this identity, or `null`, and the context the
+   *   hooks are given.
    * @param invitation - The invitation the flow carries, or `null`.
    * @returns The account the flow signs in.
    * @throws `AuthException` for a rejected flow, a closed registration, a `link` with no account
@@ -707,6 +712,7 @@ export class OAuthService {
       profile: OAuthProfile
       hookResult: OAuthLoginResult
       existingAuthUser: AuthUser | null
+      hookContext: HookContext
     },
     invitation: PendingInvitation | null
   ): Promise<AuthUser> {
@@ -716,44 +722,19 @@ export class OAuthService {
         if (invitation === null && this.options.registration === 'invitation-only') {
           throw new AuthException(AUTH_ERROR_CODES.REGISTRATION_CLOSED)
         }
-        return checked(await pinned(this.createAccount(provider, tenantId, profile)))
+        return checked(
+          await pinned(
+            this.createAccount(provider, tenantId, profile, async (account) => {
+              await pinned(invitation?.judgeNewAccount(account, flow.hookContext))
+            })
+          )
+        )
       case 'link':
         return checked(await pinned(this.linkAccount(provider, profile, existingAuthUser)))
       case 'reject':
       default:
         throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
-  }
-
-  /**
-   * Vets the invitation a flow was started with against the provider's profile.
-   *
-   * @param record - The consumed state record.
-   * @param profile - The provider's profile.
-   * @returns What completes the invitation once the account is known, or `null` for a flow that
-   *   carries none.
-   * @throws `AuthException(INVALID_INVITATION_TOKEN)` when workspaces are not enabled, and the
-   *   refusals of `WorkspaceInvitationAcceptService.prepareOAuth` otherwise.
-   */
-  private async vetInvitation(
-    record: StoredOAuthState,
-    profile: OAuthProfile
-  ): Promise<PendingInvitation | null> {
-    if (record.workspaceInvitation === undefined) return null
-    if (this.invitations === null)
-      throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
-    const accepts = this.invitations
-    const loaded: LoadedInvitation = await pinned(
-      accepts.prepareOAuth(record.workspaceInvitation, record.tenantId, {
-        email: profile.email,
-        emailVerified: profile.emailVerified
-      })
-    )
-    return checked({
-      complete: async (user, created, context): Promise<void> => {
-        await pinned(accepts.completeOAuth(loaded, user, created, context))
-      }
-    })
   }
 
   /**

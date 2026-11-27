@@ -69,6 +69,12 @@ export interface HookContext {
    * and all keys are normalized to lowercase.
    */
   sanitizedHeaders: Record<string, string | string[] | undefined>
+  /**
+   * `true` only on the {@link IAuthHooks.beforeWorkspaceCreate} call made before an invitation
+   * signup creates its account. The `user` of that call is provisional: its `id` is empty, so it
+   * cannot be looked up. Absent on every other call.
+   */
+  accountPending?: boolean
 }
 
 /**
@@ -370,8 +376,7 @@ export interface IAuthHooks {
    * known device or not. A token rotation records none.
    *
    * Use this hook to trigger new-session security alerts (via
-   * `IEmailProvider.sendNewSessionAlert`) or to update device tracking records. It is called
-   * without its object as `this`, so bind it, or write it as an arrow property, if it reads `this`.
+   * `IEmailProvider.sendNewSessionAlert`) or to update device tracking records.
    *
    * @param user - The authenticated user (credential fields omitted).
    * @param sessionInfo - Device, IP, and session hash for the new session.
@@ -478,10 +483,15 @@ export interface IAuthHooks {
   /**
    * Called before a workspace is created, and able to refuse it (a plan, a quota, an approval).
    *
-   * Runs after the per-user limit and before the workspace is written; the create route checks
-   * `workspaces.allowCreate` first, an invitation acceptance does not. A refusal answers
+   * Runs before the workspace is written, after the per-user limit except on the signup below; the
+   * create route checks `workspaces.allowCreate` first, an invitation acceptance does not. A refusal answers
    * `403 auth.forbidden`; `reason` is returned to the caller, so keep it free of anything
    * sensitive. A hook that throws refuses the creation too.
+   *
+   * On an invitation signup that creates a workspace (by password or through an OAuth provider)
+   * the call comes before the account exists, so that a refusal leaves no account behind: `context.accountPending` is `true`
+   * and `user` is provisional, with an empty `id`, `role` and `status`. Test the flag rather than
+   * looking the user up by id.
    *
    * @param user - The identity creating the workspace.
    * @param data - What it asked for: the trimmed name.

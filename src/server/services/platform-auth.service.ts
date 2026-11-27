@@ -22,12 +22,14 @@ import type {
   RotatedTokenResult
 } from '../interfaces/auth-result.interface'
 import type {
+  AuthPlatformUser,
   IPlatformUserRepository,
   SafeAuthPlatformUser
 } from '../interfaces/platform-user-repository.interface'
 import { logEvent, logHook } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { platformUserAsSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
 import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
@@ -170,15 +172,23 @@ export class PlatformAuthService {
     const result = await pinned(this.tokenManager.issuePlatformTokens(safeAdmin, ip, userAgent))
     logEvent(this.logger, 'AUTH_LOGIN_SUCCEEDED', { ...PASSWORD_LOGIN, userId: admin.id })
 
-    // Fire-and-forget: a slow or failing DB update must not block the auth response.
-    this.touchLastLogin(admin.id)
+    // Fire-and-forget: neither a slow repository nor a slow hook may block the auth response.
+    this.recordLogin(admin, ip, userAgent)
 
     return checked(result)
   }
 
-  /** Records the time of a login without making the login wait for it; a failure is logged, never raised. */
-  private touchLastLogin(id: string): void {
+  /**
+   * Records a sign-in that needed no second factor: the time of the login, and the host's
+   * `afterLogin`. The login waits for neither; a failure is logged, never raised.
+   */
+  private recordLogin(admin: AuthPlatformUser, ip: string, userAgent: string): void {
+    const { id } = admin
     runDetached(this.logger, () => this.platformUserRepo.updateLastLogin(id), 'updateLastLogin')
+    if (!this.hooks?.afterLogin) return
+    const afterLogin = this.hooks.afterLogin.bind(this.hooks)
+    const context = { plane: 'platform' as const, userId: id, ip, userAgent, sanitizedHeaders: {} }
+    runDetached(this.logger, () => afterLogin(platformUserAsSafeUser(admin), context), 'afterLogin')
   }
 
   // ---------------------------------------------------------------------------

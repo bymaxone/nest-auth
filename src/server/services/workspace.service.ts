@@ -32,6 +32,7 @@ import type {
   WorkspaceRef
 } from '../interfaces/workspace-repository.interface'
 import { checked, pinned, PinnedAll } from '../utils/settle'
+import { reportAfter } from '../utils/settle-writes'
 import { normalizeWorkspaceName } from '../utils/workspace-name'
 
 const DAY_MS = 86_400_000
@@ -203,8 +204,7 @@ export class WorkspaceService {
         audit: event
       })
     )
-    await pinned(this.settle(result, ref))
-    this.events.emit(event, context)
+    await pinned(this.settle(result, ref, () => this.events.emit(event, context)))
     return checked({
       status: immediate ? 'deleted' : 'pending_deletion',
       deletionScheduledAt: scheduledAt
@@ -242,8 +242,7 @@ export class WorkspaceService {
         audit: event
       })
     )
-    await pinned(this.settle(result, ref))
-    this.events.emit(event, context)
+    await pinned(this.settle(result, ref, () => this.events.emit(event, context)))
   }
 
   /**
@@ -276,8 +275,11 @@ export class WorkspaceService {
       const current = await pinned(this.workspaces.findById(ref))
       return current === null ? 'not_found' : (finalizeRefusal(current) ?? 'not_due')
     }
-    await pinned(this.settle(result, ref))
-    this.events.emit(event, context ?? systemContext(ref.tenantId))
+    await pinned(
+      this.settle(result, ref, () =>
+        this.events.emit(event, context ?? systemContext(ref.tenantId))
+      )
+    )
     return 'deleted'
   }
 
@@ -362,12 +364,18 @@ export class WorkspaceService {
   }
 
   /**
-   * Turns a status write's outcome into an error, or ends every member's access to the workspace.
+   * Turns a status write's outcome into an error, or ends every member's access to the workspace
+   * and reports the change.
    *
-   * A refused write throws; a successful one bumps the workspace version so no cached answer
-   * outlives the change. A bump that fails throws too: the change is never reported as done.
+   * A refused write throws and reports nothing; a successful one bumps the workspace version so no
+   * cached answer outlives the change. A bump that fails throws too, and the change is still
+   * reported, because it was written.
    */
-  private async settle(result: UpdateWorkspaceStatusResult, ref: WorkspaceRef): Promise<void> {
+  private async settle(
+    result: UpdateWorkspaceStatusResult,
+    ref: WorkspaceRef,
+    report: () => void
+  ): Promise<void> {
     if (result === 'not_found') throw new AuthException(AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND)
     if (result === 'actor_changed') {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_WORKSPACE_ROLE)
@@ -380,7 +388,7 @@ export class WorkspaceService {
           : AUTH_ERROR_CODES.WORKSPACE_NOT_FOUND
       )
     }
-    await pinned(this.access.invalidateWorkspace(ref))
+    await pinned(reportAfter(() => this.access.invalidateWorkspace(ref), report))
   }
 }
 
