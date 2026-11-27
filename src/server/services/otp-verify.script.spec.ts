@@ -43,7 +43,7 @@ describe('the verify script and the attempt counter', () => {
     }
   )
 
-  // The ceiling, and everything that is not a non-negative integer, refuse even the right code.
+  // The ceiling, and every spelling the script does not read, refuse even the right code.
   it.each([
     ['5'],
     ['nan'],
