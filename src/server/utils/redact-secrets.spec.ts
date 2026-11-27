@@ -56,6 +56,16 @@ describe('redactSecrets', () => {
     expect(line).toContain('<redacted>')
   })
 
+  // Scenario: a text that is not a string, from plain JavaScript or an error handed over by mistake,
+  // with something to look for. Expected: an empty line and no `TypeError` out of the caller's `catch`.
+  it.each([
+    ['a number', 42],
+    ['a plain object', {}],
+    ['an error', new Error('x tok')]
+  ])('answers an empty line for %s in place of the text', (_why: string, value: unknown) => {
+    expect(redactSecrets(value as string, ['tok'])).toBe('')
+  })
+
   // The early return is not only an optimisation, so it gets an assertion rather than being left
   // to the other cases to imply. Callers that hold no secret are ordinary — the opaque error
   // description passes none — and the scan walks remote-controlled text one character at a time

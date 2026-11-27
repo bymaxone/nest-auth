@@ -22,7 +22,7 @@ export function trimSlashes(value: string, leading = true): string {
   let start = 0
   let end = value.length
   // `charAt` answers `''` past either end, which stops each loop. When the whole value is slashes `end`
-  // finishes below `start`, and `slice` answers `''` for that.
+  // finishes at or below `start`, and `slice` answers `''` for that.
   if (leading) {
     while (value.charAt(start) === '/') start += 1
   }

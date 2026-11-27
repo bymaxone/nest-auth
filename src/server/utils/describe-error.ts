@@ -322,6 +322,6 @@ export function describeError(error: unknown, secrets: readonly string[]): strin
  * @returns A single-line description carrying nothing the channel authored.
  */
 export function describeChannelStatus(error: unknown): string {
-  // Stryker disable next-line ArrayDeclaration: under 'drop' the line is built only from this module's stand-ins and a `typeof`, so no secret list changes it
+  // Stryker disable next-line ArrayDeclaration: under 'drop' the line holds only this module's words and a `typeof`, none of which contains the mutant's entry
   return describe(error, [], 'drop')
 }

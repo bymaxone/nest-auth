@@ -110,9 +110,9 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   let out = ''
   let index = 0
 
-  // `index` lands on the length exactly: it grows by one, or to the end of a region that was matched
-  // inside the text.
-  while (index !== value.length) {
+  // What is left to read. A value with no `length`, which only a caller outside the types can pass,
+  // leaves `NaN` here and is not scanned: this function must not throw out of a `catch`.
+  while (value.length - index) {
     const matched = longestMatchAt(value, present, index)
 
     if (matched === 0) {
