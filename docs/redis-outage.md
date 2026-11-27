@@ -25,7 +25,7 @@ body.
   table below) and whose `message` is `redis` or `redis:<family>`, the family of the key. The client's
   error is not kept: it
   can carry the command it failed, keys and arguments included, and Nest's logger prints a `cause`.
-  A host filter that logs 5xx answers records the class, the kind and the family; the library's own `AuthExceptionFilter` writes no line for an
+  A host filter that logs 5xx answers can record the class, the kind and the family; the library's own `AuthExceptionFilter` writes no line for an
   `AuthException`, so the operator's signal is a Redis health check beside the readiness probe.
 - No `Retry-After`. Nothing in the library knows when Redis returns, and a fixed number would be a
   guess. The one `Retry-After` the library sends, on a rate-limit refusal, is a real window.
