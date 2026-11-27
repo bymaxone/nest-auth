@@ -2,15 +2,16 @@
  * Authentication lifecycle hooks contract for @bymax-one/nest-auth.
  *
  * Hooks allow consumers to inject custom logic at key points in the auth flow
- * without modifying library internals. All hooks are optional — unimplemented
- * hooks are silently skipped.
+ * without modifying library internals. All hooks are optional in the type. An unimplemented hook
+ * is skipped, with two exceptions: every OAuth sign-in fails without `onOAuthLogin`, and under
+ * `apiKeys.auditMode: 'required'` every API-key request is refused without `onApiKeyRequest`.
  *
  * @remarks
- * - Hooks are called synchronously in the auth flow. Long-running operations
- *   (e.g. analytics, audit logging) should be fire-and-forget or offloaded to
- *   a queue inside the implementation.
- * - `beforeRegister` is the only hook that can block or modify the flow.
- *   All `after*` and `on*` hooks are informational.
+ * - `beforeRegister`, `beforeLogin`, `onOAuthLogin`, `beforeWorkspaceCreate` and, under
+ *   `apiKeys.auditMode: 'required'`, `onApiKeyRequest` are awaited: they delay the request, and a
+ *   throw from one fails it.
+ * - Every other call is not awaited: a throw or a rejection is logged as `AUTH_HOOK_FAILED` and
+ *   changes nothing.
  * - Never access raw HTTP headers inside hooks — use `context.sanitizedHeaders`
  *   which has been pre-processed by the `sanitizeHeaders` utility to remove
  *   authorization tokens, cookies, and other sensitive values.
@@ -77,11 +78,11 @@ export interface HookContext {
  * default field values assigned to the new user.
  */
 export interface BeforeRegisterResult {
-  /** When `false`, registration is rejected and `reason` is returned to the caller. */
+  /** When `false`, registration is rejected with `403 auth.forbidden`. */
   allowed: boolean
   /**
-   * Human-readable explanation surfaced when `allowed` is `false`.
-   * Avoid including sensitive information — this value may be returned to the client.
+   * Why it was refused, for the host's own use: the library does not read it and the caller is not
+   * given it.
    */
   reason?: string
   /**
@@ -93,7 +94,7 @@ export interface BeforeRegisterResult {
     role?: string
     /** Override the initial account status (e.g. `'pending'`, `'active'`). */
     status?: string
-    /** Override the default email-verification state at registration. */
+    /** Override the email-verification state; ignored when verification is required. */
     emailVerified?: boolean
   }
 }
@@ -114,8 +115,8 @@ export interface OAuthLoginResult {
    */
   action: 'link' | 'create' | 'reject'
   /**
-   * Human-readable explanation for a `'reject'` action.
-   * Avoid including sensitive information — this value may be returned to the client.
+   * Why it was rejected, for the host's own use: the library does not read it and the caller is
+   * answered `auth.oauth_failed` without it.
    */
   reason?: string
 }
@@ -125,8 +126,9 @@ export interface OAuthLoginResult {
  * authentication behaviour of @bymax-one/nest-auth.
  *
  * @remarks
- * Register the implementation via the `hooks` option in `AuthModule.forRoot()`.
- * The library calls each hook via the injection token — no manual wiring needed.
+ * Register the implementation under the `BYMAX_AUTH_HOOKS` token, in the `extraProviders` of
+ * `BymaxAuthModule.registerAsync()`. It replaces {@link NoOpAuthHooks} entirely, so extend that
+ * class to keep its `onOAuthLogin`.
  *
  * Hook parameters use {@link SafeAuthUser} instead of the full `AuthUser` to
  * ensure that `passwordHash`, `mfaSecret`, and `mfaRecoveryCodes` are never
@@ -134,7 +136,7 @@ export interface OAuthLoginResult {
  *
  * @example
  * ```typescript
- * class MyAuthHooks implements IAuthHooks {
+ * class MyAuthHooks extends NoOpAuthHooks implements IAuthHooks {
  *   async afterLogin(user: SafeAuthUser, context: HookContext): Promise<void> {
  *     await this.auditService.log('login', user.id, context.ip)
  *   }
@@ -149,7 +151,7 @@ export interface IAuthHooks {
    * override default field values (role, status, emailVerified) for the new user.
    * Return `{ allowed: false, reason }` to reject the registration.
    *
-   * @param data - The registration payload as submitted by the user.
+   * @param data - The normalized email, the name and the resolved tenant.
    * @param context - Request metadata (IP, user agent, sanitized headers).
    * @returns A {@link BeforeRegisterResult} controlling whether to proceed.
    */
@@ -178,10 +180,10 @@ export interface IAuthHooks {
    * **To abort the login:** throw an exception (e.g. `throw new UnauthorizedException()`).
    * Returning normally (void) allows the login to proceed to credential validation.
    * Unlike `beforeRegister`, there is no return-value-based rejection — throwing is
-   * the only way to block. Choose a meaningful exception class so guards can
-   * translate it into the correct HTTP response.
+   * the only way to block. The request fails with what was thrown, so choose an exception that
+   * answers the status you intend.
    *
-   * @param email - The email address submitted in the login request.
+   * @param email - The email address of the login request, trimmed and lower-cased.
    * @param tenantId - The tenant context for this login attempt.
    * @param context - Request metadata (IP, user agent, sanitized headers).
    */
@@ -204,10 +206,10 @@ export interface IAuthHooks {
    * Use this hook to clean up session-related state, emit audit events, or
    * notify downstream services.
    *
-   * Fired by the call that finds the session record and names its owner. If an earlier attempt
-   * deleted the record but failed another revocation write, it answered a 5xx without this hook,
-   * and the retry that completes the logout finds no record, so it names nobody and does not fire
-   * it: that logout is never reported here.
+   * Fired by a logout that completes and can name its owner, from the session record or from the
+   * marker a failed attempt left. A failed attempt does not fire it; its retry does, once for
+   * retries made one after another, and possibly more than once when attempts run concurrently.
+   * A logout is not reported when the marker could not be written or has expired by the retry.
    *
    * @param userId - The internal ID of the user who logged out.
    * @param context - Request metadata (IP, user agent, sanitized headers).
@@ -223,13 +225,11 @@ export interface IAuthHooks {
    * the handler asking. A distinct member is additive and unambiguous.
    *
    * **`PlatformAuthService` reports a completed logout only through this hook**, and emits no
-   * other. A consumer that does not implement it learns nothing when an administrator signs out:
-   * the access token stays presentable until it expires, and the session's removal is unobserved.
+   * other. A consumer that does not implement it learns nothing when an administrator signs out.
    * That matters most for a live platform stream, which has no other signal to close on.
    *
-   * It is fired by the call that finds the session record and names its owner. If an earlier
-   * attempt deleted the record but failed another revocation write, it answered a 5xx without this
-   * hook, and the retry that completes the logout finds no record and does not fire it.
+   * It follows the same rule as {@link IAuthHooks.afterLogout}, the retry of a failed attempt
+   * included.
    *
    * @param userId - The internal ID of the administrator who logged out.
    * @param context - Request metadata; `plane` is `'platform'` and there is no tenant.
@@ -239,31 +239,33 @@ export interface IAuthHooks {
   /**
    * Called when a login attempt is refused.
    *
-   * Every other hook on this interface fires on a success path, which leaves the failure side
-   * of authentication with no structured seam at all: the events that matter most to detection
-   * — a burst of wrong passwords, an account tripping its lockout, a stolen refresh token being
-   * replayed — existed only as English log lines whose wording is not a contract and whose
-   * change is not semver-visible. ASVS v5 §16.3.1 expects authentication operations to be
-   * logged with their outcome, and §6.1.1 expects an *adaptive* response, which needs a signal
-   * to adapt to.
+   * Without a hook on the failure side, authentication has no structured seam there: the events
+   * that matter most to detection — a burst of wrong passwords, an account tripping its lockout,
+   * a stolen refresh token being replayed — existed only as English log lines whose wording is not
+   * a contract and whose change is not semver-visible. ASVS v5 §16.3.1 expects authentication
+   * operations to be logged with their outcome, and §6.1.1 expects an *adaptive* response, which
+   * needs a signal to adapt to.
    *
    * The email is passed rather than a user id because the common case has no user: a failure
    * against an address that does not exist is exactly the credential-stuffing signal a consumer
-   * wants. `userId` is present only when the account resolved and the credential did not match.
+   * wants. `userId` is present only when the account resolved.
    *
-   * Fire-and-forget, like every hook here: a throw is logged and swallowed, never turned into a
-   * different answer for the caller.
+   * Fire-and-forget: a throw is logged and swallowed, never turned into a different answer for
+   * the caller.
    *
    * @param details - What failed, and for whom, as far as it is known.
    * @param context - Request metadata (IP, user agent, sanitized headers).
    */
   onLoginFailed?(
     details: {
-      /** The address the attempt was made against, as submitted. */
+      /** The address the attempt was made against, trimmed and lower-cased. */
       email: string
       /** The tenant the attempt was scoped to. */
       tenantId: string
-      /** Present only when the account exists and the password did not match. */
+      /**
+       * Present for a wrong password, `account_blocked` and `email_not_verified`. Absent for an
+       * unknown account, an account with no password and `locked_out`.
+       */
       userId?: string
       /**
        * Why it was refused. `invalid_credentials` covers both an unknown address and a wrong
@@ -288,7 +290,7 @@ export interface IAuthHooks {
    */
   onLockout?(
     details: {
-      /** The address that was locked, as submitted. */
+      /** The address that was locked, trimmed and lower-cased. */
       email: string
       /** The tenant the lockout is scoped to. */
       tenantId: string
@@ -364,10 +366,12 @@ export interface IAuthHooks {
   afterMfaRecoveryCodesRegenerated?(user: SafeAuthUser, context: HookContext): Promise<void> | void
 
   /**
-   * Called when a successful login originates from a new device or location.
+   * Called for every dashboard session the library records when `sessions.enabled` is set, from a
+   * known device or not. A token rotation records none.
    *
    * Use this hook to trigger new-session security alerts (via
-   * `IEmailProvider.sendNewSessionAlert`) or to update device tracking records.
+   * `IEmailProvider.sendNewSessionAlert`) or to update device tracking records. It is called
+   * without its object as `this`, so bind it, or write it as an arrow property, if it reads `this`.
    *
    * @param user - The authenticated user (credential fields omitted).
    * @param sessionInfo - Device, IP, and session hash for the new session.
@@ -393,8 +397,7 @@ export interface IAuthHooks {
   /**
    * Called after the user has successfully completed a password reset.
    *
-   * Use this hook to invalidate all other active sessions, send confirmation
-   * emails, or update audit logs.
+   * Use this hook to send confirmation emails or update audit logs.
    *
    * @param user - The user who reset their password (credential fields omitted).
    * @param context - Request metadata (IP, user agent, sanitized headers).
@@ -437,12 +440,11 @@ export interface IAuthHooks {
 
   /**
    * Called when the session manager evicts an existing session to make room for
-   * a new one (triggered by the `'fifo'` eviction strategy when the session limit
-   * is reached).
+   * a new one (the oldest, when the session limit is reached).
    *
    * Use this hook to alert the affected user, emit a security audit event, or
    * track potential unauthorized access (an attacker establishing a new session
-   * will silently evict a legitimate one under FIFO).
+   * will silently evict a legitimate one).
    *
    * @param userId - The internal ID of the user whose session was evicted.
    * @param evictedSessionHash - The SHA-256 hash of the evicted refresh token.
@@ -461,9 +463,9 @@ export interface IAuthHooks {
    * pattern) and how it ended. Fires for an admitted request, for every refused credential, for
    * a key missing a scope, and for a route that declares no scopes at all.
    *
-   * By default the call is fired without being awaited and a failure is only logged, as for
-   * every other hook. With `apiKeys.auditMode: 'required'` it is awaited and a failure DENIES
-   * the request, for hosts whose audit row is a record they must have.
+   * By default the call is fired without being awaited and a failure is only logged. With
+   * `apiKeys.auditMode: 'required'` it is awaited and a failure DENIES the request, for hosts
+   * whose audit row is a record they must have.
    *
    * The event never carries the presented key or its secret. `reason` is for the operator: the
    * caller is always given the same answer for a bad credential.
@@ -476,9 +478,10 @@ export interface IAuthHooks {
   /**
    * Called before a workspace is created, and able to refuse it (a plan, a quota, an approval).
    *
-   * Runs after `workspaces.allowCreate` and the per-user limit have passed, and before anything is
-   * written. A refusal answers `403 auth.forbidden`; `reason` is returned to the caller, so keep
-   * it free of anything sensitive. A hook that throws refuses the creation too.
+   * Runs after the per-user limit and before the workspace is written; the create route checks
+   * `workspaces.allowCreate` first, an invitation acceptance does not. A refusal answers
+   * `403 auth.forbidden`; `reason` is returned to the caller, so keep it free of anything
+   * sensitive. A hook that throws refuses the creation too.
    *
    * @param user - The identity creating the workspace.
    * @param data - What it asked for: the trimmed name.
@@ -492,12 +495,13 @@ export interface IAuthHooks {
   ): Promise<BeforeWorkspaceCreateResult> | BeforeWorkspaceCreateResult
 
   /**
-   * Called after a workspace or membership change has committed, with the event that was handed to
-   * the repository for persistence.
+   * Called with an audit event: after a workspace or membership change has committed, after an
+   * invitation was sent, resent, revoked or accepted, and for a refused access or a workspace switch.
    *
-   * Informational and best-effort: it never delays or fails the operation, and it can be lost if
-   * the process dies between the commit and the call, which is why the repository's persisted audit
-   * row is the record. `access.denied` and `workspace.switched` reach only this hook.
+   * Informational and best-effort: it never delays or fails the operation, and it can be lost, for
+   * instance if the process dies before the call. The repository gets no audit row for `member.invited`,
+   * `invitation.resent`, `invitation.revoked`, `access.denied` or `workspace.switched`, and gets
+   * one for `invitation.accepted` only when `IMembershipRepository.create` added the membership.
    *
    * @param event - What changed, and who did it.
    * @param context - Request metadata (IP, user agent, sanitized headers).
