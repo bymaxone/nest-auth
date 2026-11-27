@@ -75,7 +75,7 @@ A patch release. An OTP record whose attempt counter is unreadable is now refuse
   the same records gets this rule on the rust-auth side only from a version carrying the same
   script.
 
-## [1.5.19] - 2026-11-26
+## [1.5.19] - 2026-11-27
 
 A patch release. A Redis reply that should be an integer and is not now fails the call.
 

@@ -129,7 +129,7 @@ did. Pinned by `AuthProvider.outage.spec.tsx`.
 
 ## Known and out of scope
 
-These were found while mapping the paths. None is changed here; each has its own task.
+None of these is changed here.
 
 - `token-manager.service.ts` and `session.service.ts` write after the session is already live, so a
   failure there answers an error for a login that left a live session.
