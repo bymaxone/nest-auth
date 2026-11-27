@@ -9,6 +9,7 @@
 import { Logger } from '@nestjs/common'
 
 import { PlatformAuthService } from './platform-auth.service'
+import { expectEvent } from '../__tests__/log-events'
 import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 
 const ADMIN = {
@@ -109,7 +110,7 @@ describe('PlatformAuthService afterLogin', () => {
     })
     await flush()
 
-    expect(error).toHaveBeenCalled()
+    expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterLogin', how: 'rejected' }, ['hook down'])
   })
 
   it('does not fire before the second factor', async () => {

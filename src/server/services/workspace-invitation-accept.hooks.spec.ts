@@ -173,6 +173,9 @@ describe('beforeWorkspaceCreate on an invitation signup', () => {
       h.users.create.mock.invocationCallOrder[0] as number
     )
     expect(h.users.create).toHaveBeenCalledTimes(1)
+    expect(h.users.create).toHaveBeenCalledWith(
+      expect.objectContaining({ email: EMAIL, name: SIGNUP.name, tenantId: 't1' })
+    )
     expect(h.workspaces.createWithOwner).toHaveBeenCalledWith(
       expect.objectContaining({ ownerUserId: 'new' })
     )
@@ -224,6 +227,9 @@ describe('beforeWorkspaceCreate on an invitation signup', () => {
 
     expect(beforeWorkspaceCreate).not.toHaveBeenCalled()
     expect(h.users.create).toHaveBeenCalledTimes(1)
+    expect(h.users.create).toHaveBeenCalledWith(
+      expect.objectContaining({ email: EMAIL, name: SIGNUP.name, tenantId: 't1' })
+    )
   })
 })
 
@@ -250,6 +256,9 @@ describe('beforeWorkspaceCreate for an account an OAuth flow is about to create'
       { ...asked, accountPending: true }
     )
     expect(h.workspaces.createWithOwner).toHaveBeenCalledTimes(1)
+    expect(h.workspaces.createWithOwner).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerUserId: 'new', name: 'Acme' })
+    )
   })
 
   it('refuses when the host refuses, with the token unspent', async () => {
