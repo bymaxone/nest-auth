@@ -122,7 +122,7 @@ describe('AuthHealthProbe', () => {
     await expect(Promise.all(group)).resolves.toEqual([true, true, true])
 
     await expect(probe.ping()).resolves.toBe(true)
-    await expect(probe.ping()).rejects.toThrow('READONLY')
+    await expect(probe.ping()).rejects.toThrow('The authentication store failed the PING.')
     await expect(probe.ping()).resolves.toBe(true)
     expect(asked).toHaveBeenCalledTimes(4)
   })
@@ -166,7 +166,8 @@ describe('AuthHealthProbe', () => {
     const recovered = probe.ping()
     expect(asked).toHaveBeenCalledTimes(2)
     stuck.resolve('LOADING')
-    await Promise.resolve()
+    // A turn of the event loop, so that everything the late answer sets off has run.
+    await new Promise((resolve) => setImmediate(resolve))
     const sharedWithFresh = probe.ping()
     expect(asked).toHaveBeenCalledTimes(2)
     fresh.resolve('PONG')
@@ -193,14 +194,14 @@ describe('AuthHealthProbe', () => {
     expect(remove).toHaveBeenCalledWith('abort', listener)
   })
 
-  // Scenario: the client throws instead of returning a promise. Expected: the probe rejects with it.
-  it('rejects with what a throwing client throws', async () => {
+  // Scenario: the client throws instead of returning a promise. Expected: the probe rejects, with its own error.
+  it('rejects when the client throws', async () => {
     const probe = new AuthHealthProbe({
       ping: () => {
         throw new Error('not connected')
       }
     })
 
-    await expect(probe.ping()).rejects.toThrow('not connected')
+    await expect(probe.ping()).rejects.toThrow('The authentication store failed the PING.')
   })
 })
