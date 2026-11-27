@@ -45,6 +45,8 @@ const config: Config = {
     '<rootDir>/workspace-access.e2e-spec.ts',
     // The sweep over host reads: its workspace calls run the membership cache's scripts.
     '<rootDir>/host-read-sweep.e2e-spec.ts',
+    // The OTP attempt counter as the verify script reads it, an empty string included.
+    '<rootDir>/real-redis/otp-attempts.e2e-spec.ts',
     // Rate limiting and brute-force counters.
     '<rootDir>/rate-limit.e2e-spec.ts',
     '<rootDir>/negative-paths.e2e-spec.ts',

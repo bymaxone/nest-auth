@@ -773,7 +773,7 @@ async storeOtp(
 
 ### 7.4 Atomic Check-and-Delete (Verify OTP)
 
-OTP verification must be atomic to prevent race conditions where the same code is verified twice, and so that parallel wrong guesses cannot exceed the attempt ceiling. A read in JS followed by a write back would let N concurrent guesses all read `attempts: 0`. The decision is made inside one script, with `HINCRBY` bumping the counter in place (it leaves the key's TTL untouched, so a wrong guess cannot extend the OTP's lifetime):
+OTP verification must be atomic to prevent race conditions where the same code is verified twice, and so that parallel wrong guesses cannot exceed the attempt ceiling. A read in JS followed by a write back would let N concurrent guesses all read `attempts: 0`. The decision is made inside one script, with `HINCRBY` bumping the counter in place (it leaves the key's TTL untouched, so a wrong guess cannot extend the OTP's lifetime). An absent counter reads as 0; a present one that is not a non-negative integer reads as the ceiling:
 
 ```typescript
 const OTP_VERIFY_LUA = `
@@ -781,7 +781,15 @@ local code = redis.call('HGET', KEYS[1], 'code')
 if not code then
     return { 'EXPIRED', '' }
 end
-local attempts = tonumber(redis.call('HGET', KEYS[1], 'attempts')) or 0
+local raw = redis.call('HGET', KEYS[1], 'attempts')
+local attempts = 0
+if raw then
+    if raw == '0' or (#raw <= 18 and string.match(raw, '^[1-9]%d*$')) then
+        attempts = tonumber(raw)
+    else
+        attempts = tonumber(ARGV[2])
+    end
+end
 if attempts >= tonumber(ARGV[2]) then
     redis.call('DEL', KEYS[1])
     return { 'MAX', '' }
