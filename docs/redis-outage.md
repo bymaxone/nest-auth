@@ -40,19 +40,19 @@ the other two client configurations a host may use.
 | `unavailable` | reply error `READONLY` · `LOADING` · `MASTERDOWN` · `CLUSTERDOWN` · `TRYAGAIN`                     | Redis answered that it cannot serve this command now    |
 
 A reply error that is a mistake (`NOSCRIPT`, `WRONGTYPE`, `ERR ...`) is **not** an outage: it is a
-defect. The same boundary raises `AuthException(auth.internal)` for it, with no `cause`, and logs
-`AUTH_STORE_FAILED` with `operation` `redis:<family>` and `detail` `ReplyError`: the ioredis error
-names the command it failed, keys and arguments included, so it goes no further. Pinned by
-`test/e2e/real-redis/reply-error.e2e-spec.ts`, with and without `AuthExceptionFilter`.
+defect. `mappingOutages` raises `AuthException(auth.internal)` for it, with no `cause`, and logs
+`AUTH_STORE_FAILED` with `operation` `redis` or `redis:<family>` and `detail` `ReplyError`: the
+ioredis error names the command it failed, keys and arguments included, so it goes no further.
+Pinned by `test/e2e/real-redis/reply-error.e2e-spec.ts`, with and without `AuthExceptionFilter`.
 
 `READONLY` is an outage on purpose. After a failover a client still attached to the demoted node is
 told it cannot serve writes right now; that clears when the client reconnects to the new primary.
 
 ## Where it is mapped
 
-Every Redis call goes through `AuthRedisService`, which holds the only client the services use.
-`mappingOutages` wraps that client in a proxy that turns an outage rejection of any
-method into the typed 503 and passes every other error through untouched. It wraps every method
+The stores are reached through `AuthRedisService`.
+`mappingOutages` wraps its client in a proxy that turns an outage rejection of any method into the
+typed 503, a refused command into `auth.internal`, and passes other errors through. It wraps every method
 rather than a list of commands, so a command added later is covered without anyone remembering to add
 it. `RedisReadinessService` holds the raw client for the boot probe and is not wrapped: it needs
 `.status` and the events.

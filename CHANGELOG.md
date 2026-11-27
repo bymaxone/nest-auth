@@ -20,8 +20,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [1.5.21] - 2026-11-27
 
-A patch release. A command Redis refuses with a reply error now answers `auth.internal`, and the
-command it failed is no longer printed.
+A patch release. A Redis reply error that is not an outage is now `auth.internal`, and the failed
+command is no longer printed.
 
 ### Fixed
 
@@ -30,16 +30,16 @@ command it failed is no longer printed.
   which names the command it failed, keys and arguments included. In an application without
   `AuthExceptionFilter`, the request answered Nest's own 500 body and Nest's log printed that
   command; the rate-limit counter, the login lockout counter and the token epoch were measured. The
-  library now raises `AuthException` with `auth.internal` (HTTP 500) and no `cause` where it calls
-  Redis, and logs `AUTH_STORE_FAILED` with `operation: 'redis:<family>'` (`redis` when the key has no
-  family) and `detail: 'ReplyError'`.
+  library now raises `AuthException` with `auth.internal` (HTTP 500) and no `cause` from
+  `AuthRedisService`, and logs `AUTH_STORE_FAILED` with `operation: 'redis:<family>'` (`redis` when
+  the key has no family) and `detail: 'ReplyError'`.
 
   **Apply to a derived backend:** code that caught the ioredis `ReplyError` from a call of the
-  library, or read its message, now receives an `AuthException` with no `cause`. In the OAuth
-  callback, a reply error now redirects to `errorRedirectUrl` with `error=auth.internal` when that
-  option is set. A step that goes on without Redis still does, and now has this error line for a
-  refused command. Outages are unchanged: they answer `auth.service_unavailable` (503) with the
-  ioredis error as `cause`.
+  library, or read its message, now receives an `AuthException` with no `cause`. Raised inside the
+  OAuth callback handler, past its rate limit, it now redirects to a set `errorRedirectUrl` with
+  `error=auth.internal`. A step that goes on without Redis still does, and now has this error line
+  for a refused command. Outages are unchanged: they answer `auth.service_unavailable` (503) with
+  the ioredis error as `cause`.
 
 ## [1.5.20] - 2026-11-26
 
