@@ -376,8 +376,7 @@ export interface IAuthHooks {
    * known device or not. A token rotation records none.
    *
    * Use this hook to trigger new-session security alerts (via
-   * `IEmailProvider.sendNewSessionAlert`) or to update device tracking records. It is called
-   * without its object as `this`, so bind it, or write it as an arrow property, if it reads `this`.
+   * `IEmailProvider.sendNewSessionAlert`) or to update device tracking records.
    *
    * @param user - The authenticated user (credential fields omitted).
    * @param sessionInfo - Device, IP, and session hash for the new session.
