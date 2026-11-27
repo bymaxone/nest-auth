@@ -214,3 +214,38 @@ describe('the flows that end every session', () => {
     ])
   })
 })
+
+describe('PlatformAuthService logout', () => {
+  /** A service whose refresh session belongs to `a1` and whose blacklist write is refused. */
+  function service(removed: boolean, refused = true): PlatformAuthService {
+    const store = {
+      readSessionOwner: async () => ({ userId: 'a1' }),
+      set: async () => {
+        if (refused) throw new Error('refused')
+      },
+      del: async () => removed,
+      srem: async () => 1
+    }
+    const tokens = { verifyPlatformIgnoringExpiry: () => ({ jti: 'j', exp: 9_999_999_999 }) }
+    const options = { hmacKey: 'k', jwt: { accessExpiresIn: '15m' } }
+    return build(PlatformAuthService, {}, {}, tokens, {}, store, options, hooks)
+  }
+
+  // Scenario: the session is deleted and another write is refused. Expected: announced. Without a
+  // deleted session there is nothing to announce.
+  it.each([
+    [true, 1],
+    [false, 0]
+  ])('announces a removed session once, removed=%s', async (removed, count) => {
+    await expect(service(removed).logout('access', 'raw')).rejects.toThrow('refused')
+
+    expect(events()).toHaveLength(count)
+  })
+
+  // Scenario: a completed logout, whether or not the delete reports a removed key. Expected: one.
+  it.each([true, false])('announces a completed logout once, removed=%s', async (removed) => {
+    await service(removed, false).logout('access', 'raw')
+
+    expect(events()).toHaveLength(1)
+  })
+})

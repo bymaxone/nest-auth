@@ -1112,7 +1112,7 @@ It receives `{ userId, tenantId?, plane, reason, sessionIds? }`. `tenantId` is a
 | `session_evicted`        | The session limit.                                                                                                | Yes          |
 | `refresh_reuse`          | A replayed refresh token whose family was revoked, when the owner is known.                                       | No           |
 
-It runs after the store has deleted the sessions and is not awaited. It also runs when the sessions were deleted and a later write of the same operation was refused, so an operation can report a failure after the event. A retried or repeated operation can report the same account again: handle it idempotently.
+It runs after the store has deleted the sessions and is not awaited. It also runs when the sessions were deleted but a later write was refused, so the operation can fail after the event. A retried or repeated operation can report the same account again: handle it idempotently.
 
 ---
 

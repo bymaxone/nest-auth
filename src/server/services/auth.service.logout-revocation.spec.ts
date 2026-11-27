@@ -46,7 +46,7 @@ const JTI = 'jti-under-test'
 const mockRedis = { readSessionOwner: jest.fn(), set: jest.fn(), del: jest.fn(), get: jest.fn() }
 const mockTokenManager = { verifyIgnoringExpiry: jest.fn() }
 const mockSessionService = {}
-const mockHooks = { afterLogout: jest.fn() }
+const mockHooks = { afterLogout: jest.fn(), onSessionsRevoked: jest.fn() }
 
 const mockOptions = {
   jwt: { secret: JWT_SECRET },
@@ -71,7 +71,7 @@ describe('AuthService.logout — refused revocation writes', () => {
     jest.resetAllMocks()
     mockRedis.readSessionOwner.mockResolvedValue({ userId: 'user-1', tenantId: 'tenant-1' })
     mockRedis.set.mockResolvedValue(undefined)
-    mockRedis.del.mockResolvedValue(undefined)
+    mockRedis.del.mockResolvedValue(true)
     jest.mocked(removeStoredSession).mockResolvedValue(undefined)
     mockHooks.afterLogout.mockResolvedValue(undefined)
     mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
@@ -149,6 +149,55 @@ describe('AuthService.logout — refused revocation writes', () => {
     await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
 
     expect(mockRedis.del).toHaveBeenCalledTimes(2)
+  })
+
+  // Scenario: the session is deleted and another write is refused. Expected: the revocation is
+  // announced even though the logout did not complete. Why: the session is already gone.
+  it('should announce the revoked session when another write is refused', async () => {
+    mockRedis.set.mockRejectedValue(STORE_REFUSED)
+
+    await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
+    await flushMicrotasks()
+
+    expect(mockHooks.onSessionsRevoked.mock.calls).toEqual([
+      [
+        {
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          plane: 'dashboard',
+          reason: 'logout',
+          sessionIds: [HASH]
+        }
+      ]
+    ])
+    expect(mockHooks.afterLogout).not.toHaveBeenCalled()
+  })
+
+  // Scenario: the session delete is refused. Expected: no revocation is announced. Why: this call
+  // revoked no session.
+  it('should announce no revocation when the session delete is refused', async () => {
+    mockRedis.del.mockImplementation((key: string) =>
+      key === `rt:${HASH}` ? Promise.reject(STORE_REFUSED) : Promise.resolve(true)
+    )
+
+    await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
+    await flushMicrotasks()
+
+    expect(mockHooks.onSessionsRevoked).not.toHaveBeenCalled()
+  })
+
+  // Scenario: a completed logout, whether or not the delete reports a removed key. Expected: one
+  // revocation event. Why: a delete applied with its reply lost leaves the retry removing nothing,
+  // and a call that did remove the key must not announce twice.
+  it.each([true, false])('should announce a completed logout once, removed=%s', async (removed) => {
+    mockRedis.del.mockImplementation((key: string) =>
+      Promise.resolve(key === `rt:${HASH}` ? removed : true)
+    )
+
+    await service.logout('access.jwt', RAW_REFRESH)
+    await flushMicrotasks()
+
+    expect(mockHooks.onSessionsRevoked).toHaveBeenCalledTimes(1)
   })
 
   // Scenario: a refused logout. Expected: the logout hook does not fire. Why: the hook announces a

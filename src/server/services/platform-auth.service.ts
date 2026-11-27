@@ -32,6 +32,7 @@ import type {
 } from '../interfaces/platform-user-repository.interface'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { logoutNotice } from '../utils/announce-logout'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { platformUserAsSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -224,19 +225,20 @@ export class PlatformAuthService {
     const { userId } = fromSession ? live : await pinned(this.redis.readSessionOwner(markerKey))
     logEvent(this.logger, 'AUTH_LOGOUT', { plane: 'platform', ...(userId ? { userId } : {}) })
 
-    // Every credential write is attempted whatever the earlier ones did, and the first failure is
-    // raised once they have all run. What points at a credential (its index member, and for the
-    // session key its detail) is pruned only once that credential is gone: the revoke-all sweep
-    // ends only the sessions the index names, so a dropped member would hide a live one. The index
-    // is named through `sessionIndexKey`, never `'psess:' + userId`, which nothing else reads.
+    // Every credential write is attempted, and the first failure raised once all have run. What
+    // points at a credential (its index member, its detail) is pruned only once it is gone: the
+    // revoke-all sweep ends only what the index names. `sessionIndexKey` names the index.
     const index = userId ? sessionIndexKey('platform', userId, this.options.hmacKey, undefined) : ''
     const prune = (member: string): Array<() => Promise<unknown>> =>
       index === '' ? [] : [(): Promise<unknown> => this.redis.srem(index, member)]
+    const owner = { userId, tenantId: undefined }
+    const ended = { ...owner, sessionHash: tokenHash }
+    const notice = logoutNotice(this.hooks, this.logger, ended, 'platform')
     const failures = await pinned(
       settleWrites([
         ...this.blacklistWrites(accessToken),
         settleAfter(
-          (): Promise<unknown> => this.redis.del('prt:' + tokenHash),
+          (): Promise<unknown> => notice.after(this.redis.del('prt:' + tokenHash)),
           [...prune('prt:' + tokenHash), (): Promise<unknown> => this.redis.del('psd:' + tokenHash)]
         ),
         settleAfter(
@@ -246,10 +248,8 @@ export class PlatformAuthService {
       ])
     )
 
-    // A refused write is not a completed logout: no hook, and the caller is told so. The session
-    // record is already gone, so the owner is kept for the retry that will finish it.
+    // A refused write is not a completed logout: the owner is kept for the retry.
     const markerTtl = logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn)
-    const owner = { userId, tenantId: undefined }
     if (failures.length > 0 && fromSession) {
       await pinned(rememberPendingLogout(this.redis, markerKey, owner, markerTtl, this.logger))
     }
@@ -261,7 +261,8 @@ export class PlatformAuthService {
         settlePendingLogout(this.redis, markerKey, fromSession, owner, markerTtl, this.logger)
       ))
     ) {
-      this.emitPlatformLogout(userId, tokenHash)
+      notice.completed()
+      this.emitPlatformLogout(userId)
     }
 
     return userId
@@ -293,7 +294,7 @@ export class PlatformAuthService {
   }
 
   /**
-   * Announces a completed platform logout, through `onSessionsRevoked` and `afterPlatformLogout`.
+   * Announces a completed platform logout through `afterPlatformLogout`.
    *
    * Owns three concerns a reader of `logout` does not need: whether a hook is registered, the
    * fire-and-forget discipline, and the rejection log. It mirrors `TokenManagerService`'s
@@ -309,13 +310,7 @@ export class PlatformAuthService {
    *   which case there is nobody to announce and nothing fires.
    * @param sessionHash - The hash of the session that ended.
    */
-  private emitPlatformLogout(userId: string, sessionHash: string): void {
-    announceSessionsRevoked(this.hooks, this.logger, {
-      userId,
-      plane: 'platform',
-      reason: 'logout',
-      sessionIds: [sessionHash]
-    })
+  private emitPlatformLogout(userId: string): void {
     if (!this.hooks?.afterPlatformLogout || !userId) return
     const context: HookContext = { ...createEmptyHookContext(), plane: 'platform', userId }
 

@@ -31,7 +31,6 @@
     "[\"src/server/openapi/derive-request-schemas.ts\",[\"fn\",\"applyValidator\"]]": 62,
     "[\"src/server/providers/default-auth-email.provider.ts\",[\"member\",\"DefaultAuthEmailProvider\",\"deliver\"]]": 67,
     "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"login\"]]": 160,
-    "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"logout\"]]": 51,
     "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"refresh\"]]": 131,
     "[\"src/server/services/auth.service.ts\",[\"member\",\"AuthService\",\"register\"]]": 101,
     "[\"src/server/services/email-change.service.ts\",[\"member\",\"EmailChangeService\",\"requestChange\"]]": 66,

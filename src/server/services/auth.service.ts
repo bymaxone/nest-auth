@@ -36,7 +36,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { logEvent, logStore, logDelivery } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { announceLogout } from '../utils/announce-logout'
+import { logoutNotice } from '../utils/announce-logout'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { resolveClientAddress } from '../utils/client-address'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -559,13 +559,13 @@ export class AuthService {
       : await pinned(this.redis.readSessionOwner(markerKey))
     logEvent(this.logger, 'AUTH_LOGOUT', { plane: 'dashboard', ...(userId ? { userId } : {}) })
 
-    // Every revocation write is attempted whatever the earlier ones did, and the first failure is
-    // raised once all have run. A token presented here may have rotated and still sit inside its
-    // grace window, where a grace hit mints a fresh session, so the `rp:` pointer goes too.
+    // Every revocation write is attempted, and the first failure raised once all have run. A token
+    // presented here may sit in its grace window, where a hit mints a session: `rp:` goes too.
+    const notice = logoutNotice(this.hooks, this.logger, { userId, tenantId, sessionHash })
     const failures = await pinned(
       settleWrites([
         ...this.blacklistWrites(accessToken),
-        (): Promise<unknown> => this.redis.del(`rt:${sessionHash}`),
+        (): Promise<unknown> => notice.after(this.redis.del(`rt:${sessionHash}`)),
         (): Promise<unknown> => this.redis.del(`rp:${sessionHash}`)
       ])
     )
@@ -580,15 +580,14 @@ export class AuthService {
     }
     raiseFirst(failures)
 
-    // The hook names the user who was signed out, so it only fires when the session or the marker
-    // told us who that was. A logout for an already-gone session has nobody to name.
+    // The hooks name who was signed out, so they fire only when the session or the marker said who.
     if (
       userId !== '' &&
       (await pinned(
         settlePendingLogout(this.redis, markerKey, fromSession, owner, markerTtl, this.logger)
       ))
     ) {
-      announceLogout(this.hooks, this.logger, { userId, tenantId, sessionHash })
+      notice.completed()
     }
 
     return userId
