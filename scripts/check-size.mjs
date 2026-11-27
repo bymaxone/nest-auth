@@ -185,7 +185,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     refusal of an unreadable attempt counter.
 //     187.70 KiB (192,202 B) sits 30 B above the measured 192,172 B, which also holds the `auth.internal`
 //     answer and the log line of a command Redis refuses.
-//     188.55 KiB (193,073 B) sits 30 B above the measured 193,043 B, which also holds the host-hook fixes: the
+//     188.48 KiB (193,007 B) sits 30 B above the measured 192,977 B, which also holds the host-hook fixes: the
 //     judging of a workspace before an invitation signup creates the account, the platform `afterLogin`, and the
 //     report of a change whose cache step failed.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
@@ -255,7 +255,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 193_073 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 193_007 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },
