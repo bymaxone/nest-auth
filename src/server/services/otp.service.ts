@@ -72,7 +72,7 @@ function verifyScript(
  * TTL — and an OTP that never expires is an OTP an attacker can grind against forever.
  */
 const OTP_STORE_LUA = `
-redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', 0)
+redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', '0')
 redis.call('EXPIRE', KEYS[1], ARGV[2])
 `
 
@@ -87,10 +87,15 @@ redis.call('EXPIRE', KEYS[1], ARGV[2])
  * Returns `{ tag, code }`:
  *
  * - `{ 'EXPIRED', '' }` — no record (TTL elapsed), or one with no `code` field.
- * - `{ 'MAX', '' }` — the ceiling was already reached; the record is consumed.
+ * - `{ 'MAX', '' }` — the ceiling was already reached, or the counter is unreadable; the record
+ *   is consumed.
  * - `{ 'PRESENT', storedCode }` — under the ceiling. The record is consumed on a plain match
  *   and its counter bumped in place on a mismatch. The plain comparison inside the script
  *   only decides which of those happened; the caller re-compares in constant time.
+ *
+ * An absent `attempts` field counts as 0. A present one is read only when it spells a
+ * non-negative integer of at most 18 digits with no sign, space or leading zero; any other
+ * value counts as the ceiling. `tonumber` alone would let `nan` and negative values pass it.
  *
  * `HINCRBY` is what makes the whole decision atomic without decoding anything, and it leaves
  * the key's TTL untouched so a wrong guess cannot buy extra OTP lifetime. The counter used to
@@ -103,7 +108,15 @@ local code = redis.call('HGET', KEYS[1], 'code')
 if not code then
     return { 'EXPIRED', '' }
 end
-local attempts = tonumber(redis.call('HGET', KEYS[1], 'attempts')) or 0
+local raw = redis.call('HGET', KEYS[1], 'attempts')
+local attempts = 0
+if raw then
+    if raw == '0' or (#raw <= 18 and string.match(raw, '^[1-9]%d*$')) then
+        attempts = tonumber(raw)
+    else
+        attempts = tonumber(ARGV[2])
+    end
+end
 if attempts >= tonumber(ARGV[2]) then
     redis.call('DEL', KEYS[1])
     return { 'MAX', '' }
