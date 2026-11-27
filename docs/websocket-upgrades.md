@@ -51,6 +51,10 @@ second argument. A ticket of another tenant is then refused with `auth.token_inv
 argument a ticket of any tenant is accepted. A refused ticket is consumed. `WsJwtGuard` does not
 need this: under `enforceTenantBinding` it binds the tenant itself, as described below.
 
+A caller that serves dashboard sockets only can also pass `{ requireTenant: true }` as the third
+argument: a ticket that names no tenant is then refused with `auth.token_invalid` before the session
+or the account is read. `WsJwtGuard` passes it.
+
 Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;
 both channels are accepted, and a ticket wins when both are present. On the Bearer path
 `WsJwtGuard` runs `AuthTokenVerifierService.verifyAccessToken` with the account status and the MFA

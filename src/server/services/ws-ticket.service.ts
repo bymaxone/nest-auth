@@ -181,13 +181,20 @@ export class WsTicketService {
    * @param expectedTenantId - The tenant this connection belongs to. A host that calls this
    *   itself must pass it: without it a ticket of any tenant is accepted. {@link WsJwtGuard}
    *   binds the tenant on its own, under `enforceTenantBinding`.
+   * @param options - `requireTenant` refuses a snapshot that names no tenant before anything is
+   *   read for it. {@link WsJwtGuard} passes it, because the socket it admits is a dashboard one.
    * @returns The identity the socket is authorized as.
    * @throws {@link AuthException} `auth.token_invalid` when the ticket is unknown, already
    *   redeemed or expired, was minted by a session since revoked, names another tenant than the
-   *   expected one, or its account is gone — deliberately indistinguishable to the caller — and
-   *   the `auth.*` code of the status when the account is blocked.
+   *   expected one or none where one is required, or its account is gone — deliberately
+   *   indistinguishable to the caller — and the `auth.*` code of the status when the account is
+   *   blocked.
    */
-  async redeem(ticket: string, expectedTenantId?: string): Promise<WsTicketSnapshot> {
+  async redeem(
+    ticket: string,
+    expectedTenantId?: string,
+    options?: { requireTenant?: boolean }
+  ): Promise<WsTicketSnapshot> {
     const snapshot = ticket ? await pinned(this.redis.redeemWsTicket(ticket)) : null
     if (!snapshot) {
       // Worth a line: a ticket that will not redeem is either a replay of a captured upgrade
@@ -204,6 +211,10 @@ export class WsTicketService {
     }
     if (expectedTenantId !== undefined && snapshot.tenantId !== expectedTenantId) {
       logEvent(this.logger, 'AUTH_WS_TICKET_REFUSED', { reason: 'tenant_mismatch' })
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+    // No event: the caller asked for one plane.
+    if (options?.requireTenant === true && !snapshot.tenantId) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     await pinned(this.assertSessionStands(snapshot))

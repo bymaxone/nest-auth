@@ -18,6 +18,22 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.19] - 2026-11-26
+
+A patch release. A Redis reply that should be an integer and is not now fails the call.
+
+### Fixed
+
+- **A reply that spells no integer is no longer read as `0`.** A `nil`, an `OK`, a fraction or a missing reply to an integer command or script counted as zero: the rate limiter stayed under its limit, and a lockout reported no time left. Such a reply now fails the call with `auth.internal` (HTTP 500). A safe integer, and the decimal string a client built with `stringNumbers: true` answers, read as before.
+- **A stored counter that holds no integer is no longer read as "nothing counted".** `BruteForceService.isLockedOut` could answer not locked for it, and `AuthRedisService.getUserTokenEpoch` answered `0`, under which no token of that user is bulk-revoked. Both now fail with `auth.internal`; an absent key reads as before. A suppressed count of `access.denied` that holds no integer is reported as `0`, with a warning.
+- **A tenantless WebSocket ticket is refused before the platform account is read.** `WsJwtGuard` admits dashboard sockets only, and read the platform account of such a ticket before refusing it. `WsTicketService.redeem` takes an optional third argument, `{ requireTenant: true }`, which the guard passes.
+
+### Apply to a derived backend
+
+- Nothing to change against Redis. A test double or a proxy in front of Redis has to answer an integer to `DEL`, `INCR`, `TTL`, `SADD`, `SREM`, `SISMEMBER`, `EXISTS` and to the scripts that return one; one that answered nothing used to pass.
+- A lockout counter or token epoch that was corrupted or written by another writer now fails the requests that read it until the key is repaired or expires.
+- At the guard, a tenantless ticket of a blocked platform account now answers `auth.token_invalid` instead of the code of the status. A direct call of `redeem` without the argument behaves as before.
+
 ## [1.5.18] - 2026-11-26
 
 A patch release. An auth Redis client with a string `keyPrefix` starts again.
@@ -5700,7 +5716,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.18...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.19...HEAD
+[1.5.19]: https://github.com/bymaxone/nest-auth/compare/v1.5.18...v1.5.19
 [1.5.18]: https://github.com/bymaxone/nest-auth/compare/v1.5.17...v1.5.18
 [1.5.17]: https://github.com/bymaxone/nest-auth/compare/v1.5.16...v1.5.17
 [1.5.16]: https://github.com/bymaxone/nest-auth/compare/v1.5.15...v1.5.16

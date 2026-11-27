@@ -14,6 +14,9 @@ import { assertTenantBinding } from '../utils/assert-tenant-binding'
 import type { HandshakeLike } from '../utils/handshake-request'
 import { pinned, PinnedMethods } from '../utils/settle'
 
+/** The guard admits dashboard sockets, so a tenantless ticket is refused before any other read. */
+const DASHBOARD_TICKET = { requireTenant: true } as const
+
 /** Minimal shape of a WebSocket client as seen during the handshake. */
 type WsClient = {
   /**
@@ -124,7 +127,7 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
     // client that presents both is authenticated by the stronger, single-use credential.
     const ticket = readUpgradeTicket(handshake)
     if (ticket !== undefined) {
-      const snapshot = await pinned(this.wsTickets.redeem(ticket))
+      const snapshot = await pinned(this.wsTickets.redeem(ticket, undefined, DASHBOARD_TICKET))
       assertDashboardSnapshot(snapshot)
       await pinned(assertTenantBinding(this.options, bindingInput(handshake), snapshot.tenantId))
       // The socket is authorized as the snapshot the ticket was minted from — a frozen copy of

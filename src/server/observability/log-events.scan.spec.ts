@@ -123,7 +123,7 @@ describe('the code that writes log events', () => {
     expect(new Set(calls.map((call) => call.code))).toEqual(new Set(entries.keys()))
   })
 
-  // Scenario: every direct logger call in the library. Expected: the only ones are the three operator-guidance
+  // Scenario: every direct logger call in the library. Expected: the only ones are the operator-guidance
   // sentences below, each a plain string that names no value, and each of them is still there. Why: every other
   // line is an event, so a new free-text line (where `userId=...` or a quoted error would come back) fails here
   // until someone decides it is an event or adds a guidance sentence to this list on purpose.
@@ -136,6 +136,10 @@ describe('the code that writes log events', () => {
     {
       file: 'services/workspace-denied-events.service.ts',
       starts: 'access.denied events are not being emitted'
+    },
+    {
+      file: 'services/workspace-denied-events.service.ts',
+      starts: 'The suppressed count of access.denied was not an integer'
     }
   ]
 

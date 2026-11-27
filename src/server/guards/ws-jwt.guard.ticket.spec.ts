@@ -74,7 +74,9 @@ describe('WsJwtGuard upgrade ticket', () => {
       const { client, context } = ticketContext({ ticket: 'raw-ticket' })
 
       await expect(guard.canActivate(context as never)).resolves.toBe(true)
-      expect(mockWsTickets.redeem).toHaveBeenCalledWith('raw-ticket')
+      expect(mockWsTickets.redeem).toHaveBeenCalledWith('raw-ticket', undefined, {
+        requireTenant: true
+      })
       expect(client.data['user']).toStrictEqual(snapshot)
       expect(mockVerifier.verifyAccessToken).not.toHaveBeenCalled()
     })
@@ -96,7 +98,9 @@ describe('WsJwtGuard upgrade ticket', () => {
       const { context } = ticketContext({}, '/socket?ticket=from-url')
 
       await expect(guard.canActivate(context as never)).resolves.toBe(true)
-      expect(mockWsTickets.redeem).toHaveBeenCalledWith('from-url')
+      expect(mockWsTickets.redeem).toHaveBeenCalledWith('from-url', undefined, {
+        requireTenant: true
+      })
     })
 
     // Scenario: the parameter repeated. Expected: treated as ticketless, so the request falls

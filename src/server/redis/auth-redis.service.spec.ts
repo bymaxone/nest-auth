@@ -14,6 +14,7 @@ import type { Redis } from 'ioredis'
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { hmacSha256 } from '../crypto/secure-token'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthRedisService } from './auth-redis.service'
 
 // ---------------------------------------------------------------------------
@@ -150,16 +151,14 @@ describe('AuthRedisService', () => {
     // Scenario: what `del` REPORTS, not just what it calls. Expected: `true` only when a key
     // was actually removed. Why: callers that need exactly-once semantics — consuming an MFA
     // temp token, claiming a recovery code — decide on this boolean, and "I removed it" has to
-    // be distinguishable from "someone else already had". A reply this method cannot read as a
-    // count must read as "no", not as "yes".
+    // be distinguishable from "someone else already had". A reply that is no count is refused,
+    // in `integer-reply.callers.spec.ts`.
     it.each([
       ['one key removed', 1, true],
       ['several keys removed', 3, true],
       ['nothing to remove', 0, false],
       ['a negative count', -1, false],
-      ['a numeric string reply', '1', true],
-      ['a nil reply', null, false],
-      ['an unexpected shape', {}, false]
+      ['a numeric string reply', '1', true]
     ])('reports %s as %s', async (_label, reply, expected) => {
       mockRedis.del.mockResolvedValue(reply)
 
@@ -423,8 +422,7 @@ describe('AuthRedisService', () => {
     // session was already stored — so the reply is narrowed rather than compared straight.
     it.each([
       ['the string "1"', '1', true],
-      ['the string "0"', '0', false],
-      ['a nil reply', null, false]
+      ['the string "0"', '0', false]
     ])('reads %s correctly', async (_label, reply, expected) => {
       mockRedis.eval.mockResolvedValue(reply)
 
@@ -486,9 +484,7 @@ describe('AuthRedisService', () => {
     // log or metric built on it.
     it.each([
       ['an integer reply', 3, 3],
-      ['the string "3"', '3', 3],
-      ['a nil reply', null, 0],
-      ['an unexpected shape', {}, 0]
+      ['the string "3"', '3', 3]
     ])('reads %s as a count', async (_label, reply, expected) => {
       mockRedis.eval.mockResolvedValue(reply)
 
@@ -559,9 +555,7 @@ describe('AuthRedisService', () => {
     // would make a numeric read `NaN`, which is not a count.
     it.each([
       ['an integer reply', 3, 3],
-      ['the string "3"', '3', 3],
-      ['a nil reply', null, 0],
-      ['an unexpected shape', {}, 0]
+      ['the string "3"', '3', 3]
     ])('reads %s as a count', async (_label, reply, expected) => {
       mockRedis.eval.mockResolvedValue(reply)
 
@@ -911,11 +905,13 @@ describe('AuthRedisService', () => {
       expect(mockRedis.eval).not.toHaveBeenCalled()
     })
 
-    // Verifies a non-numeric reply reads as zero removals rather than leaking through.
-    it('reports zero removals when the script returns a non-numeric reply', async () => {
+    // A reply that is no count is refused: read as zero removals, it says the family was empty.
+    it('refuses a non-numeric reply', async () => {
       mockRedis.eval.mockResolvedValue(null)
 
-      await expect(service.revokeFamily('fam-1')).resolves.toEqual({ removed: 0, ownerId: '' })
+      await expect(service.revokeFamily('fam-1')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INTERNAL } }
+      })
     })
   })
 
@@ -1052,11 +1048,13 @@ describe('AuthRedisService', () => {
       expect(result).toBe(1)
     })
 
-    // Verifies that incrWithFixedTtl returns 0 when the Lua script returns a non-number (defensive branch).
-    it('should return 0 when eval returns a non-number value', async () => {
+    // A counter at 0 is under every limit, so a reply that is no count is refused.
+    it('should refuse when eval returns a non-number value', async () => {
       mockRedis.eval.mockResolvedValue(null)
-      const result = await service.incrWithFixedTtl('counter:key', 900)
-      expect(result).toBe(0)
+
+      await expect(service.incrWithFixedTtl('counter:key', 900)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INTERNAL } }
+      })
     })
 
     // Verifies that the TTL is passed as a string ARGV argument to the Lua script.
@@ -1100,15 +1098,9 @@ describe('AuthRedisService', () => {
       expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
     })
 
-    // Verifies a corrupt or negative stored value reads as 0 rather than NaN. Comparing
-    // against NaN is always false, which would silently disable bulk revocation for that user.
-    it('should return 0 when the stored epoch is unusable', async () => {
-      mockRedis.get.mockResolvedValue('not-a-number')
-      expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
-
-      mockRedis.get.mockResolvedValue('1.5')
-      expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
-
+    // A negative value clamps to 0. One that is no integer is refused, in
+    // `integer-reply.callers.spec.ts`.
+    it('should return 0 when the stored epoch is negative', async () => {
       mockRedis.get.mockResolvedValue('-2')
       expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
     })
@@ -1147,13 +1139,14 @@ describe('AuthRedisService', () => {
       expect(script).not.toContain('v == 1')
     })
 
-    // A non-numeric reply falls back to 0. Redis returns an integer for INCR, so this is the
-    // shape guard for a mock, a proxy, or a future script edit — and 0 is the safe answer:
-    // it reads as "no epoch", which refuses nothing rather than revoking everything.
-    it('should answer 0 when the script returns a non-numeric reply', async () => {
+    // A bump that answers no epoch cannot be reported as done: 0 is the epoch that refuses
+    // no token.
+    it('should refuse when the script returns a non-numeric reply', async () => {
       mockRedis.eval.mockResolvedValue('not-a-number')
 
-      expect(await service.bumpUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
+      await expect(
+        service.bumpUserTokenEpoch('user-1', 'tenant-1', 'dashboard')
+      ).rejects.toMatchObject({ response: { error: { code: AUTH_ERROR_CODES.INTERNAL } } })
     })
 
     // Verifies the platform bump targets the platform counter.

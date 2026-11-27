@@ -31,8 +31,7 @@ describe('releaseIndex and del over the reply of the client', () => {
     ['the number one', 1, true],
     ['the string one', '1', true],
     ['the number zero', 0, false],
-    ['the string zero', '0', false],
-    ['a nil reply', null, false]
+    ['the string zero', '0', false]
   ])('reads %s', async (_label, reply, removed) => {
     const service = answering(reply)
 
