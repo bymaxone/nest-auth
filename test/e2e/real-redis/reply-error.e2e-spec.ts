@@ -10,8 +10,9 @@
 
 import { inspect } from 'node:util'
 
-import { Logger } from '@nestjs/common'
-import type { INestApplication } from '@nestjs/common'
+import { Catch, Logger } from '@nestjs/common'
+import type { ArgumentsHost, ExceptionFilter, INestApplication } from '@nestjs/common'
+import { BaseExceptionFilter, HttpAdapterHost } from '@nestjs/core'
 import { Test } from '@nestjs/testing'
 import Redis from 'ioredis'
 import request from 'supertest'
@@ -30,6 +31,7 @@ import {
   expectAuthError,
   realRedisNamespace
 } from '../setup'
+import { startRedisContainer, type StartedRedis } from './redis-container'
 
 const PASSWORD = 'SuperSecret123!'
 const TENANT = 'tenant-1'
@@ -41,7 +43,7 @@ const TENANT = 'tenant-1'
 async function boot(
   client: Redis,
   namespace: string,
-  withFilter: boolean
+  filter?: (app: INestApplication) => ExceptionFilter
 ): Promise<INestApplication> {
   const moduleRef = await Test.createTestingModule({
     imports: [
@@ -66,7 +68,7 @@ async function boot(
     ]
   }).compile()
   const app = moduleRef.createNestApplication()
-  if (withFilter) app.useGlobalFilters(new AuthExceptionFilter())
+  if (filter) app.useGlobalFilters(filter(app))
   await app.listen(0)
   return app
 }
@@ -119,7 +121,7 @@ describe.each([
 
   beforeAll(async () => {
     client = new Redis(process.env['BYMAX_E2E_REDIS_URL'] as string)
-    app = await boot(client, namespace, withFilter)
+    app = await boot(client, namespace, withFilter ? () => new AuthExceptionFilter() : undefined)
   })
 
   afterAll(async () => {
@@ -156,5 +158,53 @@ describe.each([
     read.mockRestore()
 
     await expectRefusal(client, key as string, 'redis:ep', me)
+  })
+})
+
+/** A host filter that prints what it was given with Nest's logger, then answers as Nest does. */
+@Catch()
+class PrintingFilter extends BaseExceptionFilter {
+  override catch(exception: unknown, host: ArgumentsHost): void {
+    new Logger('Host').error(exception)
+    super.catch(exception, host)
+  }
+}
+
+describe('a Redis outage printed by the host (E2E, real Redis)', () => {
+  let app: INestApplication
+  let client: Redis
+  let store: StartedRedis
+
+  // A container of its own: it is turned into a replica, which refuses every write with READONLY.
+  beforeAll(async () => {
+    store = await startRedisContainer()
+    client = new Redis(store.url)
+    client.on('error', () => undefined)
+    app = await boot(
+      client,
+      'printed',
+      (booted) => new PrintingFilter(booted.get(HttpAdapterHost).httpAdapter)
+    )
+  })
+
+  afterAll(async () => {
+    await app.close()
+    client.disconnect()
+    await store.container.stop()
+  })
+
+  it('answers 503 and prints the family of the key, not the key or the command', async () => {
+    await client.call('replicaof', '127.0.0.1', '1')
+    const errors = captureErrors()
+
+    const res = await request(app.getHttpServer())
+      .post('/login')
+      .send({ email: 'printed@example.com', password: PASSWORD, tenantId: TENANT })
+    errors.restore()
+
+    expectAuthError(res, 'auth.service_unavailable')
+    expect(errors.text()).not.toContain('printed:rl:')
+    expect(errors.text()).not.toContain('args')
+    expect(errors.text()).toContain('Error [ReplyError]: redis:rl')
   })
 })

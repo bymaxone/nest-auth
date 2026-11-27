@@ -1014,16 +1014,17 @@ auth.service_unavailable`, never admitted. What the library cannot do is bound h
 > `Retry-After` is sent, because nothing here knows when Redis returns. It is the fail-closed
 > behaviour, and a client may retry. A Redis outage is a timeout, a closed or refused connection,
 > or a server that answers it cannot serve (`READONLY` after a failover, `LOADING`, `MASTERDOWN`,
-> `CLUSTERDOWN`); one function classifies them, and any other Redis reply error (a script that is
-> not loaded, a key of the wrong type) is a defect: it becomes an `AuthException` carrying
-> `auth.internal` (HTTP 500), with or without `AuthExceptionFilter`, with no `cause`, because the
-> ioredis error names the command it failed. The library logs it as `AUTH_STORE_FAILED` with
-> `operation` `redis:<family>` and `detail` `ReplyError`, and nothing else of the key or the command.
-> In the OAuth callback, past its rate limit, it redirects to a set `errorRedirectUrl` with
-> `error=internal`.
+> `CLUSTERDOWN`); one function classifies them, and any other failure of a Redis call (a script that
+> is not loaded, a key of the wrong type, an aborted command) is a defect: it becomes an
+> `AuthException` carrying `auth.internal` (HTTP 500), with or without `AuthExceptionFilter`, with no
+> `cause`. The library logs it as `AUTH_STORE_FAILED` with `operation` `redis:<family>` and `detail`
+> the class of the error, and nothing else of the key or the command. In the OAuth callback, past its
+> rate limit, it redirects to a set `errorRedirectUrl` with `error=internal`.
 >
-> The 503 is an `AuthException` whose `cause` is the ioredis error, so a host filter that logs 5xx
-> answers (nest-core's, for one) records the real reason; `isServiceUnavailable(error)`, exported from
+> The 503 is an `AuthException` whose `cause` is a new `Error` named after the class of the client's
+> error, with `redis:<family>` (or `redis`) as its message. The client's error is not kept, because it
+> can carry the command it failed and Nest's logger prints a `cause`. A host filter that logs 5xx
+> answers (nest-core's, for one) records that class and family; `isServiceUnavailable(error)`, exported from
 > the package, tells that 503 apart from every other `AuthException` and narrows it, so a host filter
 > or interceptor can handle it without comparing codes. The library's own `AuthExceptionFilter`
 > writes no log line for it: your readiness probe, not the request log, is the signal that Redis is

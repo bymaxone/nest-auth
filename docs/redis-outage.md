@@ -20,8 +20,10 @@ body.
 - Status `503`. The code is in `AUTH_ERROR_CODES.SERVICE_UNAVAILABLE`, its status in
   `AUTH_ERROR_STATUS`, and both are pinned in `conformance/wire-contract.json`, which
   rust-auth shares.
-- The ioredis error is the exception's `cause`. It is never serialized. A host filter that logs 5xx
-  answers records the real reason; the library's own `AuthExceptionFilter` writes no line for an
+- The exception's `cause` is a new `Error` whose `name` is the class of the client's error and whose
+  `message` is `redis` or `redis:<family>`, the family of the key. The client's error is not kept: it
+  can carry the command it failed, keys and arguments included, and Nest's logger prints a `cause`.
+  A host filter that logs 5xx answers records the class and the family; the library's own `AuthExceptionFilter` writes no line for an
   `AuthException`, so the operator's signal is a Redis health check beside the readiness probe.
 - No `Retry-After`. Nothing in the library knows when Redis returns, and a fixed number would be a
   guess. The one `Retry-After` the library sends, on a rate-limit refusal, is a real window.
@@ -39,11 +41,13 @@ the other two client configurations a host may use.
 | `unreachable` | `MaxRetriesPerRequestError` · `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, `ENOTFOUND`, ... | the client gave up its retries, or the network said so  |
 | `unavailable` | reply error `READONLY` · `LOADING` · `MASTERDOWN` · `CLUSTERDOWN` · `TRYAGAIN`                     | Redis answered that it cannot serve this command now    |
 
-A reply error that is a mistake (`NOSCRIPT`, `WRONGTYPE`, `ERR ...`) is **not** an outage: it is a
-defect. `mappingOutages` raises `AuthException(auth.internal)` for it, with no `cause`, and logs
-`AUTH_STORE_FAILED` with `operation` `redis` or `redis:<family>` and `detail` `ReplyError`: the
-ioredis error names the command it failed, keys and arguments included, so it goes no further.
-Pinned by `test/e2e/real-redis/reply-error.e2e-spec.ts`, with and without `AuthExceptionFilter`.
+Everything else a call of the client rejects with is **not** an outage: a reply error that is a
+mistake (`NOSCRIPT`, `WRONGTYPE`, `ERR ...`), an `AbortError`, an error class this table does not
+name, a thrown value that is no `Error`. `mappingOutages` raises `AuthException(auth.internal)` for
+it, with no `cause`, and logs `AUTH_STORE_FAILED` with `operation` `redis` or `redis:<family>` and
+`detail` the class of the error (`Error` when it names none), so the client's error goes no further.
+Pinned by `redis-outage.spec` and, for a reply error, by
+`test/e2e/real-redis/reply-error.e2e-spec.ts`, with and without `AuthExceptionFilter`.
 
 `READONLY` is an outage on purpose. After a failover a client still attached to the demoted node is
 told it cannot serve writes right now; that clears when the client reconnects to the new primary.
@@ -52,7 +56,8 @@ told it cannot serve writes right now; that clears when the client reconnects to
 
 The stores are reached through `AuthRedisService`.
 `mappingOutages` wraps its client in a proxy that turns an outage rejection of any method into the
-typed 503, a refused command into `auth.internal`, and passes other errors through. It wraps every method
+typed 503 and any other rejection into `auth.internal`. A method that throws before it returns a
+promise is not mapped. It wraps every method
 rather than a list of commands, so a command added later is covered without anyone remembering to add
 it. `RedisReadinessService` holds the raw client for the boot probe and is not wrapped: it needs
 `.status` and the events.
@@ -73,7 +78,7 @@ the suite pauses and stops itself, under each client configuration a host may us
 | OTP, password reset, email change               | `forgot-password`, `reset-password`, `verify-*`, `email-change`  | 503; a reset request: same 503 for every address, after the floor | `real-redis/redis-outage` (reset request), `answer-reset-request.outage.spec`                   |
 | Rate limiting, lockout counters                 | `@AuthRateLimit` routes                                          | 503, fail-closed kept                                             | the primitives (`auth-redis.service.outage.spec`, `eval`); not driven over HTTP                 |
 | Sessions, workspaces, invitations               | `sessions`, `workspaces/*`, `invitations/*`                      | 503, except the fail-open caches below                            | `real-redis/redis-outage` (`GET sessions`), `workspace-access.e2e-spec`                         |
-| OAuth                                           | initiate, callback                                               | 503, or a redirect carrying `error=auth.service_unavailable`      | not driven over HTTP: the controller's existing branch for an `AuthException`                   |
+| OAuth                                           | initiate, callback                                               | 503, or a redirect carrying `error=service_unavailable`           | not driven over HTTP: the controller's existing branch for an `AuthException`                   |
 | WebSocket ticket and guards                     | `POST ws-ticket`, `WsJwtGuard`                                   | the typed exception reaches `WsAuthExceptionFilter` as an event   | the primitives (`auth-redis.service.outage.spec`); not driven over HTTP                         |
 | Platform plane                                  | `platform/*`                                                     | 503                                                               | the primitives (`auth-redis.service.outage.spec`); not driven over HTTP                         |
 | A process that boots with Redis down            | `RedisReadinessService`                                          | boot fails with the address in the message                        | `redis-readiness.e2e-spec`                                                                      |

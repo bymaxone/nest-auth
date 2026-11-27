@@ -8,6 +8,7 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { inspect } from 'node:util'
 
 import { Logger } from '@nestjs/common'
 import type { Redis } from 'ioredis'
@@ -19,7 +20,6 @@ import {
   mappingOutages,
   NETWORK_CODES,
   redisOutageKindOf,
-  rethrowAsOutage,
   UNAVAILABLE_REPLIES
 } from './redis-outage'
 
@@ -133,43 +133,6 @@ describe('redisOutageKindOf', () => {
   })
 })
 
-describe('rethrowAsOutage', () => {
-  // Scenario: an outage error. Expected: the typed 503 with the library's body, the original error
-  // on `cause`, and nothing of the store's text in the body.
-  it('throws the typed 503 with the original error as its cause', () => {
-    const original = new Error('Command timed out')
-    let thrown: unknown
-    try {
-      rethrowAsOutage(original)
-    } catch (error) {
-      thrown = error
-    }
-
-    expect(thrown).toBeInstanceOf(AuthException)
-    const exception = thrown as AuthException
-    expect(exception.getStatus()).toBe(503)
-    expect(exception.getResponse()).toEqual({
-      error: {
-        code: 'auth.service_unavailable',
-        message: 'Service temporarily unavailable',
-        details: null
-      }
-    })
-    expect(exception.cause).toBe(original)
-    expect(JSON.stringify(exception.getResponse())).not.toContain('timed out')
-  })
-
-  // Scenario: an error that is not an outage. Expected: the very same object, untouched.
-  it('rethrows any other error as it is', () => {
-    const other = named(
-      'ReplyError',
-      'WRONGTYPE Operation against a key holding the wrong kind of value'
-    )
-
-    expect(() => rethrowAsOutage(other)).toThrow(other)
-  })
-})
-
 describe('isServiceUnavailable', () => {
   it('recognises the typed 503 and nothing else', () => {
     expect(isServiceUnavailable(new AuthException(AUTH_ERROR_CODES.SERVICE_UNAVAILABLE))).toBe(true)
@@ -202,31 +165,75 @@ describe('mappingOutages', () => {
     return proxied as Record<string, (...args: unknown[]) => unknown>
   }
 
+  /** What a call of the proxy rejected with. */
+  async function rejectionOf(call: unknown): Promise<AuthException> {
+    return (await Promise.resolve(call).catch((error: unknown) => error)) as AuthException
+  }
+
   // Scenario: any method of the client rejects with an outage, a name nobody listed included.
-  // Expected: the typed 503 with the cause, because the proxy wraps every method rather than a
-  // list of commands.
+  // Expected: the typed 503, because the proxy wraps every method rather than a list of commands.
   it.each(['get', 'anyCommandAddedLater'])('maps an outage raised by %s', async (method) => {
     const target = client()
-    const original = new Error('Connection is closed.')
-    ;(target[method] as jest.Mock).mockRejectedValue(original)
+    ;(target[method] as jest.Mock).mockRejectedValue(new Error('Connection is closed.'))
 
-    const call: unknown = view(target)[method]?.('k')
-    const rejection = (await Promise.resolve(call).catch(
-      (error: unknown) => error
-    )) as AuthException
+    const rejection = await rejectionOf(view(target)[method]?.('k'))
 
-    expect(rejection).toBeInstanceOf(AuthException)
-    expect(rejection.cause).toBe(original)
+    expect(rejection.getStatus()).toBe(503)
+    expect(rejection.getResponse()).toEqual(
+      new AuthException(AUTH_ERROR_CODES.SERVICE_UNAVAILABLE).getResponse()
+    )
   })
 
-  // Scenario: a rejection that is neither an outage nor a reply of the server. Expected: the same
-  // error object.
-  it('passes any other rejection through untouched', async () => {
+  // Scenario: an outage whose error carries the command. Expected: the cause is named after the
+  // class of that error and says the family of the key, and holds nothing else of it.
+  it('keeps only the class and the family of the error behind an outage', async () => {
     const target = client()
-    const other = named('Error', 'boom')
-    ;(target['get'] as jest.Mock).mockRejectedValue(other)
+    const key = `${NAMESPACE}:lf:${SECRET}`
+    const original = Object.assign(named('ReplyError', `READONLY ${SECRET}`), {
+      command: { name: 'get', args: [key] }
+    })
+    ;(target['get'] as jest.Mock).mockRejectedValue(original)
 
-    await expect(view(target)['get']?.('k')).rejects.toBe(other)
+    const cause = (await rejectionOf(view(target)['get']?.(key))).cause as Error
+
+    expect(cause).not.toBe(original)
+    expect({ name: cause.name, message: cause.message, stack: cause.stack }).toEqual({
+      name: 'ReplyError',
+      message: 'redis:lf',
+      stack: 'ReplyError: redis:lf'
+    })
+    expect(cause).not.toHaveProperty('command')
+    expect(inspect(cause, { depth: 6 })).not.toContain(SECRET)
+  })
+
+  // Scenario: a rejection that is neither an outage nor a reply of the server, an error class the
+  // library has never seen included. Expected: `auth.internal` with no cause, and one line naming
+  // the class, or `Error` when what was thrown names none.
+  it.each([
+    ['an aborted command', named('AbortError', `Command aborted ${SECRET}`), 'AbortError'],
+    ['a class nobody wrote down', named('SomeNewRedisError', SECRET), 'SomeNewRedisError'],
+    ['a name that is not a class', named(`${NAMESPACE}:${SECRET}`, 'x'), 'Error'],
+    ['a name that only ends like one', named(`${SECRET}:Error`, 'x'), 'Error'],
+    ['a name that only starts like one', named(`TypeError ${SECRET}`, 'x'), 'Error'],
+    ['a name that is no string', Object.assign(new Error('x'), { name: 7 }), 'Error'],
+    ['a thrown string', SECRET, 'Error'],
+    ['a thrown object', { name: 'AbortError', message: SECRET }, 'Error']
+  ])('answers %s as auth.internal', async (_label, thrown, detail) => {
+    const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    const target = client()
+    ;(target['get'] as jest.Mock).mockRejectedValue(thrown)
+
+    const rejection = await rejectionOf(view(target)['get']?.(`${NAMESPACE}:ep:${SECRET}`))
+
+    expect(rejection.getResponse()).toEqual(
+      new AuthException(AUTH_ERROR_CODES.INTERNAL).getResponse()
+    )
+    expect(rejection.cause).toBeUndefined()
+    expect(logged.mock.calls).toEqual([
+      [expect.objectContaining({ event: 'AUTH_STORE_FAILED', operation: 'redis:ep', detail })]
+    ])
+    expect(JSON.stringify(logged.mock.calls)).not.toContain(SECRET)
+    logged.mockRestore()
   })
 
   // Scenario: the server answers a command with an error, which ioredis raises with the command it
@@ -271,19 +278,16 @@ describe('mappingOutages', () => {
   )
 
   // Scenario: a reply error that says the server cannot serve the command now. Expected: the typed
-  // 503 with the cause, not the answer of a refused command, and nothing logged.
+  // 503, not the answer of a refused command, and nothing logged.
   it('keeps a READONLY reply an outage', async () => {
     const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
     const target = client()
     const original = named('ReplyError', 'READONLY the server cannot serve this now')
     ;(target['get'] as jest.Mock).mockRejectedValue(original)
 
-    const rejection = (await Promise.resolve(view(target)['get']?.('k')).catch(
-      (error: unknown) => error
-    )) as AuthException
+    const rejection = await rejectionOf(view(target)['get']?.('k'))
 
     expect(isServiceUnavailable(rejection)).toBe(true)
-    expect(rejection.cause).toBe(original)
     expect(logged).not.toHaveBeenCalled()
     logged.mockRestore()
   })

@@ -196,10 +196,11 @@ describe('workspace membership cache against Redis', () => {
     const { service, outage } = build(store)
     outage.active = true
 
-    // The typed 503 the library answers an outage with, carrying the client's own error as `cause`.
+    // The typed 503 the library answers an outage with. Its `cause` says the class of the client's
+    // error and the family of the key, and nothing else.
     const refused = {
       status: 503,
-      cause: expect.objectContaining({ message: 'Connection is closed.' })
+      cause: expect.objectContaining({ name: 'Error', message: expect.stringMatching(/^redis/) })
     }
     await expect(service.invalidateMembership(REF)).rejects.toMatchObject(refused)
     await expect(service.invalidateWorkspace(WORKSPACE_REF)).rejects.toMatchObject(refused)

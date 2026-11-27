@@ -20,8 +20,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [1.5.21] - 2026-11-27
 
-A patch release. A Redis reply error that is not an outage is now `auth.internal`, and the failed
-command is no longer printed.
+A patch release. The error of a failed Redis call, with the command it names, no longer leaves the
+library.
 
 ### Fixed
 
@@ -29,17 +29,24 @@ command is no longer printed.
   Redis cannot increment, a script the server rejects) reached the application as the ioredis error,
   which names the command it failed, keys and arguments included. In an application without
   `AuthExceptionFilter`, the request answered Nest's own 500 body and Nest's log printed that
-  command; the rate-limit counter, the login lockout counter and the token epoch were measured. The
-  library now raises `AuthException` with `auth.internal` (HTTP 500) and no `cause` from
-  `AuthRedisService`, and logs `AUTH_STORE_FAILED` with `operation: 'redis:<family>'` (`redis` when
-  the key has no family) and `detail: 'ReplyError'`.
+  command; the rate-limit counter, the login lockout counter and the token epoch were measured. Any
+  rejection of a Redis call that is not an outage, an `AbortError` or an error class the library does
+  not know included, is now an `AuthException` with `auth.internal` (HTTP 500) and no `cause`, raised
+  from `AuthRedisService` and logged as `AUTH_STORE_FAILED` with `operation: 'redis:<family>'`
+  (`redis` when the key has no family) and `detail` the class of the error.
 
-  **Apply to a derived backend:** code that caught the ioredis `ReplyError` from a call of the
+  **Apply to a derived backend:** code that caught an error of the ioredis client from a call of the
   library, or read its message, now receives an `AuthException` with no `cause`. Raised inside the
   OAuth callback handler, past its rate limit, it now redirects to a set `errorRedirectUrl` with
-  `error=internal`. A step that goes on without Redis still does, and now has this error line
-  for a refused command. Outages are unchanged: they answer `auth.service_unavailable` (503) with
-  the ioredis error as `cause`.
+  `error=internal`. A step that goes on without Redis still does, and now has this error line.
+
+- The 503 of a Redis outage kept the ioredis error as its `cause`. A reply such as `READONLY` names
+  the command it failed, and Nest's logger prints a `cause` with it, so a host that logged the
+  exception printed keys and arguments. The `cause` is now a new `Error` whose `name` is the class of
+  the client's error and whose `message` is `redis:<family>` or `redis`.
+
+  **Apply to a derived backend:** code that read the client's `message`, `code` or `command` from the
+  `cause` of the 503 no longer finds them. `isServiceUnavailable` and the response are unchanged.
 
 ## [1.5.20] - 2026-11-26
 

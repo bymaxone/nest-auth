@@ -4,7 +4,8 @@
  * Every authentication decision here awaits Redis. When the store cannot answer, the request has
  * nothing to decide with: it is refused, and what the client can act on is that the refusal is
  * temporary. The answer is `AuthException(SERVICE_UNAVAILABLE)`, whose body carries the library
- * code and nothing of the store, and whose `cause` keeps the ioredis error for a host's logger.
+ * code and nothing of the store, and whose `cause` holds the class of the client's error and the family
+ * of the key.
  *
  * @layer Service
  */
@@ -91,19 +92,6 @@ export function redisOutageKindOf(error: unknown): RedisOutageKind | undefined {
 }
 
 /**
- * Turns a Redis outage into the typed 503 and passes every other error through untouched.
- *
- * @param error - The error a Redis call rejected with.
- * @returns Never: it throws.
- * @throws {AuthException} `SERVICE_UNAVAILABLE` for an outage, with the original error as `cause`.
- * @throws The same `error` for anything else.
- */
-export function rethrowAsOutage(error: unknown): never {
-  if (redisOutageKindOf(error) === undefined) throw error
-  throw new AuthException(AUTH_ERROR_CODES.SERVICE_UNAVAILABLE, undefined, { cause: error })
-}
-
-/**
  * Whether an error is the typed 503 this module raises.
  *
  * @param error - A caught value.
@@ -134,14 +122,39 @@ function storeOf(
   return family === undefined ? 'redis' : `redis:${family}`
 }
 
+/** What a class of error is called. A name that does not read as one is not carried anywhere. */
+const CLASS_NAME = /^[A-Za-z]{0,48}Error$/
+
+/** The class of what the client rejected with, `Error` when it names none. */
+function errorClassOf(error: unknown): string {
+  if (!(error instanceof Error)) return 'Error'
+  const name: unknown = error.name
+  return typeof name === 'string' && CLASS_NAME.test(name) ? name : 'Error'
+}
+
 /**
- * Answers a command Redis refused as a mistake with `auth.internal`. The error ioredis raises carries
- * the command it failed, keys and values included, so it is not kept as the cause and nothing but its
- * class is logged.
+ * Raises what a failed call of the client is answered with: the typed 503 for an outage, and
+ * `auth.internal` for everything else, which is logged. The error ioredis raises can carry the command
+ * it failed, keys and values included, so it goes no further: the class and the family of the key are
+ * all that is kept of it.
+ *
+ * @param error - Whatever the call rejected with.
+ * @param operation - The store the command was for.
+ * @returns Never: it throws.
+ * @throws {AuthException} `SERVICE_UNAVAILABLE` for an outage, with a `cause` named after the class of
+ *   the error and carrying the family as its message; `INTERNAL`, with no `cause`, for anything else.
  */
-function refuseReply(operation: StoreOperation): never {
-  logEvent(logger, 'AUTH_STORE_FAILED', { operation, detail: 'ReplyError' })
-  throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
+function refuseStoreError(error: unknown, operation: StoreOperation): never {
+  const kind = errorClassOf(error)
+  if (redisOutageKindOf(error) === undefined) {
+    logEvent(logger, 'AUTH_STORE_FAILED', { operation, detail: kind })
+    throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
+  }
+  const cause = new Error(operation)
+  cause.name = kind
+  // The stack of a new error was written before the name was set.
+  cause.stack = `${kind}: ${operation}`
+  throw new AuthException(AUTH_ERROR_CODES.SERVICE_UNAVAILABLE, undefined, { cause })
 }
 
 /** Whether a call returned something to wait for: ioredis answers with a promise-like. */
@@ -154,29 +167,28 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 }
 
 /**
- * Waits for a call of the client and raises the typed 503 when it failed for an outage, and `auth.internal` when Redis refused
- * the command. It waits with `await`, not through `then` of the promise it was given: every answer of the store passes here,
- * so a replaced `then` would answer for all of them.
+ * Waits for a call of the client and answers a failed one through {@link refuseStoreError}. It waits with `await`, not
+ * through `then` of the promise it was given: every answer of the store passes here, so a replaced `then` would answer for
+ * all of them. Only the wait is inside the `try`: a refusal of the root check is the library's own and is not a store error.
  */
 async function mappingOutage(
   result: PromiseLike<unknown>,
   store: () => StoreOperation
 ): Promise<unknown> {
+  assertRootIsStandard()
+  let answer: unknown
   try {
-    assertRootIsStandard()
-    const answer = await pinned(result)
-    // The answer is read for `then` when this function returns it, so the root is checked again as the last statement.
-    return checked(answer)
+    answer = await pinned(result)
   } catch (error: unknown) {
-    const refused = error instanceof Error && error.name === 'ReplyError'
-    if (refused && redisOutageKindOf(error) === undefined) return refuseReply(store())
-    return rethrowAsOutage(error)
+    return refuseStoreError(error, store())
   }
+  // The answer is read for `then` when this function returns it, so the root is checked again as the last statement.
+  return checked(answer)
 }
 
 /**
  * A view of the client whose failed calls raise the typed 503 for an outage, and `auth.internal`
- * for a command Redis refused.
+ * for any other failure.
  *
  * Every method of the client is wrapped, not a list of names: a command added to the service later
  * is covered without anyone remembering to add it here. A call that does not return a promise, and
