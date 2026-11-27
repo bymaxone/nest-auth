@@ -32,10 +32,12 @@ import { classifyResetProof } from '../utils/classify-reset-proof'
 import { describeChannelStatus } from '../utils/describe-error'
 import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
+import { parseResetContext } from '../utils/reset-context'
 import type { ResetContext } from '../utils/reset-context'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
+import { revokeEverySession } from '../utils/session-revocation'
 import { checked, pinned, PinnedAll } from '../utils/settle'
 import { tenantScoped } from '../utils/tenant-scoped'
 
@@ -375,7 +377,7 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
-    const context = this.parseResetContext(contextJson)
+    const context = parseResetContext(contextJson, this.logger)
 
     // Defence-in-depth: verify email and tenantId match the stored context.
     // Compare SHA-256 digests rather than the raw variable-length strings — the
@@ -433,7 +435,7 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
-    const context = this.parseResetContext(contextJson)
+    const context = parseResetContext(contextJson, this.logger)
 
     // Compare SHA-256 digests to eliminate the variable-length oracle in
     // `timingSafeCompare`. See `resetWithToken` for the full rationale.
@@ -612,7 +614,8 @@ export class PasswordResetService {
         this.sessionService.revokeAllExceptCurrent({
           userId,
           tenantId,
-          currentSessionHash: keptHash
+          currentSessionHash: keptHash,
+          reason: 'password_changed'
         })
       )
     } catch (err: unknown) {
@@ -624,8 +627,14 @@ export class PasswordResetService {
 
   /** Ends every session the account has and advances its token epoch. */
   private async endAllSessions(userId: string, tenantId: string): Promise<void> {
-    await pinned(this.redis.invalidateUserSessions(userId, tenantId, 'dashboard'))
-    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
+    await pinned(
+      revokeEverySession(this.redis, this.hooks, this.logger, {
+        userId,
+        tenantId,
+        plane: 'dashboard',
+        reason: 'password_changed'
+      })
+    )
   }
 
   /**
@@ -724,8 +733,14 @@ export class PasswordResetService {
     // invalidation (atomic, so a concurrent login cannot slip a session in between the SMEMBERS
     // read and the DEL) followed by the epoch bump, which must land before the reset returns.
     // Deleting the refresh sessions alone would leave a stolen access token valid until its exp.
-    await pinned(this.redis.invalidateUserSessions(userId, tenantId, 'dashboard'))
-    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
+    await pinned(
+      revokeEverySession(this.redis, this.hooks, this.logger, {
+        userId,
+        tenantId,
+        plane: 'dashboard',
+        reason: 'password_reset'
+      })
+    )
 
     // The same repository read serves the notification, which a reset needs at least as much as
     // a change does: the classic takeover completes a reset from a compromised mailbox and
@@ -889,52 +904,5 @@ export class PasswordResetService {
   private isBlocked(status: string): boolean {
     const lower = status.toLowerCase()
     return this.options.blockedStatuses.some((s) => s.toLowerCase() === lower)
-  }
-
-  /**
-   * Parses a {@link ResetContext} from a Redis JSON string.
-   *
-   * @throws {@link AuthException} `PASSWORD_RESET_TOKEN_INVALID` if the JSON is
-   *   malformed or missing required fields.
-   */
-  private parseResetContext(json: string): ResetContext {
-    // Narrow try scope to JSON.parse only — so that future logic added after
-    // parsing is not accidentally swallowed and re-wrapped as TOKEN_INVALID.
-    let parsed: unknown
-    try {
-      parsed = parseJson(json)
-    } catch {
-      // Corrupted storage, not an expired or replayed token: indistinguishable to the caller
-      // by design, and distinguishable to an operator only here.
-      logEvent(this.logger, 'AUTH_RECORD_INVALID', { record: 'reset_context' })
-      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so the shape check immediately below refuses the record with the identical code. Same log, same error, same order.
-      throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
-    }
-
-    if (
-      parsed === null ||
-      typeof parsed !== 'object' ||
-      !('userId' in parsed) ||
-      !('email' in parsed) ||
-      !('tenantId' in parsed) ||
-      typeof (parsed as Record<string, unknown>)['userId'] !== 'string' ||
-      typeof (parsed as Record<string, unknown>)['email'] !== 'string' ||
-      typeof (parsed as Record<string, unknown>)['tenantId'] !== 'string'
-    ) {
-      throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
-    }
-
-    const record = parsed as Record<string, unknown>
-    const fingerprint = record['passwordFingerprint']
-    return {
-      userId: record['userId'] as string,
-      email: record['email'] as string,
-      tenantId: record['tenantId'] as string,
-      // Absent on a record written by an older build, or by a sibling that has not taken this
-      // change yet. Treated as "no binding" rather than as a mismatch: refusing every such
-      // token would break every reset in flight during a rolling deploy, which is a worse
-      // outcome than the narrow window this closes.
-      passwordFingerprint: typeof fingerprint === 'string' ? fingerprint : ''
-    }
   }
 }

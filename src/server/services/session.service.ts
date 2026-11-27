@@ -12,18 +12,26 @@ import { sessionIndexKey } from '../constants/user-keys'
 import { sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type {
+  HookContext,
+  IAuthHooks,
+  SessionRevocationReason,
+  SessionsRevokedEvent
+} from '../interfaces/auth-hooks.interface'
 import type { SessionAlertInfo } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logHook, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { integerReply } from '../redis/integer-reply'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
+import { deleteGracePointers } from '../utils/delete-grace-pointers'
 import { describeChannelStatus } from '../utils/describe-error'
+import { evictSessions } from '../utils/evict-sessions'
 import { hostEntityOf } from '../utils/host-read'
 import { toSafeUser } from '../utils/mfa-safe-user'
 import { runDetached } from '../utils/run-detached'
 import { parseUserAgent, type StoredSessionDetail } from '../utils/session-detail'
+import { announceSessionsRevoked } from '../utils/session-revocation'
 import { allOf, awaiting, checked, detached, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst } from '../utils/settle-writes'
 
@@ -193,6 +201,8 @@ export interface RevokeAllExceptCurrentParams {
   tenantId: string
   /** SHA-256 hash of the session to KEEP — the caller's own. */
   currentSessionHash: string
+  /** What `onSessionsRevoked` is told. Defaults to `other_sessions_revoked`. */
+  reason?: SessionRevocationReason
 }
 
 /**
@@ -406,6 +416,19 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
+    await pinned(this.removeSession({ userId, tenantId, sessionHash }))
+    this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
+  }
+
+  /**
+   * The store removal alone, without `onSessionsRevoked`: for a flow that announces the
+   * revocation itself, once, under its own reason.
+   *
+   * @internal Call {@link revokeSession} to revoke a session.
+   * @param params - See {@link RevokeSessionParams}.
+   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
+   */
+  async removeSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
     this.assertTenant(tenantId)
     this.assertValidSessionHash(sessionHash)
 
@@ -449,16 +472,20 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeOtherSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    // No `assertTenant` here: `revokeSession` on the next line performs the identical check
+    // No `assertTenant` here: `removeSession` on the next line performs the identical check
     // before touching anything, so a guard at this level is unreachable code that reads as
     // defence. Measured — deleting it left all 133 tests in this suite green, which is what an
     // equivalent mutant looks like. Removed rather than suppressed: a `Stryker disable` would
     // have preserved the duplication and added a comment defending it.
-    await pinned(this.revokeSession({ userId, tenantId, sessionHash }))
+    await pinned(this.removeSession({ userId, tenantId, sessionHash }))
     // After the revoke, not before: a failure above leaves the epoch untouched and the
     // operation visibly incomplete, rather than the reverse — every device losing its access
     // token for a session that is in fact still alive.
-    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
+    try {
+      await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
+    } finally {
+      this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
+    }
   }
 
   /**
@@ -537,22 +564,47 @@ export class SessionService {
   async revokeAllExceptCurrent({
     userId,
     tenantId,
-    currentSessionHash
+    currentSessionHash,
+    reason = 'other_sessions_revoked'
   }: RevokeAllExceptCurrentParams): Promise<void> {
     this.assertTenant(tenantId)
     this.assertValidSessionHash(currentSessionHash, 'currentSessionHash')
 
     const members = await pinned(this.redis.smembers(this.indexKey(userId, tenantId)))
     const keptHash = await pinned(this.resolveLiveMember(members, currentSessionHash))
-    const rtMembers = members.filter((m) => m.startsWith('rt:'))
+    const revoked: string[] = []
+    let completed = false
+    try {
+      await pinned(this.removeOthers({ userId, tenantId }, members, keptHash, revoked))
+      await pinned(deleteGracePointers(this.redis, this.indexKey(userId, tenantId), members))
+      // Last, and only once every refresh session is gone: a bump before the loop would be
+      // undone by nothing, but a bump after it means a failure above leaves the epoch untouched
+      // rather than logging the user out of a device the loop never got to revoke.
+      await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
+      completed = true
+    } finally {
+      // A failure part-way still announces what is already deleted.
+      if (completed || revoked.length > 0) {
+        this.announce({ userId, tenantId, reason, sessionIds: revoked })
+      }
+    }
+  }
 
-    for (const member of rtMembers) {
+  /** Removes every session in `members` but the kept one, recording each one it removed. */
+  private async removeOthers(
+    { userId, tenantId }: { userId: string; tenantId: string },
+    members: string[],
+    keptHash: string,
+    revoked: string[]
+  ): Promise<void> {
+    for (const member of members.filter((m) => m.startsWith('rt:'))) {
       const hash = member.slice(3)
 
       if (timingSafeCompare(hash, keptHash)) continue
 
       try {
-        await pinned(this.revokeSession({ userId, tenantId, sessionHash: hash }))
+        await pinned(this.removeSession({ userId, tenantId, sessionHash: hash }))
+        revoked.push(hash)
       } catch (err: unknown) {
         // SESSION_NOT_FOUND is expected when a concurrent logout already removed
         // this session between our SMEMBERS read and the Lua revocation. Any
@@ -564,30 +616,6 @@ export class SessionService {
         throw err
       }
     }
-
-    // Every rotation grace pointer the account holds goes too.
-    //
-    // `revokeSession` only ever deletes `rt:`/`sd:` keys, and the loop above only visits `rt:`
-    // members, so a `rp:{predecessor}` pointer survived both. For a *revoked* session that is
-    // harmless — the grace branch requires the successor's `rt:` key, which is gone. The gap is
-    // the *preserved* session: its predecessor's pointer names a hash that is deliberately
-    // still alive, so anyone holding that predecessor token could take the grace branch and
-    // mint a brand-new full-lifetime session for the rest of the window. The epoch bump below
-    // does not help — a recovered session signs its access token from the current epoch.
-    //
-    // "Sign out my other devices" is a statement about right now, so no credential minted
-    // before this moment may still produce a session. `logout` clears the same pointer for the
-    // single token it is handed, for the same reason.
-    const gracePointers = members.filter((m) => m.startsWith('rp:'))
-    for (const member of gracePointers) {
-      await pinned(this.redis.del(member))
-      await pinned(this.redis.srem(this.indexKey(userId, tenantId), member))
-    }
-
-    // Last, and only once every refresh session is gone: a bump before the loop would be
-    // undone by nothing, but a bump after it means a failure above leaves the epoch untouched
-    // rather than logging the user out of a device the loop never got to revoke.
-    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
   }
 
   /**
@@ -863,43 +891,14 @@ export class SessionService {
       .filter((entry) => entry.memberHash !== newHash)
       .slice(0, evictCount)
 
-    // Names the account as well as the request. An eviction context must carry tenant-qualified
-    // identity: a repository id is unique only within a tenant, so a consumer disconnecting sockets
-    // on a bare id reaches another tenant's user. Both values are parameters of this method, so there is nothing to look up.
-    const context: HookContext = {
-      plane: 'dashboard',
-      userId,
-      tenantId,
-      ip,
-      userAgent,
-      sanitizedHeaders: {}
-    }
+    const index = this.indexKey(userId, tenantId)
+    const request = { userId, tenantId, ip, userAgent, index }
+    await pinned(evictSessions(this.redis, this.hooks, this.logger, request, toEvict))
+  }
 
-    for (const entry of toEvict) {
-      try {
-        // Best-effort eviction: partial Redis failures leave stale keys that expire via TTL.
-        // The new session is already committed at this point — a mid-eviction failure
-        // MUST NOT propagate back to createSession callers.
-        await pinned(this.redis.del(`rt:${entry.memberHash}`))
-        await pinned(this.redis.srem(this.indexKey(userId, tenantId), entry.member))
-        await pinned(this.redis.del(`sd:${entry.memberHash}`))
-      } catch (err: unknown) {
-        logEvent(this.logger, 'AUTH_SESSION_EVICTION_FAILED', {
-          detail: describeChannelStatus(err)
-        })
-        continue
-      }
-
-      // Fire onSessionEvicted hook — fire-and-forget; errors must not propagate.
-      if (this.hooks?.onSessionEvicted) {
-        const onSessionEvicted = this.hooks.onSessionEvicted.bind(this.hooks)
-        runDetached(
-          this.logger,
-          () => onSessionEvicted(userId, entry.memberHash, context),
-          'onSessionEvicted'
-        )
-      }
-    }
+  /** Announces a revocation of dashboard sessions through `onSessionsRevoked`. */
+  private announce(revocation: Omit<SessionsRevokedEvent, 'plane'>): void {
+    announceSessionsRevoked(this.hooks, this.logger, { ...revocation, plane: 'dashboard' })
   }
 
   /**

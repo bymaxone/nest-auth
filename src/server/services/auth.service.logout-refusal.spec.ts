@@ -43,7 +43,7 @@ const JTI = 'jti-under-test'
 
 const mockRedis = { readSessionOwner: jest.fn(), set: jest.fn(), del: jest.fn(), get: jest.fn() }
 const mockTokenManager = { verifyIgnoringExpiry: jest.fn() }
-const mockSessionService = { revokeSession: jest.fn() }
+const mockSessionService = { removeSession: jest.fn() }
 const mockHooks = { afterLogout: jest.fn() }
 
 const mockOptions = {
@@ -70,7 +70,7 @@ describe('AuthService.logout when the verification of the access token refuses',
     mockRedis.readSessionOwner.mockResolvedValue({ userId: 'user-1', tenantId: 'tenant-1' })
     mockRedis.set.mockResolvedValue(undefined)
     mockRedis.del.mockResolvedValue(undefined)
-    mockSessionService.revokeSession.mockResolvedValue(undefined)
+    mockSessionService.removeSession.mockResolvedValue(undefined)
     mockHooks.afterLogout.mockResolvedValue(undefined)
     mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
       jti: JTI,

@@ -15,7 +15,11 @@ import { hmacSha256, sha256 } from '../crypto/secure-token'
 import type { PlatformLoginDto } from '../dto/platform-login.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type {
+  HookContext,
+  IAuthHooks,
+  SessionRevocationReason
+} from '../interfaces/auth-hooks.interface'
 import type {
   MfaChallengeResult,
   PlatformAuthResult,
@@ -35,6 +39,7 @@ import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
+import { announceSessionsRevoked, revokeEverySession } from '../utils/session-revocation'
 import { checked, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
 
@@ -256,7 +261,7 @@ export class PlatformAuthService {
         settlePendingLogout(this.redis, markerKey, fromSession, owner, markerTtl, this.logger)
       ))
     ) {
-      this.emitPlatformLogout(userId)
+      this.emitPlatformLogout(userId, tokenHash)
     }
 
     return userId
@@ -288,11 +293,11 @@ export class PlatformAuthService {
   }
 
   /**
-   * Announces a completed platform logout, the only hook `PlatformAuthService` emits.
+   * Announces a completed platform logout, through `onSessionsRevoked` and `afterPlatformLogout`.
    *
    * Owns three concerns a reader of `logout` does not need: whether a hook is registered, the
    * fire-and-forget discipline, and the rejection log. It mirrors `TokenManagerService`'s
-   * `emitReuseDetected`, which carries the same three for the same reason.
+   * `endReusedFamily`, which treats its hook the same way.
    *
    * The event is its own hook rather than a share of `afterLogout`, because a consumer's dashboard
    * handler may resolve a tenant and a platform administrator has none. Fire-and-forget: a hook
@@ -302,15 +307,22 @@ export class PlatformAuthService {
    *
    * @param userId - The administrator who signed out; empty when the record named no owner, in
    *   which case there is nobody to announce and nothing fires.
+   * @param sessionHash - The hash of the session that ended.
    */
-  private emitPlatformLogout(userId: string): void {
+  private emitPlatformLogout(userId: string, sessionHash: string): void {
+    announceSessionsRevoked(this.hooks, this.logger, {
+      userId,
+      plane: 'platform',
+      reason: 'logout',
+      sessionIds: [sessionHash]
+    })
     if (!this.hooks?.afterPlatformLogout || !userId) return
     const context: HookContext = { ...createEmptyHookContext(), plane: 'platform', userId }
 
     // `runDetached` makes the call inside its own `try`. `afterPlatformLogout` may be declared `void`, so a
     // consumer implementation is free to throw synchronously, and that must be logged, not escape into
     // `logout`, whose Redis writes have already completed: the caller would be told a finished logout
-    // failed, and might retry it. Same shape and same remedy as `TokenManagerService.emitReuseDetected`.
+    // failed, and might retry it. Same shape and same remedy as `endReusedFamily`.
     const afterPlatformLogout = this.hooks.afterPlatformLogout.bind(this.hooks)
     runDetached(this.logger, () => afterPlatformLogout(userId, context), 'afterPlatformLogout')
   }
@@ -352,7 +364,7 @@ export class PlatformAuthService {
     if (!admin) {
       // The account was deleted while the session outlived it. Clear what is left rather than
       // leaving the freshly rotated records to be rotated again.
-      await pinned(this.revokeAllPlatformSessions(result.session.userId))
+      await pinned(this.endSessions(result.session.userId, 'account_unavailable'))
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
 
@@ -361,7 +373,7 @@ export class PlatformAuthService {
     } catch (err: unknown) {
       // Compensated, not merely refused: the rotation above already minted a live pair, and
       // leaving it would hand back exactly the access this gate exists to end.
-      await pinned(this.revokeAllPlatformSessions(admin.id))
+      await pinned(this.endSessions(admin.id, 'account_unavailable'))
       throw err
     }
 
@@ -457,9 +469,19 @@ export class PlatformAuthService {
    */
 
   async revokeAllPlatformSessions(userId: string): Promise<void> {
+    await pinned(this.endSessions(userId, 'all_sessions_revoked'))
+  }
+
+  /** {@link revokeAllPlatformSessions}, with the reason the host is told. */
+  private async endSessions(userId: string, reason: SessionRevocationReason): Promise<void> {
     // The platform plane carries no tenant: its admins are cross-tenant by definition, which
     // is the same asymmetry `userSubject` encodes for every other user-derived key.
-    await pinned(this.redis.invalidateUserSessions(userId, undefined, 'platform'))
-    await pinned(this.redis.bumpUserTokenEpoch(userId, undefined, 'platform'))
+    await pinned(
+      revokeEverySession(this.redis, this.hooks, this.logger, {
+        userId,
+        plane: 'platform',
+        reason
+      })
+    )
   }
 }

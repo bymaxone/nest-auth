@@ -18,7 +18,11 @@ import { logoutPendingKey, logoutPendingTtlSeconds } from '../constants/logout-p
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type {
+  HookContext,
+  IAuthHooks,
+  SessionRevocationReason
+} from '../interfaces/auth-hooks.interface'
 import type {
   AuthResult,
   DashboardRefreshResult,
@@ -32,6 +36,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { logEvent, logHook, logStore, logDelivery } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { announceLogout } from '../utils/announce-logout'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { resolveClientAddress } from '../utils/client-address'
 import { describeChannelStatus } from '../utils/describe-error'
@@ -42,6 +47,7 @@ import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-log
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
+import { announceSessionsRevoked, revokeEverySession } from '../utils/session-revocation'
 import { detached, checked, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst, settleWrites } from '../utils/settle-writes'
 import { sleep } from '../utils/sleep'
@@ -581,7 +587,7 @@ export class AuthService {
         settlePendingLogout(this.redis, markerKey, fromSession, owner, markerTtl, this.logger)
       ))
     ) {
-      this.emitLogout(userId, tenantId)
+      announceLogout(this.hooks, this.logger, { userId, tenantId, sessionHash })
     }
 
     return userId
@@ -637,7 +643,7 @@ export class AuthService {
   ): Promise<void> {
     if (!this.options.sessions.enabled || !userId || tenantId === undefined) return
     try {
-      await pinned(this.sessionService.revokeSession({ userId, tenantId, sessionHash }))
+      await pinned(this.sessionService.removeSession({ userId, tenantId, sessionHash }))
     } catch (err: unknown) {
       const errCode =
         err instanceof AuthException
@@ -650,43 +656,6 @@ export class AuthService {
         logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_cleanup', err)
       }
     }
-  }
-
-  /**
-   * Announces a completed logout, the only hook `AuthService.logout` emits.
-   *
-   * Owns three concerns the session-revocation flow does not need: whether a hook is registered,
-   * the fire-and-forget discipline, and the rejection log. It mirrors
-   * `PlatformAuthService.emitPlatformLogout` and `TokenManagerService.emitReuseDetected`, which
-   * carry the same three.
-   *
-   * The context names the account, because `logout` knows it — `readSessionOwner` returns both
-   * fields and the session revoke is keyed on them. A consumer disconnecting live sockets must
-   * match the tenant as well as the id, since a repository id is unique only within a tenant, so a
-   * hook naming only the id cannot be acted on safely: acting on it would reach another tenant's
-   * account.
-   *
-   * `ip` and `userAgent` stay empty because `logout` receives two tokens and no request, and an
-   * invented value would be worse than an empty string a consumer can see is empty. `tenantId` is
-   * omitted rather than set to `undefined` when the session record carries none, so its absence
-   * reads as "the record did not say" rather than as a tenant literally named `undefined`.
-   *
-   * @param userId - The account that signed out; empty when the record named no owner, in which
-   *   case there is nobody to announce and nothing fires.
-   * @param tenantId - The tenant from the session record, absent on a record that carries none.
-   */
-  private emitLogout(userId: string, tenantId: string | undefined): void {
-    if (!this.hooks?.afterLogout || !userId) return
-
-    const context: HookContext = { ...createEmptyHookContext(), plane: 'dashboard', userId }
-    if (tenantId !== undefined) {
-      context.tenantId = tenantId
-    }
-
-    // `runDetached` calls the hook inside its own `try`: `afterLogout` may be declared `void`, and a
-    // synchronous throw must be logged, not escape into a `logout` whose Redis writes have completed.
-    const afterLogout = this.hooks.afterLogout.bind(this.hooks)
-    runDetached(this.logger, () => afterLogout(userId, context), 'afterLogout')
   }
 
   // ---------------------------------------------------------------------------
@@ -735,7 +704,7 @@ export class AuthService {
     if (!user) {
       // The account is gone. The session record outlived it, so end it rather than hand back
       // a token for a user nobody can look up.
-      await pinned(this.revokeAllSessions({ userId, tenantId }))
+      await pinned(this.endSessions({ userId, tenantId }, 'account_unavailable'))
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     try {
@@ -745,7 +714,7 @@ export class AuthService {
       // `assertUserNotBlocked` rather than testing `blockedStatuses` inline so there is one
       // definition of "blocked" — the inline version would have to re-implement the
       // case-insensitive comparison, and a second implementation is a second thing to drift.
-      await pinned(this.revokeAllSessions({ userId, tenantId }))
+      await pinned(this.endSessions({ userId, tenantId }, 'account_unavailable'))
       throw err
     }
 
@@ -862,7 +831,15 @@ export class AuthService {
    *   so naming the wrong one revokes the colliding id in another tenant instead.
    * @throws {@link AuthException} `VALIDATION` when the tenant is blank.
    */
-  async revokeAllSessions({ userId, tenantId }: RevokeAllSessionsParams): Promise<void> {
+  async revokeAllSessions(params: RevokeAllSessionsParams): Promise<void> {
+    await pinned(this.endSessions(params, 'all_sessions_revoked'))
+  }
+
+  /** {@link revokeAllSessions}, with the reason the host is told. */
+  private async endSessions(
+    { userId, tenantId }: RevokeAllSessionsParams,
+    reason: SessionRevocationReason
+  ): Promise<void> {
     // A blank tenant derives `dashboard:0::{userId}` — an index and an epoch nobody writes. Both
     // operations below would succeed against them and this method would return normally: a
     // "sign out everywhere" reported as done while every session and access token stayed valid.
@@ -872,8 +849,14 @@ export class AuthService {
         { field: 'tenantId', message: "tenantId is required to revoke a user's sessions" }
       ])
     }
-    await pinned(this.redis.invalidateUserSessions(userId, tenantId, 'dashboard'))
-    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
+    await pinned(
+      revokeEverySession(this.redis, this.hooks, this.logger, {
+        userId,
+        tenantId,
+        plane: 'dashboard',
+        reason
+      })
+    )
   }
 
   // ---------------------------------------------------------------------------

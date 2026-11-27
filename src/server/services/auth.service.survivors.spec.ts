@@ -63,7 +63,7 @@ const mockTokenManager = {
 }
 const mockSessionService = {
   createSession: jest.fn(),
-  revokeSession: jest.fn(),
+  removeSession: jest.fn(),
   rotateSession: jest.fn()
 }
 
@@ -170,7 +170,7 @@ describe('AuthService.logout and the index of sessions', () => {
     const owner = await service.logout('access.jwt', 'raw-refresh-token')
 
     expect(owner).toBe('')
-    expect(mockSessionService.revokeSession).not.toHaveBeenCalled()
+    expect(mockSessionService.removeSession).not.toHaveBeenCalled()
   })
 
   // Scenario: the library runs with sessions off and the stored session names its owner. Expected: the index is not asked to revoke.
@@ -182,6 +182,6 @@ describe('AuthService.logout and the index of sessions', () => {
     const owner = await service.logout('access.jwt', 'raw-refresh-token')
 
     expect(owner).toBe(USER.id)
-    expect(mockSessionService.revokeSession).not.toHaveBeenCalled()
+    expect(mockSessionService.removeSession).not.toHaveBeenCalled()
   })
 })

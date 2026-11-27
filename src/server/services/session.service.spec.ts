@@ -2035,11 +2035,11 @@ describe('SessionService', () => {
       const otherHash = sha256('other-auth-err')
       mockRedis.smembers.mockResolvedValue([`rt:${currentHash}`, `rt:${otherHash}`])
 
-      // Simulate revokeSession throwing a different AuthException
+      // Simulate removeSession throwing a different AuthException
       // We do that by making the hash invalid — but revokeAllExceptCurrent validates currentHash
-      // and calls revokeSession with member hashes. Let's use a spy instead.
+      // and calls removeSession with member hashes. Let's use a spy instead.
       const revokeSpy = jest
-        .spyOn(service, 'revokeSession')
+        .spyOn(service, 'removeSession')
         .mockRejectedValue(new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID))
 
       await expect(

@@ -147,7 +147,7 @@ describe('SessionService.resolveLiveSession', () => {
     const other = 'c'.repeat(64)
     mockRedis.smembers.mockResolvedValue([`rp:${presented}`, `rt:${successor}`, `rt:${other}`])
     mockRedis.get.mockResolvedValue(`${successor}:{}`)
-    const revoke = jest.spyOn(service, 'revokeSession').mockResolvedValue(undefined)
+    const revoke = jest.spyOn(service, 'removeSession').mockResolvedValue(undefined)
 
     await service.revokeAllExceptCurrent({
       userId,

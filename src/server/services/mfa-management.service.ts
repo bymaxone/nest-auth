@@ -35,6 +35,7 @@ import { DEFAULT_RECOVERY_CODE_COUNT, generateRecoveryCodes } from '../utils/mfa
 import { committedSafeUser, platformUserAsSafeUser, toSafeUser } from '../utils/mfa-safe-user'
 import { decryptMfaSecret } from '../utils/mfa-secret-cipher'
 import { runDetached } from '../utils/run-detached'
+import { revokeEverySession } from '../utils/session-revocation'
 import { checked, pinned, PinnedAll } from '../utils/settle'
 
 /** The plane, account and tenant an MFA change applies to. */
@@ -336,8 +337,14 @@ export class MfaManagementService {
         mfaRecoveryCodes: null
       }))
     )
-    await pinned(this.redis.invalidateUserSessions(userId, tenantId, context))
-    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, context))
+    await pinned(
+      revokeEverySession(this.redis, this.hooks, this.logger, {
+        userId,
+        ...(tenantId === undefined ? {} : { tenantId }),
+        plane: context,
+        reason: 'mfa_disabled'
+      })
+    )
   }
 
   /**
