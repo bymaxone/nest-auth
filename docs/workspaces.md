@@ -5,11 +5,15 @@ Hooks, events, account deletion, invitations through OAuth and the threat model 
 ## Hooks and events
 
 `beforeWorkspaceCreate(user, { name }, context)` can refuse a creation. `onWorkspaceEvent(event,
-context)` receives, after the change has committed, `workspace.created`, `.renamed`,
+context)` receives, after what it reports has happened, `workspace.created`, `.renamed`,
 `.deletion_scheduled`, `.restored` and `.deleted`; `member.invited`, `invitation.resent`,
 `.revoked` and `.accepted`; `member.role_changed`, `.removed` and `.left`; `ownership.transferred`;
 `workspace.switched`; and `access.denied` (with the `surface`, the public `code` and a host-only
-`reason`). It is best-effort and informational: the repository's persisted audit row is the record.
+`reason`). It is best-effort and informational. The repository gets no audit row for
+`member.invited`, `invitation.resent`, `invitation.revoked`, `access.denied` or
+`workspace.switched`, and gets one for `invitation.accepted` only when
+`IMembershipRepository.create` added the membership. A bootstrap acceptance persists
+`workspace.created` and reports `invitation.accepted` to the hook, not `workspace.created`.
 
 ## Deleting an account
 

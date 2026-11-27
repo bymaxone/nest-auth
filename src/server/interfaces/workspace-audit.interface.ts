@@ -24,7 +24,7 @@ interface WorkspaceAuditBase {
 }
 
 /**
- * One audited change to a workspace or one of its memberships.
+ * One audited event of a workspace, its memberships or its invitations.
  *
  * Every mutating repository method receives the event for its own change in an `audit` field and
  * must persist it in the SAME transaction as the change, so the audit row cannot be missing for a
@@ -32,9 +32,12 @@ interface WorkspaceAuditBase {
  * the event out to a hook; that fan-out is best-effort and can be lost if the process dies between
  * the commit and the call, which is why the persisted row is the record.
  *
- * `access.denied` and `workspace.switched` are the exceptions: neither rides on a repository write
- * that takes an `audit` field (a refused request writes nothing, and switching only remembers the
- * last workspace), so they go to the hook only.
+ * Some events ride on no repository write that takes an `audit` field, so they go to the hook only:
+ * `member.invited`, `invitation.resent` and `invitation.revoked` (invitations live in the library's
+ * own store), `access.denied` (a refused request writes nothing) and `workspace.switched`
+ * (switching only remembers the last workspace). `invitation.accepted` is persisted only when
+ * `IMembershipRepository.create` added the membership. A bootstrap acceptance persists
+ * `workspace.created` instead, and the hook receives `invitation.accepted`, not `workspace.created`.
  */
 export type WorkspaceAuditEvent =
   | (WorkspaceAuditBase & {

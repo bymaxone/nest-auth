@@ -25,8 +25,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   interface, and the `OAuthProviderPlugin` documentation says that registering a provider is not
   supported. Several hook comments that did not match the code are corrected: the `reason` of
   `beforeRegister` and of a rejected `onOAuthLogin` is not returned to the caller, `onNewSession`
-  fires for every recorded session, the retry of a failed logout does fire `afterLogout`, and the
-  hooks object is registered under `BYMAX_AUTH_HOOKS`.
+  fires for every recorded session, the retry of a failed logout does fire `afterLogout`, the
+  hooks object is registered under `BYMAX_AUTH_HOOKS`, and several `onWorkspaceEvent` events have no
+  audit row in the repository. **Apply:** a host that reads its audit rows as the full history of a
+  workspace has to record those events from the hook.
 
 ## [1.5.22] - 2026-11-27
 

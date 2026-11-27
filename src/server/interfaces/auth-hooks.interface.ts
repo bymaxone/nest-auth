@@ -495,11 +495,13 @@ export interface IAuthHooks {
   ): Promise<BeforeWorkspaceCreateResult> | BeforeWorkspaceCreateResult
 
   /**
-   * Called after a workspace or membership change has committed, with an audit event of it.
+   * Called with an audit event: after a workspace or membership change has committed, after an
+   * invitation was sent, resent, revoked or accepted, and for a refused access or a workspace switch.
    *
    * Informational and best-effort: it never delays or fails the operation, and it can be lost if
-   * the process dies between the commit and the call, which is why the repository's persisted audit
-   * row is the record. `access.denied` and `workspace.switched` reach only this hook.
+   * the process dies before the call. The repository gets no audit row for `member.invited`,
+   * `invitation.resent`, `invitation.revoked`, `access.denied` or `workspace.switched`, and gets
+   * one for `invitation.accepted` only when `IMembershipRepository.create` added the membership.
    *
    * @param event - What changed, and who did it.
    * @param context - Request metadata (IP, user agent, sanitized headers).

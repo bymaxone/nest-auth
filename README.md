@@ -1088,7 +1088,7 @@ Where the table says **logged**, the call is not awaited: a throw or a rejection
 | `onOAuthLogin`                     | The OAuth callback, once the provider profile is fetched. It returns `create`, `link` or `reject`.                                                                                                                                                | The callback fails (an `AuthException` follows `errorRedirectUrl` when one is set). Returning nothing, or not implementing it, answers `auth.oauth_failed`. |
 | `afterInvitationAccepted`          | An invitation creates the account: invitation acceptance, workspace invitation signup, or a workspace invitation completed by an OAuth sign-in that created the account. Not when a signed-in user accepts a workspace invitation.                | Logged.                                                                                                                                                     |
 | `beforeWorkspaceCreate`            | Before a workspace is written: workspace creation, and acceptance of an invitation that creates the workspace. `allowed: false` answers `403 auth.forbidden` with the `reason`.                                                                   | The creation is refused with what was thrown.                                                                                                               |
-| `onWorkspaceEvent`                 | A workspace or membership change has committed; also `access.denied` (rate-limited) and `workspace.switched`.                                                                                                                                     | Logged.                                                                                                                                                     |
+| `onWorkspaceEvent`                 | A workspace or membership change has committed, or an invitation was sent, resent, revoked or accepted; also `access.denied` (rate-limited) and `workspace.switched`.                                                                             | Logged.                                                                                                                                                     |
 | `onApiKeyRequest`                  | Every request to a route guarded by `ApiKeyGuard`, refusals included.                                                                                                                                                                             | Logged. Under `apiKeys.auditMode: 'required'` the call is awaited, and a throw, or no such hook, denies the request.                                        |
 
 ---
@@ -1425,7 +1425,7 @@ an inbound `x-workspace-id` and never sets one. Path values go through `fillRout
 
 ### Hooks, account deletion and the threat model
 
-`beforeWorkspaceCreate` can refuse a creation and `onWorkspaceEvent` receives every committed change.
+`beforeWorkspaceCreate` can refuse a creation and `onWorkspaceEvent` reports what happens, best-effort.
 A host that deletes a user must call `MembershipService.removeAllForUser(tenantId, userId,
 actorUserId, context)` first; it refuses with `409 auth.last_owner` while the account is the only
 owner of an active or suspended workspace. A workspace id is never trusted from the body, a header
