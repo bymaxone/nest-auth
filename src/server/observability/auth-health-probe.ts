@@ -7,6 +7,7 @@
 import { Inject, Injectable } from '@nestjs/common'
 
 import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import { redisOutageKindOf } from '../redis/redis-outage'
 import { IntrinsicPromise } from '../utils/captured-builtins'
 import { PinnedAll, awaiting, pinned } from '../utils/settle'
 
@@ -17,6 +18,28 @@ import { PinnedAll, awaiting, pinned } from '../utils/settle'
  * reports the failure itself instead of being abandoned by the aggregator.
  */
 export const PING_TIMEOUT_MS = 4000
+
+/** The first word of an error reply, which is its code. A first word of any other shape is not carried. */
+const REPLY_CODE = /^[A-Z]{2,32}$/
+
+/** The code of an error reply, when the error is one and starts with a code. */
+function replyCodeOf(error: unknown): string | undefined {
+  if (!(error instanceof Error) || error.name !== 'ReplyError') return undefined
+  // `split` always yields a first element.
+  const first = error.message.split(' ', 1)[0] as string
+  return REPLY_CODE.test(first) ? first : undefined
+}
+
+/**
+ * What a failed `PING` is rejected with. The client's error can hold the command it failed, and the text of a reply
+ * can repeat its arguments, so neither the error nor its message is carried: only the reply code or the kind of
+ * outage, when the error names one.
+ */
+function refusalOf(error: unknown): Error {
+  const reason = replyCodeOf(error) ?? redisOutageKindOf(error)
+  const suffix = reason === undefined ? '' : ` (${reason})`
+  return new Error(`The authentication store failed the PING${suffix}.`)
+}
 
 /**
  * Asks the Redis client the module was given whether it answers.
@@ -47,7 +70,8 @@ export class AuthHealthProbe {
    * @param signal - Aborted when the caller stops waiting; the probe then rejects without waiting longer.
    * @returns `true` when it answers `PONG`, `false` for any other answer.
    * @throws When the store cannot be reached, does not answer in time, or the signal aborts; the health
-   *   aggregator turns the rejection into a `down` entry.
+   *   aggregator turns the rejection into a `down` entry. A failure of the client is rejected with the
+   *   library's own error, naming at most the reply code or the kind of outage, with no `cause`.
    */
   async ping(signal?: AbortSignal): Promise<boolean> {
     const stop = AbortSignal.timeout(PING_TIMEOUT_MS)
@@ -61,7 +85,7 @@ export class AuthHealthProbe {
     // The monotonic clock: a step of the wall clock must not lengthen how long a stuck PING is shared.
     if (pending !== undefined && performance.now() - pending.at < PING_TIMEOUT_MS)
       return pending.asked
-    const entry = { asked: pinned(this.redis.ping()), at: performance.now() }
+    const entry = { asked: pinned(this.#send()), at: performance.now() }
     const clear = (): void => {
       if (this.#pending === entry) this.#pending = undefined
     }
@@ -76,6 +100,15 @@ export class AuthHealthProbe {
     })()
     this.#pending = entry
     return entry.asked
+  }
+
+  /** One `PING`, whose failure, thrown or rejected, is replaced by the library's own error. */
+  async #send(): Promise<string> {
+    try {
+      return await pinned(this.redis.ping())
+    } catch (error: unknown) {
+      throw refusalOf(error)
+    }
   }
 
   /** `answer`, or a rejection as soon as `signal` aborts. */

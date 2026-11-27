@@ -58,6 +58,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   dropping the cached access afterwards fails. The call still fails.
 - `onNewSession` is called on the hooks object, so a method that reads `this` works.
 - `afterEmailVerified` receives the user with `emailVerified: true`.
+- Error cause hygiene in the readiness probe (`AuthHealthProbe.ping`, and
+  `AuthRedisHealthIndicator.check` through it): Redis client errors are now reduced to the reply code
+  with a fixed message; the client's message, cause and command are no longer forwarded. Without a
+  reply code, the message names the kind of outage when there is one.
+
+  **Apply to a derived backend:** a check, an alert or a log search that reads the class, the message
+  or a property of the rejection (`ReplyError`, `Connection is closed.`, `command`) must match
+  `The authentication store failed the PING` instead. The probe's own timeout and abort rejection is
+  unchanged.
 
 ## [1.5.22] - 2026-11-27
 
