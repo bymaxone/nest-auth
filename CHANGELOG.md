@@ -60,7 +60,7 @@ leaves the library.
   **Apply to a derived backend:** code that read the client's `message`, `code` or `command` from the
   `cause` of the 503 no longer finds them. `isServiceUnavailable` and the response are unchanged.
 
-## [1.5.20] - 2026-11-26
+## [1.5.20] - 2026-11-27
 
 A patch release. An OTP record whose attempt counter is unreadable is now refused.
 
