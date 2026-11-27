@@ -18,6 +18,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation only; no behaviour changed. The README has a table of every `IAuthHooks` method,
+  when it is called and what a throw does. It no longer says OAuth is extensible through a plugin
+  interface, and the `OAuthProviderPlugin` documentation says that registering a provider is not
+  supported. Several hook comments that did not match the code are corrected: the `reason` of
+  `beforeRegister` and of a rejected `onOAuthLogin` is not returned to the caller, `onNewSession`
+  fires for every recorded session, the retry of a failed logout does fire `afterLogout`, and the
+  hooks object is registered under `BYMAX_AUTH_HOOKS`.
+
 ## [1.5.22] - 2026-11-27
 
 A patch release. The `cause` of the 503 an outage answers also names the kind of the outage.

@@ -61,22 +61,12 @@ export interface OAuthProfile {
 /**
  * Contract for OAuth 2.0 Authorization Code flow plugins.
  *
- * Implement this interface to add a new OAuth provider. The plugin is
- * responsible for all three operations in the flow:
+ * The shape of the library's own Google provider. Registering a provider of your own is not
+ * supported: the module builds its providers from `oauth.google` alone, and the token that holds
+ * them is not exported. A provider is responsible for all three operations in the flow:
  *  1. Constructing the provider's authorization URL (with a CSRF-protection state value).
  *  2. Exchanging the authorization code for an access token.
  *  3. Fetching and normalizing the user profile.
- *
- * @example
- * ```typescript
- * class GoogleOAuthPlugin implements OAuthProviderPlugin {
- *   readonly name = 'google'
- *
- *   authorizeUrl(state: string): string { ... }
- *   async exchangeCode(code: string): Promise<{ access_token: string; token_type: string }> { ... }
- *   async fetchProfile(accessToken: string): Promise<OAuthProfile> { ... }
- * }
- * ```
  */
 export interface OAuthProviderPlugin {
   /**
