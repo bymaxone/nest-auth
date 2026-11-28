@@ -103,8 +103,8 @@ When the store accepts some writes of an operation and refuses others:
   refreshing until it is revoked or a later eviction removes it.
 - MFA enable, MFA disable and password reset, session removal refused: the call errors, repeating
   it is refused, and the sessions keep refreshing until every session of the account is revoked.
-- MFA enable, MFA disable, password reset and change of password, token epoch refused: the call
-  errors, repeating it as it was is refused, and access tokens are accepted until they expire.
+- MFA enable, MFA disable, password reset and change to another password, token epoch refused:
+  the call errors, repeating it is refused, and access tokens are accepted until they expire.
   Refresh of the ended sessions is refused.
 
 ### Fixed
