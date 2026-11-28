@@ -18,6 +18,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.24] - 2026-11-28
+
+A patch release. It adds one hook for session revocations and changes when
+`afterInvitationAccepted` runs on an invitation completed by an OAuth sign-in.
+
 ### Added
 
 - `IAuthHooks.onSessionsRevoked`, one hook fired by every revocation of refresh sessions whose account is
@@ -26,6 +31,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   and reset, MFA enable and disable, session eviction and refresh token reuse. Several of these had
   no hook before. The event carries `userId`, `plane`, `reason` and, when known, `tenantId` and
   `sessionIds`; the types `SessionsRevokedEvent` and `SessionRevocationReason` are exported.
+  `SessionService.revokeAllExceptCurrent` accepts an optional `reason`, which the event carries.
   This addition does not change when the existing hooks fire. **Apply:** nothing is required. A host
   that keeps state per session can implement the hook instead of watching routes.
 
@@ -5855,7 +5861,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.23...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.24...HEAD
+[1.5.24]: https://github.com/bymaxone/nest-auth/compare/v1.5.23...v1.5.24
 [1.5.23]: https://github.com/bymaxone/nest-auth/compare/v1.5.22...v1.5.23
 [1.5.22]: https://github.com/bymaxone/nest-auth/compare/v1.5.21...v1.5.22
 [1.5.21]: https://github.com/bymaxone/nest-auth/compare/v1.5.20...v1.5.21
