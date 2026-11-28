@@ -42,17 +42,6 @@ describe('AuthRedisService over a client that answers integers as strings', () =
     await expect(call(answering(replies))).resolves.toBe(expected)
   })
 
-  // Scenario: the family revocation counts what it removed. Expected: the count.
-  it('reports the members a family revocation removed', async () => {
-    const service = answering({ smembers: [], eval: '3' })
-
-    await expect(service.revokeFamily('fam-1')).resolves.toEqual({
-      removed: 3,
-      ownerId: '',
-      sessionHashes: []
-    })
-  })
-
   // Scenario: a grace recovery asks whether its family still exists. Expected: `1` as a string says yes.
   // Why: read as no, a client's one retry is refused.
   it('recovers a grace pointer whose family exists', async () => {

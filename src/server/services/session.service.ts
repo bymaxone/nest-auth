@@ -767,7 +767,7 @@ export class SessionService {
 
     const index = this.indexKey(userId, tenantId)
     const { jwt } = this.options
-    const request = { userId, tenantId, ip, userAgent, index, members: rtMembers, jwt }
+    const request = { userId, tenantId, ip, userAgent, index, limit, jwt }
     await pinned(evictSessions(this.redis, this.hooks, this.logger, request, toEvict))
   }
 

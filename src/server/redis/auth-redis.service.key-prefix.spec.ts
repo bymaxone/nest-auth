@@ -28,7 +28,8 @@ async function recording(
     options,
     eval: jest.fn(async (_script: string, count: number, ...rest: string[]) => {
       calls.push({ keys: rest.slice(0, count), argv: rest.slice(count) })
-      return 0
+      // The family revocation answers the members it removed; the other scripts here a count.
+      return rest[0]?.startsWith('ns:fam:') ? [] : 0
     }),
     smembers: jest.fn().mockResolvedValue(['h1']),
     get: jest.fn().mockResolvedValue(JSON.stringify({ userId: 'u1', tenantId: 't1' }))

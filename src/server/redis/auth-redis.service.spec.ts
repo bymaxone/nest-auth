@@ -753,7 +753,7 @@ describe('AuthRedisService', () => {
     it('runs the revocation over the dashboard family keyspace', async () => {
       mockRedis.smembers.mockResolvedValue(['h1', 'h2'])
       mockRedis.get.mockResolvedValue('{"userId":"u1","tenantId":"tenant-1"}')
-      mockRedis.eval.mockResolvedValue(2)
+      mockRedis.eval.mockResolvedValue(['h1', 'h2'])
 
       expect(await service.revokeFamily('fam-1')).toMatchObject({ removed: 2, ownerId: 'u1' })
 
@@ -776,7 +776,7 @@ describe('AuthRedisService', () => {
     it('runs the revocation over the platform family keyspace', async () => {
       mockRedis.smembers.mockResolvedValue(['h1'])
       mockRedis.get.mockResolvedValue('{"userId":"admin-1"}')
-      mockRedis.eval.mockResolvedValue(1)
+      mockRedis.eval.mockResolvedValue(['h1'])
 
       await expect(service.revokeFamily('fam-1', 'platform')).resolves.toEqual({
         removed: 1,
@@ -810,7 +810,7 @@ describe('AuthRedisService', () => {
         if (key.endsWith('blank')) return Promise.resolve('{"userId":""}')
         return Promise.resolve('{"userId":"u9","tenantId":"tenant-1"}')
       })
-      mockRedis.eval.mockResolvedValue(1)
+      mockRedis.eval.mockResolvedValue(['h1'])
 
       await service.revokeFamily('fam-1')
 
@@ -825,7 +825,7 @@ describe('AuthRedisService', () => {
     it('passes an empty owner index when no member record is readable', async () => {
       mockRedis.smembers.mockResolvedValue(['h1'])
       mockRedis.get.mockResolvedValue(null)
-      mockRedis.eval.mockResolvedValue(0)
+      mockRedis.eval.mockResolvedValue([])
 
       await service.revokeFamily('fam-1')
 
@@ -844,7 +844,7 @@ describe('AuthRedisService', () => {
       // `Once`, not a standing value: the mock is shared across this describe, and a standing
       // arm here changed the owner a later test read.
       mockRedis.get.mockResolvedValueOnce('{"userId":"u9"}')
-      mockRedis.eval.mockResolvedValueOnce(1)
+      mockRedis.eval.mockResolvedValueOnce(['h1'])
 
       await service.revokeFamily('fam-1')
 
@@ -858,7 +858,7 @@ describe('AuthRedisService', () => {
     it('still prunes the platform index when the record names no tenant', async () => {
       mockRedis.smembers.mockResolvedValue(['h1'])
       mockRedis.get.mockResolvedValueOnce('{"userId":"admin-9"}')
-      mockRedis.eval.mockResolvedValueOnce(1)
+      mockRedis.eval.mockResolvedValueOnce(['h1'])
 
       await service.revokeFamily('fam-1', 'platform')
 
@@ -875,7 +875,7 @@ describe('AuthRedisService', () => {
     it('prunes no index when a dashboard family record carries a blank tenant', async () => {
       mockRedis.smembers.mockResolvedValueOnce(['h1'])
       mockRedis.get.mockResolvedValueOnce('{"userId":"u9","tenantId":""}')
-      mockRedis.eval.mockResolvedValueOnce(1)
+      mockRedis.eval.mockResolvedValueOnce(['h1'])
 
       await service.revokeFamily('fam-1')
 
@@ -890,7 +890,7 @@ describe('AuthRedisService', () => {
     it('prunes no platform index when no member record is readable', async () => {
       mockRedis.smembers.mockResolvedValueOnce(['h1'])
       mockRedis.get.mockResolvedValueOnce(null)
-      mockRedis.eval.mockResolvedValueOnce(0)
+      mockRedis.eval.mockResolvedValueOnce([])
 
       await service.revokeFamily('fam-1', 'platform')
 
@@ -905,8 +905,8 @@ describe('AuthRedisService', () => {
       expect(mockRedis.eval).not.toHaveBeenCalled()
     })
 
-    // A reply that is no count is refused: read as zero removals, it says the family was empty.
-    it('refuses a non-numeric reply', async () => {
+    // A reply that is no list of members is refused: read as empty, it says the family was empty.
+    it('refuses a reply that is no list', async () => {
       mockRedis.eval.mockResolvedValue(null)
 
       await expect(service.revokeFamily('fam-1')).rejects.toMatchObject({

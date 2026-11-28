@@ -30,7 +30,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   limit or the revocation of any of them now ends them all, so none is left able to refresh into a
   refused access token. `onSessionsRevoked` can name more than one session; a logout names the
   others in a second event. The sessions of the account's other sign-ins are not affected. Past
-  the session limit, every session removed with a sign-in counts toward the excess.
+  the session limit, the account's sessions are counted again after each removal, and no further
+  sign-in is ended once the account is within the limit.
 
   **Apply to a derived backend:** nothing to change. A user who revokes another entry of their own
   current sign-in is signed out and signs in again.
@@ -57,6 +58,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   - The shared wire contract moves to version 9: the two key prefixes, the entry, and the optional
     `sid` of a WebSocket ticket and `familyId` of a pending-logout record.
   - Sessions whose record names no family behave as before.
+
+### Fixed
+
+- A replayed refresh token answered while the same sign-in is rotating now reads the family again
+  when no session it read still names the owner, so the account's session index is pruned and
+  `onSessionsRevoked` fires.
 
 ## [1.5.24] - 2026-11-28
 

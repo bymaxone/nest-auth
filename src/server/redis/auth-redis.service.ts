@@ -12,7 +12,8 @@ import type { SessionExtra } from './create-session-script'
 import { integerReply } from './integer-reply'
 import { mappingOutages } from './redis-outage'
 import type { RefreshRotationOutcome, RefreshRotationParams } from './refresh-rotation'
-import { sessionOwner, type RevokedFamily, type SessionOwner } from './session-records'
+import { readFamily, removedSessions, sessionOwner } from './session-records'
+import type { RevokedFamily, SessionOwner } from './session-records'
 import { storedNamespace } from './stored-namespace'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
@@ -221,7 +222,7 @@ return false
 /**
  * Revokes every live session in a refresh-token family in one transaction.
  *
- * Held byte-identical to rust-auth's `crates/bymax-auth-redis/src/lua/revoke_family.lua`.
+ * Change it together with rust-auth's `crates/bymax-auth-redis/src/lua/revoke_family.lua`.
  *
  * ```text
  * KEYS[1] = fam:{family} (already namespaced)
@@ -229,16 +230,15 @@ return false
  * ARGV[4] = the owner's index key, or '' when no member record was readable
  * ```
  *
- * The owner is resolved by the caller rather than decoded here: every member of one family
- * belongs to the same user, and reading one record in the host language keeps the script free
- * of `cjson`. The script still re-reads the membership itself, so a member added between the
- * two steps is revoked too.
+ * The caller resolves the owner: every member of one family belongs to one user, and reading
+ * a record in the host language keeps the script free of `cjson`. The script re-reads the
+ * membership, so a member added in between is revoked too, and its reply names what it removed.
  */
 const REVOKE_FAMILY_LUA = `
 local members = redis.call('SMEMBERS', KEYS[1])
 if #members == 0 then
   redis.call('DEL', KEYS[1])
-  return 0
+  return members
 end
 local ns, rt, sd, sess_key = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
 for _, hash in ipairs(members) do
@@ -251,7 +251,7 @@ for _, hash in ipairs(members) do
   end
 end
 redis.call('DEL', KEYS[1])
-return #members
+return members
 `
 
 /**
@@ -675,8 +675,8 @@ export class AuthRedisService {
    *   the three methods that lost their default in this change, this one takes no positional
    *   tenant beside it — the owner and its tenant come off the family's own record — so there is
    *   no adjacent same-typed argument for it to be transposed with.
-   * @returns The members removed and their hashes, the family's account and its tenant. The owner
-   *   is reported because the caller cannot obtain it any other way: the presented token's own
+   * @returns The script's count of members removed; the hashes it removed together with any the
+   *   read before it named; the family's account and its tenant. The owner is reported because the caller cannot obtain it any other way: the presented token's own
    *   `rt:` key was deleted when it was rotated, so at reuse-detection time the family index is
    *   the only surviving link between the replayed token and an account. It is `''` when no
    *   member record was readable.
@@ -687,8 +687,10 @@ export class AuthRedisService {
   ): Promise<RevokedFamily> {
     if (familyId === '') return checked({ removed: 0, sessionHashes: [], ownerId: '' })
     const p = prefixesFor(kind)
-    const members = await pinned(this.smembers(`${p.family}:${familyId}`))
-    const { userId: ownerId, tenantId } = await pinned(this.readFamilyOwner(members, p.live))
+    const key = `${p.family}:${familyId}`
+    const owned = (found: string[]): Promise<SessionOwner> => this.readFamilyOwner(found, p.live)
+    const family = await pinned(readFamily(() => this.smembers(key), owned))
+    const { members, userId: ownerId, tenantId } = family
 
     // No owner, or a dashboard owner whose record names no tenant, means NO index to prune —
     // the same answer logout gives a pre-upgrade record, and for the same reason. Deriving one
@@ -700,14 +702,10 @@ export class AuthRedisService {
     const indexKey = nameable
       ? `${this.stored}:${sessionIndexKey(kind, ownerId, this.#hmacKey, tenantId)}`
       : ''
-    const removed = await pinned(
-      this.eval(
-        REVOKE_FAMILY_LUA,
-        [`${p.family}:${familyId}`],
-        [this.stored, p.live, p.detail, indexKey]
-      )
+    const reply = await pinned(
+      this.eval(REVOKE_FAMILY_LUA, [key], [this.stored, p.live, p.detail, indexKey])
     )
-    return checked({ removed: integerReply(removed), sessionHashes: members, ownerId, tenantId })
+    return checked({ ...removedSessions(members, reply), ownerId, tenantId })
   }
 
   /**

@@ -10,7 +10,7 @@ import { describeChannelStatus } from './describe-error'
 import { runDetached } from './run-detached'
 import { endSignIn } from './session-access'
 import { announceSessionsRevoked } from './session-revocation'
-import { pinned } from './settle'
+import { checked, pinned } from './settle'
 import { raiseFirst, settleWrites } from './settle-writes'
 import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import { logEvent } from '../observability/log-event'
@@ -19,7 +19,7 @@ import type { AuthRedisService } from '../redis/auth-redis.service'
 /** The store operations an eviction needs. */
 export type EvictionStore = Pick<
   AuthRedisService,
-  'del' | 'srem' | 'set' | 'readSessionOwner' | 'revokeFamily'
+  'del' | 'srem' | 'set' | 'smembers' | 'readSessionOwner' | 'revokeFamily'
 >
 
 /** The account and the request an eviction pass is made for, and the account's session index. */
@@ -29,8 +29,8 @@ export interface EvictionRequest {
   ip: string
   userAgent: string
   index: string
-  /** The index members the limit counted. */
-  members: ReadonlyArray<string>
+  /** How many sessions the account may keep. */
+  limit: number
   /** The resolved JWT options; the access lifetime bounds how long an ended session's entry lives. */
   jwt: { accessExpiresIn: string }
 }
@@ -48,7 +48,7 @@ function evictionContext({
   tenantId,
   ip,
   userAgent
-}: Omit<EvictionRequest, 'index' | 'members' | 'jwt'>): HookContext {
+}: Omit<EvictionRequest, 'index' | 'limit' | 'jwt'>): HookContext {
   return { plane: 'dashboard', userId, tenantId, ip, userAgent, sanitizedHeaders: {} }
 }
 
@@ -80,25 +80,44 @@ async function removeEvicted(
 }
 
 /**
- * Removes the sessions the limit pushed out. Ending one can remove others of its sign-in, so once
- * as many counted sessions are gone as the limit chose, no further one is ended. A chosen session
- * whose writes are all accepted fires `onSessionEvicted`; the pass then fires `onSessionsRevoked` once, naming every session whose
- * refresh token was deleted, the other sessions of its sign-in included.
+ * Whether the index still holds more sessions than the limit, leaving out those this pass removed:
+ * a refused `SREM` leaves one listed.
+ */
+async function isOverLimit(
+  redis: EvictionStore,
+  { index, limit }: Pick<EvictionRequest, 'index' | 'limit'>,
+  removed: ReadonlySet<string>
+): Promise<boolean> {
+  const members = await pinned(redis.smembers(index))
+  const live = members.filter(
+    (member) => member.startsWith('rt:') && !removed.has(member.slice('rt:'.length))
+  )
+  return checked(live.length > limit)
+}
+
+/**
+ * Removes the sessions the limit pushed out. Ending one can remove others of its sign-in, and a
+ * sibling can rotate meanwhile, so after a removal the index is read again before a further chosen
+ * session is ended: none is once the account is within the limit, or when that read fails. One
+ * already removed with an earlier sign-in is still reported as evicted, without a read. A chosen
+ * session whose writes are all accepted fires `onSessionEvicted`; the pass then fires
+ * `onSessionsRevoked` once, naming every session whose refresh token was deleted, the other
+ * sessions of its sign-in included.
  */
 export async function evictSessions(
   redis: EvictionStore,
   hooks: IAuthHooks | null,
   logger: Logger,
-  { userId, tenantId, ip, userAgent, index, members, jwt }: EvictionRequest,
+  { userId, tenantId, ip, userAgent, index, limit, jwt }: EvictionRequest,
   toEvict: ReadonlyArray<{ member: string; memberHash: string }>
 ): Promise<void> {
   const context = evictionContext({ userId, tenantId, ip, userAgent })
 
   const evicted = new Set<string>()
   for (const entry of toEvict) {
-    const gone = members.filter((member) => evicted.has(member.slice('rt:'.length))).length
-    if (gone >= toEvict.length && !evicted.has(entry.memberHash)) continue
     try {
+      const unsettled = evicted.size > 0 && !evicted.has(entry.memberHash)
+      if (unsettled && !(await pinned(isOverLimit(redis, { index, limit }, evicted)))) continue
       // Best-effort eviction: partial Redis failures leave stale keys that expire via TTL.
       // The new session is already committed at this point — a mid-eviction failure
       // MUST NOT propagate back to createSession callers.

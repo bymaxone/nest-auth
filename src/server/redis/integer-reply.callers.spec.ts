@@ -97,7 +97,6 @@ const callers: [string, (s: AuthRedisService) => Promise<unknown>][] = [
         refreshTtl: 60
       })
   ],
-  ['revokeFamily', (s) => s.revokeFamily('f1')],
   ['pruneExpiredGraceMembers', (s) => s.pruneExpiredGraceMembers('set', 'rp:')],
   ['pruneDeadMembers', (s) => s.pruneDeadMembers('set', ['rt:a'])],
   ['incrWithFixedTtl', (s) => s.incrWithFixedTtl('k', 60)],

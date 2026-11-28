@@ -4,7 +4,7 @@
  * @layer Test
  */
 
-import { endStoredSession } from './remove-session'
+import { endStoredSession, removeStoredSession } from './remove-session'
 
 const familyId = '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b'
 const session = { userId: 'u1', tenantId: 't1', sessionHash: 'a'.repeat(64) }
@@ -135,5 +135,22 @@ describe('endStoredSession', () => {
     })
 
     expect(redis.readSessionOwner).not.toHaveBeenCalled()
+  })
+})
+
+describe('removeStoredSession', () => {
+  // Scenario: called directly, as logout does, with a malformed hash or a blank tenant. Expected:
+  // refused before the store is reached.
+  it.each([
+    { ...session, sessionHash: 'x' },
+    { ...session, tenantId: '' }
+  ])('refuses %o before reaching the store', async (target) => {
+    const redis = store()
+
+    await expect(removeStoredSession(redis, options.hmacKey, target)).rejects.toMatchObject({
+      response: { error: { code: 'auth.validation' } }
+    })
+
+    expect(redis.eval).not.toHaveBeenCalled()
   })
 })

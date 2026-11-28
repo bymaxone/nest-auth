@@ -165,6 +165,36 @@ describe('access tokens of an ended session (E2E)', () => {
     await redis.set(key, JSON.stringify(record), 600)
   }
 
+  /**
+   * Runs `inject` once during the next family revocation: before it reads the family (`before`),
+   * between that read and the owner lookup (`read`), or before the script that removes it
+   * (`after`).
+   */
+  function duringFamilyRevocation(
+    when: 'before' | 'read' | 'after',
+    inject: () => Promise<void>
+  ): void {
+    const redis = boot.app.get(AuthRedisService)
+    let pending = true
+    const once = async (key: string | undefined): Promise<void> => {
+      if (!pending || !key?.startsWith('fam:')) return
+      pending = false
+      await inject()
+    }
+    const read = redis.smembers.bind(redis)
+    const run = redis.eval.bind(redis)
+    jest.spyOn(redis, 'smembers').mockImplementation(async (key) => {
+      if (when === 'before') await once(key)
+      const members = await read(key)
+      if (when === 'read') await once(key)
+      return members
+    })
+    jest.spyOn(redis, 'eval').mockImplementation(async (script, keys, args) => {
+      if (when === 'after') await once(keys[0])
+      return run(script, keys, args)
+    })
+  }
+
   describe('dashboard', () => {
     beforeEach(() => start())
 
@@ -239,6 +269,56 @@ describe('access tokens of an ended session (E2E)', () => {
           sessionIds: [hashOf(current.refreshToken)]
         }
       ])
+    })
+
+    // The revocation reads the family and then removes it in one script, so a session can be
+    // created between the two. The script removes it, and the event has to name it.
+    it('names a session rotated in while a replayed token is being answered', async () => {
+      const earlier = await register()
+      const current = await rotate('/refresh', earlier)
+      await closeGraceWindow()
+      await settled()
+      events.length = 0
+      let late: Tokens | undefined
+      duringFamilyRevocation('after', async () => {
+        late = await rotate('/refresh', current)
+      })
+
+      await request(server())
+        .post('/refresh')
+        .send({ refreshToken: earlier.refreshToken })
+        .expect(401)
+      await settled()
+
+      expect(await refreshStatus('/refresh', late as Tokens)).toBe(401)
+      expect(events.flatMap((event) => event.sessionIds ?? [])).toContain(
+        hashOf((late as Tokens).refreshToken)
+      )
+    })
+
+    // Every session the first read saw is gone by the owner lookup, which reads their records.
+    it('names the owner of a family that rotated whole while the owner was looked up', async () => {
+      const earlier = await register()
+      const current = await rotate('/refresh', earlier)
+      await closeGraceWindow()
+      await settled()
+      events.length = 0
+      let late: Tokens | undefined
+      duringFamilyRevocation('read', async () => {
+        late = await rotate('/refresh', current)
+      })
+
+      await request(server())
+        .post('/refresh')
+        .send({ refreshToken: earlier.refreshToken })
+        .expect(401)
+      await settled()
+
+      const index = (await boot.redis.keys('*sess:*'))[0]
+      expect(events).toMatchObject([{ userId: earlier.userId, reason: 'refresh_reuse' }])
+      expect(events[0]?.sessionIds).toContain(hashOf((late as Tokens).refreshToken))
+      const held = index === undefined ? [] : await boot.redis.smembers(index)
+      expect(held.filter((member) => member.startsWith('rt:'))).toEqual([])
     })
 
     it('refuses a WebSocket ticket minted before its session was revoked', async () => {
@@ -380,6 +460,27 @@ describe('access tokens of an ended session (E2E)', () => {
       expect([await me(other), await me(newest)]).toEqual([200, 200])
       expect(await refreshStatus('/refresh', other)).toBe(200)
     })
+    // A sibling of the first chosen sign-in rotates while the limit is being applied: after the
+    // index was counted and before the family is read, or between that read and the removal.
+    it.each(['before', 'after'] as const)(
+      'ends no extra sign-in when a sibling rotates %s the family is read',
+      async (when) => {
+        const account = await register()
+        const other = await login(account.email)
+        const pair = await siblings('/refresh', account)
+        let late: Tokens | undefined
+        duringFamilyRevocation(when, async () => {
+          late = await rotate('/refresh', pair[1])
+        })
+
+        const newest = await login(account.email)
+        await settled()
+
+        expect(await refreshStatus('/refresh', late as Tokens)).toBe(401)
+        expect([await me(other), await me(newest)]).toEqual([200, 200])
+        expect(await refreshStatus('/refresh', other)).toBe(200)
+      }
+    )
   })
 
   describe('session limit', () => {

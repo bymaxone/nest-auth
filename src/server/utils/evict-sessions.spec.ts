@@ -15,7 +15,7 @@ const request = {
   ip: 'ip',
   userAgent: 'ua',
   index: 'sess:x',
-  members: ['rt:a', 'rt:b', 'rt:c'],
+  limit: 1,
   jwt: { accessExpiresIn: '15m' }
 }
 const familyOf = {
@@ -48,7 +48,8 @@ function store(refused: string[] = [], siblings: string[] = []): EvictionStore {
       if (refused.includes(key)) throw new Error('refused')
       return true
     }),
-    srem: jest.fn(async () => 1)
+    srem: jest.fn(async () => 1),
+    smembers: jest.fn(async () => ['rt:a', 'rt:b', 'rt:c'])
   }
 }
 
@@ -220,5 +221,57 @@ describe('evictSessions', () => {
     await evictSessions(store([], ['a', 'b']), { onSessionEvicted }, new Logger(), request, entries)
 
     expect(onSessionEvicted.mock.calls.map((call) => call[1])).toEqual(['a', 'b'])
+  })
+
+  // Scenario: two chosen. Expected: the index is read once, after the first removal and before the
+  // second.
+  it('reads the index again only after a removal', async () => {
+    const redis = store()
+
+    await evictSessions(redis, null, new Logger(), request, entries)
+
+    expect(redis.smembers).toHaveBeenCalledTimes(1)
+    expect(redis.smembers).toHaveBeenCalledWith('sess:x')
+    expect(jest.mocked(redis.del).mock.invocationCallOrder[0]).toBeLessThan(
+      jest.mocked(redis.smembers).mock.invocationCallOrder[0] ?? 0
+    )
+  })
+
+  // Scenario: the index still lists a removed session. Expected: not counted, so the account is
+  // within the limit and the next chosen one stays.
+  it('does not count a removed session the index still lists', async () => {
+    const redis = store()
+    jest.mocked(redis.srem).mockRejectedValue(new Error('refused'))
+
+    await evictSessions(redis, null, new Logger(), { ...request, limit: 2 }, entries)
+
+    expect(redis.del).not.toHaveBeenCalledWith('rt:b')
+  })
+
+  // Scenario: the index holds a grace pointer. Expected: it is not a session.
+  it('counts only sessions against the limit', async () => {
+    const redis = store()
+    jest.mocked(redis.smembers).mockResolvedValue(['rt:b', 'rp:old'])
+
+    await evictSessions(redis, null, new Logger(), request, entries)
+
+    expect(redis.del).not.toHaveBeenCalledWith('rt:b')
+  })
+
+  // Scenario: the read before the second of three fails. Expected: that one is left alone and
+  // reported to the log only, and the third reads again and goes.
+  it('ends no session without reading the index', async () => {
+    const redis = store()
+    const onSessionEvicted = jest.fn()
+    jest.mocked(redis.smembers).mockRejectedValueOnce(new Error('refused'))
+    const three = [...entries, { member: 'rt:c', memberHash: 'c' }]
+
+    await evictSessions(redis, { onSessionEvicted }, new Logger(), { ...request, limit: 0 }, three)
+
+    expect(redis.del).not.toHaveBeenCalledWith('rt:b')
+    expect(redis.del).toHaveBeenCalledWith('rt:c')
+    expect(onSessionEvicted.mock.calls.map((call) => call[1])).toEqual(['a', 'c'])
+    expect(redis.smembers).toHaveBeenCalledTimes(2)
+    expect(Logger.prototype.error).toHaveBeenCalledTimes(1)
   })
 })
