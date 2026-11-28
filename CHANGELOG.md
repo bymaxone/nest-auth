@@ -25,13 +25,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `SessionService.revokeSession` on the dashboard. An access token issued earlier in the session,
   and a WebSocket ticket minted from one, is refused at once instead of working until it expires.
   `onSessionsRevoked` now names the revoked sessions for `refresh_reuse`.
-- Ending one session now ends its whole sign-in. Two refresh sessions can descend from one login
+- Ending one session now ends its whole sign-in. Several refresh sessions can descend from one login
   when a refresh token is replayed inside the grace window; a logout, an eviction past the session
-  limit or the revocation of either one now ends both, so neither is left able to refresh into a
-  refused access token. `onSessionsRevoked` names every session ended; a logout names the others in
-  a second event. The sessions of the account's other sign-ins are not affected.
+  limit or the revocation of any of them now ends them all, so none is left able to refresh into a
+  refused access token. `onSessionsRevoked` can name more than one session; a logout names the
+  others in a second event. The sessions of the account's other sign-ins are not affected.
 
-  **Apply to a derived backend:** nothing to change. A user who revokes a second entry of their own
+  **Apply to a derived backend:** nothing to change. A user who revokes another entry of their own
   current sign-in is signed out and signs in again.
 
 - `DELETE /sessions/:id` and `SessionService.revokeOtherSession` end the sign-in of the named

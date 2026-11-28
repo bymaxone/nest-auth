@@ -1645,7 +1645,7 @@ The `tenantId` is always extracted from the validated JWT — never from the req
 
 ### Token Revocation via Redis JTI Blacklist
 
-Access tokens are short-lived (default 15 minutes) and immediately revocable: a Redis JTI blacklist refuses one token, and an entry keyed by the token's `sid` refuses every access token of a sign-in that ended and leaves the account's other sign-ins alone. Ending one session (logout, eviction, revocation or a replayed refresh token) ends every refresh session of its sign-in. Refresh tokens rotate on every use with a configurable grace window to handle concurrent requests. This is the industry-standard hybrid approach used by Auth0, Okta, and SuperTokens — combining short lifetimes for low-latency revocation with rotating refresh tokens for session continuity.
+Access tokens are short-lived (default 15 minutes) and immediately revocable: a Redis JTI blacklist refuses one token, and an entry keyed by the token's `sid` refuses every access token of a sign-in that ended and leaves the account's other sign-ins alone. Ending one session ends every refresh session of its sign-in. Refresh tokens rotate on every use with a configurable grace window to handle concurrent requests. This is the industry-standard hybrid approach used by Auth0, Okta, and SuperTokens — combining short lifetimes for low-latency revocation with rotating refresh tokens for session continuity.
 
 ### A Process That Changes Its Own Built-ins
 
@@ -1800,9 +1800,9 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 > sessions of the login the access token's `sid` names.
 
 > **`DELETE /sessions/:id` ends the sign-in of the named session, and only that one.** Its refresh
-> sessions and access tokens end; other sign-ins keep working. A sign-in holds two sessions when a
-> refresh token was replayed inside the grace window, and revoking either one ends both, including
-> the caller's own if it is one of them. When the stored session names no family, it
+> sessions and access tokens end; other sign-ins keep working. A sign-in can hold several sessions when a
+> refresh token was replayed inside the grace window, and revoking any of them ends them all,
+> including the caller's own if it is one of them. When the stored session names no family, it
 > advances the account's token epoch instead, so every access token of the account answers `401`
 > until its client refreshes. `POST /sessions/revoke-all` always advances the epoch.
 
