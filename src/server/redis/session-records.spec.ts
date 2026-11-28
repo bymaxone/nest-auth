@@ -1,6 +1,8 @@
 /**
  * @fileoverview What the owner read off a session record carries, how a family and its owner are
  * read, and what a family revocation is read to have removed.
+ *
+ * @layer Test
  */
 
 import { readFamily, removedSessions, sessionOwner } from './session-records'
