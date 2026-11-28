@@ -34,7 +34,7 @@ describe('sessionOwner', () => {
 
 describe('removedSessions', () => {
   // Scenario: a rotation between the read and the script moved a session to a new hash. Expected:
-  // every hash either side saw, each once, and the script's own count.
+  // every hash either side saw, each once, counted by what the script removed.
   it('names every hash of either side and counts what the script removed', () => {
     expect(removedSessions(['h1', 'h2'], ['h1', 'h3'])).toEqual({
       removed: 2,

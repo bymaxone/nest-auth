@@ -98,7 +98,7 @@ async function isOverLimit(
 /**
  * Removes the sessions the limit pushed out. Ending one can remove others of its sign-in, and a
  * sibling can rotate meanwhile, so after a removal the index is read again before a further chosen
- * session is ended: none is once the account is within the limit, or when that read fails. One
+ * session is ended: none is once the account is within the limit, nor one whose read fails. One
  * already removed with an earlier sign-in is still reported as evicted, without a read. A chosen
  * session whose writes are all accepted fires `onSessionEvicted`; the pass then fires
  * `onSessionsRevoked` once, naming every session whose refresh token was deleted, the other

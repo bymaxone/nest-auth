@@ -675,7 +675,7 @@ export class AuthRedisService {
    *   the three methods that lost their default in this change, this one takes no positional
    *   tenant beside it — the owner and its tenant come off the family's own record — so there is
    *   no adjacent same-typed argument for it to be transposed with.
-   * @returns The script's count of members removed; the hashes it removed together with any the
+   * @returns How many members the script removed; the hashes it removed together with any the
    *   read before it named; the family's account and its tenant. The owner is reported because the caller cannot obtain it any other way: the presented token's own
    *   `rt:` key was deleted when it was rotated, so at reuse-detection time the family index is
    *   the only surviving link between the replayed token and an account. It is `''` when no

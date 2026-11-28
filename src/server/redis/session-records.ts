@@ -29,7 +29,7 @@ export interface RevokedFamily {
  *
  * @param readBefore - The members the caller read before the script ran.
  * @param reply - The members the script answered it removed.
- * @returns The script's count, and every hash of either side once.
+ * @returns How many the script removed, and every hash of either side once.
  * @throws {@link AuthException} `auth.internal` for a reply that is no list of strings.
  */
 export function removedSessions(
@@ -51,7 +51,7 @@ const OWNER_READS = 3
  * Reads a family's members and the owner their records name.
  *
  * A rotation deletes the record of the member it replaces, so one that lands between the read of
- * the members and the read of their records leaves none to name the owner: the family is read
+ * the members and the read of their records can leave none to name the owner: the family is read
  * again.
  *
  * @param read - Reads the family's members.
