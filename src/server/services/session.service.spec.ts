@@ -826,6 +826,32 @@ describe('SessionService', () => {
       expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hashes[2]}`)
     })
 
+    // Scenario: one session over the limit, and the store refuses to delete the one chosen.
+    // Expected: no other session is touched. Why: only as many sessions as the account is over by
+    // are chosen, so a failed removal must not move on to a newer one.
+    it('ends no other session when the chosen one cannot be removed', async () => {
+      const now = Date.now()
+      const hashes = Array.from({ length: 6 }, (_, i) => sha256(`refused-eviction-${i}`))
+      mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
+      mockRedis.get.mockImplementation((key: string) => {
+        const hashPart = key.replace(/^sd:/, '')
+        return Promise.resolve(makeDetailJson(now - (6 - hashes.indexOf(hashPart)) * 100))
+      })
+      mockRedis.del.mockRejectedValue(new Error('READONLY'))
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
+
+      expect(mockRedis.del.mock.calls).toEqual([[`rt:${hashes[0]}`]])
+      expect(mockHooks.onSessionEvicted).not.toHaveBeenCalled()
+    })
+
     // Verifies that a rejection from the onSessionEvicted hook is caught and logged without propagating to the caller.
     it('logs error and does not throw when onSessionEvicted hook throws', async () => {
       // Arrange: set up 6 sessions so eviction fires
