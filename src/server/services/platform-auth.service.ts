@@ -40,7 +40,7 @@ import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
-import { announceSessionsRevoked, revokeEverySession } from '../utils/session-revocation'
+import { revokeEverySession } from '../utils/session-revocation'
 import { checked, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
 
