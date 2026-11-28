@@ -50,7 +50,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
     `DELETE /sessions/:id`, which the epoch used to cut for it too.
   - Code that calls `AuthRevocationService.isAccessTokenRevoked` with a payload it rebuilt must
     include `sid`, or the session check is skipped.
-  - Redis holds a new key per ended session, `rvs:{sid}` or `prvs:{sid}`, for the access-token
+  - Redis holds a new key per ended sign-in, `rvs:{sid}` or `prvs:{sid}`, for the access-token
     lifetime plus 60 seconds, and a revocation check of a token that carries `sid` reads one key
     more. Backends that share one Redis must configure the same access-token lifetime.
   - The shared wire contract moves to version 9: the two key prefixes, the entry, and the optional

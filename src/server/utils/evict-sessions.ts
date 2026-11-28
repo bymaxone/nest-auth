@@ -64,9 +64,8 @@ async function removeEvicted(
   const { familyId } = await pinned(redis.readSessionOwner(`rt:${memberHash}`))
   await pinned(redis.del(`rt:${memberHash}`))
   onRemoved([memberHash])
-  const endAccess = async (): Promise<void> => {
-    onRemoved(await pinned(endSignIn(redis, 'dashboard', familyId, jwt.accessExpiresIn)))
-  }
+  const endAccess = (): Promise<void> =>
+    endSignIn(redis, 'dashboard', familyId, jwt.accessExpiresIn, onRemoved)
   raiseFirst(
     await pinned(
       settleWrites([

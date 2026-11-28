@@ -57,6 +57,18 @@ describe('endStoredSession', () => {
     expect(announce.mock.calls).toEqual([[[session.sessionHash, 'sibling']]])
   })
 
+  // Scenario: the sign-in is removed and the entry refused. Expected: every removed session named.
+  it('names the siblings when the entry is refused', async () => {
+    const redis = store()
+    redis.revokeFamily.mockResolvedValue({ sessionHashes: ['sibling'] })
+    redis.set.mockRejectedValue(new Error('READONLY'))
+    const announce = jest.fn()
+
+    await expect(end(redis, announce)).rejects.toThrow('READONLY')
+
+    expect(announce.mock.calls).toEqual([[[session.sessionHash, 'sibling']]])
+  })
+
   // Scenario: the family cannot be revoked. Expected: no entry, which would leave a live session
   // refreshing into refused tokens.
   it('writes no entry when the family is not revoked', async () => {

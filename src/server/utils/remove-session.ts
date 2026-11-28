@@ -169,8 +169,11 @@ export async function endStoredSession(
       await pinned(withoutFamily())
       return
     }
-    const hashes = await pinned(endSignIn(redis, 'dashboard', familyId, jwt.accessExpiresIn))
-    for (const hash of hashes) ended.add(hash)
+    await pinned(
+      endSignIn(redis, 'dashboard', familyId, jwt.accessExpiresIn, (hashes) => {
+        for (const hash of hashes) ended.add(hash)
+      })
+    )
   }
   const failures = await pinned(settleWrites([endAccess]))
   announce([...ended])

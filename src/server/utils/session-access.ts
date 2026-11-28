@@ -10,7 +10,7 @@
  */
 
 import { rethrowRefusal } from './object-prototype-guard'
-import { checked, pinned } from './settle'
+import { pinned } from './settle'
 import { durationToSeconds } from '../config/duration'
 import { sessionId } from '../constants/session-id'
 import type { AuthRedisService } from '../redis/auth-redis.service'
@@ -74,19 +74,21 @@ export async function revokeSessionAccess(
  * @param plane - The plane the sessions belong to.
  * @param familyId - The family id read from the record of the session being ended.
  * @param accessExpiresIn - The resolved `jwt.accessExpiresIn` time span.
- * @returns The hashes the family named; empty when `familyId` is not one a token could carry.
+ * @param removed - Told the hashes the family named, before the entry is written, so a refused
+ *   write still reports them. Not called when `familyId` is not one a token could carry.
  */
 export async function endSignIn(
   redis: Pick<AuthRedisService, 'revokeFamily' | 'set'>,
   plane: SessionPlane,
   familyId: unknown,
-  accessExpiresIn: string
-): Promise<string[]> {
+  accessExpiresIn: string,
+  removed: (sessionHashes: string[]) => void
+): Promise<void> {
   const sid = sessionId(familyId)
-  if (sid === undefined) return checked([])
+  if (sid === undefined) return
   const { sessionHashes } = await pinned(redis.revokeFamily(sid, plane))
+  removed(sessionHashes)
   await pinned(revokeSessionAccess(redis, plane, sid, accessExpiresIn))
-  return checked(sessionHashes)
 }
 
 /** The session a logout ends, and how long an access token lives. */
@@ -117,9 +119,7 @@ export function logoutAccessWrites(
   { plane, familyId, accessExpiresIn, ended }: EndedSessionAccess,
   verify: () => { jti: string; exp: number }
 ): Array<() => Promise<unknown>> {
-  const endSession = async (): Promise<void> => {
-    ended(await pinned(endSignIn(redis, plane, familyId, accessExpiresIn)))
-  }
+  const endSession = (): Promise<void> => endSignIn(redis, plane, familyId, accessExpiresIn, ended)
   try {
     const payload = verify()
     const remainingTtl = payload.exp - Math.floor(Date.now() / 1000)

@@ -100,6 +100,20 @@ describe('evictSessions', () => {
     expect(hooks.onSessionEvicted.mock.calls.map((call) => call[1])).toEqual(['a'])
   })
 
+  // Scenario: an evicted sign-in is removed and its entry refused. Expected: the siblings named.
+  it('names the siblings when the entry of an evicted sign-in is refused', async () => {
+    const onSessionsRevoked = jest.fn()
+    const redis = store([`rvs:${familyOf['rt:a']}`], ['c'])
+
+    await evictSessions(redis, { onSessionsRevoked }, new Logger(), request, [
+      { member: 'rt:a', memberHash: 'a' }
+    ])
+
+    expect(onSessionsRevoked).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionIds: ['a', 'c'] })
+    )
+  })
+
   // Scenario: one session cannot be deleted. Expected: only the deleted one is named.
   it('names only the sessions it deleted', async () => {
     const onSessionsRevoked = jest.fn()

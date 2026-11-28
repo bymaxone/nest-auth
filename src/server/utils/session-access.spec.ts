@@ -69,10 +69,11 @@ describe('endSignIn', () => {
     const set = jest.fn(async () => undefined)
     const revokeFamily = jest.fn(async () => family(['a', 'b']))
 
-    await expect(endSignIn({ set, revokeFamily }, plane, familyId, '5m')).resolves.toEqual([
-      'a',
-      'b'
-    ])
+    const removed = jest.fn()
+
+    await endSignIn({ set, revokeFamily }, plane, familyId, '5m', removed)
+
+    expect(removed.mock.calls).toEqual([[['a', 'b']]])
 
     expect(revokeFamily.mock.calls).toEqual([[familyId, plane]])
     expect(set.mock.calls).toEqual([[`${prefix}:${familyId}`, '1', 360]])
@@ -85,14 +86,34 @@ describe('endSignIn', () => {
   it.each([undefined, '', 'family:1', 7])('does nothing for %p', async (value) => {
     const set = jest.fn(async () => undefined)
     const revokeFamily = jest.fn(async () => family(['a']))
+    const removed = jest.fn()
 
-    await expect(endSignIn({ set, revokeFamily }, 'dashboard', value, '5m')).resolves.toEqual([])
+    await endSignIn({ set, revokeFamily }, 'dashboard', value, '5m', removed)
 
-    expect([revokeFamily.mock.calls, set.mock.calls]).toEqual([[], []])
+    expect([revokeFamily.mock.calls, set.mock.calls, removed.mock.calls]).toEqual([[], [], []])
   })
 })
 
 describe('logoutAccessWrites', () => {
+  // Scenario: the sessions are removed and the entry refused. Expected: still told what was removed,
+  // then the refusal raised.
+  it('tells what was removed when the entry is refused', async () => {
+    const set = jest.fn(async (): Promise<void> => Promise.reject(new Error('READONLY')))
+    const revokeFamily = jest.fn(async () => family(['h', 'sibling']))
+    const told = jest.fn()
+    const writes = logoutAccessWrites(
+      { set, revokeFamily },
+      { plane: 'dashboard', familyId, accessExpiresIn: '5m', ended: told },
+      () => {
+        throw new Error('bad signature')
+      }
+    )
+
+    await expect(writes[0]?.()).rejects.toThrow('READONLY')
+
+    expect(told.mock.calls).toEqual([[['h', 'sibling']]])
+  })
+
   const ended = { plane: 'dashboard' as const, familyId, accessExpiresIn: '5m' }
   const now = (): number => Math.floor(Date.now() / 1000)
 
