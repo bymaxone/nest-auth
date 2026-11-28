@@ -214,8 +214,8 @@ export const OPERATIONS: Readonly<
     //
     // `logout` reads the ACCESS token too, and a document that omitted it caused a weaker
     // logout than the server performs: the handler blacklists that token's `jti` for whatever
-    // life it has left, so a generated client sending no `Authorization` header revokes the
-    // refresh session and leaves a valid access token in circulation until it expires. Neither
+    // life it has left, which is what ends a token carrying no `sid`, so a generated client
+    // sending no `Authorization` header would leave such a token valid until it expires. Neither
     // credential is required — this is the operation a signed-out-by-expiry user reaches — so
     // every form is an alternative beside the empty one.
     'AuthController.logout': 'optionalAccessAndRefresh',

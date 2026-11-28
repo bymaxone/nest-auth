@@ -1914,7 +1914,7 @@ Services cover what a guard or a route cannot, each documented in
 - **Administrative operations** — support-desk operations that ship as methods with no HTTP route.
 - **`AuthRevocationService`** — check revocation outside a guard.
 - **`AuthTokenVerifierService`** — authorise a long-lived transport (a WebSocket, an SSE stream, a
-  message consumer): signature, token type, both revocation channels, account status and the MFA
+  message consumer): signature, token type, the revocation channels, account status and the MFA
   policy, with the same refusals the guards give.
 - **`AccountStatusService.invalidate`** — drop an account's cached status after you persist a
   status change.

@@ -40,7 +40,7 @@ disputable. `tenantId` is required when `context` is `'dashboard'` (the default)
 ## Checking revocation outside a guard — `AuthRevocationService`
 
 The JWT guards do not decide revocation themselves; they delegate to one service, and that
-service is exported so **you can consult the same two channels from a transport the guards never
+service is exported so **you can consult the same channels from a transport the guards never
 see** — a WebSocket, an SSE stream, a message consumer. Without it there is no way to ask the
 question at all outside an HTTP request: a connection whose user logs out keeps its stream until
 the access token expires, while that user's HTTP calls are refused at once.
