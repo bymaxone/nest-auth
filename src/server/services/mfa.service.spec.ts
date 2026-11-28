@@ -2682,11 +2682,11 @@ describe('MfaService', () => {
     it('only ends the sessions of an account with no second factor', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: false })
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-
       await expect(service.resetMfa('user-1', 'dashboard', 'tenant-1')).resolves.toBeUndefined()
 
       expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledTimes(1)
+      const ended = mockRedis.invalidateUserSessions.mock.calls
+      expect(ended).toStrictEqual([['user-1', 'tenant-1', 'dashboard']])
       expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
       expect(mockEmailProvider.sendMfaDisabledNotification).not.toHaveBeenCalled()
       // The event is the only record this call happened at all — the return value is the same
