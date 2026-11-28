@@ -126,8 +126,9 @@ export class MfaManagementService {
    * who may reset whom is a question only the host application can answer, and every route
    * this library ships is scoped to the caller's own account.
    *
-   * Idempotent: resetting an account that has no second factor is a no-op, so a support desk
-   * retrying does not get an error for a job already done.
+   * Resetting an account that has no second factor succeeds and ends its sessions, so a support
+   * desk repeating a reset that cleared the factor and could not end them completes it. It sends
+   * no notification and fires no `afterMfaDisabled`.
    *
    * Three things happen beyond clearing the record, and none of them are optional:
    *
@@ -162,6 +163,7 @@ export class MfaManagementService {
 
     if (!user.mfaEnabled) {
       logEvent(this.logger, 'AUTH_MFA_NOTHING_TO_RESET', { plane: context, userId })
+      await pinned(this.endEverySession(scope))
       return
     }
 
@@ -337,6 +339,11 @@ export class MfaManagementService {
         mfaRecoveryCodes: null
       }))
     )
+    await pinned(this.endEverySession(scope))
+  }
+
+  /** Ends every session of the account and its access tokens, under the reason `mfa_disabled`. */
+  private async endEverySession({ userId, context, tenantId }: AccountScope): Promise<void> {
     await pinned(
       revokeEverySession(this.redis, this.hooks, this.logger, {
         userId,

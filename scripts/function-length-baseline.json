@@ -46,7 +46,6 @@
     "[\"src/server/services/mfa.service.ts\",[\"member\",\"MfaService\",\"verifyAndEnable\"]]": 93,
     "[\"src/server/services/otp.service.ts\",[\"member\",\"OtpService\",\"verify\"]]": 63,
     "[\"src/server/services/platform-auth.service.ts\",[\"member\",\"PlatformAuthService\",\"login\"]]": 78,
-    "[\"src/server/services/platform-auth.service.ts\",[\"member\",\"PlatformAuthService\",\"logout\"]]": 57,
     "[\"src/server/services/platform-auth.service.ts\",[\"member\",\"PlatformAuthService\",\"refresh\"]]": 53,
     "[\"src/server/services/reauthentication.service.ts\",[\"member\",\"ReauthenticationService\",\"assertReauthenticated\"]]": 54,
     "[\"src/server/services/token-manager.service.ts\",[\"member\",\"TokenManagerService\",\"issueTokens\"]]": 51,

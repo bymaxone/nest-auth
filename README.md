@@ -1110,7 +1110,7 @@ It receives `{ userId, tenantId?, plane, reason, sessionIds? }`. `tenantId` is a
 | `password_changed`       | A password change. With the current session kept, the ids of the others; with none kept, every one.               | If one kept  |
 | `password_reset`         | A password reset, by any method.                                                                                  | No           |
 | `mfa_enabled`            | MFA enrolment.                                                                                                    | No           |
-| `mfa_disabled`           | MFA removal, by the user or by `resetMfa`.                                                                        | No           |
+| `mfa_disabled`           | MFA removal, by the user or by `resetMfa`, including a reset of an account with no factor.                        | No           |
 | `session_evicted`        | The session limit.                                                                                                | Yes          |
 | `refresh_reuse`          | A replayed refresh token whose family was revoked, when the owner is known.                                       | If any       |
 

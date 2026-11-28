@@ -358,10 +358,10 @@ export class SessionService {
   /**
    * Revokes a single session belonging to the specified user.
    *
-   * Once `SISMEMBER` has proved ownership, deletes the refresh token, its detail and its member
-   * of the user's session SET, then ends its sign-in: any other session of the same refresh family
-   * and the access tokens of all of them. When the record names no family, the access tokens last
-   * until they expire.
+   * For a session the user's session SET holds, ends its whole sign-in in one script: every
+   * session of the same refresh family, their details and the access tokens of all of them. When
+   * the record names no family, only that session is removed and its access tokens last until
+   * they expire.
    *
    * @param userId - Internal user ID who owns the session.
    * @param sessionHash - SHA-256 hash of the refresh token identifying the session.

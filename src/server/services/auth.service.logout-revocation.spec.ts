@@ -108,8 +108,9 @@ describe('AuthService.logout — refused revocation writes', () => {
   })
 
   // Scenario: the entry that ends the session's access tokens is refused. Expected: logout rejects,
-  // and the marker for the retry keeps the family id. Why: the record that named it is gone.
-  it('should keep the family id for the retry when the session entry is refused', async () => {
+  // the refresh session is not deleted here and the marker keeps the family id. Why: the retry reads
+  // it from the session however late it comes, or from the marker when the family removal took it.
+  it('should keep the refresh session for the retry when the session entry is refused', async () => {
     mockRedis.readSessionOwner.mockResolvedValue({
       userId: 'user-1',
       tenantId: 'tenant-1',
@@ -122,6 +123,7 @@ describe('AuthService.logout — refused revocation writes', () => {
     await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
 
     expect(mockRedis.set).toHaveBeenCalledWith(`rvs:${FAMILY}`, '1', 360)
+    expect(mockRedis.del).not.toHaveBeenCalledWith(`rt:${HASH}`)
     const marker = expect.stringContaining(`"familyId":"${FAMILY}"`)
     expect(mockRedis.set).toHaveBeenCalledWith(expect.any(String), marker, 300)
   })

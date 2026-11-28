@@ -31,7 +31,9 @@ account holder** through the same channel a self-service disable uses; and it lo
 under its own prefix. The notification is not optional: an administrative reset the owner
 cannot see is an account-takeover path, and it is what makes the event detectable and
 disputable. `tenantId` is required when `context` is `'dashboard'` (the default) and ignored for
-`'platform'`. Idempotent; throws for an id that resolves to nobody, so a typo cannot read as
+`'platform'`. On an account with no second factor it succeeds, ends every session of the account
+and sends no notification, so repeating a reset that cleared the factor and could not end the
+sessions completes it. Throws for an id that resolves to nobody, so a typo cannot read as
 "done".
 
 > `MfaService` is only registered when `controllers.mfa` or `controllers.platform` is on —

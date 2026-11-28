@@ -259,7 +259,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 194_244 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 194_746 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },

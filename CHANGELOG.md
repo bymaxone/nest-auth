@@ -35,6 +35,28 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **Apply to a derived backend:** nothing to change. A user who revokes another entry of their own
   current sign-in is signed out and signs in again.
 
+- Revoking one session on the dashboard (`DELETE /sessions/:id`, `SessionService.revokeSession`
+  and `revokeOtherSession`) removes the whole sign-in in one script when the stored session names a
+  family, so a call refused for the family or the access entry can be repeated and then ends every
+  session of the sign-in. A call whose script is refused does not fire `onSessionsRevoked`. When
+  the record names no family, `revokeOtherSession` advances the account's token epoch before it
+  removes the session.
+
+  **Apply to a derived backend:** nothing to change.
+
+- `MfaService.resetMfa` on an account with no second factor ends every session of the account and
+  advances its token epoch, so that repeating a reset that cleared the factor and could not end the
+  sessions completes it. It sends no notification and fires no `afterMfaDisabled`;
+  `onSessionsRevoked` fires.
+
+  **Apply to a derived backend:** a reset on an account without MFA now signs it out. A job that
+  calls `resetMfa` on accounts it has not checked must check `mfaEnabled` first.
+
+- A logout on either plane that is refused the removal of the sign-in's sessions keeps the stored
+  refresh session: repeating the logout before that token is refreshed ends it. The call errors.
+
+  **Apply to a derived backend:** nothing to change.
+
 - `DELETE /sessions/:id` and `SessionService.revokeOtherSession` end the sign-in of the named
   session only. They
   advanced the account's token epoch, so every access token of the account, the caller's included,
@@ -57,6 +79,36 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   - The shared wire contract moves to version 9: the two key prefixes, the entry, and the optional
     `sid` of a WebSocket ticket and `familyId` of a pending-logout record.
   - Sessions whose record names no family behave as before.
+  - While nodes of 1.5.24 and of this version share one Redis: a 1.5.24 node does not read the
+    session entry, so it accepts access tokens of a session ended on a newer node until they expire
+    (`jwt.accessExpiresIn`). That covers the revoked session's token after `DELETE /sessions/:id`,
+    and the earlier tokens of a session after a logout; the token presented at logout is refused by
+    both. Refresh of the ended session is refused by both. A session revoked through
+    `DELETE /sessions/:id` on a 1.5.24 node is refused by both.
+
+### Known limits
+
+When the store accepts some writes of an operation and refuses others:
+
+- Logout, session entry refused: the call errors, and until a repeated logout succeeds the other
+  access tokens of the sign-in are accepted. Refresh is refused.
+- Logout, family removal refused: the call errors, and until a repeated logout succeeds the
+  presented refresh token still refreshes.
+- Logout, session entry and retry marker both refused: the call errors and a repeated logout
+  succeeds without writing the entry, so the other access tokens of the sign-in are accepted until
+  they expire. Refresh is refused.
+- Eviction past the session limit, session entry or family removal refused: the login that caused
+  the eviction succeeds, and the evicted session cannot refresh, but its access tokens are accepted
+  until they expire.
+- Eviction of a sign-in that holds two sessions, session entry refused: neither session can
+  refresh, and their access tokens are accepted until they expire.
+- Eviction of a sign-in that holds two sessions, family removal refused: the second session keeps
+  refreshing until it is revoked or a later eviction removes it.
+- MFA enable, MFA disable and password reset, session removal refused: the call errors, repeating
+  it is refused, and the sessions keep refreshing until every session of the account is revoked.
+- MFA enable, MFA disable, password reset and change to another password, token epoch refused:
+  the call errors, repeating it is refused, and access tokens are accepted until they expire.
+  Refresh of the ended sessions is refused.
 
 ### Fixed
 

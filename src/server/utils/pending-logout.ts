@@ -1,6 +1,6 @@
 /**
- * @fileoverview The two halves of the marker a failed logout leaves for its retry: writing it when
- * an attempt fails, and settling it when a logout completes.
+ * @fileoverview The marker a failed logout leaves for its retry: the order of a logout's writes
+ * around it, writing it when an attempt fails, and settling it when a logout completes.
  *
  * The guarantee is exactly-once for sequential retries: a failed attempt, then retries one after
  * another, announce the logout once. It is at-least-once when attempts of one logout run
@@ -14,7 +14,8 @@
 import type { Logger } from '@nestjs/common'
 
 import { stringifyJson } from './captured-builtins'
-import { pinned } from './settle'
+import { checked, pinned } from './settle'
+import { settleWrites } from './settle-writes'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { logStore } from '../observability/log-event'
@@ -29,12 +30,60 @@ export interface PendingLogoutOwner {
   readonly familyId?: string | undefined
 }
 
+/** The writes of one logout, in the groups their order depends on. */
+export interface LogoutWrites {
+  /** The writes that end access tokens, the one that ends the sign-in last. */
+  readonly access: ReadonlyArray<() => Promise<unknown>>
+  /** The writes that delete the session a retry would read its owner from. */
+  readonly session: ReadonlyArray<() => Promise<unknown>>
+  /** The writes that depend on neither. */
+  readonly rest: ReadonlyArray<() => Promise<unknown>>
+}
+
+/** What writing the marker of one logout takes. */
+export interface PendingLogoutMarker {
+  readonly redis: AuthRedisService
+  readonly key: string
+  readonly owner: PendingLogoutOwner
+  readonly ttlSeconds: number
+  readonly logger: Logger
+}
+
+/**
+ * Runs the writes of a logout so that a retry can finish what an attempt could not.
+ *
+ * The session is deleted here only once its sign-in has ended, so that a retry made at any later
+ * time can still read its owner from it. The marker is written when any write failed: ending the
+ * sign-in can remove the session and then be refused its access entry.
+ *
+ * @param writes - The writes, grouped.
+ * @param marker - What to record for the retry; absent when the owner did not come from the stored
+ *   session, where there is no session left to keep.
+ * @returns The errors raised, in the order the writes ran.
+ */
+export async function settleLogoutWrites(
+  { access, session, rest }: LogoutWrites,
+  marker: PendingLogoutMarker | undefined
+): Promise<unknown[]> {
+  const before = await pinned(settleWrites(access.slice(0, -1)))
+  const end = await pinned(settleWrites(access.slice(-1)))
+  const deletable = end.length === 0 || marker === undefined
+  const deleted = deletable ? await pinned(settleWrites(session)) : []
+  const others = await pinned(settleWrites(rest))
+  const failures = [...before, ...end, ...deleted, ...others]
+  if (marker !== undefined && failures.length > 0) {
+    const { redis, key, owner, ttlSeconds, logger } = marker
+    await pinned(rememberPendingLogout(redis, key, owner, ttlSeconds, logger))
+  }
+  return checked(failures)
+}
+
 /**
  * Records who a failed logout belonged to, for the retry that will complete it.
  *
- * An attempt that fails has usually deleted the refresh session already, so the retry would find
- * no record naming its owner. The write is best effort: the logout is already failing, and a
- * marker that cannot be written leaves the retry exactly where it would have been without one.
+ * An attempt that fails may have deleted the refresh session already, so the retry would find no
+ * record naming its owner. The write is best effort: the logout is already failing, and a marker
+ * that cannot be written leaves the retry exactly where it would have been without one.
  *
  * @param redis - The Redis wrapper.
  * @param key - The un-namespaced marker key.

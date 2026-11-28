@@ -80,7 +80,7 @@ the suite pauses and stops itself, under each client configuration a host may us
 | Login, brute-force counters, session birth      | `POST login`, `POST register`                                    | 503; neither the right nor the wrong password gets a 401 or token | `real-redis/redis-outage`                                                                       |
 | JWT guard: revocation, epoch, account status    | every authenticated route, platform plane, WebSocket bearer path | 503, not 401: a client is not told it is signed out               | `real-redis/redis-outage`                                                                       |
 | Refresh rotation and reuse detection            | `POST refresh`, platform refresh                                 | 503; the refresh token is not reported invalid                    | `real-redis/redis-outage`                                                                       |
-| Logout                                          | `POST logout`, platform logout                                   | 503, the first revocation write that failed                       | `real-redis/redis-outage`, `pending-logout.outage.spec`                                         |
+| Logout                                          | `POST logout`, platform logout                                   | 503, the first revocation write that failed; see below            | `real-redis/redis-outage`, `pending-logout.outage.spec`                                         |
 | MFA setup, verify, challenge, disable, recovery | `mfa/*`                                                          | 503                                                               | `real-redis/redis-outage` (setup); the rest at the primitives, `auth-redis.service.outage.spec` |
 | OTP, password reset, email change               | `forgot-password`, `reset-password`, `verify-*`, `email-change`  | 503; a reset request: same 503 for every address, after the floor | `real-redis/redis-outage` (reset request), `answer-reset-request.outage.spec`                   |
 | Rate limiting, lockout counters                 | `@AuthRateLimit` routes                                          | 503, fail-closed kept                                             | the primitives (`auth-redis.service.outage.spec`, `eval`); not driven over HTTP                 |
@@ -89,6 +89,9 @@ the suite pauses and stops itself, under each client configuration a host may us
 | WebSocket ticket and guards                     | `POST ws-ticket`, `WsJwtGuard`                                   | the typed exception reaches `WsAuthExceptionFilter` as an event   | the primitives (`auth-redis.service.outage.spec`); not driven over HTTP                         |
 | Platform plane                                  | `platform/*`                                                     | 503                                                               | the primitives (`auth-redis.service.outage.spec`); not driven over HTTP                         |
 | A process that boots with Redis down            | `RedisReadinessService`                                          | boot fails with the address in the message                        | `redis-readiness.e2e-spec`                                                                      |
+
+A logout refused the removal of the sign-in's sessions keeps the stored refresh session: until a
+repeated logout succeeds the presented refresh token still refreshes (`real-redis/partial-revoke`).
 
 Absorbed on purpose. The rule, with its examples, is `serviceUnavailable.absorption` in
 `conformance/wire-contract.json`: a call whose result the answer does not depend on is logged and

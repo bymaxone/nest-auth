@@ -7,15 +7,15 @@
  * @layer Util
  */
 
-import { endSignIn } from './session-access'
+import { sessionRevocationKey, sessionRevocationTtlSeconds } from './session-access'
 import { pinned } from './settle'
-import { raiseFirst, settleWrites } from './settle-writes'
 import { sessionId } from '../constants/session-id'
 import { sessionIndexKey } from '../constants/user-keys'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { AuthRedisService } from '../redis/auth-redis.service'
 import { integerReply } from '../redis/integer-reply'
+import { removedSessions } from '../redis/session-records'
 
 /** Regex for a valid SHA-256 hex session hash (64 lowercase hex characters). */
 export const SESSION_HASH_RE = /^[a-f0-9]{64}$/
@@ -41,6 +41,46 @@ redis.call('DEL', KEYS[2])
 redis.call('SREM', KEYS[1], ARGV[1])
 redis.call('DEL', KEYS[3])
 return 1
+`
+
+/**
+ * Lua script that ends the whole sign-in of one owned session, access tokens included, at once.
+ *
+ * One script, so no refusal can leave the named session gone and a sibling out of a retry's reach:
+ * the keys in KEYS are checked by a key ACL before anything runs, and the named
+ * session leaves the account's index last, so a call refused part-way still passes the ownership
+ * check when it is repeated. Redis does not undo the writes of a script that stops part-way.
+ * The entry is written after the removals: a server over its memory limit refuses a script whose
+ * first write adds data, and then nothing of the sign-in would be removed.
+ *
+ * KEYS[1] = `sess:{subject}`   KEYS[2] = `rt:{hash}`   KEYS[3] = `sd:{hash}`
+ * KEYS[4] = `fam:{sid}`        KEYS[5] = `rvs:{sid}`
+ * ARGV[1] = `rt:{hash}`, the index member   ARGV[2] = the entry's lifetime in seconds
+ *
+ * The names of the other sessions are built from the prefix KEYS[2] was stored under, which is what
+ * is left of it once the member is taken off its end.
+ *
+ * Returns: 0 if the account does not own the session, else the hashes the family named.
+ */
+const END_OWNED_SIGN_IN_LUA = `
+local member = ARGV[1]
+if redis.call('SISMEMBER', KEYS[1], member) == 0 then return 0 end
+local base = string.sub(KEYS[2], 1, #KEYS[2] - #member)
+local family = redis.call('SMEMBERS', KEYS[4])
+for _, hash in ipairs(family) do
+  local name = 'rt:' .. hash
+  if name ~= member then
+    redis.call('DEL', base .. name)
+    redis.call('DEL', base .. 'sd:' .. hash)
+    redis.call('SREM', KEYS[1], name)
+  end
+end
+redis.call('DEL', KEYS[4])
+redis.call('DEL', KEYS[2])
+redis.call('DEL', KEYS[3])
+redis.call('SET', KEYS[5], '1', 'EX', ARGV[2])
+redis.call('SREM', KEYS[1], member)
+return family
 `
 
 /**
@@ -144,38 +184,50 @@ export async function removeStoredSession(
 /**
  * Ends the sign-in of one refresh session, access tokens included, and announces the removal.
  *
- * The family id is read before the removal deletes the record, and used only once the removal has
- * proved the account owns the session. A refused write is raised after `announce`, which is given
- * the named hash and those of the other sessions of the sign-in.
+ * The family id is read first, and the script that uses it writes only once it has seen that the
+ * account owns the session. A refused write announces nothing and leaves the call to be repeated.
  *
- * @param withoutFamily - Runs instead of the entry write when the record names no family a token
- *   could carry. By default nothing does, and those access tokens last until they expire.
+ * @param announce - Given the named hash and those of the other sessions of the sign-in.
+ * @param withoutFamily - Runs when the record names no family a token could carry, after the
+ *   ownership check and before the session is removed. By default nothing does, and those access
+ *   tokens last until they expire.
  * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the account.
  */
 export async function endStoredSession(
-  redis: Pick<AuthRedisService, 'eval' | 'readSessionOwner' | 'revokeFamily' | 'set'>,
+  redis: Pick<AuthRedisService, 'eval' | 'readSessionOwner' | 'sismember'>,
   { hmacKey, jwt }: { hmacKey: string; jwt: { accessExpiresIn: string } },
   session: { userId: string; tenantId: string; sessionHash: string },
   announce: (sessionIds: string[]) => void,
   withoutFamily?: () => Promise<unknown>
 ): Promise<void> {
-  assertTenant(session.tenantId)
-  assertSessionHash(session.sessionHash)
-  const { familyId } = await pinned(redis.readSessionOwner(`rt:${session.sessionHash}`))
-  await pinned(removeStoredSession(redis, hmacKey, session))
-  const ended = new Set([session.sessionHash])
-  const endAccess = async (): Promise<void> => {
-    if (sessionId(familyId) === undefined && withoutFamily !== undefined) {
+  const { userId, tenantId, sessionHash } = session
+  assertTenant(tenantId)
+  assertSessionHash(sessionHash)
+  const member = `rt:${sessionHash}`
+  const index = sessionIndexKey('dashboard', userId, hmacKey, tenantId)
+  const sid = sessionId((await pinned(redis.readSessionOwner(member))).familyId)
+
+  if (sid === undefined) {
+    if (withoutFamily !== undefined) {
+      const owned = await pinned(redis.sismember(index, member))
+      if (!owned) throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
       await pinned(withoutFamily())
-      return
     }
-    await pinned(
-      endSignIn(redis, 'dashboard', familyId, jwt.accessExpiresIn, (hashes) => {
-        for (const hash of hashes) ended.add(hash)
-      })
-    )
+    await pinned(removeStoredSession(redis, hmacKey, session))
+    announce([sessionHash])
+    return
   }
-  const failures = await pinned(settleWrites([endAccess]))
-  announce([...ended])
-  raiseFirst(failures)
+
+  const keys = [index, member, `sd:${sessionHash}`, `fam:${sid}`]
+  const reply = await pinned(
+    redis.eval(
+      END_OWNED_SIGN_IN_LUA,
+      [...keys, sessionRevocationKey('dashboard', sid)],
+      [member, String(sessionRevocationTtlSeconds(jwt.accessExpiresIn))]
+    )
+  )
+  if (!Array.isArray(reply) && integerReply(reply) === 0) {
+    throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+  }
+  announce(removedSessions([sessionHash], reply).sessionHashes)
 }
