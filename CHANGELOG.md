@@ -90,6 +90,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 When the store accepts some writes of an operation and refuses others:
 
+- Logout, session entry refused: the call errors, and until a repeated logout succeeds access
+  tokens of the sign-in are accepted. Refresh is refused.
 - Logout, family removal refused: the call errors, and until a repeated logout succeeds the
   presented refresh token still refreshes.
 - Eviction past the session limit, session entry or family removal refused: the login that caused

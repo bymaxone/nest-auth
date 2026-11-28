@@ -262,6 +262,26 @@ describe('a revocation the store refuses part-way (real Redis)', () => {
     }
   )
 
+  // Scenario: a logout whose family removal is applied and whose access entry is refused, repeated.
+  // Expected: the retry writes the entry, so the sibling's access token is refused. Why: the removal
+  // took the session the owner was read from, and a retry with no marker answers success without it.
+  it.each([
+    ['/logout', '/refresh', '/me', 'rvs'],
+    ['/platform/logout', '/platform/refresh', '/platform/me', 'prvs']
+  ] as const)('%s writes the refused entry on a retry', async (path, refresh, me, refused) => {
+    const { mine, sibling, out } = await signedInTwice(path, refresh)
+
+    await refuseWrites(refused)
+    expect(await out()).toBeGreaterThanOrEqual(500)
+    await refuseWrites()
+    // Until the retry, the entry is missing and only the refresh is refused.
+    expect(await statusOf(me, sibling)).toBe(200)
+    expect(await out()).toBe(204)
+
+    expect(await statusOf(me, sibling)).toBe(401)
+    expect(await refreshStatus(refresh, sibling)).toBe(401)
+  })
+
   // Scenario: a logout answered with an error and not repeated. Expected: the presented token still
   // refreshes. Why: the session stays findable until a retry ends its sign-in.
   it.each([

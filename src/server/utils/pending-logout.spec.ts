@@ -95,12 +95,12 @@ describe('pending logout marker', () => {
       return { ran, raised: failures.map((failure) => (failure as Error).message) }
     }
 
-    // The session is deleted once the sign-in has ended, and then the marker is written for any
-    // failure. With the sign-in live the session stays and no marker is needed.
+    // The session is deleted only once the sign-in has ended. The marker is written for any failure,
+    // since a refused end can have removed the session already.
     it.each([
       ['nothing', [], ['token', 'end', 'session', 'rest'], []],
       ['a token write', ['token'], ['token', 'end', 'session', 'rest', 'marker'], ['token']],
-      ['the end of the sign-in', ['end'], ['token', 'end', 'rest'], ['end']],
+      ['the end of the sign-in', ['end'], ['token', 'end', 'rest', 'marker'], ['end']],
       [
         'the deletion of the session',
         ['session'],

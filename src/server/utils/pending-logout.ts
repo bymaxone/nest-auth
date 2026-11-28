@@ -52,9 +52,9 @@ export interface PendingLogoutMarker {
 /**
  * Runs the writes of a logout so that a retry can finish what an attempt could not.
  *
- * The session is deleted once its sign-in has ended. While the sign-in is live the session stays,
- * so a retry made at any later time reads its owner from it and ends everything. Once it is deleted
- * the marker is what names the owner, and it is written when any write failed.
+ * The session is deleted here only once its sign-in has ended, so that a retry made at any later
+ * time can still read its owner from it. The marker is written when any write failed: ending the
+ * sign-in can remove the session and then be refused its access entry.
  *
  * @param writes - The writes, grouped.
  * @param marker - What to record for the retry; absent when the owner did not come from the stored
@@ -71,7 +71,7 @@ export async function settleLogoutWrites(
   const deleted = deletable ? await pinned(settleWrites(session)) : []
   const others = await pinned(settleWrites(rest))
   const failures = [...before, ...end, ...deleted, ...others]
-  if (deletable && marker !== undefined && failures.length > 0) {
+  if (marker !== undefined && failures.length > 0) {
     const { redis, key, owner, ttlSeconds, logger } = marker
     await pinned(rememberPendingLogout(redis, key, owner, ttlSeconds, logger))
   }

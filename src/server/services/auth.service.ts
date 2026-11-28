@@ -547,9 +547,8 @@ export class AuthService {
     // the record proves whose it is. Claims from an unverified token would not.
     //
     // A session that is gone may belong to an earlier attempt that failed part-way: that attempt
-    // keeps the session while its sign-in is live, and otherwise leaves a short-lived marker naming
-    // its owner for exactly this call. The owner then comes from the marker, which this library
-    // wrote from the session record, never from a token's claims.
+    // leaves a short-lived marker naming its owner for exactly this call. The owner then comes from
+    // the marker, which this library wrote from the session record, never from a token's claims.
     const sessionHash = sha256(rawRefreshToken)
     const markerKey = logoutPendingKey('dashboard', sessionHash)
     const live = await pinned(this.redis.readSessionOwner(`rt:${sessionHash}`))

@@ -216,8 +216,8 @@ export class PlatformAuthService {
     // out. Claims read from an access token would not name the owner once it has expired.
     //
     // A session that is gone may belong to an earlier attempt that failed part-way: that attempt
-    // keeps the session while its sign-in is live, and otherwise leaves a short-lived marker naming
-    // its owner for exactly this call, written from the session record.
+    // leaves a short-lived marker naming its owner for exactly this call, written from the session
+    // record.
     const tokenHash = sha256(rawRefreshToken)
     const markerKey = logoutPendingKey('platform', tokenHash)
     const live = await pinned(this.redis.readSessionOwner(`prt:${tokenHash}`))

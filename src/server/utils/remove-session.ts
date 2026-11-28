@@ -47,7 +47,7 @@ return 1
  * Lua script that ends the whole sign-in of one owned session, access tokens included, at once.
  *
  * One script, so no refusal can leave the named session gone and a sibling out of a retry's reach:
- * every key it names is declared, which a key ACL refuses before anything runs, and the named
+ * the keys in KEYS are checked by a key ACL before anything runs, and the named
  * session leaves the account's index last, so a call refused part-way still passes the ownership
  * check when it is repeated. Redis does not undo the writes of a script that stops part-way.
  *
