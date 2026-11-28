@@ -26,8 +26,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   and reset, MFA enable and disable, session eviction and refresh token reuse. Several of these had
   no hook before. The event carries `userId`, `plane`, `reason` and, when known, `tenantId` and
   `sessionIds`; the types `SessionsRevokedEvent` and `SessionRevocationReason` are exported.
-  Existing hooks fire as before. **Apply:** nothing is required. A host that keeps state per session
-  can implement the hook instead of watching routes.
+  This addition does not change when the existing hooks fire. **Apply:** nothing is required. A host
+  that keeps state per session can implement the hook instead of watching routes.
 
 ### Fixed
 
