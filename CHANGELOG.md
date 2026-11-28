@@ -18,6 +18,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.5.23] - 2026-11-27
+
+A patch release. It closes gaps in the host hooks, one of which changes when
+`beforeWorkspaceCreate` is called, and cleans up the error the readiness probe forwards.
+
 ### Changed
 
 - On an invitation signup that creates a workspace, by password or through an OAuth provider, `beforeWorkspaceCreate` is
@@ -27,7 +32,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
   **Apply to a derived backend:** on such a signup the hook now runs before the account exists;
   check `context.accountPending` instead of looking the user up by id. A hook that looks up the
-  empty id and refuses when it finds nothing now refuses every such signup.
+  empty id and refuses when it finds nothing now refuses every such signup. That call also has no
+  `context.userId`, so a hook that reads the caller's id from the context must handle its absence.
 
 - A platform password login that needs no MFA now calls `afterLogin`, with `plane: 'platform'`.
 
@@ -5828,7 +5834,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.22...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.5.23...HEAD
+[1.5.23]: https://github.com/bymaxone/nest-auth/compare/v1.5.22...v1.5.23
 [1.5.22]: https://github.com/bymaxone/nest-auth/compare/v1.5.21...v1.5.22
 [1.5.21]: https://github.com/bymaxone/nest-auth/compare/v1.5.20...v1.5.21
 [1.5.20]: https://github.com/bymaxone/nest-auth/compare/v1.5.19...v1.5.20
