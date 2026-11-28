@@ -109,7 +109,31 @@ describe('pending logout marker', () => {
       ],
       ['a later write', ['rest'], ['token', 'end', 'session', 'rest', 'marker'], ['rest']]
     ])('with %s refused', async (_name, refused, ran, raised) => {
-      await expect(settle(refused)).resolves.toEqual({ ran, raised })
+      // Strict, so that an extra entry which carries no message is not taken for no entry.
+      await expect(settle(refused)).resolves.toStrictEqual({ ran, raised })
+    })
+
+    // Only the last access write ends the sign-in: any number may precede it, each runs once, and a
+    // refusal among them does not keep the session from being deleted.
+    it('runs each earlier access write once and still deletes the session when one is refused', async () => {
+      const ran: string[] = []
+      const write = (name: string) => (): Promise<void> => {
+        ran.push(name)
+        return name === 'second' ? Promise.reject(new Error(name)) : Promise.resolve()
+      }
+      redis.set.mockImplementation(write('marker'))
+
+      const failures = await settleLogoutWrites(
+        {
+          access: [write('first'), write('second'), write('end')],
+          session: [write('session')],
+          rest: []
+        },
+        marker
+      )
+
+      expect(ran).toStrictEqual(['first', 'second', 'end', 'session', 'marker'])
+      expect(failures).toStrictEqual([new Error('second')])
     })
 
     // A refused marker adds no error: the logout is already failing.
