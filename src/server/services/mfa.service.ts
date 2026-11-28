@@ -496,7 +496,7 @@ export class MfaService {
    * has lost their authenticator AND their recovery codes.
    *
    * Authorising the caller is the consumer's job: the library ships no route for this. The flow
-   * lives in {@link MfaManagementService.resetMfa}. Idempotent.
+   * lives in {@link MfaManagementService.resetMfa}.
    *
    * @param userId - Internal ID of the user whose second factor is being removed.
    * @param context - Which identity plane the user belongs to: `'dashboard'` (default) or
