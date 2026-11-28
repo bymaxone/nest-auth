@@ -780,6 +780,7 @@ describe('AuthRedisService', () => {
 
       await expect(service.revokeFamily('fam-1', 'platform')).resolves.toEqual({
         removed: 1,
+        sessionHashes: ['h1'],
         ownerId: 'admin-1'
       })
 
@@ -897,11 +898,10 @@ describe('AuthRedisService', () => {
       expect(call[call.length - 1]).toBe('')
     })
 
-    // Verifies an empty family id short-circuits: `fam:` with no id is a key every familyless
-    // session would share, so revoking it would be an unbounded blast radius.
+    // An empty id short-circuits: `fam:` alone is a key every familyless session would share.
     it('is a no-op for an empty family id', async () => {
-      await expect(service.revokeFamily('')).resolves.toEqual({ removed: 0, ownerId: '' })
-
+      const nothing = { removed: 0, sessionHashes: [], ownerId: '' }
+      await expect(service.revokeFamily('')).resolves.toEqual(nothing)
       expect(mockRedis.eval).not.toHaveBeenCalled()
     })
 

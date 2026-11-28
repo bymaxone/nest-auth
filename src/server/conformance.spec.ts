@@ -44,6 +44,7 @@ import { AuthException } from './errors/auth-exception'
 import { apiKeyDigest, formatApiKey, generateApiKeySecret, parseApiKey } from './crypto/api-key'
 import { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
 import { PasswordService } from './services/password.service'
+import { SESSION_END_PREFIX_SOURCES } from './__tests__/session-end-prefix-sources'
 import { WORKSPACE_PREFIX_SOURCES } from './__tests__/workspace-prefix-sources'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
@@ -145,7 +146,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = '1605016731c3e93ba2eb1157759670457952343f847fa1de699bd280fdc50f9c'
+const CONTRACT_SHA256 = '4796c062d32ed3cf6b54cb183e727a7cb5fb9187edcbc4de19fa2bb25fbcc08b'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -333,8 +334,6 @@ describe('cross-implementation conformance', () => {
      * than centralized, so there is no runtime value to assert against.
      */
     const PREFIX_SOURCES: Record<string, string> = {
-      dashboardLogoutPending: 'constants/logout-pending.ts',
-      platformLogoutPending: 'constants/logout-pending.ts',
       dashboardRefreshSession: 'services/token-manager.service.ts',
       dashboardGracePointer: 'services/token-manager.service.ts',
       dashboardSessionIndex: 'constants/user-keys.ts',
@@ -370,6 +369,7 @@ describe('cross-implementation conformance', () => {
       mfaTempTokenMarker: 'services/token-manager.service.ts',
       userStatus: 'services/account-status.service.ts',
       userEmailVerified: 'services/account-status.service.ts',
+      ...SESSION_END_PREFIX_SOURCES,
       ...WORKSPACE_PREFIX_SOURCES
     }
 

@@ -459,7 +459,7 @@ export class TokenManagerService {
         familyId: outcome.familyId
       })
       await pinned(
-        endReusedFamily(this.redis, this.hooks, this.logger, {
+        endReusedFamily(this.redis, this.hooks, this.logger, this.options.jwt, {
           kind: 'dashboard',
           outcome,
           ip,
@@ -899,7 +899,7 @@ export class TokenManagerService {
         familyId: outcome.familyId
       })
       await pinned(
-        endReusedFamily(this.redis, this.hooks, this.logger, {
+        endReusedFamily(this.redis, this.hooks, this.logger, this.options.jwt, {
           kind: 'platform',
           outcome,
           ip,

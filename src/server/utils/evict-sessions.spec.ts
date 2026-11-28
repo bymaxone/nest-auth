@@ -9,15 +9,36 @@ import { Logger } from '@nestjs/common'
 import { evictSessions } from './evict-sessions'
 import type { AuthRedisService } from '../redis/auth-redis.service'
 
-const request = { userId: 'u1', tenantId: 't1', ip: 'ip', userAgent: 'ua', index: 'sess:x' }
+const request = {
+  userId: 'u1',
+  tenantId: 't1',
+  ip: 'ip',
+  userAgent: 'ua',
+  index: 'sess:x',
+  jwt: { accessExpiresIn: '15m' }
+}
+const familyOf = {
+  'rt:a': '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b',
+  'rt:b': '7a1c2d3e-4b5f-4a6c-9d8e-0f1a2b3c4d5e'
+}
 const entries = [
   { member: 'rt:a', memberHash: 'a' },
   { member: 'rt:b', memberHash: 'b' }
 ]
 
 /** A store that refuses to delete the keys named. */
-function store(refused: string[] = []): Pick<AuthRedisService, 'del' | 'srem'> {
+function store(
+  refused: string[] = []
+): Pick<AuthRedisService, 'del' | 'srem' | 'set' | 'readSessionOwner'> {
   return {
+    readSessionOwner: jest.fn(async (key: string) => ({
+      userId: 'u1',
+      tenantId: 't1',
+      familyId: familyOf[key as keyof typeof familyOf]
+    })),
+    set: jest.fn(async (key: string) => {
+      if (refused.includes(key)) throw new Error('refused')
+    }),
     del: jest.fn(async (key: string) => {
       if (refused.includes(key)) throw new Error('refused')
       return true
@@ -94,5 +115,42 @@ describe('evictSessions', () => {
     )
 
     expect(onSessionsRevoked).not.toHaveBeenCalled()
+  })
+
+  // Scenario: two sessions pushed out. Expected: the access tokens of each are ended.
+  it('ends the access tokens of each evicted session', async () => {
+    const redis = store()
+
+    await evictSessions(redis, null, new Logger(), request, entries)
+
+    expect((redis.set as jest.Mock).mock.calls).toEqual([
+      [`rvs:${familyOf['rt:a']}`, '1', 960],
+      [`rvs:${familyOf['rt:b']}`, '1', 960]
+    ])
+  })
+
+  // Scenario: the session cannot be deleted. Expected: its access tokens are left alone.
+  // Why: it was not evicted.
+  it('ends no access token of a session it could not delete', async () => {
+    const redis = store(['rt:a'])
+
+    await evictSessions(redis, null, new Logger(), request, [{ member: 'rt:a', memberHash: 'a' }])
+
+    expect(redis.set).not.toHaveBeenCalled()
+  })
+
+  // Scenario: the entry is refused. Expected: the index and detail cleanup still run, and the
+  // session is still named.
+  it('finishes the cleanup when the entry is refused', async () => {
+    const redis = store([`rvs:${familyOf['rt:a']}`])
+    const onSessionsRevoked = jest.fn()
+
+    await evictSessions(redis, { onSessionsRevoked }, new Logger(), request, [
+      { member: 'rt:a', memberHash: 'a' }
+    ])
+
+    expect(redis.srem).toHaveBeenCalledWith('sess:x', 'rt:a')
+    expect(redis.del).toHaveBeenCalledWith('sd:a')
+    expect(onSessionsRevoked).toHaveBeenCalledWith(expect.objectContaining({ sessionIds: ['a'] }))
   })
 })

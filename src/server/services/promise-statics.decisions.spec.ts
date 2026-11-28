@@ -125,6 +125,7 @@ describe('the statics of Promise replaced after the library loaded', () => {
       get: jest.fn(),
       del: jest.fn(),
       srem: jest.fn(),
+      readSessionOwner: jest.fn().mockResolvedValue({}),
       smembers: jest.fn(),
       pruneExpiredGraceMembers: jest.fn().mockResolvedValue(0),
       pruneDeadMembers: jest.fn().mockResolvedValue(0)

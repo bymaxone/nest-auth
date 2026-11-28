@@ -223,4 +223,60 @@ describe('AuthRevocationService', () => {
 
     expect(getUserTokenEpoch).toHaveBeenCalledWith('user-1', undefined, 'platform')
   })
+  /**
+   * Per-session entry.
+   * Rule: a hit on the entry of the token's session revokes it, under the plane's own key.
+   */
+  it.each([
+    ['dashboard' as const, 'rvs:3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b'],
+    ['platform' as const, 'prvs:3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b']
+  ])('revokes a token whose %s session was ended', async (kind, key) => {
+    const { service, get, getUserTokenEpoch } = buildService()
+    get.mockImplementation(async (read: string) => (read === key ? '1' : null))
+
+    await expect(
+      service.isAccessTokenRevoked(
+        { ...PAYLOAD, sid: '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b' },
+        kind
+      )
+    ).resolves.toBe(true)
+    expect(getUserTokenEpoch).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Live session.
+   * Rule: with no entry, the check goes on to the epoch.
+   */
+  it('reports a token of a live session as valid', async () => {
+    const { service, get } = buildService({ epoch: 3 })
+
+    await expect(
+      service.isAccessTokenRevoked({ ...PAYLOAD, sid: '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b' })
+    ).resolves.toBe(false)
+    expect(get.mock.calls).toEqual([['rv:jti-1'], ['rvs:3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b']])
+  })
+
+  /**
+   * No usable session id.
+   * Rule: no key is built from an absent or malformed `sid`.
+   */
+  it.each([undefined, '', 'a:b', 7])('reads no session entry for a sid of %p', async (sid) => {
+    const { service, get } = buildService({ epoch: 3 })
+
+    await expect(service.isAccessTokenRevoked({ ...PAYLOAD, sid })).resolves.toBe(false)
+    expect(get.mock.calls).toEqual([['rv:jti-1']])
+  })
+
+  /**
+   * Fail closed.
+   * Rule: a store that cannot answer for the session rejects the check.
+   */
+  it('rejects when the session entry cannot be read', async () => {
+    const { service, get } = buildService()
+    get.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('store down'))
+
+    await expect(
+      service.isAccessTokenRevoked({ ...PAYLOAD, sid: '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b' })
+    ).rejects.toThrow('store down')
+  })
 })

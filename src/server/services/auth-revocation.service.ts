@@ -1,9 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common'
 
+import { sessionId } from '../constants/session-id'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { readStampedEpoch } from '../utils'
 import { assertRootIsStandard } from '../utils/object-prototype-guard'
+import { sessionRevocationKey } from '../utils/session-access'
 import { pinned, PinnedAll } from '../utils/settle'
 
 /**
@@ -28,25 +30,31 @@ export interface RevocableTokenPayload {
    * is a field somebody will omit.
    */
   readonly tenantId?: string | undefined
+  /**
+   * The session the token belongs to, the key of the per-session entry (`rvs:{sid}`, `prvs:{sid}`).
+   * A payload without a well-formed one is not checked against it, so pass the verified payload
+   * whole rather than a copy of some of its claims.
+   */
+  readonly sid?: unknown
 }
 
 /**
- * Answers whether an already-verified access token has been revoked, across both channels the auth
+ * Answers whether an already-verified access token has been revoked, across the channels the auth
  * module writes to.
  *
- * There are two, and a check that consults only the first is not a revocation check. A single
- * logout writes `rv:{jti}` with the token's remaining TTL — the per-token blacklist. A password
- * reset, an MFA reset or an administrative revoke-all advances the user's token epoch — the bulk
- * channel, which invalidates every access token stamped below it in one write. Both channels this
- * service reads gate access tokens only; a refresh token is opaque and carries no epoch, so a bulk
- * flow revokes it through a separate session invalidation, not through either read here.
+ * There are three, and a check that consults only some of them is not a revocation check. A
+ * logout writes `rv:{jti}` with the token's remaining TTL — the per-token blacklist. Ending one
+ * session (logout, eviction, a replayed refresh token, `SessionService.revokeSession`) writes
+ * `rvs:{sid}`, which every access token of that session carries. A password reset, an MFA reset or
+ * an administrative revoke-all advances the user's token epoch — the bulk channel, which
+ * invalidates every access token stamped below it in one write. All of them gate access tokens
+ * only; a refresh token is opaque, and is ended by deleting its session.
  *
- * `JwtAuthGuard`, `WsJwtGuard` and `JwtPlatformGuard` all consult both, and did so through three
- * separate copies of the same two Redis reads. This is that logic in one place — the guards
- * delegate to it, and it is exported so a consumer bridging `@bymax-one/nest-auth` to a realtime
- * transport can consult the same two channels rather than verifying a token's signature and
- * granting a stream that outlives every revocation. Without it, a socket that logs out keeps its
- * stream until the access token expires, while its HTTP requests are refused at once.
+ * The guards delegate to this one place, and it is exported so a consumer bridging
+ * `@bymax-one/nest-auth` to a realtime transport can consult the same channels rather than
+ * verifying a token's signature and granting a stream that outlives every revocation. Without it,
+ * a socket that logs out keeps its stream until the access token expires, while its HTTP requests
+ * are refused at once.
  *
  * @layer Service
  */
@@ -56,18 +64,19 @@ export class AuthRevocationService {
   private readonly logger = new Logger(AuthRevocationService.name)
 
   /**
-   * @param redis - The auth module's Redis service, holding both revocation channels.
+   * @param redis - The auth module's Redis service, holding the revocation channels.
    */
   constructor(@Inject(AuthRedisService) private readonly redis: AuthRedisService) {}
 
   /**
    * Whether a verified access token has been revoked.
    *
-   * @param payload - The verified token's `jti`, `sub` and stamped `epoch`.
+   * @param payload - The verified token's `jti`, `sub`, `sid` and stamped `epoch`.
    * @param kind - Which plane the token belongs to; selects the epoch namespace, defaulting to the
    *   dashboard plane an ordinary user token uses. The per-token blacklist is shared across planes.
-   * @returns `true` when the token is on the blacklist, predates the user's current epoch, or is a
-   *   dashboard payload carrying no tenant — the last fails closed without a store read, and warns.
+   * @returns `true` when the token is on the blacklist, belongs to an ended session, predates the
+   *   user's current epoch, or is a dashboard payload carrying no tenant — the last fails closed
+   *   without a store read, and warns.
    */
   async isAccessTokenRevoked(
     payload: RevocableTokenPayload,
@@ -104,6 +113,11 @@ export class AuthRevocationService {
 
     if ((await pinned(this.redis.get(`rv:${payload.jti}`))) !== null) {
       return true
+    }
+
+    const sid = sessionId(payload.sid)
+    if (sid !== undefined) {
+      if ((await pinned(this.redis.get(sessionRevocationKey(kind, sid)))) !== null) return true
     }
 
     const epoch = await pinned(this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, kind))

@@ -12,6 +12,7 @@ import type { SessionExtra } from './create-session-script'
 import { integerReply } from './integer-reply'
 import { mappingOutages } from './redis-outage'
 import type { RefreshRotationOutcome, RefreshRotationParams } from './refresh-rotation'
+import { sessionOwner, type RevokedFamily, type SessionOwner } from './session-records'
 import { storedNamespace } from './stored-namespace'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
@@ -674,7 +675,7 @@ export class AuthRedisService {
    *   the three methods that lost their default in this change, this one takes no positional
    *   tenant beside it — the owner and its tenant come off the family's own record — so there is
    *   no adjacent same-typed argument for it to be transposed with.
-   * @returns The members removed, the family's account and its tenant, if named. The owner
+   * @returns The members removed and their hashes, the family's account and its tenant. The owner
    *   is reported because the caller cannot obtain it any other way: the presented token's own
    *   `rt:` key was deleted when it was rotated, so at reuse-detection time the family index is
    *   the only surviving link between the replayed token and an account. It is `''` when no
@@ -683,8 +684,8 @@ export class AuthRedisService {
   async revokeFamily(
     familyId: string,
     kind: 'dashboard' | 'platform' = 'dashboard'
-  ): Promise<{ removed: number; ownerId: string; tenantId?: string | undefined }> {
-    if (familyId === '') return checked({ removed: 0, ownerId: '' })
+  ): Promise<RevokedFamily> {
+    if (familyId === '') return checked({ removed: 0, sessionHashes: [], ownerId: '' })
     const p = prefixesFor(kind)
     const members = await pinned(this.smembers(`${p.family}:${familyId}`))
     const { userId: ownerId, tenantId } = await pinned(this.readFamilyOwner(members, p.live))
@@ -706,7 +707,7 @@ export class AuthRedisService {
         [this.stored, p.live, p.detail, indexKey]
       )
     )
-    return checked({ removed: integerReply(removed), ownerId, tenantId })
+    return checked({ removed: integerReply(removed), sessionHashes: members, ownerId, tenantId })
   }
 
   /**
@@ -1053,9 +1054,10 @@ export class AuthRedisService {
    * kept the OWNER out of those claims.
    *
    * @param key - The un-namespaced session key (`rt:{hash}` or `prt:{hash}`).
-   * @returns The recorded owner and tenant; `userId` is `''` when there is no usable record.
+   * @returns The recorded owner, tenant and family id; `userId` is `''` when there is no usable
+   *   record, and `familyId` is absent when the record names none a token could carry.
    */
-  async readSessionOwner(key: string): Promise<{ userId: string; tenantId: string | undefined }> {
+  async readSessionOwner(key: string): Promise<SessionOwner> {
     const none = { userId: '', tenantId: undefined }
     const raw = await pinned(this.get(key))
     if (raw === null) return checked(none)
@@ -1069,17 +1071,7 @@ export class AuthRedisService {
       const record = parsed as Record<string, unknown>
       const userId = record['userId']
       if (typeof userId !== 'string') return checked(none)
-      const tenantId = record['tenantId']
-      // A BLANK tenant is normalised to absent, not returned as a usable value. Callers test
-      // presence to decide whether they can name an index, and `''` builds `dashboard:0::{userId}`
-      // — a keyspace belonging to no tenant, exactly as `dashboard:9:undefined:` does. Returning it
-      // as a string made `AuthService.logout`'s `tenantId !== undefined` check pass and then miss
-      // the real index, leaving the member and its detail record behind. One shape of "no tenant"
-      // at the boundary means every caller downstream gets the same answer.
-      return checked({
-        userId,
-        tenantId: typeof tenantId === 'string' && tenantId !== '' ? tenantId : undefined
-      })
+      return checked(sessionOwner(userId, record))
     } catch {
       // A malformed record names nobody. The session parser reports it on the paths that
       // need to fail loudly; here the caller only wants an owner or the absence of one.

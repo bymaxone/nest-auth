@@ -42,12 +42,12 @@ import { resolveClientAddress } from '../utils/client-address'
 import { describeChannelStatus } from '../utils/describe-error'
 import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
-import { rethrowRefusal } from '../utils/object-prototype-guard'
 import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
 import { removeStoredSession } from '../utils/remove-session'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
+import { logoutAccessWrites } from '../utils/session-access'
 import { revokeEverySession } from '../utils/session-revocation'
 import { detached, checked, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst, settleWrites } from '../utils/settle-writes'
@@ -554,9 +554,8 @@ export class AuthService {
     const markerKey = logoutPendingKey('dashboard', sessionHash)
     const live = await pinned(this.redis.readSessionOwner(`rt:${sessionHash}`))
     const fromSession = live.userId !== ''
-    const { userId, tenantId } = fromSession
-      ? live
-      : await pinned(this.redis.readSessionOwner(markerKey))
+    const record = fromSession ? live : await pinned(this.redis.readSessionOwner(markerKey))
+    const { userId, tenantId, familyId } = record
     logEvent(this.logger, 'AUTH_LOGOUT', { plane: 'dashboard', ...(userId ? { userId } : {}) })
 
     // Every revocation write is attempted, and the first failure raised once all have run. A token
@@ -564,7 +563,7 @@ export class AuthService {
     const notice = logoutNotice(this.hooks, this.logger, { userId, tenantId, sessionHash })
     const failures = await pinned(
       settleWrites([
-        ...this.blacklistWrites(accessToken),
+        ...this.blacklistWrites(accessToken, familyId),
         (): Promise<unknown> => notice.after(this.redis.del(`rt:${sessionHash}`)),
         (): Promise<unknown> => this.redis.del(`rp:${sessionHash}`)
       ])
@@ -574,7 +573,7 @@ export class AuthService {
     // A refused revocation write is not a completed logout: no hook, and the caller is told so.
     // The session record is already gone, so the owner is kept for the retry that will finish it.
     const markerTtl = logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn)
-    const owner = { userId, tenantId }
+    const owner = { userId, tenantId, familyId }
     if (failures.length > 0 && fromSession) {
       await pinned(rememberPendingLogout(this.redis, markerKey, owner, markerTtl, this.logger))
     }
@@ -594,26 +593,20 @@ export class AuthService {
   }
 
   /**
-   * The access-token blacklist write for a logout, or none when there is nothing to revoke.
+   * The writes of this logout that end access tokens, from {@link logoutAccessWrites}.
    *
-   * Verifies signature and algorithm but not expiry: an expired token is the normal case here, a
-   * forged one must not blacklist an id it does not own. Only the verification is tolerant.
-   *
-   * @param accessToken - Raw access token; absent, malformed or expired yields no write.
+   * @param accessToken - Raw access token; absent, malformed or expired adds no blacklist entry.
+   * @param familyId - The family id the session record names, if any.
    * @returns The writes to hand to `settleWrites`.
    */
-  private blacklistWrites(accessToken: string): Array<() => Promise<unknown>> {
-    try {
-      const payload = this.tokenManager.verifyIgnoringExpiry(accessToken)
-      const remainingTtl = payload.exp - Math.floor(Date.now() / 1000)
-      if (remainingTtl > 0) {
-        return [(): Promise<unknown> => this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)]
-      }
-    } catch (error) {
-      rethrowRefusal(error)
-      // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
-    }
-    return []
+  private blacklistWrites(
+    accessToken: string,
+    familyId: string | undefined
+  ): Array<() => Promise<unknown>> {
+    const ended = { familyId, accessExpiresIn: this.options.jwt.accessExpiresIn }
+    return logoutAccessWrites(this.redis, { plane: 'dashboard', ...ended }, () =>
+      this.tokenManager.verifyIgnoringExpiry(accessToken)
+    )
   }
 
   /**

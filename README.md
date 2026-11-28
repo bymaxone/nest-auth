@@ -69,7 +69,7 @@ pnpm add @bymax-one/nest-auth
 - ✅ **Session Management** — Track active sessions with FIFO eviction, and an `onNewSession` hook fired on every session created (alerting on it is yours to decide — see `sendNewSessionAlert`)
 - ✅ **HttpOnly Cookies** — Secure, SameSite, path-scoped refresh tokens by default
 - ✅ **Timing-Safe Comparisons** — All secret comparisons use `crypto.timingSafeEqual`
-- ✅ **JWT Revocation** — Instant access token revocation via Redis JTI blacklist
+- ✅ **JWT Revocation** — Instant access token revocation via Redis, per token (`jti`) and per session (`sid`)
 - ✅ **Refresh-Token Reuse Detection** — Replaying a consumed token revokes that login's whole lineage, and only that lineage
 - ✅ **Bulk Access-Token Revocation** — A password reset advances a per-user token epoch, invalidating every outstanding access token in one write
 - ✅ **Absolute Session Lifetime** — Optional hard cap on how long one login can be extended by rotation
@@ -1110,7 +1110,7 @@ It receives `{ userId, tenantId?, plane, reason, sessionIds? }`. `tenantId` is a
 | `mfa_enabled`            | MFA enrolment.                                                                                                    | No           |
 | `mfa_disabled`           | MFA removal, by the user or by `resetMfa`.                                                                        | No           |
 | `session_evicted`        | The session limit.                                                                                                | Yes          |
-| `refresh_reuse`          | A replayed refresh token whose family was revoked, when the owner is known.                                       | No           |
+| `refresh_reuse`          | A replayed refresh token whose family was revoked, when the owner is known.                                       | If any       |
 
 It runs after the store has deleted the sessions and is not awaited. It also runs when the sessions were deleted but a later write was refused, so the operation can fail after the event. A retried or repeated operation can report the same account again: handle it idempotently. A revocation that can name no account is not reported.
 
@@ -1643,7 +1643,7 @@ The `tenantId` is always extracted from the validated JWT — never from the req
 
 ### Token Revocation via Redis JTI Blacklist
 
-Access tokens are short-lived (default 15 minutes) and immediately revocable via a Redis JTI blacklist. Refresh tokens rotate on every use with a configurable grace window to handle concurrent requests. This is the industry-standard hybrid approach used by Auth0, Okta, and SuperTokens — combining short lifetimes for low-latency revocation with rotating refresh tokens for session continuity.
+Access tokens are short-lived (default 15 minutes) and immediately revocable: a Redis JTI blacklist refuses one token, and an entry keyed by the token's `sid` refuses every access token of a session that ended (logout, eviction past the session limit, a replayed refresh token, `SessionService.revokeSession`) and leaves the account's other sessions alone. Refresh tokens rotate on every use with a configurable grace window to handle concurrent requests. This is the industry-standard hybrid approach used by Auth0, Okta, and SuperTokens — combining short lifetimes for low-latency revocation with rotating refresh tokens for session continuity.
 
 ### A Process That Changes Its Own Built-ins
 
@@ -1756,7 +1756,7 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | ------ | ------------------------------ | ---------------------------------- | ----------------------------------------------------------- |
 | POST   | `/register`                    | Public                             | Register a new dashboard user and issue tokens              |
 | POST   | `/login`                       | Public                             | Authenticate with email/password (may return MFA challenge) |
-| POST   | `/logout`                      | Public (reads both credentials)    | Revoke the session; blacklists the access token it is given |
+| POST   | `/logout`                      | Public (reads both credentials)    | Revoke the session and its access tokens                    |
 | POST   | `/refresh`                     | Public (refresh cookie or body)    | Rotate refresh token, issue new access token                |
 | GET    | `/me`                          | `JwtAuthGuard`                     | Current dashboard user payload                              |
 | POST   | `/ws-ticket`                   | `JwtAuthGuard`, `UserStatusGuard`  | Mint a single-use ticket for a WebSocket upgrade            |
@@ -1782,7 +1782,7 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | POST   | `/platform/login`              | Public                             | Platform admin login (separate token context)               |
 | POST   | `/platform/mfa/challenge`      | Public                             | Platform admin MFA challenge                                |
 | GET    | `/platform/me`                 | `JwtPlatformGuard`                 | Current platform admin payload                              |
-| POST   | `/platform/logout`             | Public (refresh token in body)     | Revoke the session; blacklists the access token it is given |
+| POST   | `/platform/logout`             | Public (refresh token in body)     | Revoke the session and its access tokens                    |
 | POST   | `/platform/refresh`            | Public (refresh token in body)     | Rotate the platform refresh token                           |
 | DELETE | `/platform/sessions`           | `JwtPlatformGuard`                 | Revoke all platform sessions                                |
 | POST   | `/platform/mfa/setup`          | `JwtPlatformGuard`                 | Generate the admin's TOTP secret and recovery codes         |
@@ -1797,11 +1797,11 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 > bearer client that sends none, or a refresh cookie whose path does not cover the route), it marks the
 > sessions of the login the access token's `sid` names.
 
-> **Revoking one session cuts every access token of the account, the caller's included.**
-> `DELETE /sessions/:id` and `POST /sessions/revoke-all` advance the account's token epoch, because
-> a session cannot be traced to the access tokens issued from it. The caller's next request answers
-> `401` until the client refreshes; every session that was kept refreshes normally, and a revoked
-> one cannot.
+> **`DELETE /sessions/:id` cuts every access token of the account, the caller's included.**
+> It and `POST /sessions/revoke-all` advance the account's token epoch. The caller's next request
+> answers `401` until the client refreshes; every session that was kept refreshes normally, and a
+> revoked one cannot. `SessionService.revokeSession`, the method for host code, ends the named
+> session and its access tokens only.
 
 > **The platform plane never uses a refresh cookie.** `extractPlatformRefreshToken` reads
 > `req.body.refreshToken` in every `tokenDelivery` mode, and the access token is always the

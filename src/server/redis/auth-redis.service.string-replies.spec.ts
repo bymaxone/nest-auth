@@ -46,7 +46,11 @@ describe('AuthRedisService over a client that answers integers as strings', () =
   it('reports the members a family revocation removed', async () => {
     const service = answering({ smembers: [], eval: '3' })
 
-    await expect(service.revokeFamily('fam-1')).resolves.toEqual({ removed: 3, ownerId: '' })
+    await expect(service.revokeFamily('fam-1')).resolves.toEqual({
+      removed: 3,
+      ownerId: '',
+      sessionHashes: []
+    })
   })
 
   // Scenario: a grace recovery asks whether its family still exists. Expected: `1` as a string says yes.

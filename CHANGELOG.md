@@ -18,6 +18,26 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Changed
+
+- Ending one session now also ends the access tokens of that session: a logout and a replayed
+  refresh token on both identity planes, and eviction past the session limit and
+  `SessionService.revokeSession` on the dashboard. An access token issued earlier in the session,
+  and a WebSocket ticket minted from one, is refused at once instead of working until it expires.
+  The other sessions of the account are not affected.
+  `onSessionsRevoked` now names the revoked sessions for `refresh_reuse`.
+
+  **Apply to a derived backend:**
+  - Nothing to change in code that goes through the mounted guards or `AuthTokenVerifierService`.
+  - Code that calls `AuthRevocationService.isAccessTokenRevoked` with a payload it rebuilt must
+    include `sid`, or the session check is skipped.
+  - Redis holds a new key per ended session, `rvs:{sid}` or `prvs:{sid}`, for the access-token
+    lifetime plus 60 seconds, and a revocation check of a token that carries `sid` reads one key
+    more. Backends that share one Redis must configure the same access-token lifetime.
+  - The shared wire contract moves to version 9: the two key prefixes, the entry, and the optional
+    `sid` of a WebSocket ticket and `familyId` of a pending-logout record.
+  - Access tokens without `sid`, and sessions whose record names no family, behave as before.
+
 ## [1.5.24] - 2026-11-28
 
 A patch release. It adds one hook for session revocations and changes when

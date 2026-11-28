@@ -7,7 +7,9 @@
  * @layer Util
  */
 
+import { revokeSessionAccess } from './session-access'
 import { pinned } from './settle'
+import { raiseFirst, settleWrites } from './settle-writes'
 import { sessionIndexKey } from '../constants/user-keys'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -136,4 +138,31 @@ export async function removeStoredSession(
   if (integerReply(result) === 0) {
     throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
   }
+}
+
+/**
+ * Removes one refresh session, ends its access tokens, and announces the removal.
+ *
+ * The family id is read before the removal deletes the record, and used only once the removal has
+ * proved the account owns the session. A refused access write is raised after `announce`.
+ *
+ * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the account.
+ */
+export async function endStoredSession(
+  redis: AuthRedisService,
+  { hmacKey, jwt }: { hmacKey: string; jwt: { accessExpiresIn: string } },
+  session: { userId: string; tenantId: string; sessionHash: string },
+  announce: () => void
+): Promise<void> {
+  assertTenant(session.tenantId)
+  assertSessionHash(session.sessionHash)
+  const { familyId } = await pinned(redis.readSessionOwner(`rt:${session.sessionHash}`))
+  await pinned(removeStoredSession(redis, hmacKey, session))
+  const failures = await pinned(
+    settleWrites([
+      (): Promise<void> => revokeSessionAccess(redis, 'dashboard', familyId, jwt.accessExpiresIn)
+    ])
+  )
+  announce()
+  raiseFirst(failures)
 }

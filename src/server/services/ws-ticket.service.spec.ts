@@ -326,6 +326,25 @@ describe('WsTicketService', () => {
     })
   })
 
+  describe('session id', () => {
+    // Scenario: the token carries a sid. Expected: the snapshot keeps it. Why: redeeming checks it.
+    it('keeps the sid of the token on the snapshot', async () => {
+      await service.issue(payload({ sid: '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b' }))
+
+      expect(mockRedis.mintWsTicket.mock.calls[0]?.[0]).toHaveProperty(
+        'sid',
+        '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b'
+      )
+    })
+
+    // Scenario: no usable sid. Expected: the field is left out, not written empty.
+    it.each([undefined, 'a:b'])('writes no sid field for %p', async (sid) => {
+      await service.issue(payload(sid === undefined ? {} : { sid }))
+
+      expect(Object.keys(mockRedis.mintWsTicket.mock.calls[0]?.[0] as object)).not.toContain('sid')
+    })
+  })
+
   describe('redeem', () => {
     // Scenario: a ticket the store returns a snapshot for. Expected: the snapshot, unchanged.
     it('should return the bound snapshot', async () => {
@@ -343,6 +362,28 @@ describe('WsTicketService', () => {
 
       await expect(service.redeem('raw-ticket')).resolves.toStrictEqual(snapshot)
       expect(mockRedis.redeemWsTicket).toHaveBeenCalledWith('raw-ticket')
+    })
+
+    // Scenario: a snapshot naming its session. Expected: the revocation check is given the sid.
+    it('checks the session the ticket was minted from', async () => {
+      mockRedis.redeemWsTicket.mockResolvedValue({
+        sub: 'user-9',
+        tenantId: 'tenant-9',
+        role: 'MEMBER',
+        status: 'ACTIVE',
+        mfaEnabled: false,
+        mfaVerified: false,
+        jti: 'jti-9',
+        epoch: 0,
+        sid: '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b'
+      })
+
+      await service.redeem('raw-ticket')
+
+      expect(mockRevocation.isAccessTokenRevoked.mock.calls[0]?.[0]).toHaveProperty(
+        'sid',
+        '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b'
+      )
     })
 
     // Scenario: the session that minted the ticket was revoked between the mint and the upgrade.

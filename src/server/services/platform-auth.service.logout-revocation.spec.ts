@@ -46,10 +46,11 @@ const mockTokenManager = { verifyPlatformIgnoringExpiry: jest.fn() }
 const mockHooks = { afterPlatformLogout: jest.fn() }
 
 const mockOptions = {
-  jwt: { secret: JWT_SECRET },
+  jwt: { secret: JWT_SECRET, accessExpiresIn: '5m' },
   hmacKey: HMAC_KEY,
   previousHmacKeys: []
 }
+const FAMILY = '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b'
 
 /** What a store under memory pressure answers to a write it refuses. */
 const STORE_REFUSED = new Error('OOM command not allowed when used memory > maxmemory')
@@ -89,6 +90,25 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
       ]
     }).compile()
     service = module.get(PlatformAuthService)
+  })
+
+  // Scenario: the entry that ends the session's access tokens is refused. Expected: logout rejects,
+  // and the marker for the retry keeps the family id. Why: the record that named it is gone.
+  it('should keep the family id for the retry when the session entry is refused', async () => {
+    mockRedis.readSessionOwner.mockResolvedValue({
+      userId: ADMIN_ID,
+      tenantId: undefined,
+      familyId: FAMILY
+    })
+    mockRedis.set.mockImplementation((key: string) =>
+      key === `prvs:${FAMILY}` ? Promise.reject(STORE_REFUSED) : Promise.resolve(undefined)
+    )
+
+    await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
+
+    expect(mockRedis.set).toHaveBeenCalledWith(`prvs:${FAMILY}`, '1', 360)
+    const marker = expect.stringContaining(`"familyId":"${FAMILY}"`)
+    expect(mockRedis.set).toHaveBeenCalledWith(expect.any(String), marker, 300)
   })
 
   // Scenario: the store refuses the blacklist write but serves everything else. Expected: logout

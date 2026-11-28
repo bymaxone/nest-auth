@@ -19,7 +19,10 @@ describe('SessionService.revokeSession over string replies', () => {
   // reported. Why: read as `0`, a removed session answers as not found and the access tokens of
   // the account are never cut.
   it('reads the string a client answers for a removed session', async () => {
-    const redis = { eval: jest.fn().mockResolvedValue('1') }
+    const redis = {
+      eval: jest.fn().mockResolvedValue('1'),
+      readSessionOwner: jest.fn().mockResolvedValue({})
+    }
     const module = await Test.createTestingModule({
       providers: [
         SessionService,

@@ -80,7 +80,8 @@ const mockRedis = {
   eval: jest.fn<Promise<unknown>, [string, string[], string[]]>(),
   pruneExpiredGraceMembers: jest.fn<Promise<number>, [string, string]>().mockResolvedValue(0),
   pruneDeadMembers: jest.fn<Promise<number>, [string, string[]]>().mockResolvedValue(0),
-  bumpUserTokenEpoch: jest.fn()
+  bumpUserTokenEpoch: jest.fn(),
+  readSessionOwner: jest.fn().mockResolvedValue({})
 }
 
 const mockUserRepo = {
@@ -97,7 +98,7 @@ const HMAC_KEY = 'test-hmac-key'
 
 const mockOptions = {
   hmacKey: 'test-hmac-key',
-  jwt: { secret: 'test-secret', refreshExpiresInDays: 7 },
+  jwt: { secret: 'test-secret', refreshExpiresInDays: 7, accessExpiresIn: '15m' },
   sessions: {
     enabled: true,
     defaultMaxSessions: 5,
@@ -106,8 +107,7 @@ const mockOptions = {
   }
 }
 
-// Computed TTL used by tests (mirrors production: days * 86_400)
-const TTL = 7 * 86_400
+const TTL = 7 * 86_400 // mirrors production: days * 86_400
 
 // ---------------------------------------------------------------------------
 // Module factory helpers
