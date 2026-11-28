@@ -1643,7 +1643,7 @@ The `tenantId` is always extracted from the validated JWT — never from the req
 
 ### Token Revocation via Redis JTI Blacklist
 
-Access tokens are short-lived (default 15 minutes) and immediately revocable: a Redis JTI blacklist refuses one token, and an entry keyed by the token's `sid` refuses every access token of a session that ended (logout, eviction past the session limit, a replayed refresh token, `SessionService.revokeSession`) and leaves the account's other sessions alone. Refresh tokens rotate on every use with a configurable grace window to handle concurrent requests. This is the industry-standard hybrid approach used by Auth0, Okta, and SuperTokens — combining short lifetimes for low-latency revocation with rotating refresh tokens for session continuity.
+Access tokens are short-lived (default 15 minutes) and immediately revocable: a Redis JTI blacklist refuses one token, and an entry keyed by the token's `sid` refuses every access token of a session that ended and leaves the account's other sessions alone. Refresh tokens rotate on every use with a configurable grace window to handle concurrent requests. This is the industry-standard hybrid approach used by Auth0, Okta, and SuperTokens — combining short lifetimes for low-latency revocation with rotating refresh tokens for session continuity.
 
 ### A Process That Changes Its Own Built-ins
 
@@ -1797,8 +1797,8 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 > bearer client that sends none, or a refresh cookie whose path does not cover the route), it marks the
 > sessions of the login the access token's `sid` names.
 
-> **`DELETE /sessions/:id` ends the named session and its access tokens only.** The caller's own
-> access token and the other sessions keep working. When the stored session names no family, it
+> **`DELETE /sessions/:id` ends the named session and its access tokens only.** The other
+> sessions keep working. When the stored session names no family, it
 > advances the account's token epoch instead, so every access token of the account answers `401`
 > until its client refreshes. `POST /sessions/revoke-all` always advances the epoch.
 

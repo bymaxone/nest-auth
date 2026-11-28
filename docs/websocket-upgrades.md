@@ -27,8 +27,7 @@ ever a Redis key, and the stored value is a verified-identity **snapshot** — n
 redeemed ticket authorizes a socket and cannot be turned back into a session. It carries the
 `jti`, `sid` and `epoch` of the access token that minted it, the keys the revocation channels are
 read by, and redemption is refused when that token has been blacklisted by a logout, when its
-session has ended (logout, eviction past the session limit, a replayed refresh token,
-`SessionService.revokeSession`) or when it is stamped below the user's current epoch
+session has ended or when it is stamped below the user's current epoch
 (sign-out-everywhere, password change, MFA reset): a ticket does not outlive the session that asked
 for it. An access token with no `sid` mints a ticket that is not tied to a session, so only the
 blacklist and the epoch refuse it. Minting requires an authenticated session in good standing that has already

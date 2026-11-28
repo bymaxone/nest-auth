@@ -46,7 +46,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
     more. Backends that share one Redis must configure the same access-token lifetime.
   - The shared wire contract moves to version 9: the two key prefixes, the entry, and the optional
     `sid` of a WebSocket ticket and `familyId` of a pending-logout record.
-  - Access tokens without `sid`, and sessions whose record names no family, behave as before.
+  - Sessions whose record names no family behave as before.
 
 ## [1.5.24] - 2026-11-28
 
