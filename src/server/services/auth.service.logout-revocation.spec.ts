@@ -175,9 +175,14 @@ describe('AuthService.logout — refused revocation writes', () => {
 
   // Scenario: the session delete is refused and the metadata removal, which deletes the same key,
   // removes nothing either. Expected: no revocation is announced. Why: this call revoked no session.
-  it.each([STORE_REFUSED, new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)])(
+  // The title takes a label, never the error: an error prints its stack, whose paths differ in the
+  // mutation sandbox, and the run is then reported as having skipped the test.
+  it.each([
+    ['the store refuses it', STORE_REFUSED],
+    ['the session is gone', new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)]
+  ])(
     'should announce no revocation when neither removal deletes the session (%s)',
-    async (refusal) => {
+    async (_label, refusal) => {
       mockRedis.del.mockImplementation((key: string) =>
         key === `rt:${HASH}` ? Promise.reject(STORE_REFUSED) : Promise.resolve(true)
       )
