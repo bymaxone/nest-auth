@@ -15,14 +15,15 @@ function store() {
   return {
     readSessionOwner: jest.fn().mockResolvedValue({ familyId }),
     eval: jest.fn().mockResolvedValue(1),
-    set: jest.fn().mockResolvedValue(undefined)
+    set: jest.fn().mockResolvedValue(undefined),
+    revokeFamily: jest.fn().mockResolvedValue({ sessionHashes: [session.sessionHash] })
   }
 }
 
 /** Runs the removal over `redis`. */
 const end = (
   redis: ReturnType<typeof store>,
-  announce: () => void,
+  announce: (sessionIds: string[]) => void,
   target = session,
   withoutFamily?: () => Promise<unknown>
 ) => endStoredSession(redis, options, target, announce, withoutFamily)
@@ -41,6 +42,32 @@ describe('endStoredSession', () => {
     )
     expect(redis.set).toHaveBeenCalledWith(`rvs:${familyId}`, '1', 360)
     expect(announce).toHaveBeenCalledTimes(1)
+  })
+
+  // Scenario: the sign-in holds a second session. Expected: both named, the named one once and
+  // first.
+  it('announces the other sessions of the sign-in with the named one', async () => {
+    const redis = store()
+    redis.revokeFamily.mockResolvedValue({ sessionHashes: ['sibling', session.sessionHash] })
+    const announce = jest.fn()
+
+    await end(redis, announce)
+
+    expect(redis.revokeFamily).toHaveBeenCalledWith(familyId, 'dashboard')
+    expect(announce.mock.calls).toEqual([[[session.sessionHash, 'sibling']]])
+  })
+
+  // Scenario: the family cannot be revoked. Expected: no entry, which would leave a live session
+  // refreshing into refused tokens.
+  it('writes no entry when the family is not revoked', async () => {
+    const redis = store()
+    redis.revokeFamily.mockRejectedValue(new Error('READONLY'))
+    const announce = jest.fn()
+
+    await expect(end(redis, announce)).rejects.toThrow('READONLY')
+
+    expect(redis.set).not.toHaveBeenCalled()
+    expect(announce.mock.calls).toEqual([[[session.sessionHash]]])
   })
 
   // Scenario: a session the account does not own. Expected: nobody's access tokens are ended.

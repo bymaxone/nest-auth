@@ -24,9 +24,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   refresh token on both identity planes, and eviction past the session limit and
   `SessionService.revokeSession` on the dashboard. An access token issued earlier in the session,
   and a WebSocket ticket minted from one, is refused at once instead of working until it expires.
-  The other sessions of the account are not affected.
   `onSessionsRevoked` now names the revoked sessions for `refresh_reuse`.
-- `DELETE /sessions/:id` and `SessionService.revokeOtherSession` end the named session only. They
+- Ending one session now ends its whole sign-in. Two refresh sessions can descend from one login
+  when a refresh token is replayed inside the grace window; a logout, an eviction past the session
+  limit or the revocation of either one now ends both, so neither is left able to refresh into a
+  refused access token. `onSessionsRevoked` names every session ended; a logout names the others in
+  a second event. The sessions of the account's other sign-ins are not affected.
+
+  **Apply to a derived backend:** nothing to change. A user who revokes a second entry of their own
+  current sign-in is signed out and signs in again.
+
+- `DELETE /sessions/:id` and `SessionService.revokeOtherSession` end the sign-in of the named
+  session only. They
   advanced the account's token epoch, so every access token of the account, the caller's included,
   was refused until its client refreshed. The epoch is still advanced when the stored session names
   no family.

@@ -28,6 +28,14 @@ const REFUSED = 'OOM command not allowed when used memory > maxmemory'
 interface Refusal {
   command: string
   keyPart: string
+  also?: Refusal
+}
+
+/** Whether `refusal` covers this command on this first argument. */
+function refuses(refusal: Refusal | null, command: string, key: string): boolean {
+  if (refusal === null) return false
+  if (command === refusal.command && key.includes(refusal.keyPart)) return true
+  return refuses(refusal.also ?? null, command, key)
 }
 
 /** A Redis whose writes matching `refusal.current` fail the way a store at its memory limit does. */
@@ -37,10 +45,8 @@ function flaky(redis: Redis, refusal: { current: Refusal | null }): Redis {
       const value: unknown = Reflect.get(target, prop, receiver)
       if (typeof value !== 'function') return value
       return (...args: unknown[]): unknown => {
-        const active = refusal.current
-        if (active !== null && String(prop) === active.command) {
-          const key = String(args[0])
-          if (key.includes(active.keyPart)) return Promise.reject(new Error(REFUSED))
+        if (refuses(refusal.current, String(prop), String(args[0]))) {
+          return Promise.reject(new Error(REFUSED))
         }
         return (value as (...a: unknown[]) => unknown).apply(target, args)
       }
@@ -247,12 +253,24 @@ describe('logout when the store refuses a revocation write (E2E)', () => {
       expect(me.status).toBe(401)
     })
 
+    // Scenario: only the plain delete of the refresh key is refused. Expected: the removal of the
+    // sign-in still ends the credential, and logout still answers a 5xx.
+    it('should end the credential with its sign-in when only its delete is refused', async () => {
+      refusal.current = { command: 'del', keyPart: 'prt:' }
+      const failed = await logout()
+
+      expect(failed.status).toBeGreaterThanOrEqual(500)
+      expect(await store.keys('*prt:*')).toEqual([])
+    })
+
     // Scenario: the store refuses the delete of the refresh key, so that credential is still live.
     // Expected: its member is still in the session index, and a later revoke-all against a healthy
     // store finds it and ends it. Why: the sweep revokes only what the index names, so a member
     // pruned while its credential survives leaves a session that "sign out everywhere" cannot reach.
     it('should keep the index member of a credential it could not delete, so revoke-all still finds it', async () => {
-      refusal.current = { command: 'del', keyPart: 'prt:' }
+      // The sign-in is removed by a script, so a store that cannot delete the key refuses both.
+      const script = { command: 'eval', keyPart: 'local ns, rt, sd, sess_key' }
+      refusal.current = { command: 'del', keyPart: 'prt:', also: script }
       const failed = await logout()
       expect(failed.status).toBeGreaterThanOrEqual(500)
       expect(await store.keys('*prt:*')).toHaveLength(1)

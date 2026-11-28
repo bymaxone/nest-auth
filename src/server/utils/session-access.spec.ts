@@ -5,6 +5,7 @@
  */
 
 import {
+  endSignIn,
   logoutAccessWrites,
   revokeSessionAccess,
   sessionRevocationTtlSeconds
@@ -50,6 +51,47 @@ describe('sessionRevocationTtlSeconds', () => {
   })
 })
 
+/** What `revokeFamily` answers for a family naming these sessions. */
+const family = (sessionHashes: string[]) => ({
+  removed: sessionHashes.length,
+  sessionHashes,
+  ownerId: 'u1',
+  tenantId: 't1'
+})
+
+describe('endSignIn', () => {
+  // Scenario: a family on each plane. Expected: its sessions removed first, then the entry written,
+  // and the sessions it named answered.
+  it.each([
+    ['dashboard' as const, 'rvs'],
+    ['platform' as const, 'prvs']
+  ])('removes the %s sessions before writing the entry', async (plane, prefix) => {
+    const set = jest.fn(async () => undefined)
+    const revokeFamily = jest.fn(async () => family(['a', 'b']))
+
+    await expect(endSignIn({ set, revokeFamily }, plane, familyId, '5m')).resolves.toEqual([
+      'a',
+      'b'
+    ])
+
+    expect(revokeFamily.mock.calls).toEqual([[familyId, plane]])
+    expect(set.mock.calls).toEqual([[`${prefix}:${familyId}`, '1', 360]])
+    expect(revokeFamily.mock.invocationCallOrder[0]).toBeLessThan(
+      set.mock.invocationCallOrder[0] ?? 0
+    )
+  })
+
+  // Scenario: a record with no family a token could carry. Expected: nothing removed or written.
+  it.each([undefined, '', 'family:1', 7])('does nothing for %p', async (value) => {
+    const set = jest.fn(async () => undefined)
+    const revokeFamily = jest.fn(async () => family(['a']))
+
+    await expect(endSignIn({ set, revokeFamily }, 'dashboard', value, '5m')).resolves.toEqual([])
+
+    expect([revokeFamily.mock.calls, set.mock.calls]).toEqual([[], []])
+  })
+})
+
 describe('logoutAccessWrites', () => {
   const ended = { plane: 'dashboard' as const, familyId, accessExpiresIn: '5m' }
   const now = (): number => Math.floor(Date.now() / 1000)
@@ -57,7 +99,11 @@ describe('logoutAccessWrites', () => {
   /** The writes made when `verify` answers as given. */
   async function written(verify: () => { jti: string; exp: number }): Promise<unknown[]> {
     const set = jest.fn(async () => undefined)
-    for (const write of logoutAccessWrites({ set }, ended, verify)) await write()
+    const revokeFamily = jest.fn(async () => family(['h']))
+    const told = jest.fn()
+    const session = { ...ended, ended: told }
+    for (const write of logoutAccessWrites({ set, revokeFamily }, session, verify)) await write()
+    expect(told.mock.calls).toEqual([[['h']]])
     return set.mock.calls
   }
 

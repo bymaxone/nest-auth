@@ -114,6 +114,16 @@ describe('access tokens of an ended session (E2E)', () => {
     return res.body as Tokens
   }
 
+  async function refreshStatus(path: string, tokens: Tokens): Promise<number> {
+    const res = await request(server()).post(path).send({ refreshToken: tokens.refreshToken })
+    return res.status
+  }
+
+  /** Presents one refresh token twice inside its grace window: two live sessions of one sign-in. */
+  async function siblings(path: string, first: Tokens): Promise<[Tokens, Tokens]> {
+    return [await rotate(path, first), await rotate(path, first)]
+  }
+
   /** Closes the grace window by removing its pointers, so no row has to wait it out. */
   async function closeGraceWindow(): Promise<void> {
     for (const key of await boot.redis.keys('*rp:*')) {
@@ -267,6 +277,94 @@ describe('access tokens of an ended session (E2E)', () => {
       await boot.app.get(AuthService).logout(current.accessToken, current.refreshToken)
 
       expect(await me(earlier)).toBe(401)
+    })
+  })
+
+  // Two sessions of one sign-in share a `sid`, so ending one ends both: none is left able to
+  // refresh into an access token that is then refused.
+  describe('two sessions of one sign-in', () => {
+    beforeEach(() => start())
+
+    const named = (): string[] => events.flatMap((event) => event.sessionIds ?? [])
+
+    it.each([
+      [
+        'logout',
+        async (_userId: string, target: Tokens): Promise<void> => logout('/logout', target)
+      ],
+      [
+        'SessionService.revokeSession',
+        async (userId: string, target: Tokens): Promise<void> =>
+          boot.app.get(SessionService).revokeSession({
+            userId,
+            tenantId: TENANT,
+            sessionHash: hashOf(target.refreshToken)
+          })
+      ]
+    ])('ends both when one is ended by %s', async (_name, end) => {
+      const account = await register()
+      const other = await login(account.email)
+      const [kept, target] = await siblings('/refresh', account)
+
+      await end(account.userId, target)
+      await settled()
+
+      expect(await refreshStatus('/refresh', kept)).toBe(401)
+      expect(await me(kept)).toBe(401)
+      expect([await me(other), await refreshStatus('/refresh', other)]).toEqual([200, 200])
+      expect(named()).toEqual(
+        expect.arrayContaining([hashOf(kept.refreshToken), hashOf(target.refreshToken)])
+      )
+    })
+
+    it('ends both when one is ended by DELETE /sessions/:id', async () => {
+      const account = await register()
+      const caller = await login(account.email)
+      const [kept, target] = await siblings('/refresh', account)
+
+      await deleteSession(caller, target)
+      await settled()
+
+      expect(await refreshStatus('/refresh', kept)).toBe(401)
+      expect(await me(kept)).toBe(401)
+      expect([await me(caller), await refreshStatus('/refresh', caller)]).toEqual([200, 200])
+      expect(named()).toEqual(
+        expect.arrayContaining([hashOf(kept.refreshToken), hashOf(target.refreshToken)])
+      )
+    })
+
+    it('ends both on the platform plane when one signs out', async () => {
+      const first = await platformLogin()
+      const other = await platformLogin()
+      const [kept, target] = await siblings('/platform/refresh', first)
+
+      await logout('/platform/logout', target)
+      await settled()
+
+      expect(await refreshStatus('/platform/refresh', kept)).toBe(401)
+      expect(await platformMe(kept)).toBe(401)
+      expect(await refreshStatus('/platform/refresh', other)).toBe(200)
+      expect(named()).toEqual(
+        expect.arrayContaining([hashOf(kept.refreshToken), hashOf(target.refreshToken)])
+      )
+    })
+  })
+
+  describe('session limit of two', () => {
+    beforeEach(() => start({ defaultMaxSessions: 2 }))
+
+    it('ends both sessions of one sign-in when the limit pushes one out', async () => {
+      const account = await register()
+      const pair = await siblings('/refresh', account)
+
+      const kept = await login(account.email)
+      await settled()
+
+      expect([
+        await refreshStatus('/refresh', pair[0]),
+        await refreshStatus('/refresh', pair[1])
+      ]).toEqual([401, 401])
+      expect([await me(pair[0]), await me(pair[1]), await me(kept)]).toEqual([401, 401, 200])
     })
   })
 

@@ -47,7 +47,7 @@ import { removeStoredSession } from '../utils/remove-session'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
-import { logoutAccessWrites } from '../utils/session-access'
+import { logoutAccessWrites, type EndedSessionAccess } from '../utils/session-access'
 import { revokeEverySession } from '../utils/session-revocation'
 import { detached, checked, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst, settleWrites } from '../utils/settle-writes'
@@ -563,7 +563,7 @@ export class AuthService {
     const notice = logoutNotice(this.hooks, this.logger, { userId, tenantId, sessionHash })
     const failures = await pinned(
       settleWrites([
-        ...this.blacklistWrites(accessToken, familyId),
+        ...this.blacklistWrites(accessToken, { familyId, ended: notice.signInEnded }),
         (): Promise<unknown> => notice.after(this.redis.del(`rt:${sessionHash}`)),
         (): Promise<unknown> => this.redis.del(`rp:${sessionHash}`)
       ])
@@ -596,15 +596,15 @@ export class AuthService {
    * The writes of this logout that end access tokens, from {@link logoutAccessWrites}.
    *
    * @param accessToken - Raw access token; absent, malformed or expired adds no blacklist entry.
-   * @param familyId - The family id the session record names, if any.
+   * @param ended - The family id the session record names, and who is told what ended.
    * @returns The writes to hand to `settleWrites`.
    */
   private blacklistWrites(
     accessToken: string,
-    familyId: string | undefined
+    ended: Pick<EndedSessionAccess, 'familyId' | 'ended'>
   ): Array<() => Promise<unknown>> {
-    const ended = { familyId, accessExpiresIn: this.options.jwt.accessExpiresIn }
-    return logoutAccessWrites(this.redis, { plane: 'dashboard', ...ended }, () =>
+    const session = { ...ended, accessExpiresIn: this.options.jwt.accessExpiresIn }
+    return logoutAccessWrites(this.redis, { plane: 'dashboard', ...session }, () =>
       this.tokenManager.verifyIgnoringExpiry(accessToken)
     )
   }

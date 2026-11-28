@@ -359,19 +359,17 @@ export class SessionService {
    * Revokes a single session belonging to the specified user.
    *
    * Once `SISMEMBER` has proved ownership, deletes the refresh token, its detail and its member
-   * of the user's session SET, and ends that session's access tokens. When the record names no
-   * family, those access tokens last until they expire.
+   * of the user's session SET, then ends its sign-in: any other session of the same refresh family
+   * and the access tokens of all of them. When the record names no family, the access tokens last
+   * until they expire.
    *
    * @param userId - Internal user ID who owns the session.
    * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    await pinned(
-      endStoredSession(this.redis, this.options, { userId, tenantId, sessionHash }, () => {
-        this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
-      })
-    )
+    const session = { userId, tenantId, sessionHash }
+    await pinned(endStoredSession(this.redis, this.options, session, this.announceEnded(session)))
   }
 
   /**
@@ -386,16 +384,11 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeOtherSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
+    const session = { userId, tenantId, sessionHash }
+    const bump = (): Promise<unknown> =>
+      this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
     await pinned(
-      endStoredSession(
-        this.redis,
-        this.options,
-        { userId, tenantId, sessionHash },
-        () => {
-          this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
-        },
-        (): Promise<unknown> => this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
-      )
+      endStoredSession(this.redis, this.options, session, this.announceEnded(session), bump)
     )
   }
 
@@ -776,6 +769,12 @@ export class SessionService {
     const index = this.indexKey(userId, tenantId)
     const request = { userId, tenantId, ip, userAgent, index, jwt: this.options.jwt }
     await pinned(evictSessions(this.redis, this.hooks, this.logger, request, toEvict))
+  }
+
+  /** Announces the removal of one session, with the others of its sign-in. */
+  private announceEnded({ userId, tenantId }: RevokeSessionParams): (ids: string[]) => void {
+    return (sessionIds) =>
+      this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds })
   }
 
   /** Announces a revocation of dashboard sessions through `onSessionsRevoked`. */

@@ -1096,6 +1096,8 @@ Where the table says **logged**, the call is not awaited: a throw or a rejection
 
 `onSessionsRevoked` is the one hook to implement when the host keeps state per session, such as open sockets or a cache. The more specific hooks in the table still fire beside it.
 
+Ending one session ends its whole sign-in, so `sessionIds` can name more than one session; a logout names the others in a second event.
+
 It receives `{ userId, tenantId?, plane, reason, sessionIds? }`. `tenantId` is absent on the platform plane and for a session record that names none. `sessionIds` holds the SHA-256 hashes of the revoked refresh sessions when the operation names them; when it is absent, the event does not say which sessions ended, so treat any session of that account as possibly revoked.
 
 | `reason`                 | What revoked                                                                                                      | `sessionIds` |
@@ -1643,7 +1645,7 @@ The `tenantId` is always extracted from the validated JWT — never from the req
 
 ### Token Revocation via Redis JTI Blacklist
 
-Access tokens are short-lived (default 15 minutes) and immediately revocable: a Redis JTI blacklist refuses one token, and an entry keyed by the token's `sid` refuses every access token of a session that ended and leaves the account's other sessions alone. Refresh tokens rotate on every use with a configurable grace window to handle concurrent requests. This is the industry-standard hybrid approach used by Auth0, Okta, and SuperTokens — combining short lifetimes for low-latency revocation with rotating refresh tokens for session continuity.
+Access tokens are short-lived (default 15 minutes) and immediately revocable: a Redis JTI blacklist refuses one token, and an entry keyed by the token's `sid` refuses every access token of a sign-in that ended and leaves the account's other sign-ins alone. Ending one session (logout, eviction, revocation or a replayed refresh token) ends every refresh session of its sign-in. Refresh tokens rotate on every use with a configurable grace window to handle concurrent requests. This is the industry-standard hybrid approach used by Auth0, Okta, and SuperTokens — combining short lifetimes for low-latency revocation with rotating refresh tokens for session continuity.
 
 ### A Process That Changes Its Own Built-ins
 
@@ -1797,8 +1799,10 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 > bearer client that sends none, or a refresh cookie whose path does not cover the route), it marks the
 > sessions of the login the access token's `sid` names.
 
-> **`DELETE /sessions/:id` ends the named session and its access tokens only.** The other
-> sessions keep working. When the stored session names no family, it
+> **`DELETE /sessions/:id` ends the sign-in of the named session, and only that one.** Its refresh
+> sessions and access tokens end; other sign-ins keep working. A sign-in holds two sessions when a
+> refresh token was replayed inside the grace window, and revoking either one ends both, including
+> the caller's own if it is one of them. When the stored session names no family, it
 > advances the account's token epoch instead, so every access token of the account answers `401`
 > until its client refreshes. `POST /sessions/revoke-all` always advances the epoch.
 

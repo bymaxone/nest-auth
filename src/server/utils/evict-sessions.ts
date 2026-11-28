@@ -8,13 +8,19 @@ import type { Logger } from '@nestjs/common'
 
 import { describeChannelStatus } from './describe-error'
 import { runDetached } from './run-detached'
-import { revokeSessionAccess } from './session-access'
+import { endSignIn } from './session-access'
 import { announceSessionsRevoked } from './session-revocation'
 import { pinned } from './settle'
 import { raiseFirst, settleWrites } from './settle-writes'
 import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import { logEvent } from '../observability/log-event'
 import type { AuthRedisService } from '../redis/auth-redis.service'
+
+/** The store operations an eviction needs. */
+export type EvictionStore = Pick<
+  AuthRedisService,
+  'del' | 'srem' | 'set' | 'readSessionOwner' | 'revokeFamily'
+>
 
 /** The account and the request an eviction pass is made for, and the account's session index. */
 export interface EvictionRequest {
@@ -45,22 +51,26 @@ function evictionContext({
 }
 
 /**
- * Removes one evicted session and ends its access tokens. `onRemoved` runs once the refresh token
- * is deleted; the writes after it are all attempted, and the first failure is raised.
+ * Removes one evicted session and ends its sign-in. `onRemoved` is given its hash once the refresh
+ * token is deleted, and the hashes of the sign-in once that is ended; the writes after the delete
+ * are all attempted, and the first failure is raised.
  */
 async function removeEvicted(
-  redis: Pick<AuthRedisService, 'del' | 'srem' | 'set' | 'readSessionOwner'>,
+  redis: EvictionStore,
   { index, jwt }: Pick<EvictionRequest, 'index' | 'jwt'>,
   { member, memberHash }: { member: string; memberHash: string },
-  onRemoved: () => void
+  onRemoved: (sessionHashes: string[]) => void
 ): Promise<void> {
   const { familyId } = await pinned(redis.readSessionOwner(`rt:${memberHash}`))
   await pinned(redis.del(`rt:${memberHash}`))
-  onRemoved()
+  onRemoved([memberHash])
+  const endAccess = async (): Promise<void> => {
+    onRemoved(await pinned(endSignIn(redis, 'dashboard', familyId, jwt.accessExpiresIn)))
+  }
   raiseFirst(
     await pinned(
       settleWrites([
-        (): Promise<void> => revokeSessionAccess(redis, 'dashboard', familyId, jwt.accessExpiresIn),
+        endAccess,
         (): Promise<unknown> => redis.srem(index, member),
         (): Promise<unknown> => redis.del(`sd:${memberHash}`)
       ])
@@ -69,12 +79,12 @@ async function removeEvicted(
 }
 
 /**
- * Removes the sessions the limit pushed out. Each one whose three writes are accepted fires
+ * Removes the sessions the limit pushed out. Each one whose writes are all accepted fires
  * `onSessionEvicted`; the pass then fires `onSessionsRevoked` once, naming every session whose
- * refresh token was deleted.
+ * refresh token was deleted, the other sessions of its sign-in included.
  */
 export async function evictSessions(
-  redis: Pick<AuthRedisService, 'del' | 'srem' | 'set' | 'readSessionOwner'>,
+  redis: EvictionStore,
   hooks: IAuthHooks | null,
   logger: Logger,
   { userId, tenantId, ip, userAgent, index, jwt }: EvictionRequest,
@@ -82,15 +92,15 @@ export async function evictSessions(
 ): Promise<void> {
   const context = evictionContext({ userId, tenantId, ip, userAgent })
 
-  const evicted: string[] = []
+  const evicted = new Set<string>()
   for (const entry of toEvict) {
     try {
       // Best-effort eviction: partial Redis failures leave stale keys that expire via TTL.
       // The new session is already committed at this point — a mid-eviction failure
       // MUST NOT propagate back to createSession callers.
       await pinned(
-        removeEvicted(redis, { index, jwt }, entry, () => {
-          evicted.push(entry.memberHash)
+        removeEvicted(redis, { index, jwt }, entry, (sessionHashes) => {
+          for (const hash of sessionHashes) evicted.add(hash)
         })
       )
     } catch (err: unknown) {
@@ -111,13 +121,13 @@ export async function evictSessions(
     }
   }
 
-  if (evicted.length > 0) {
+  if (evicted.size > 0) {
     announceSessionsRevoked(hooks, logger, {
       userId,
       tenantId,
       plane: 'dashboard',
       reason: 'session_evicted',
-      sessionIds: evicted
+      sessionIds: [...evicted]
     })
   }
 }

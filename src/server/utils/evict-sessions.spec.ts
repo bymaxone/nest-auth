@@ -7,7 +7,7 @@
 import { Logger } from '@nestjs/common'
 
 import { evictSessions } from './evict-sessions'
-import type { AuthRedisService } from '../redis/auth-redis.service'
+import type { EvictionStore } from './evict-sessions'
 
 const request = {
   userId: 'u1',
@@ -27,10 +27,14 @@ const entries = [
 ]
 
 /** A store that refuses to delete the keys named. */
-function store(
-  refused: string[] = []
-): Pick<AuthRedisService, 'del' | 'srem' | 'set' | 'readSessionOwner'> {
+function store(refused: string[] = [], siblings: string[] = []): EvictionStore {
   return {
+    revokeFamily: jest.fn(async () => ({
+      removed: siblings.length,
+      sessionHashes: siblings,
+      ownerId: 'u1',
+      tenantId: 't1'
+    })),
     readSessionOwner: jest.fn(async (key: string) => ({
       userId: 'u1',
       tenantId: 't1',
@@ -79,6 +83,21 @@ describe('evictSessions', () => {
         }
       ]
     ])
+  })
+
+  // Scenario: the evicted session shares its sign-in with others. Expected: all named, each once,
+  // and one eviction hook for the session the limit chose.
+  it('names the other sessions of an evicted sign-in', async () => {
+    const hooks = { onSessionsRevoked: jest.fn(), onSessionEvicted: jest.fn() }
+    const redis = store([], ['c', 'a'])
+
+    await evictSessions(redis, hooks, new Logger(), request, [{ member: 'rt:a', memberHash: 'a' }])
+
+    expect(redis.revokeFamily).toHaveBeenCalledWith(familyOf['rt:a'], 'dashboard')
+    expect(hooks.onSessionsRevoked).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionIds: ['a', 'c'] })
+    )
+    expect(hooks.onSessionEvicted.mock.calls.map((call) => call[1])).toEqual(['a'])
   })
 
   // Scenario: one session cannot be deleted. Expected: only the deleted one is named.

@@ -65,3 +65,39 @@ describe('logoutNotice', () => {
     expect(hooks.afterLogout).not.toHaveBeenCalled()
   })
 })
+
+describe('logoutNotice — the end of the sign-in', () => {
+  // Scenario: the sign-in held a second session. Expected: the session signing out first, once,
+  // then the other in an event of its own, and nothing again on completion.
+  it('names the session signing out and then the others', () => {
+    const hooks = recording()
+    const notice = logoutNotice(hooks, new Logger(), ended)
+
+    notice.signInEnded(['h2', 'h1'])
+    expect(hooks.onSessionsRevoked.mock.calls).toStrictEqual([
+      [{ ...named, tenantId: 't1' }],
+      [{ ...named, tenantId: 't1', sessionIds: ['h2'] }]
+    ])
+    notice.completed()
+
+    expect(hooks.onSessionsRevoked).toHaveBeenCalledTimes(2)
+  })
+
+  // Scenario: the sign-in held only the session signing out. Expected: its one event.
+  it('says one thing for a sign-in of one session', () => {
+    const hooks = recording()
+
+    logoutNotice(hooks, new Logger(), ended).signInEnded(['h1'])
+
+    expect(hooks.onSessionsRevoked.mock.calls).toStrictEqual([[{ ...named, tenantId: 't1' }]])
+  })
+
+  // Scenario: nothing was removed. Expected: no event.
+  it('says nothing when the sign-in held no session', () => {
+    const hooks = recording()
+
+    logoutNotice(hooks, new Logger(), ended).signInEnded([])
+
+    expect(hooks.onSessionsRevoked).not.toHaveBeenCalled()
+  })
+})

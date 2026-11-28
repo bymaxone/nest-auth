@@ -43,7 +43,13 @@ const RAW_REFRESH = 'raw-refresh-token'
 const HASH = createHash('sha256').update(RAW_REFRESH).digest('hex')
 const JTI = 'jti-under-test'
 
-const mockRedis = { readSessionOwner: jest.fn(), set: jest.fn(), del: jest.fn(), get: jest.fn() }
+const mockRedis = {
+  revokeFamily: jest.fn(),
+  readSessionOwner: jest.fn(),
+  set: jest.fn(),
+  del: jest.fn(),
+  get: jest.fn()
+}
 const mockTokenManager = { verifyIgnoringExpiry: jest.fn() }
 const mockSessionService = {}
 const mockHooks = { afterLogout: jest.fn(), onSessionsRevoked: jest.fn() }
@@ -72,6 +78,7 @@ describe('AuthService.logout — refused revocation writes', () => {
     jest.resetAllMocks()
     mockRedis.readSessionOwner.mockResolvedValue({ userId: 'user-1', tenantId: 'tenant-1' })
     mockRedis.set.mockResolvedValue(undefined)
+    mockRedis.revokeFamily.mockResolvedValue({ sessionHashes: [] })
     mockRedis.del.mockResolvedValue(true)
     jest.mocked(removeStoredSession).mockResolvedValue(undefined)
     mockHooks.afterLogout.mockResolvedValue(undefined)

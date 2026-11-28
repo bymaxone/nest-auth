@@ -10,7 +10,7 @@
  */
 
 import { rethrowRefusal } from './object-prototype-guard'
-import { pinned } from './settle'
+import { checked, pinned } from './settle'
 import { durationToSeconds } from '../config/duration'
 import { sessionId } from '../constants/session-id'
 import type { AuthRedisService } from '../redis/auth-redis.service'
@@ -63,33 +63,63 @@ export async function revokeSessionAccess(
   await pinned(redis.set(sessionRevocationKey(plane, sid), '1', ttl))
 }
 
+/**
+ * Ends one sign-in: every live refresh session of the family, then their access tokens.
+ *
+ * A grace-window recovery leaves two sessions under one family id, so the entry refuses the access
+ * tokens of both. The sessions are removed first and the entry written only once they are, so no
+ * session is left able to refresh into an access token that is then refused.
+ *
+ * @param redis - The store.
+ * @param plane - The plane the sessions belong to.
+ * @param familyId - The family id read from the record of the session being ended.
+ * @param accessExpiresIn - The resolved `jwt.accessExpiresIn` time span.
+ * @returns The hashes the family named; empty when `familyId` is not one a token could carry.
+ */
+export async function endSignIn(
+  redis: Pick<AuthRedisService, 'revokeFamily' | 'set'>,
+  plane: SessionPlane,
+  familyId: unknown,
+  accessExpiresIn: string
+): Promise<string[]> {
+  const sid = sessionId(familyId)
+  if (sid === undefined) return checked([])
+  const { sessionHashes } = await pinned(redis.revokeFamily(sid, plane))
+  await pinned(revokeSessionAccess(redis, plane, sid, accessExpiresIn))
+  return checked(sessionHashes)
+}
+
 /** The session a logout ends, and how long an access token lives. */
 export interface EndedSessionAccess {
   plane: SessionPlane
   familyId: string | undefined
   accessExpiresIn: string
+  /** Told every session hash the sign-in held, once they are ended. */
+  ended: (sessionHashes: string[]) => void
 }
 
 /**
  * The writes of a logout that end access tokens: the blacklist entry of the presented token, and
- * the entry of its whole session.
+ * the end of its whole sign-in.
  *
  * `verify` checks signature and algorithm but not expiry: an expired token is the normal case at a
  * logout, and a forged one must not blacklist an id it does not own. Only the verification is
  * tolerant — absent, malformed or signed by a secret nobody holds yields no blacklist write.
  *
  * @param redis - The store.
- * @param ended - The plane and family id from the session's own record, and the access lifetime.
+ * @param session - The plane and family id from the session's own record, the access lifetime, and
+ *   who is told which sessions ended.
  * @param verify - Verifies the presented access token, ignoring its expiry.
  * @returns The writes to hand to `settleWrites`.
  */
 export function logoutAccessWrites(
-  redis: Pick<AuthRedisService, 'set'>,
-  { plane, familyId, accessExpiresIn }: EndedSessionAccess,
+  redis: Pick<AuthRedisService, 'revokeFamily' | 'set'>,
+  { plane, familyId, accessExpiresIn, ended }: EndedSessionAccess,
   verify: () => { jti: string; exp: number }
 ): Array<() => Promise<unknown>> {
-  const endSession = (): Promise<unknown> =>
-    revokeSessionAccess(redis, plane, familyId, accessExpiresIn)
+  const endSession = async (): Promise<void> => {
+    ended(await pinned(endSignIn(redis, plane, familyId, accessExpiresIn)))
+  }
   try {
     const payload = verify()
     const remainingTtl = payload.exp - Math.floor(Date.now() / 1000)
