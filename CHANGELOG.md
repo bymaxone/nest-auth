@@ -53,7 +53,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   calls `resetMfa` on accounts it has not checked must check `mfaEnabled` first.
 
 - A logout on either plane that is refused the removal of the sign-in's sessions keeps the stored
-  refresh session, so a logout repeated at any later time ends it. The call still answers an error.
+  refresh session, so a logout repeated at any later time, before that token is refreshed, ends it.
+  The call still answers an error.
 
   **Apply to a derived backend:** nothing to change.
 
@@ -91,7 +92,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 When the store accepts some writes of an operation and refuses others:
 
 - Logout, session entry refused: the call errors, and until a repeated logout succeeds access
-  tokens of the sign-in are accepted. Refresh is refused.
+  tokens of the sign-in, other than the one presented, are accepted. Refresh is refused.
 - Logout, family removal refused: the call errors, and until a repeated logout succeeds the
   presented refresh token still refreshes.
 - Eviction past the session limit, session entry or family removal refused: the login that caused
