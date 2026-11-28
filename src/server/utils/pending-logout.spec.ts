@@ -9,7 +9,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { expectEvent } from '../__tests__/log-events'
 import type { AuthRedisService } from '../redis/auth-redis.service'
-import { rememberPendingLogout, settlePendingLogout } from './pending-logout'
+import { rememberPendingLogout, settleLogoutWrites, settlePendingLogout } from './pending-logout'
 
 const KEY = 'lp:abc'
 const OWNER = { userId: 'user-1', tenantId: 'tenant-1' }
@@ -67,6 +67,70 @@ describe('pending logout marker', () => {
 
       expect(logger.warn).toHaveBeenCalledTimes(1)
       expectEvent(warned, 'AUTH_STORE_DEGRADED', KEPT, [KEY, 'user-1'])
+    })
+  })
+
+  describe('settleLogoutWrites', () => {
+    const marker = { redis: asRedis, key: KEY, owner: OWNER, ttlSeconds: 900, logger: asLogger }
+
+    /** Runs the writes, each refused when named, and says what ran and what was raised. */
+    async function settle(
+      refused: string[],
+      keep: typeof marker | null = marker
+    ): Promise<{ ran: string[]; raised: string[] }> {
+      const ran: string[] = []
+      const write = (name: string) => (): Promise<void> => {
+        ran.push(name)
+        return refused.includes(name) ? Promise.reject(new Error(name)) : Promise.resolve()
+      }
+      redis.set.mockImplementation(write('marker'))
+      const failures = await settleLogoutWrites(
+        {
+          access: [write('token'), write('end')],
+          session: [write('session')],
+          rest: [write('rest')]
+        },
+        keep ?? undefined
+      )
+      return { ran, raised: failures.map((failure) => (failure as Error).message) }
+    }
+
+    // The session is deleted once the sign-in has ended, and then the marker is written for any
+    // failure. With the sign-in live the session stays and no marker is needed.
+    it.each([
+      ['nothing', [], ['token', 'end', 'session', 'rest'], []],
+      ['a token write', ['token'], ['token', 'end', 'session', 'rest', 'marker'], ['token']],
+      ['the end of the sign-in', ['end'], ['token', 'end', 'rest'], ['end']],
+      [
+        'the deletion of the session',
+        ['session'],
+        ['token', 'end', 'session', 'rest', 'marker'],
+        ['session']
+      ],
+      ['a later write', ['rest'], ['token', 'end', 'session', 'rest', 'marker'], ['rest']]
+    ])('with %s refused', async (_name, refused, ran, raised) => {
+      await expect(settle(refused)).resolves.toEqual({ ran, raised })
+    })
+
+    // A refused marker adds no error: the logout is already failing.
+    it('raises only the write that failed when the marker is refused too', async () => {
+      const result = await settle(['rest', 'marker'])
+
+      expect(result.raised).toEqual(['rest'])
+    })
+
+    // Every failure is returned, in the order its write ran.
+    it('returns every error in the order of the writes', async () => {
+      const result = await settle(['token', 'session', 'rest'])
+
+      expect(result.raised).toEqual(['token', 'session', 'rest'])
+    })
+
+    // With no marker to write, the owner came from one already, and there is no session to keep.
+    it('deletes the session when there is no marker to write', async () => {
+      const result = await settle(['end'], null)
+
+      expect(result).toEqual({ ran: ['token', 'end', 'session', 'rest'], raised: ['end'] })
     })
   })
 

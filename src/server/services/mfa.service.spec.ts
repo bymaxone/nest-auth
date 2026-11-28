@@ -2676,22 +2676,22 @@ describe('MfaService', () => {
       expect(mockPlatformUserRepo.findById).not.toHaveBeenCalled()
     })
 
-    // Scenario: the account has no second factor. Expected: nothing happens, and no error.
-    // Why: a support desk retrying a job already done should not be told it failed — the same
-    // idempotence `unlockAccount` promises. Asserting the writes did NOT happen is what
-    // separates this from a method that quietly re-runs the whole teardown on every call.
-    it('is a no-op for an account with no second factor', async () => {
+    // Scenario: the account has no second factor. Expected: no error, no write to the record, no
+    // notification, and the sessions ended all the same. Why: a repeat of a reset that cleared the
+    // factor and could not end the sessions reads no factor, and must not report them as ended.
+    it('only ends the sessions of an account with no second factor', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: false })
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
       await expect(service.resetMfa('user-1', 'dashboard', 'tenant-1')).resolves.toBeUndefined()
 
       expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
-      expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledTimes(1)
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
       expect(mockEmailProvider.sendMfaDisabledNotification).not.toHaveBeenCalled()
       // The event is the only record this call happened at all — the return value is the same
       // `undefined` a real reset produces, so without it an operator cannot tell a
-      // no-op apart from a removal in the audit trail.
+      // call that cleared nothing apart from a removal in the audit trail.
       expectEvent(logSpy, 'AUTH_MFA_NOTHING_TO_RESET', DASHBOARD_USER)
       logSpy.mockRestore()
     })

@@ -32,17 +32,17 @@ import type {
 } from '../interfaces/platform-user-repository.interface'
 import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { logoutNotice } from '../utils/announce-logout'
+import { logoutNotice, type LogoutNotice } from '../utils/announce-logout'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { platformUserAsSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
-import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
+import { settleLogoutWrites, settlePendingLogout, type LogoutWrites } from '../utils/pending-logout'
 import { runDetached } from '../utils/run-detached'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { logoutAccessWrites, type EndedSessionAccess } from '../utils/session-access'
 import { revokeEverySession } from '../utils/session-revocation'
 import { checked, pinned, PinnedAll } from '../utils/settle'
-import { raiseFirst, settleAfter, settleWrites } from '../utils/settle-writes'
+import { raiseFirst, settleAfter } from '../utils/settle-writes'
 
 /** What the two login events of the platform plane have in common. */
 const PASSWORD_LOGIN = { plane: 'platform', via: 'password' } as const
@@ -216,8 +216,8 @@ export class PlatformAuthService {
     // out. Claims read from an access token would not name the owner once it has expired.
     //
     // A session that is gone may belong to an earlier attempt that failed part-way: that attempt
-    // deletes the refresh session whatever else it could not write, and leaves a short-lived
-    // marker naming its owner for exactly this call, written from the session record.
+    // keeps the session while its sign-in is live, and otherwise leaves a short-lived marker naming
+    // its owner for exactly this call, written from the session record.
     const tokenHash = sha256(rawRefreshToken)
     const markerKey = logoutPendingKey('platform', tokenHash)
     const live = await pinned(this.redis.readSessionOwner(`prt:${tokenHash}`))
@@ -226,33 +226,19 @@ export class PlatformAuthService {
     const { userId, familyId } = record
     logEvent(this.logger, 'AUTH_LOGOUT', { plane: 'platform', ...(userId ? { userId } : {}) })
 
-    // All writes are attempted, then the first failure raised. An index member or detail is pruned
-    // only once its credential is gone: the revoke-all sweep ends only what the index names.
-    const index = userId ? sessionIndexKey('platform', userId, this.options.hmacKey, undefined) : ''
-    const prune = (member: string): Array<() => Promise<unknown>> =>
-      index === '' ? [] : [(): Promise<unknown> => this.redis.srem(index, member)]
     const owner = { userId, tenantId: undefined, familyId }
     const ended = { ...owner, sessionHash: tokenHash }
     const notice = logoutNotice(this.hooks, this.logger, ended, 'platform')
-    const failures = await pinned(
-      settleWrites([
-        ...this.blacklistWrites(accessToken, { familyId, ended: notice.signInEnded }),
-        settleAfter(
-          (): Promise<unknown> => notice.after(this.redis.del('prt:' + tokenHash)),
-          [...prune('prt:' + tokenHash), (): Promise<unknown> => this.redis.del('psd:' + tokenHash)]
-        ),
-        settleAfter(
-          (): Promise<unknown> => this.redis.del('prp:' + tokenHash),
-          prune('prp:' + tokenHash)
-        )
-      ])
-    )
-
-    // A refused write is not a completed logout: the owner is kept for the retry.
-    const markerTtl = logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn)
-    if (failures.length > 0 && fromSession) {
-      await pinned(rememberPendingLogout(this.redis, markerKey, owner, markerTtl, this.logger))
+    const writes = {
+      access: this.blacklistWrites(accessToken, { familyId, ended: notice.signInEnded }),
+      ...this.recordWrites(userId, tokenHash, notice)
     }
+
+    // A refused write is not a completed logout: what its retry reads is kept.
+    const markerTtl = logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn)
+    const marker = { key: markerKey, owner, ttlSeconds: markerTtl }
+    const keep = fromSession ? { ...marker, redis: this.redis, logger: this.logger } : undefined
+    const failures = await pinned(settleLogoutWrites(writes, keep))
     raiseFirst(failures)
 
     if (
@@ -266,6 +252,34 @@ export class PlatformAuthService {
     }
 
     return userId
+  }
+
+  /**
+   * The writes of this logout that delete its records. An index member or detail is pruned only once
+   * its credential is gone: the revoke-all sweep ends only what the index names.
+   */
+  private recordWrites(
+    userId: string,
+    tokenHash: string,
+    notice: LogoutNotice
+  ): Omit<LogoutWrites, 'access'> {
+    const index = userId ? sessionIndexKey('platform', userId, this.options.hmacKey, undefined) : ''
+    const prune = (member: string): Array<() => Promise<unknown>> =>
+      index === '' ? [] : [(): Promise<unknown> => this.redis.srem(index, member)]
+    return {
+      session: [
+        settleAfter(
+          (): Promise<unknown> => notice.after(this.redis.del('prt:' + tokenHash)),
+          [...prune('prt:' + tokenHash), (): Promise<unknown> => this.redis.del('psd:' + tokenHash)]
+        )
+      ],
+      rest: [
+        settleAfter(
+          (): Promise<unknown> => this.redis.del('prp:' + tokenHash),
+          prune('prp:' + tokenHash)
+        )
+      ]
+    }
   }
 
   /**

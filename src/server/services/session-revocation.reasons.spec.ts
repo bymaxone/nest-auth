@@ -27,7 +27,8 @@ const redis = {
   smembers: jest.fn(),
   del: jest.fn(),
   srem: jest.fn(),
-  readSessionOwner: jest.fn()
+  readSessionOwner: jest.fn(),
+  sismember: jest.fn()
 }
 
 /** Builds a service from positional collaborators the test does not need to type. */
@@ -42,6 +43,7 @@ beforeEach(() => {
   jest.resetAllMocks()
   redis.eval.mockResolvedValue(1)
   redis.readSessionOwner.mockResolvedValue({})
+  redis.sismember.mockResolvedValue(true)
   redis.smembers.mockResolvedValue([`rt:${kept}`, `rt:${other}`])
   jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 })
@@ -66,13 +68,15 @@ describe('SessionService', () => {
     expect(events()).toEqual([revoked('session_revoked', [other])])
   })
 
-  // Scenario: the epoch write after the removal is refused. Expected: announced all the same.
-  it('announces another session even when the epoch write is refused', async () => {
+  // Scenario: the epoch write of a session that names no family is refused. Expected: nothing is
+  // removed or announced, so the call is there to be repeated.
+  it('announces nothing when the epoch write is refused', async () => {
     redis.bumpUserTokenEpoch.mockRejectedValue(new Error('refused'))
 
     await expect(sessions().revokeOtherSession(target)).rejects.toThrow('refused')
 
-    expect(events()).toEqual([revoked('session_revoked', [other])])
+    expect(redis.eval).not.toHaveBeenCalled()
+    expect(events()).toEqual([])
   })
 
   // Scenario: every other session revoked, with and without a reason given.

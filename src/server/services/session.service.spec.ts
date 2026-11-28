@@ -81,7 +81,8 @@ const mockRedis = {
   pruneExpiredGraceMembers: jest.fn<Promise<number>, [string, string]>().mockResolvedValue(0),
   pruneDeadMembers: jest.fn<Promise<number>, [string, string[]]>().mockResolvedValue(0),
   bumpUserTokenEpoch: jest.fn(),
-  readSessionOwner: jest.fn().mockResolvedValue({})
+  readSessionOwner: jest.fn().mockResolvedValue({}),
+  sismember: jest.fn().mockResolvedValue(true)
 }
 
 const mockUserRepo = {
@@ -1824,11 +1825,10 @@ describe('SessionService', () => {
       expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
     })
 
-    // After the revoke, never before: a failure in the revoke must leave the epoch untouched
-    // and the operation visibly incomplete, rather than signing every device out of its access
-    // token for a session that is in fact still alive.
-    it('writes nothing when the session was not revoked', async () => {
-      mockRedis.eval.mockResolvedValue(0)
+    // Never for a session the account does not own: that would sign every device out of its access
+    // token on a request that revoked nothing.
+    it('writes nothing when the account does not own the session', async () => {
+      mockRedis.sismember.mockResolvedValueOnce(false)
 
       await expect(
         service.revokeOtherSession({

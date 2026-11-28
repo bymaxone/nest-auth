@@ -57,6 +57,8 @@ const config: Config = {
     '<rootDir>/real-redis/string-replies.e2e-spec.ts',
     // A store that stops answering: the suite pauses and stops its own container.
     '<rootDir>/real-redis/redis-outage.e2e-spec.ts',
+    // A revocation the server refuses by ACL: only a real server refuses a key a script declares.
+    '<rootDir>/real-redis/partial-revoke.e2e-spec.ts',
     // A client with `keyPrefix`: the names the scripts build must be the ones the client writes.
     '<rootDir>/real-redis/key-prefix.e2e-spec.ts'
   ],

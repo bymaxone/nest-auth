@@ -42,7 +42,7 @@ import { resolveClientAddress } from '../utils/client-address'
 import { describeChannelStatus } from '../utils/describe-error'
 import { toSafeUser } from '../utils/mfa-safe-user'
 import { normalizeEmail } from '../utils/normalize-email'
-import { rememberPendingLogout, settlePendingLogout } from '../utils/pending-logout'
+import { settleLogoutWrites, settlePendingLogout } from '../utils/pending-logout'
 import { removeStoredSession } from '../utils/remove-session'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { runDetached } from '../utils/run-detached'
@@ -50,7 +50,7 @@ import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-heade
 import { logoutAccessWrites, type EndedSessionAccess } from '../utils/session-access'
 import { revokeEverySession } from '../utils/session-revocation'
 import { detached, checked, pinned, PinnedAll } from '../utils/settle'
-import { raiseFirst, settleWrites } from '../utils/settle-writes'
+import { raiseFirst } from '../utils/settle-writes'
 import { sleep } from '../utils/sleep'
 import { tenantScoped } from '../utils/tenant-scoped'
 
@@ -547,9 +547,9 @@ export class AuthService {
     // the record proves whose it is. Claims from an unverified token would not.
     //
     // A session that is gone may belong to an earlier attempt that failed part-way: that attempt
-    // deletes the refresh session whatever else it could not write, and leaves a short-lived
-    // marker naming its owner for exactly this call. The owner then comes from the marker, which
-    // this library wrote from the session record, never from a token's claims.
+    // keeps the session while its sign-in is live, and otherwise leaves a short-lived marker naming
+    // its owner for exactly this call. The owner then comes from the marker, which this library
+    // wrote from the session record, never from a token's claims.
     const sessionHash = sha256(rawRefreshToken)
     const markerKey = logoutPendingKey('dashboard', sessionHash)
     const live = await pinned(this.redis.readSessionOwner(`rt:${sessionHash}`))
@@ -558,25 +558,22 @@ export class AuthService {
     const { userId, tenantId, familyId } = record
     logEvent(this.logger, 'AUTH_LOGOUT', { plane: 'dashboard', ...(userId ? { userId } : {}) })
 
-    // Every revocation write is attempted, and the first failure raised once all have run. A token
-    // presented here may sit in its grace window, where a hit mints a session: `rp:` goes too.
+    // A failed attempt keeps what its retry reads; `rp:` goes too, since a grace hit mints.
     const notice = logoutNotice(this.hooks, this.logger, { userId, tenantId, sessionHash })
-    const failures = await pinned(
-      settleWrites([
-        ...this.blacklistWrites(accessToken, { familyId, ended: notice.signInEnded }),
-        (): Promise<unknown> => notice.after(this.redis.del(`rt:${sessionHash}`)),
-        (): Promise<unknown> => this.redis.del(`rp:${sessionHash}`)
-      ])
-    )
-    await pinned(notice.after(this.revokeSessionMetadata(userId, tenantId, sessionHash)))
-
-    // A refused revocation write is not a completed logout: no hook, and the caller is told so.
-    // The session record is already gone, so the owner is kept for the retry that will finish it.
     const markerTtl = logoutPendingTtlSeconds(this.options.jwt.accessExpiresIn)
     const owner = { userId, tenantId, familyId }
-    if (failures.length > 0 && fromSession) {
-      await pinned(rememberPendingLogout(this.redis, markerKey, owner, markerTtl, this.logger))
+    const marker = { key: markerKey, owner, ttlSeconds: markerTtl }
+    const writes = {
+      access: this.blacklistWrites(accessToken, { familyId, ended: notice.signInEnded }),
+      session: [
+        (): Promise<unknown> => notice.after(this.redis.del(`rt:${sessionHash}`)),
+        (): Promise<unknown> =>
+          notice.after(this.revokeSessionMetadata(userId, tenantId, sessionHash))
+      ],
+      rest: [(): Promise<unknown> => this.redis.del(`rp:${sessionHash}`)]
     }
+    const keep = fromSession ? { ...marker, redis: this.redis, logger: this.logger } : undefined
+    const failures = await pinned(settleLogoutWrites(writes, keep))
     raiseFirst(failures)
 
     // The hooks name who was signed out, so they fire only when the session or the marker said who.

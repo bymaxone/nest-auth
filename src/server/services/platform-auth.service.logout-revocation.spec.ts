@@ -95,8 +95,9 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
   })
 
   // Scenario: the entry that ends the session's access tokens is refused. Expected: logout rejects,
-  // and the marker for the retry keeps the family id. Why: the record that named it is gone.
-  it('should keep the family id for the retry when the session entry is refused', async () => {
+  // the refresh session stays and no marker is written. Why: the retry reads the family id from it,
+  // however late it comes.
+  it('should keep the refresh session for the retry when the session entry is refused', async () => {
     mockRedis.readSessionOwner.mockResolvedValue({
       userId: ADMIN_ID,
       tenantId: undefined,
@@ -109,8 +110,8 @@ describe('PlatformAuthService.logout — refused revocation writes', () => {
     await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
 
     expect(mockRedis.set).toHaveBeenCalledWith(`prvs:${FAMILY}`, '1', 360)
-    const marker = expect.stringContaining(`"familyId":"${FAMILY}"`)
-    expect(mockRedis.set).toHaveBeenCalledWith(expect.any(String), marker, 300)
+    expect(mockRedis.del).not.toHaveBeenCalledWith(`prt:${HASH}`)
+    expect(mockRedis.set).toHaveBeenCalledTimes(2)
   })
 
   // Scenario: the store refuses the blacklist write but serves everything else. Expected: logout
