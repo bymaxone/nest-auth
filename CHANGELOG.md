@@ -36,6 +36,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   - A client or test that expects its own access token to be refused after revoking another
     session must stop expecting it. To cut every access token of an account, use
     `AuthService.revokeAllSessions` or `SessionService.revokeAllExceptCurrent`.
+  - Another backend on the same Redis that does not read the session entry accepts the access
+    tokens of a session ended here until they expire, including one ended by
+    `DELETE /sessions/:id`, which the epoch used to cut for it too.
   - Code that calls `AuthRevocationService.isAccessTokenRevoked` with a payload it rebuilt must
     include `sid`, or the session check is skipped.
   - Redis holds a new key per ended session, `rvs:{sid}` or `prvs:{sid}`, for the access-token
