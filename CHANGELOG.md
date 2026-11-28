@@ -20,8 +20,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
-- `IAuthHooks.onSessionsRevoked`, one hook fired by every revocation of refresh sessions on both
-  identity planes: logout, revoking one or every other session, `revokeAllSessions`,
+- `IAuthHooks.onSessionsRevoked`, one hook fired by every revocation of refresh sessions that can name its
+  account, on both identity planes: logout, revoking one or every other session, `revokeAllSessions`,
   `revokeAllPlatformSessions`, a refresh that finds the account missing or blocked, password change
   and reset, MFA enable and disable, session eviction and refresh token reuse. Several of these had
   no hook before. The event carries `userId`, `tenantId`, `plane`, `reason` and, when known,

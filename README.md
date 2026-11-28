@@ -1102,7 +1102,7 @@ It receives `{ userId, tenantId?, plane, reason, sessionIds? }`. `tenantId` is a
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------------ |
 | `logout`                 | A logout, on either plane.                                                                                        | Yes          |
 | `session_revoked`        | `DELETE /sessions/:id`, or `SessionService.revokeSession` and `revokeOtherSession`.                               | Yes          |
-| `other_sessions_revoked` | `POST /sessions/revoke-all`, or `SessionService.revokeAllExceptCurrent`.                                          | Yes          |
+| `other_sessions_revoked` | `POST /sessions/revoke-all`, or `SessionService.revokeAllExceptCurrent` without a `reason`.                       | Yes          |
 | `all_sessions_revoked`   | `AuthService.revokeAllSessions`, `PlatformAuthService.revokeAllPlatformSessions` and `DELETE /platform/sessions`. | No           |
 | `account_unavailable`    | A refresh that found the account missing or blocked, on either plane.                                             | No           |
 | `password_changed`       | A password change. With the current session kept, the ids of the others; with none kept, every one.               | If one kept  |
@@ -1112,7 +1112,7 @@ It receives `{ userId, tenantId?, plane, reason, sessionIds? }`. `tenantId` is a
 | `session_evicted`        | The session limit.                                                                                                | Yes          |
 | `refresh_reuse`          | A replayed refresh token whose family was revoked, when the owner is known.                                       | No           |
 
-It runs after the store has deleted the sessions and is not awaited. It also runs when the sessions were deleted but a later write was refused, so the operation can fail after the event. A retried or repeated operation can report the same account again: handle it idempotently.
+It runs after the store has deleted the sessions and is not awaited. It also runs when the sessions were deleted but a later write was refused, so the operation can fail after the event. A retried or repeated operation can report the same account again: handle it idempotently. A revocation that can name no account is not reported.
 
 ---
 

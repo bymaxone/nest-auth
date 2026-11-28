@@ -461,9 +461,9 @@ export class SessionService {
   /**
    * Revokes all sessions for a user except the caller's current session.
    *
-   * Reads all `rt:`-prefixed members from `sess:{userId}` and calls
-   * {@link revokeSession} for each session whose hash differs from
-   * `currentSessionHash`. The current session is always preserved, and it has to exist: a hash
+   * Reads all `rt:`-prefixed members from `sess:{userId}` and removes each session whose hash
+   * differs from `currentSessionHash`, then reports them in one `onSessionsRevoked` event.
+   * The current session is always preserved, and it has to exist: a hash
    * that names no live session of this user is refused before anything is revoked, since keeping
    * nothing would revoke every session the account has, the caller's own included.
    *
@@ -486,8 +486,8 @@ export class SessionService {
    * @param currentSessionHash - SHA-256 hash of the session to preserve.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when `currentSessionHash` names no live
    *   session of this user.
-   * @throws {unknown} Propagates any error thrown by `revokeSession` — including
-   *   {@link AuthException} with various codes, Redis errors, or other runtime errors.
+   * @throws {unknown} Propagates any other error met while removing the sessions or advancing
+   *   the epoch.
    */
   async revokeAllExceptCurrent({
     userId,
