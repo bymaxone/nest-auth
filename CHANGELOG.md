@@ -42,8 +42,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
   **Apply to a derived backend:**
   - Nothing to change in code that goes through the mounted guards or `AuthTokenVerifierService`.
-  - A client or test that expects its own access token to be refused after revoking another
-    session must stop expecting it. To cut every access token of an account, use
+  - A client or test that expects its own access token to be refused after revoking a session
+    of another sign-in must stop expecting it. To cut every access token of an account, use
     `AuthService.revokeAllSessions` or `SessionService.revokeAllExceptCurrent`.
   - Another backend on the same Redis that does not read the session entry accepts the access
     tokens of a session ended here until they expire, including one ended by
