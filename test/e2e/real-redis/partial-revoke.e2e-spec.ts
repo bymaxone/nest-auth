@@ -17,6 +17,7 @@ import { BYMAX_AUTH_REDIS_CLIENT } from '../../../src/server/bymax-auth.constant
 import { AuthRedisService } from '../../../src/server/redis/auth-redis.service'
 import { MfaService } from '../../../src/server/services/mfa.service'
 import { PasswordService } from '../../../src/server/services/password.service'
+import { SessionService } from '../../../src/server/services/session.service'
 import { bootstrapTestApp, type BootstrappedTestApp } from '../setup'
 
 const PASSWORD = 'PartialRevoke123!-xyz'
@@ -186,6 +187,28 @@ describe('a revocation the store refuses part-way (real Redis)', () => {
     expect(await statusOf('/me', caller)).toBe(200)
   })
 
+  // Scenario: one session is revoked while the server is over its memory limit. Expected: the sign-in
+  // is removed all the same. Why: Redis refuses a script whose first write adds data, and runs one
+  // that has already freed some, so the entry must not be what the script writes first.
+  it('ends the sign-in of a revoked session when the server is out of memory', async () => {
+    const account = await register()
+    const [target, sibling] = await siblings('/refresh', account)
+    const sessionHash = hashOf(target.refreshToken)
+
+    await boot.redis.call('CONFIG', 'SET', 'maxmemory', '1')
+    try {
+      await boot.app
+        .get(SessionService)
+        .revokeSession({ userId: account.userId, tenantId: TENANT, sessionHash })
+    } finally {
+      await boot.redis.call('CONFIG', 'SET', 'maxmemory', '0')
+    }
+
+    expect(await refreshStatus('/refresh', target)).toBe(401)
+    expect(await refreshStatus('/refresh', sibling)).toBe(401)
+    expect(await statusOf('/me', sibling)).toBe(401)
+  })
+
   // Scenario: a session whose record names no family is revoked while the store refuses the epoch.
   // Expected: the retry removes it and refuses its access tokens. Why: removing the session first
   // leaves the retry nothing to find, and those access tokens would then be reported as ended.
@@ -279,6 +302,24 @@ describe('a revocation the store refuses part-way (real Redis)', () => {
     expect(await out()).toBe(204)
 
     expect(await statusOf(me, sibling)).toBe(401)
+    expect(await refreshStatus(refresh, sibling)).toBe(401)
+  })
+
+  // Scenario: a logout refused both its access entry and the marker, then repeated. Expected: the
+  // documented limit: the repeat answers success, refresh is refused and the sibling's access token
+  // is accepted. Why: the family removal took the session, and nothing names the owner.
+  it.each([
+    ['/logout', '/refresh', '/me', ['rvs', 'lp']],
+    ['/platform/logout', '/platform/refresh', '/platform/me', ['prvs', 'plp']]
+  ] as const)('%s leaves access tokens to expire', async (path, refresh, me, refused) => {
+    const { mine, sibling, out } = await signedInTwice(path, refresh)
+
+    await refuseWrites(...refused)
+    expect(await out()).toBeGreaterThanOrEqual(500)
+    await refuseWrites()
+    expect(await out()).toBe(204)
+
+    expect(await statusOf(me, sibling)).toBe(200)
     expect(await refreshStatus(refresh, sibling)).toBe(401)
   })
 

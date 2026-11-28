@@ -94,6 +94,9 @@ When the store accepts some writes of an operation and refuses others:
   access tokens of the sign-in are accepted. Refresh is refused.
 - Logout, family removal refused: the call errors, and until a repeated logout succeeds the
   presented refresh token still refreshes.
+- Logout, session entry and retry marker both refused: the call errors and a repeated logout
+  succeeds without writing the entry, so the other access tokens of the sign-in are accepted until
+  they expire. Refresh is refused.
 - Eviction past the session limit, session entry or family removal refused: the login that caused
   the eviction succeeds, and the evicted session cannot refresh, but its access tokens are accepted
   until they expire.

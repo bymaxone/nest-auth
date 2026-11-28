@@ -50,6 +50,8 @@ return 1
  * the keys in KEYS are checked by a key ACL before anything runs, and the named
  * session leaves the account's index last, so a call refused part-way still passes the ownership
  * check when it is repeated. Redis does not undo the writes of a script that stops part-way.
+ * The entry is written after the removals: a server over its memory limit refuses a script whose
+ * first write adds data, and then nothing of the sign-in would be removed.
  *
  * KEYS[1] = `sess:{subject}`   KEYS[2] = `rt:{hash}`   KEYS[3] = `sd:{hash}`
  * KEYS[4] = `fam:{sid}`        KEYS[5] = `rvs:{sid}`
@@ -63,7 +65,6 @@ return 1
 const END_OWNED_SIGN_IN_LUA = `
 local member = ARGV[1]
 if redis.call('SISMEMBER', KEYS[1], member) == 0 then return 0 end
-redis.call('SET', KEYS[5], '1', 'EX', ARGV[2])
 local base = string.sub(KEYS[2], 1, #KEYS[2] - #member)
 local family = redis.call('SMEMBERS', KEYS[4])
 for _, hash in ipairs(family) do
@@ -77,6 +78,7 @@ end
 redis.call('DEL', KEYS[4])
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
+redis.call('SET', KEYS[5], '1', 'EX', ARGV[2])
 redis.call('SREM', KEYS[1], member)
 return family
 `
