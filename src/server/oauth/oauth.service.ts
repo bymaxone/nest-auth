@@ -324,16 +324,50 @@ export class OAuthService {
       return checked(await pinned(this.issueMfaChallenge(authUser)))
     }
 
-    const created = hookResult.action === 'create'
-    await pinned(invitation?.complete(authUser, created, { ...hookContext, userId: authUser.id }))
     return checked(
-      await pinned(this.openSession(authUser, provider, hookResult, hookContext, ip, userAgent))
+      await pinned(
+        this.completeAndOpen(invitation, authUser, provider, hookResult, hookContext, ip, userAgent)
+      )
     )
   }
 
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Completes the invitation a flow carries, opens the session, and only then announces an account
+   * the invitation created: a sign-in that fails to issue its session announces nothing, while the
+   * membership stays written and the token spent.
+   *
+   * @param invitation - The vetted invitation, or `null` when the flow carries none.
+   * @param authUser - The account the flow resolved to.
+   * @param provider - The provider name, for the log line.
+   * @param hookResult - The hook's decision.
+   * @param hookContext - The context the hooks are given.
+   * @param ip - The client address.
+   * @param userAgent - The `User-Agent` header.
+   * @returns The auth result.
+   */
+  private async completeAndOpen(
+    invitation: PendingInvitation | null,
+    authUser: AuthUser,
+    provider: string,
+    hookResult: OAuthLoginResult,
+    hookContext: HookContext,
+    ip: string,
+    userAgent: string
+  ): Promise<AuthResult> {
+    const created = hookResult.action === 'create'
+    const announce = await pinned(
+      invitation?.complete(authUser, created, { ...hookContext, userId: authUser.id })
+    )
+    const session = await pinned(
+      this.openSession(authUser, provider, hookResult, hookContext, ip, userAgent)
+    )
+    announce?.()
+    return checked(session)
+  }
 
   /**
    * Refuses an account that may not sign in: a blocked status, or an unverified address where the

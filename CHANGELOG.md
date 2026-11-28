@@ -18,6 +18,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- On a workspace invitation completed by an OAuth sign-in that creates the account,
+  `afterInvitationAccepted` runs after the session is issued, as it does on a password signup. It
+  ran before, so it also ran for a sign-in that then failed to issue its session.
+
+  **Apply to a derived backend:** nothing to change in code. A hook that must run for every account
+  an OAuth invitation creates, including one whose session then fails to open, no longer gets that
+  call: the account, the membership and the spent token remain.
+
 ## [1.5.23] - 2026-11-27
 
 A patch release. It closes gaps in the host hooks, one of which changes when

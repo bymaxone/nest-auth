@@ -24,6 +24,7 @@ import { invitationKey } from '../constants/workspace-invitation-keys'
 import { sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { expectEvent } from '../__tests__/log-events'
+import { toSafeUser } from '../utils/mfa-safe-user'
 
 const HASH = sha256(TOKEN)
 const VERIFIED = { email: EMAIL, emailVerified: true }
@@ -117,7 +118,7 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
   })
 
   describe('completeOAuth', () => {
-    it('writes the membership, spends the token and tells the cache and the hook', async () => {
+    it('writes the membership, spends the token and tells the cache', async () => {
       const h = build()
       await seed(h)
       const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
@@ -125,7 +126,6 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       const answer = await h.service.completeOAuth(
         invitation,
         user('new', { email: EMAIL }),
-        true,
         CONTEXT
       )
 
@@ -150,12 +150,7 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
       await h.store.remove(WORKSPACE_REF, EMAIL, invitationKey(TOKEN))
 
-      const refused = h.service.completeOAuth(
-        invitation,
-        user('new', { email: EMAIL }),
-        true,
-        CONTEXT
-      )
+      const refused = h.service.completeOAuth(invitation, user('new', { email: EMAIL }), CONTEXT)
 
       expect(await code(refused)).toBe(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
       expect(h.memberships.create).not.toHaveBeenCalled()
@@ -177,12 +172,7 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
         change(h)
         jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
-        const refused = h.service.completeOAuth(
-          invitation,
-          user('new', { email: EMAIL }),
-          true,
-          CONTEXT
-        )
+        const refused = h.service.completeOAuth(invitation, user('new', { email: EMAIL }), CONTEXT)
 
         expect(await code(refused)).toBe(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
         expect(h.memberships.create).not.toHaveBeenCalled()
@@ -198,7 +188,6 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       const refused = h.service.completeOAuth(
         invitation,
         user('new', { email: EMAIL, tenantId: 't2' }),
-        false,
         CONTEXT
       )
 
@@ -212,7 +201,7 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       await seed(h)
       const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
 
-      const refused = h.service.completeOAuth(invitation, user('other'), false, CONTEXT)
+      const refused = h.service.completeOAuth(invitation, user('other'), CONTEXT)
 
       expect(await code(refused)).toBe(AUTH_ERROR_CODES.INVITATION_EMAIL_MISMATCH)
       expect(h.memberships.create).not.toHaveBeenCalled()
@@ -227,7 +216,6 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       const refused = h.service.completeOAuth(
         invitation,
         user('new', { email: EMAIL, emailVerified: false }),
-        false,
         CONTEXT
       )
 
@@ -236,33 +224,39 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       expect(await stillThere(h)).toBe(true)
     })
 
-    it.each([
-      ['a created account', true, 1],
-      ['an existing account', false, 0]
-    ])('runs the after-acceptance hook for %s %s time(s)', async (_n, created, calls) => {
+    it('does not run the after-acceptance hook itself, which waits for the session', async () => {
       const afterInvitationAccepted = jest.fn()
       const h = build(false, { afterInvitationAccepted })
       await seed(h)
       const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
 
-      await h.service.completeOAuth(invitation, user('new', { email: EMAIL }), created, CONTEXT)
+      await h.service.completeOAuth(invitation, user('new', { email: EMAIL }), CONTEXT)
 
-      expect(afterInvitationAccepted).toHaveBeenCalledTimes(calls)
+      expect(afterInvitationAccepted).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('announceCreated', () => {
+    it('runs the after-acceptance hook with the account and the context', () => {
+      const afterInvitationAccepted = jest.fn()
+      const h = build(false, { afterInvitationAccepted })
+      const account = toSafeUser(user('new', { email: EMAIL }))
+
+      h.service.announceCreated(account, CONTEXT)
+
+      expect(afterInvitationAccepted).toHaveBeenCalledTimes(1)
+      expect(afterInvitationAccepted).toHaveBeenCalledWith(account, CONTEXT)
     })
 
-    it('does not let a throwing after-acceptance hook change the answer', async () => {
+    it('logs a throwing after-acceptance hook and throws nothing', () => {
       const afterInvitationAccepted = jest.fn(() => {
         throw new Error('hook')
       })
       jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       const h = build(false, { afterInvitationAccepted })
-      await seed(h)
-      const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
 
-      await expect(
-        h.service.completeOAuth(invitation, user('new', { email: EMAIL }), true, CONTEXT)
-      ).resolves.toEqual({ workspaceId: 'w1', role: 'viewer' })
+      expect(() => h.service.announceCreated(toSafeUser(user('new')), CONTEXT)).not.toThrow()
       expectEvent(error, 'AUTH_HOOK_FAILED', { hook: 'afterInvitationAccepted', how: 'threw' })
     })
   })
@@ -277,7 +271,6 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       const answer = await h.service.completeOAuth(
         invitation,
         user('new', { email: EMAIL }),
-        true,
         CONTEXT
       )
 
@@ -295,12 +288,7 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       h.memberships.countOwned.mockResolvedValue(1)
       const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
 
-      const refused = h.service.completeOAuth(
-        invitation,
-        user('new', { email: EMAIL }),
-        true,
-        CONTEXT
-      )
+      const refused = h.service.completeOAuth(invitation, user('new', { email: EMAIL }), CONTEXT)
 
       expect(await code(refused)).toBe(AUTH_ERROR_CODES.WORKSPACE_LIMIT_REACHED)
       expect(h.workspaces.createWithOwner).not.toHaveBeenCalled()
@@ -314,12 +302,7 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
       h.workspaces.findById.mockResolvedValue(null)
       const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
 
-      const refused = h.service.completeOAuth(
-        invitation,
-        user('new', { email: EMAIL }),
-        true,
-        CONTEXT
-      )
+      const refused = h.service.completeOAuth(invitation, user('new', { email: EMAIL }), CONTEXT)
 
       expect(await code(refused)).toBe(AUTH_ERROR_CODES.FORBIDDEN)
       expect(beforeWorkspaceCreate).toHaveBeenCalledWith(
@@ -338,7 +321,7 @@ describe('WorkspaceInvitationAcceptService OAuth acceptance', () => {
     await seed(h, memberRecord({ role: 'viewer' }))
     const invitation = await h.service.prepareOAuth(HASH, 't1', VERIFIED)
 
-    await h.service.completeOAuth(invitation, user('new', { email: EMAIL }), false, CONTEXT)
+    await h.service.completeOAuth(invitation, user('new', { email: EMAIL }), CONTEXT)
 
     expect(h.workspaces.createWithOwner).not.toHaveBeenCalled()
   })

@@ -15,14 +15,18 @@ import type {
   LoadedInvitation,
   WorkspaceInvitationAcceptService
 } from '../services/workspace-invitation-accept.service'
+import { toSafeUser } from '../utils/mfa-safe-user'
 import { checked, pinned } from '../utils/settle'
 
 /** A vetted invitation, waiting for the account its flow signs in. */
 export interface PendingInvitation {
   /** Told of an account the flow is about to create, for the host to judge; refuses by throwing. */
   judgeNewAccount(account: { email: string; name: string }, context: HookContext): Promise<void>
-  /** Writes the membership for `user` and spends the token; `created` is whether the flow made the account. */
-  complete(user: AuthUser, created: boolean, context: HookContext): Promise<void>
+  /**
+   * Writes the membership for `user` and spends the token; `created` is whether the flow made the
+   * account. Answers what to call once the session of `user` is open.
+   */
+  complete(user: AuthUser, created: boolean, context: HookContext): Promise<() => void>
 }
 
 /**
@@ -54,8 +58,11 @@ export async function vetInvitation(
     judgeNewAccount: async (account, context): Promise<void> => {
       hostAsked = await pinned(accepts.judgeNewAccount(loaded, account, context))
     },
-    complete: async (user, created, context): Promise<void> => {
-      await pinned(accepts.completeOAuth(loaded, user, created, context, hostAsked))
+    complete: async (user, created, context): Promise<() => void> => {
+      await pinned(accepts.completeOAuth(loaded, user, context, hostAsked))
+      return checked((): void => {
+        if (created) accepts.announceCreated(toSafeUser(user), context)
+      })
     }
   })
 }
