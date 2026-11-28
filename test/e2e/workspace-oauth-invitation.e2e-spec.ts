@@ -21,6 +21,7 @@ import {
   BYMAX_AUTH_WORKSPACE_REPOSITORY
 } from '../../src/server/bymax-auth.constants'
 import type { IAuthHooks, OAuthLoginResult } from '../../src/server/interfaces/auth-hooks.interface'
+import type { IMembershipRepository } from '../../src/server/interfaces/membership-repository.interface'
 import type {
   OAuthProfile,
   OAuthProviderPlugin
@@ -62,10 +63,14 @@ const acceptances: { email: string; sessions: number }[] = []
 /** Counts the sessions of an account, as the app under test lists them. */
 let openSessions: (userId: string) => Promise<number> = async () => 0
 
+/** Set by a case that needs the after-acceptance hook to fail. */
+let hookFailure: Error | undefined
+
 const hooks: IAuthHooks = {
   onOAuthLogin: async () => flow.decision,
   afterInvitationAccepted: async (user) => {
     acceptances.push({ email: user.email, sessions: await openSessions(user.id) })
+    if (hookFailure !== undefined) throw hookFailure
   }
 }
 
@@ -78,13 +83,16 @@ const WORKSPACES = {
   }
 }
 
-/** Boots an app with OAuth, workspaces and the given registration mode. */
-async function boot(registration: 'open' | 'invitation-only'): Promise<BootstrappedTestApp> {
+/** Boots an app with OAuth, workspaces, the given registration mode and sessions on or off. */
+async function boot(
+  registration: 'open' | 'invitation-only',
+  sessions = true
+): Promise<BootstrappedTestApp> {
   const repositories = memoryRepositories()
   return bootstrapTestApp(
     {
       registration,
-      sessions: { enabled: true },
+      sessions: { enabled: sessions },
       workspaces: WORKSPACES,
       oauth: {
         google: {
@@ -202,6 +210,14 @@ describe('workspace invitation through OAuth (E2E)', () => {
       expectAuthError(await preview(token), 'auth.invalid_invitation_token')
     })
 
+    /** The membership the invited address holds in a workspace, as the host's port reads it. */
+    async function membershipOf(email: string, workspaceId: string): Promise<unknown> {
+      const user = await b.repo.findByEmail({ email, tenantId: 'tenant-1' })
+      return app
+        .get<IMembershipRepository>(BYMAX_AUTH_MEMBERSHIP_REPOSITORY, { strict: false })
+        .find({ tenantId: 'tenant-1', workspaceId, userId: user?.id ?? '' })
+    }
+
     it('runs the after-acceptance hook once the session of the new account is open', async () => {
       const email = 'hook.success@example.com'
       flow.profile = profileFor(email, true)
@@ -223,7 +239,7 @@ describe('workspace invitation through OAuth (E2E)', () => {
       async (_name, service, method) => {
         const email = `hook.${method.toLowerCase()}@example.com`
         flow.profile = profileFor(email, true)
-        const { token } = await invitation(email)
+        const { id, token } = await invitation(email)
         const target = app.get<Record<string, () => Promise<unknown>>>(service, { strict: false })
         const failing = jest.spyOn(target, method).mockRejectedValueOnce(new Error('store down'))
         const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
@@ -236,10 +252,30 @@ describe('workspace invitation through OAuth (E2E)', () => {
 
         expect(res.status).toBe(500)
         expect(acceptances).toEqual([])
-        expect(await b.repo.findByEmail({ email, tenantId: 'tenant-1' })).not.toBeNull()
+        expect(await membershipOf(email, id)).toMatchObject({ role: 'editor', status: 'active' })
         expectAuthError(await preview(token), 'auth.invalid_invitation_token')
       }
     )
+
+    it('keeps the sign-in, the membership and the spent token when the after-acceptance hook throws', async () => {
+      const email = 'hook.throws@example.com'
+      flow.profile = profileFor(email, true)
+      const { id, token } = await invitation(email)
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      hookFailure = new Error('host hook failed')
+      acceptances.length = 0
+
+      const res = await finish(await start(token))
+      await new Promise((resolve) => setImmediate(resolve))
+      hookFailure = undefined
+      error.mockRestore()
+
+      expect(res.status).toBe(200)
+      expect(res.body).toHaveProperty('accessToken')
+      expect(acceptances).toEqual([{ email, sessions: 1 }])
+      expect(await membershipOf(email, id)).toMatchObject({ role: 'editor', status: 'active' })
+      expectAuthError(await preview(token), 'auth.invalid_invitation_token')
+    })
 
     it('refuses a provider address that is not the invited one and leaves the token usable', async () => {
       const { token } = await invitation('someone.else@example.com')
@@ -336,6 +372,70 @@ describe('workspace invitation through OAuth (E2E)', () => {
       const res = await start('short')
 
       expect(res.status).toBe(400)
+    })
+  })
+
+  describe('with sessions disabled', () => {
+    let b: BootstrappedTestApp
+
+    beforeAll(async () => {
+      b = await boot('open', false)
+      openSessions = async () => 0
+    })
+
+    afterAll(async () => {
+      await b.app.close()
+    })
+
+    beforeEach(() => {
+      flow.decision = { action: 'create' }
+      acceptances.length = 0
+    })
+
+    /** Runs the whole flow for a new address the platform invited. */
+    async function acceptAs(email: string): Promise<request.Response> {
+      flow.profile = profileFor(email, true)
+      await b.app
+        .get(WorkspaceInvitationService, { strict: false })
+        .inviteAsPlatform(
+          { tenantId: 'tenant-1', email, workspaceName: 'Acme', inviterName: 'Platform' },
+          createEmptyHookContext()
+        )
+      const mail = [...b.email.sentEmails].reverse().find((sent) => sent.to === email)
+      const workspaceInvitation = TOKEN_IN_MAIL.exec(mail?.html ?? '')?.[0] ?? ''
+      const { state, cookie } = started(
+        await request(b.app.getHttpServer())
+          .get('/oauth/google')
+          .query({ tenantId: 'tenant-1', workspaceInvitation })
+      )
+      const res = await request(b.app.getHttpServer())
+        .get('/oauth/google/callback')
+        .query({ code: 'code', state })
+        .set('Cookie', cookie)
+      await new Promise((resolve) => setImmediate(resolve))
+      return res
+    }
+
+    it('runs the after-acceptance hook once for a new account that is signed in', async () => {
+      const res = await acceptAs('stateless@example.com')
+
+      expect(res.status).toBe(200)
+      expect(acceptances).toEqual([{ email: 'stateless@example.com', sessions: 0 }])
+    })
+
+    it('runs no after-acceptance hook when the tokens cannot be issued', async () => {
+      const tokenManager = b.app.get(TokenManagerService, { strict: false })
+      const failing = jest
+        .spyOn(tokenManager, 'issueTokens')
+        .mockRejectedValueOnce(new Error('store down'))
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      const res = await acceptAs('stateless.failure@example.com')
+      failing.mockRestore()
+      error.mockRestore()
+
+      expect(res.status).toBe(500)
+      expect(acceptances).toEqual([])
     })
   })
 
