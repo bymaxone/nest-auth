@@ -760,14 +760,14 @@ export class SessionService {
 
     // Sort ascending by createdAt — oldest first.
     withTimestamps.sort((a, b) => a.createdAt - b.createdAt)
-
     const evictCount = rtMembers.length - limit
     const toEvict = withTimestamps
       .filter((entry) => entry.memberHash !== newHash)
       .slice(0, evictCount)
 
     const index = this.indexKey(userId, tenantId)
-    const request = { userId, tenantId, ip, userAgent, index, jwt: this.options.jwt }
+    const { jwt } = this.options
+    const request = { userId, tenantId, ip, userAgent, index, members: rtMembers, jwt }
     await pinned(evictSessions(this.redis, this.hooks, this.logger, request, toEvict))
   }
 

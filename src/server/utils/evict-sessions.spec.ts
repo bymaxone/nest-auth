@@ -15,6 +15,7 @@ const request = {
   ip: 'ip',
   userAgent: 'ua',
   index: 'sess:x',
+  members: ['rt:a', 'rt:b', 'rt:c'],
   jwt: { accessExpiresIn: '15m' }
 }
 const familyOf = {
@@ -185,5 +186,39 @@ describe('evictSessions', () => {
     expect(redis.srem).toHaveBeenCalledWith('sess:x', 'rt:a')
     expect(redis.del).toHaveBeenCalledWith('sd:a')
     expect(onSessionsRevoked).toHaveBeenCalledWith(expect.objectContaining({ sessionIds: ['a'] }))
+  })
+
+  // Scenario: two over the limit, and ending the first sign-in removes a second counted session.
+  // Expected: the next session chosen is left alone.
+  it('stops once the sign-ins it ended cover the excess', async () => {
+    const redis = store([], ['a', 'c'])
+    const hooks = { onSessionEvicted: jest.fn(), onSessionsRevoked: jest.fn() }
+
+    await evictSessions(redis, hooks, new Logger(), request, entries)
+
+    expect((redis.del as jest.Mock).mock.calls.flat()).toEqual(['rt:a', 'sd:a'])
+    expect(hooks.onSessionEvicted.mock.calls.map((call) => call[1])).toEqual(['a'])
+    expect(hooks.onSessionsRevoked).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionIds: ['a', 'c'] })
+    )
+  })
+
+  // Scenario: the sign-in names a session the limit did not count. Expected: it covers nothing.
+  it('does not count a session that was not in the index', async () => {
+    const redis = store([], ['a', 'gone'])
+
+    await evictSessions(redis, null, new Logger(), request, entries)
+
+    expect(redis.del).toHaveBeenCalledWith('rt:b')
+  })
+
+  // Scenario: a session the limit chose went with an earlier one's sign-in. Expected: still
+  // reported as evicted, though enough are already gone.
+  it('reports a chosen session that left with an earlier one', async () => {
+    const onSessionEvicted = jest.fn()
+
+    await evictSessions(store([], ['a', 'b']), { onSessionEvicted }, new Logger(), request, entries)
+
+    expect(onSessionEvicted.mock.calls.map((call) => call[1])).toEqual(['a', 'b'])
   })
 })

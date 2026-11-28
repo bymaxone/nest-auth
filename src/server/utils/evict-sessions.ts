@@ -29,6 +29,8 @@ export interface EvictionRequest {
   ip: string
   userAgent: string
   index: string
+  /** The index members the limit counted. */
+  members: ReadonlyArray<string>
   /** The resolved JWT options; the access lifetime bounds how long an ended session's entry lives. */
   jwt: { accessExpiresIn: string }
 }
@@ -46,7 +48,7 @@ function evictionContext({
   tenantId,
   ip,
   userAgent
-}: Omit<EvictionRequest, 'index' | 'jwt'>): HookContext {
+}: Omit<EvictionRequest, 'index' | 'members' | 'jwt'>): HookContext {
   return { plane: 'dashboard', userId, tenantId, ip, userAgent, sanitizedHeaders: {} }
 }
 
@@ -78,21 +80,24 @@ async function removeEvicted(
 }
 
 /**
- * Removes the sessions the limit pushed out. Each one whose writes are all accepted fires
- * `onSessionEvicted`; the pass then fires `onSessionsRevoked` once, naming every session whose
+ * Removes the sessions the limit pushed out. Ending one can remove others of its sign-in, so once
+ * as many counted sessions are gone as the limit chose, no further one is ended. A chosen session
+ * whose writes are all accepted fires `onSessionEvicted`; the pass then fires `onSessionsRevoked` once, naming every session whose
  * refresh token was deleted, the other sessions of its sign-in included.
  */
 export async function evictSessions(
   redis: EvictionStore,
   hooks: IAuthHooks | null,
   logger: Logger,
-  { userId, tenantId, ip, userAgent, index, jwt }: EvictionRequest,
+  { userId, tenantId, ip, userAgent, index, members, jwt }: EvictionRequest,
   toEvict: ReadonlyArray<{ member: string; memberHash: string }>
 ): Promise<void> {
   const context = evictionContext({ userId, tenantId, ip, userAgent })
 
   const evicted = new Set<string>()
   for (const entry of toEvict) {
+    const gone = members.filter((member) => evicted.has(member.slice('rt:'.length))).length
+    if (gone >= toEvict.length && !evicted.has(entry.memberHash)) continue
     try {
       // Best-effort eviction: partial Redis failures leave stale keys that expire via TTL.
       // The new session is already committed at this point — a mid-eviction failure

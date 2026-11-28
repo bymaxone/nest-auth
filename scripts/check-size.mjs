@@ -190,7 +190,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     report of a change whose cache step failed.
 //     188.94 KiB (193,473 B) sits 30 B above the measured 193,443 B, which also holds the announcement of
 //     an OAuth invitation account after its session is issued.
-//     188.89 KiB (193,823 B) sits 30 B above the measured 193,793 B, which also holds the ending of a
+//     189.28 KiB (193,823 B) sits 7 B above the measured 193,816 B, which also holds the ending of a
 //     whole sign-in when one of its sessions ends.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.

@@ -366,6 +366,20 @@ describe('access tokens of an ended session (E2E)', () => {
       ]).toEqual([401, 401])
       expect([await me(pair[0]), await me(pair[1]), await me(kept)]).toEqual([401, 401, 200])
     })
+
+    // Two over the limit: ending the oldest sign-in removes both of its sessions, which is enough.
+    it('ends no more sign-ins than the limit requires', async () => {
+      const account = await register()
+      const other = await login(account.email)
+      const pair = await siblings('/refresh', account)
+
+      const newest = await login(account.email)
+      await settled()
+
+      expect([await me(pair[0]), await me(pair[1])]).toEqual([401, 401])
+      expect([await me(other), await me(newest)]).toEqual([200, 200])
+      expect(await refreshStatus('/refresh', other)).toBe(200)
+    })
   })
 
   describe('session limit', () => {

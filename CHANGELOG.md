@@ -29,7 +29,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   when a refresh token is replayed inside the grace window; a logout, an eviction past the session
   limit or the revocation of any of them now ends them all, so none is left able to refresh into a
   refused access token. `onSessionsRevoked` can name more than one session; a logout names the
-  others in a second event. The sessions of the account's other sign-ins are not affected.
+  others in a second event. The sessions of the account's other sign-ins are not affected. Past
+  the session limit, every session removed with a sign-in counts toward the excess.
 
   **Apply to a derived backend:** nothing to change. A user who revokes another entry of their own
   current sign-in is signed out and signs in again.
