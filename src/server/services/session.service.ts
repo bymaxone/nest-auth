@@ -31,6 +31,7 @@ import { toSafeUser } from '../utils/mfa-safe-user'
 import {
   assertSessionHash,
   assertTenant,
+  endStoredSession,
   removeStoredSession,
   SESSION_HASH_RE
 } from '../utils/remove-session'
@@ -357,63 +358,38 @@ export class SessionService {
   /**
    * Revokes a single session belonging to the specified user.
    *
-   * Verifies ownership via `SISMEMBER` before deleting the refresh token,
-   * session detail, and removing the member from the user's session SET.
-   * Throws {@link AuthException} with `SESSION_NOT_FOUND` if the session
-   * does not belong to the user.
+   * Once `SISMEMBER` has proved ownership, deletes the refresh token, its detail and its member
+   * of the user's session SET, then ends its sign-in: any other session of the same refresh family
+   * and the access tokens of all of them. When the record names no family, the access tokens last
+   * until they expire.
    *
    * @param userId - Internal user ID who owns the session.
    * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    await pinned(
-      removeStoredSession(this.redis, this.options.hmacKey, { userId, tenantId, sessionHash })
-    )
-    this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
+    const session = { userId, tenantId, sessionHash }
+    await pinned(endStoredSession(this.redis, this.options, session, this.announceEnded(session)))
   }
 
   /**
-   * Revokes one named session **other than the caller's own**, and cuts the access tokens with
-   * it.
+   * Revokes one named session on behalf of its owner, as `DELETE /sessions/:id` does.
    *
-   * Distinct from {@link revokeSession}, which is the primitive: deleting the refresh session
-   * stops rotation but says nothing about the stateless access token that session's holder is
-   * already carrying, and that token keeps working until it expires. Someone who opens their
-   * session list and revokes a device does so because they think it is compromised — a decision
-   * about *right now*, not about the next fifteen minutes. The same argument
-   * {@link revokeAllExceptCurrent} makes in its own JSDoc applies to revoking one.
-   *
-   * The epoch is the only lever available: a session hash does not name the `jti` of any access
-   * token, so there is nothing to blacklist individually. Bumping it ends every access token
-   * the account holds, and the user's *other* devices silently re-mint one on their next
-   * rotation — they still hold live refresh sessions. The revoked device cannot, which is the
-   * point.
-   *
-   * `logout` deliberately keeps using the primitive: it blacklists its own `jti` by name, and
-   * ending one session must not sign the account out of every other device's access token.
+   * Like {@link revokeSession}, except for a session whose record names no family: nothing says
+   * which access tokens came from it, so the account's token epoch is advanced and every access
+   * token of the account is refused. The other sessions keep their refresh sessions.
    *
    * @param userId - Internal user ID who owns the session.
    * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeOtherSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    // No `assertTenant` here: `removeStoredSession` on the next line performs the identical check
-    // before touching anything, so a guard at this level is unreachable code that reads as
-    // defence. Measured — deleting it left all 133 tests in this suite green, which is what an
-    // equivalent mutant looks like. Removed rather than suppressed: a `Stryker disable` would
-    // have preserved the duplication and added a comment defending it.
+    const session = { userId, tenantId, sessionHash }
+    const bump = (): Promise<unknown> =>
+      this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
     await pinned(
-      removeStoredSession(this.redis, this.options.hmacKey, { userId, tenantId, sessionHash })
+      endStoredSession(this.redis, this.options, session, this.announceEnded(session), bump)
     )
-    // After the revoke, not before: a failure above leaves the epoch untouched and the
-    // operation visibly incomplete, rather than the reverse — every device losing its access
-    // token for a session that is in fact still alive.
-    try {
-      await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
-    } finally {
-      this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
-    }
   }
 
   /**
@@ -784,15 +760,21 @@ export class SessionService {
 
     // Sort ascending by createdAt — oldest first.
     withTimestamps.sort((a, b) => a.createdAt - b.createdAt)
-
     const evictCount = rtMembers.length - limit
     const toEvict = withTimestamps
       .filter((entry) => entry.memberHash !== newHash)
       .slice(0, evictCount)
 
     const index = this.indexKey(userId, tenantId)
-    const request = { userId, tenantId, ip, userAgent, index }
+    const { jwt } = this.options
+    const request = { userId, tenantId, ip, userAgent, index, limit, jwt }
     await pinned(evictSessions(this.redis, this.hooks, this.logger, request, toEvict))
+  }
+
+  /** Announces the removal of one session, with the others of its sign-in. */
+  private announceEnded({ userId, tenantId }: RevokeSessionParams): (ids: string[]) => void {
+    return (sessionIds) =>
+      this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds })
   }
 
   /** Announces a revocation of dashboard sessions through `onSessionsRevoked`. */

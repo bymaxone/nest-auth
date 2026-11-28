@@ -22,7 +22,8 @@ const redis = {
   get: jest.fn(),
   getUserTokenEpoch: jest.fn(),
   rotateRefreshSession: jest.fn(),
-  revokeFamily: jest.fn()
+  revokeFamily: jest.fn(),
+  set: jest.fn()
 }
 const verify = jest.fn()
 const options = {
@@ -59,7 +60,7 @@ describe('observed refusals of a refresh', () => {
     jest.resetAllMocks()
     // `get` answers `null` for an absent record, as the real contract does; `undefined` would skip the guard.
     redis.get.mockResolvedValue(null)
-    redis.revokeFamily.mockResolvedValue({ removed: 1, ownerId: '' })
+    redis.revokeFamily.mockResolvedValue({ removed: 1, sessionHashes: [], ownerId: '' })
     const module = await Test.createTestingModule({
       providers: [
         TokenManagerService,

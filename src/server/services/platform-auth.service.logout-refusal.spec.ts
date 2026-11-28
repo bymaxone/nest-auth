@@ -37,6 +37,7 @@ const JTI = 'platform-jti-under-test'
 const ADMIN_ID = 'admin-1'
 
 const mockRedis = {
+  revokeFamily: jest.fn(),
   readSessionOwner: jest.fn(),
   set: jest.fn(),
   del: jest.fn(),
@@ -68,6 +69,7 @@ describe('PlatformAuthService.logout when the verification of the access token r
     jest.resetAllMocks()
     mockRedis.readSessionOwner.mockResolvedValue({ userId: ADMIN_ID, tenantId: undefined })
     mockRedis.set.mockResolvedValue(undefined)
+    mockRedis.revokeFamily.mockResolvedValue({ sessionHashes: [] })
     mockRedis.del.mockResolvedValue(undefined)
     mockRedis.srem.mockResolvedValue(1)
     mockHooks.afterPlatformLogout.mockResolvedValue(undefined)

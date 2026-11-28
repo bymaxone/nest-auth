@@ -26,7 +26,8 @@ const redis = {
   eval: jest.fn(),
   smembers: jest.fn(),
   del: jest.fn(),
-  srem: jest.fn()
+  srem: jest.fn(),
+  readSessionOwner: jest.fn()
 }
 
 /** Builds a service from positional collaborators the test does not need to type. */
@@ -40,13 +41,15 @@ const events = (): SessionsRevokedEvent[] => onSessionsRevoked.mock.calls.map(([
 beforeEach(() => {
   jest.resetAllMocks()
   redis.eval.mockResolvedValue(1)
+  redis.readSessionOwner.mockResolvedValue({})
   redis.smembers.mockResolvedValue([`rt:${kept}`, `rt:${other}`])
   jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 })
 afterEach(() => jest.restoreAllMocks())
 
 describe('SessionService', () => {
-  const sessions = (): SessionService => build(SessionService, { hmacKey: 'k' }, {}, hooks, redis)
+  const sessions = (): SessionService =>
+    build(SessionService, { hmacKey: 'k', jwt: {} }, {}, hooks, redis)
   const target = { ...account, sessionHash: other }
   const revoked = (reason: string, sessionIds: string[]) => ({
     userId: 'u1',

@@ -170,8 +170,8 @@ export interface VerifyAccessTokenOptions {
  * A long-lived transport — a WebSocket, an SSE stream, a message consumer — has no guard in front
  * of it, so it has to establish the same facts itself, on a cadence, for as long as the connection
  * lives. Assembling that from the parts is where it goes wrong: {@link AuthRevocationService}
- * answers two channels and nothing else, and a bridge that calls it alone has verified a signature
- * and consulted a blacklist while checking neither the token's type, nor its `exp`, nor whether the
+ * answers revocation and nothing else, and a bridge that calls it alone has verified a signature
+ * and asked whether the token was withdrawn while checking neither the token's type, nor its `exp`, nor whether the
  * account behind it still exists.
  *
  * What one call establishes, in the order the refusals fire:
@@ -186,8 +186,8 @@ export interface VerifyAccessTokenOptions {
  *    intended.
  * 4. **Token type**, matched against the plane the caller named. Without it an `mfa_challenge`
  *    token — signed with the same secret, holding half a credential — reads as a valid session.
- * 5. **Revocation**, both channels: the per-token blacklist a logout writes and the per-user epoch
- *    a password reset or an administrative revoke-all advances.
+ * 5. **Revocation**: the per-token blacklist a logout writes, the entry of an ended session and
+ *    the per-user epoch a password reset or an administrative revoke-all advances.
  * 6. **Account status**, unless the caller opted out. See
  *    {@link VerifyAccessTokenOptions.checkStatus}.
  * 7. **MFA policy**, unless the caller opted out. See {@link VerifyAccessTokenOptions.requireMfa}.
@@ -228,7 +228,7 @@ export class AuthTokenVerifierService {
    * @param jwtService - The Nest JWT service, configured with the current signing secret.
    * @param options - Resolved module options, for the algorithm, the binding claims and the
    *   secrets retired by a rotation.
-   * @param revocation - The two revocation channels, shared with the mounted guards.
+   * @param revocation - The revocation channels, shared with the mounted guards.
    * @param accountStatus - The account lifecycle gate, shared with {@link UserStatusGuard}.
    */
   constructor(

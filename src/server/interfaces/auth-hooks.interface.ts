@@ -507,6 +507,8 @@ export interface IAuthHooks {
   /**
    * Called after every revocation of refresh sessions, on both identity planes, whatever caused it.
    * The other hooks of the same moments, such as `afterLogout` or `onSessionEvicted`, still fire.
+   * Ending one session ends its whole sign-in, so `sessionIds` can name more than one session; a
+   * logout names the others in a second event.
    *
    * Runs after the store has deleted the sessions, and is not awaited: a rejection or a throw is
    * logged and changes nothing. It also runs when the sessions were deleted and a later write of

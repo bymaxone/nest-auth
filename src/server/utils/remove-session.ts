@@ -7,7 +7,10 @@
  * @layer Util
  */
 
+import { endSignIn } from './session-access'
 import { pinned } from './settle'
+import { raiseFirst, settleWrites } from './settle-writes'
+import { sessionId } from '../constants/session-id'
 import { sessionIndexKey } from '../constants/user-keys'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -112,7 +115,7 @@ export function assertSessionHash(sessionHash: string, field = 'sessionHash'): v
  * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the account.
  */
 export async function removeStoredSession(
-  redis: AuthRedisService,
+  redis: Pick<AuthRedisService, 'eval'>,
   hmacKey: string,
   { userId, tenantId, sessionHash }: { userId: string; tenantId: string; sessionHash: string }
 ): Promise<void> {
@@ -136,4 +139,43 @@ export async function removeStoredSession(
   if (integerReply(result) === 0) {
     throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
   }
+}
+
+/**
+ * Ends the sign-in of one refresh session, access tokens included, and announces the removal.
+ *
+ * The family id is read before the removal deletes the record, and used only once the removal has
+ * proved the account owns the session. A refused write is raised after `announce`, which is given
+ * the named hash and those of the other sessions of the sign-in.
+ *
+ * @param withoutFamily - Runs instead of the entry write when the record names no family a token
+ *   could carry. By default nothing does, and those access tokens last until they expire.
+ * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the account.
+ */
+export async function endStoredSession(
+  redis: Pick<AuthRedisService, 'eval' | 'readSessionOwner' | 'revokeFamily' | 'set'>,
+  { hmacKey, jwt }: { hmacKey: string; jwt: { accessExpiresIn: string } },
+  session: { userId: string; tenantId: string; sessionHash: string },
+  announce: (sessionIds: string[]) => void,
+  withoutFamily?: () => Promise<unknown>
+): Promise<void> {
+  assertTenant(session.tenantId)
+  assertSessionHash(session.sessionHash)
+  const { familyId } = await pinned(redis.readSessionOwner(`rt:${session.sessionHash}`))
+  await pinned(removeStoredSession(redis, hmacKey, session))
+  const ended = new Set([session.sessionHash])
+  const endAccess = async (): Promise<void> => {
+    if (sessionId(familyId) === undefined && withoutFamily !== undefined) {
+      await pinned(withoutFamily())
+      return
+    }
+    await pinned(
+      endSignIn(redis, 'dashboard', familyId, jwt.accessExpiresIn, (hashes) => {
+        for (const hash of hashes) ended.add(hash)
+      })
+    )
+  }
+  const failures = await pinned(settleWrites([endAccess]))
+  announce([...ended])
+  raiseFirst(failures)
 }

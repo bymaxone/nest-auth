@@ -30,6 +30,8 @@ export interface EndedSession {
 export interface LogoutNotice {
   /** Waits for the session delete, and tells `onSessionsRevoked` if it removed the session. */
   after(removal: Promise<boolean>): Promise<void>
+  /** Tells `onSessionsRevoked` what ending the sign-in removed, the others in their own event. */
+  readonly signInEnded: (sessionHashes: string[]) => void
   /**
    * For a completed logout: tells `onSessionsRevoked` unless this call already did, then
    * `afterLogout` on the dashboard plane.
@@ -39,7 +41,8 @@ export interface LogoutNotice {
 
 /**
  * Builds the notice of one `logout` call. `onSessionsRevoked` is told as soon as the session is
- * gone, whether or not the other writes are accepted, and at most once per call. A completed logout
+ * gone, whether or not the other writes are accepted, and at most once per call; any other session
+ * of the same sign-in is named in a second event. A completed logout
  * tells it even when the delete removed nothing, because a delete applied with its reply lost
  * leaves the retry nothing to remove. With no account named nothing fires.
  */
@@ -51,20 +54,28 @@ export function logoutNotice(
 ): LogoutNotice {
   const { userId, tenantId, sessionHash } = ended
   let told = false
-  const tell = (): void => {
-    if (told) return
-    told = true
+  const announce = (sessionIds: string[]): void => {
     announceSessionsRevoked(hooks, logger, {
       userId,
       ...(tenantId === undefined ? {} : { tenantId }),
       plane,
       reason: 'logout',
-      sessionIds: [sessionHash]
+      sessionIds
     })
+  }
+  const tell = (): void => {
+    if (told) return
+    told = true
+    announce([sessionHash])
   }
   return {
     after: async (removal: Promise<boolean>): Promise<void> => {
       if (await pinned(removal)) tell()
+    },
+    signInEnded: (sessionHashes: string[]): void => {
+      if (sessionHashes.includes(sessionHash)) tell()
+      const rest = sessionHashes.filter((hash) => hash !== sessionHash)
+      if (rest.length > 0) announce(rest)
     },
     completed: (): void => {
       tell()

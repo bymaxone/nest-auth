@@ -20,17 +20,18 @@ import { Inject, Injectable, Logger } from '@nestjs/common'
 
 import { BYMAX_AUTH_OPTIONS, GUARDED_USER_REPOSITORY } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { sessionId } from '../constants/session-id'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 import { WS_TICKET_TTL_SECONDS } from '../interfaces/ws-ticket.interface'
+import { logEvent } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { readStampedEpoch } from '../utils'
 import { AccountStatusService } from './account-status.service'
 import { AuthRevocationService } from './auth-revocation.service'
-import { logEvent } from '../observability/log-event'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { checked, pinned, PinnedAll } from '../utils/settle'
 
@@ -94,6 +95,7 @@ export class WsTicketService {
     if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     assertNotBlocked(user.status, this.options.blockedStatuses)
 
+    const sid = sessionId(payload.sid)
     const snapshot: WsTicketSnapshot = {
       sub: user.id,
       tenantId: user.tenantId,
@@ -103,7 +105,8 @@ export class WsTicketService {
       mfaVerified: payload.mfaVerified,
       jti: payload.jti,
       epoch: readStampedEpoch(payload),
-      exp: Math.floor(payload.exp)
+      exp: Math.floor(payload.exp),
+      ...(sid === undefined ? {} : { sid })
     }
 
     // Measured last, after every await above: Redis applies the TTL from the moment it receives
@@ -223,7 +226,7 @@ export class WsTicketService {
   }
 
   /**
-   * Refuses a snapshot whose minting session has been revoked, through the same two channels a
+   * Refuses a snapshot whose minting session has been revoked, through the same channels a
    * bearer token is held to. The platform plane is named for a snapshot with no tenant, the way
    * the epoch key itself is.
    *
@@ -237,7 +240,8 @@ export class WsTicketService {
           jti: snapshot.jti,
           sub: snapshot.sub,
           epoch: snapshot.epoch,
-          tenantId: snapshot.tenantId
+          tenantId: snapshot.tenantId,
+          sid: snapshot.sid
         },
         snapshot.tenantId === undefined ? 'platform' : 'dashboard'
       )

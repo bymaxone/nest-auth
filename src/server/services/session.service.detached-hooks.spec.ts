@@ -53,7 +53,8 @@ function build(hooks: Record<string, jest.Mock>, members: string[]): SessionServ
     smembers: jest.fn().mockResolvedValue(members),
     get: jest.fn().mockResolvedValue(null),
     del: jest.fn().mockResolvedValue(true),
-    srem: jest.fn().mockResolvedValue(1)
+    srem: jest.fn().mockResolvedValue(1),
+    readSessionOwner: jest.fn().mockResolvedValue({})
   }
   const userRepo = { findById: jest.fn().mockResolvedValue(USER) }
   return new SessionService(options, userRepo as never, hooks as never, redis as never)

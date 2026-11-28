@@ -59,7 +59,7 @@ const mockRedis = {
   rotateRefreshSession: jest.fn(),
   getUserTokenEpoch: jest.fn().mockResolvedValue(0),
   bumpUserTokenEpoch: jest.fn().mockResolvedValue(1),
-  revokeFamily: jest.fn().mockResolvedValue({ removed: 1, ownerId: 'user-1' }),
+  revokeFamily: jest.fn().mockResolvedValue({ sessionHashes: [], ownerId: 'user-1' }),
   invalidateUserSessions: jest.fn().mockResolvedValue(undefined),
   revokeAllUserTokens: jest.fn().mockResolvedValue(undefined),
   readSessionOwner: jest.fn().mockResolvedValue({ userId: 'user-1', tenantId: 'tenant-1' }),
@@ -1001,7 +1001,7 @@ describe('TokenManagerService', () => {
     // rather than fired with an empty identity a consumer would have to guess about.
     it('skips the reuse hook when the family names no owner', async () => {
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
-      mockRedis.revokeFamily.mockResolvedValue({ removed: 0, ownerId: '' })
+      mockRedis.revokeFamily.mockResolvedValue({ sessionHashes: [], ownerId: '' })
 
       await expect(service.reissueTokens('replayed', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
@@ -1015,7 +1015,7 @@ describe('TokenManagerService', () => {
     it('writes the revocation event naming the family and no owner when the family names none', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
-      mockRedis.revokeFamily.mockResolvedValue({ removed: 0, ownerId: '' })
+      mockRedis.revokeFamily.mockResolvedValue({ sessionHashes: [], ownerId: '' })
 
       await expect(service.reissueTokens('replayed', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
@@ -2198,7 +2198,7 @@ describe('TokenManagerService', () => {
         kind: 'reused',
         familyId: PLATFORM_FAMILY
       })
-      mockRedis.revokeFamily.mockResolvedValue({ removed: 0, ownerId: '' })
+      mockRedis.revokeFamily.mockResolvedValue({ sessionHashes: [], ownerId: '' })
 
       await expect(
         service.reissuePlatformTokens('replayed-platform', '9.9.9.9', 'Attacker')
@@ -2220,7 +2220,7 @@ describe('TokenManagerService', () => {
         kind: 'reused',
         familyId: PLATFORM_FAMILY
       })
-      mockRedis.revokeFamily.mockResolvedValue({ removed: 2, ownerId: 'admin-1' })
+      mockRedis.revokeFamily.mockResolvedValue({ sessionHashes: [], ownerId: 'admin-1' })
 
       await expect(
         service.reissuePlatformTokens('stolen-platform-token', '9.9.9.9', 'Attacker')
@@ -2604,7 +2604,7 @@ describe('TokenManagerService', () => {
         const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
         mockRedis.get.mockResolvedValue(null)
         mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: 'fam-stolen' })
-        mockRedis.revokeFamily.mockResolvedValue({ ownerId: 'user-compromised', count: 3 })
+        mockRedis.revokeFamily.mockResolvedValue({ sessionHashes: [], ownerId: 'user-compromised' })
 
         try {
           const call =

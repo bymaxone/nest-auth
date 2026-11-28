@@ -8,8 +8,10 @@ import type { Logger } from '@nestjs/common'
 
 import { runDetached } from './run-detached'
 import { createEmptyHookContext } from './sanitize-headers'
+import { revokeSessionAccess } from './session-access'
 import { announceSessionsRevoked } from './session-revocation'
 import { pinned } from './settle'
+import { raiseFirst, settleWrites } from './settle-writes'
 import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 import { logEvent } from '../observability/log-event'
 import type { AuthRedisService } from '../redis/auth-redis.service'
@@ -42,20 +44,30 @@ export interface ReusedFamily {
  * worse than an empty object a consumer can see is empty.
  */
 export async function endReusedFamily(
-  redis: Pick<AuthRedisService, 'revokeFamily'>,
+  redis: Pick<AuthRedisService, 'revokeFamily' | 'set'>,
   hooks: IAuthHooks | null,
   logger: Logger,
+  { accessExpiresIn }: { accessExpiresIn: string },
   { kind, outcome, ip, userAgent }: ReusedFamily
 ): Promise<void> {
   const { familyId } = outcome
-  const { ownerId: userId, tenantId } = await pinned(
+  const {
+    ownerId: userId,
+    tenantId,
+    sessionHashes
+  } = await pinned(
     kind === 'platform' ? redis.revokeFamily(familyId, 'platform') : redis.revokeFamily(familyId)
+  )
+  // Raised last: a replay finds the family marker again and repeats this write.
+  const failures = await pinned(
+    settleWrites([(): Promise<void> => revokeSessionAccess(redis, kind, familyId, accessExpiresIn)])
   )
   announceSessionsRevoked(hooks, logger, {
     userId,
     ...(tenantId === undefined ? {} : { tenantId }),
     plane: kind,
-    reason: 'refresh_reuse'
+    reason: 'refresh_reuse',
+    ...(sessionHashes.length > 0 ? { sessionIds: sessionHashes } : {})
   })
   // Named on both planes: on the platform one this is the highest-privilege identity.
   logEvent(logger, 'AUTH_REFRESH_FAMILY_REVOKED', { plane: kind, familyId: outcome.familyId })
@@ -63,12 +75,14 @@ export async function endReusedFamily(
   // exchanged has been presented again, so one of its two holders is not the owner. Emitted after
   // the revocation, so a consumer that reacts by paging someone is reacting to a lineage that is
   // already dead rather than one still being torn down.
-  if (!hooks?.onRefreshTokenReuseDetected || userId === '') return
-  const onReuse = hooks.onRefreshTokenReuseDetected.bind(hooks)
-  runDetached(
-    logger,
-    () =>
-      onReuse({ userId, familyId }, { ...createEmptyHookContext(), plane: kind, ip, userAgent }),
-    'onRefreshTokenReuseDetected'
-  )
+  if (hooks?.onRefreshTokenReuseDetected && userId !== '') {
+    const onReuse = hooks.onRefreshTokenReuseDetected.bind(hooks)
+    runDetached(
+      logger,
+      () =>
+        onReuse({ userId, familyId }, { ...createEmptyHookContext(), plane: kind, ip, userAgent }),
+      'onRefreshTokenReuseDetected'
+    )
+  }
+  raiseFirst(failures)
 }

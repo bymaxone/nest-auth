@@ -18,6 +18,52 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Changed
+
+- Ending one session now also ends the access tokens of that session: a logout and a replayed
+  refresh token on both identity planes, and eviction past the session limit and
+  `SessionService.revokeSession` on the dashboard. An access token issued earlier in the session,
+  and a WebSocket ticket minted from one, is refused at once instead of working until it expires.
+  `onSessionsRevoked` now names the revoked sessions for `refresh_reuse`.
+- Ending one session now ends its whole sign-in. Several refresh sessions can descend from one login
+  when a refresh token is replayed inside the grace window; a logout, an eviction past the session
+  limit or the revocation of any of them now ends them all, so none is left able to refresh into a
+  refused access token. `onSessionsRevoked` can name more than one session; a logout names the
+  others in a second event. The sessions of the account's other sign-ins are not affected. Past
+  the session limit, no further sign-in is ended once the account is within the limit.
+
+  **Apply to a derived backend:** nothing to change. A user who revokes another entry of their own
+  current sign-in is signed out and signs in again.
+
+- `DELETE /sessions/:id` and `SessionService.revokeOtherSession` end the sign-in of the named
+  session only. They
+  advanced the account's token epoch, so every access token of the account, the caller's included,
+  was refused until its client refreshed. The epoch is still advanced when the stored session names
+  no family.
+
+  **Apply to a derived backend:**
+  - Nothing to change in code that goes through the mounted guards or `AuthTokenVerifierService`.
+  - A client or test that expects its own access token to be refused after revoking a session
+    of another sign-in must stop expecting it. To cut every access token of an account, use
+    `AuthService.revokeAllSessions` or `SessionService.revokeAllExceptCurrent`.
+  - Another backend on the same Redis that does not read the session entry accepts the access
+    tokens of a session ended here until they expire, including one ended by
+    `DELETE /sessions/:id`, which the epoch used to cut for it too.
+  - Code that calls `AuthRevocationService.isAccessTokenRevoked` with a payload it rebuilt must
+    include `sid`, or the session check is skipped.
+  - Redis holds a new key per ended sign-in, `rvs:{sid}` or `prvs:{sid}`, for the access-token
+    lifetime plus 60 seconds, and a revocation check of a token that carries `sid` reads one key
+    more. Backends that share one Redis must configure the same access-token lifetime.
+  - The shared wire contract moves to version 9: the two key prefixes, the entry, and the optional
+    `sid` of a WebSocket ticket and `familyId` of a pending-logout record.
+  - Sessions whose record names no family behave as before.
+
+### Fixed
+
+- A replayed refresh token answered while the same sign-in is rotating now reads the family again
+  a bounded number of times while no session it read names the owner, and once one does, prunes
+  the account's session index and fires `onSessionsRevoked`.
+
 ## [1.5.24] - 2026-11-28
 
 A patch release. It adds one hook for session revocations and changes when

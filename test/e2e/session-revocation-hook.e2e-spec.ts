@@ -331,7 +331,7 @@ describe('onSessionsRevoked (E2E)', () => {
 
     it('fires on a replayed refresh token', async () => {
       const account = await register()
-      await request(server())
+      const rotated = await request(server())
         .post('/refresh')
         .send({ refreshToken: account.refreshToken })
         .expect(200)
@@ -350,7 +350,8 @@ describe('onSessionsRevoked (E2E)', () => {
         userId: account.userId,
         tenantId: TENANT,
         plane: 'dashboard',
-        reason: 'refresh_reuse'
+        reason: 'refresh_reuse',
+        sessionIds: [hashOf((rotated.body as { refreshToken: string }).refreshToken)]
       })
     })
 
@@ -574,7 +575,7 @@ describe('onSessionsRevoked (E2E)', () => {
 
     it('fires on a replayed refresh token', async () => {
       const tokens = await platformLogin()
-      await request(server())
+      const rotated = await request(server())
         .post('/platform/refresh')
         .send({ refreshToken: tokens.refreshToken })
         .expect(200)
@@ -591,7 +592,8 @@ describe('onSessionsRevoked (E2E)', () => {
       expect(await onlyEvent()).toEqual({
         userId: ADMIN_ID,
         plane: 'platform',
-        reason: 'refresh_reuse'
+        reason: 'refresh_reuse',
+        sessionIds: [hashOf((rotated.body as { refreshToken: string }).refreshToken)]
       })
     })
   })

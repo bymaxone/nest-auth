@@ -25,6 +25,8 @@ import { isServiceUnavailable } from '../redis/redis-outage'
 export interface PendingLogoutOwner {
   readonly userId: string
   readonly tenantId: string | undefined
+  /** The ended session's family id, absent when its record named none. */
+  readonly familyId?: string | undefined
 }
 
 /**
@@ -50,9 +52,7 @@ export async function rememberPendingLogout(
   try {
     // `JSON.stringify` omits an undefined `tenantId`, which is how a record with no tenant is
     // written: the field is absent, never the string `undefined`.
-    await pinned(
-      redis.set(key, stringifyJson({ userId: owner.userId, tenantId: owner.tenantId }), ttlSeconds)
-    )
+    await pinned(redis.set(key, stringifyJson({ ...owner }), ttlSeconds))
   } catch (err: unknown) {
     logStore(logger, 'AUTH_STORE_DEGRADED', 'logout_owner_keep', err)
   }

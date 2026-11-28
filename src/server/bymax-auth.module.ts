@@ -737,7 +737,7 @@ export class BymaxAuthModule {
         AuthRedisService,
         // Export AuthRevocationService for the same @UseGuards() reason — the exported guards now
         // depend on it — and so a host bridging a realtime transport can inject it and consult
-        // both revocation channels rather than granting a stream that outlives a logout.
+        // the revocation channels rather than granting a stream that outlives a logout.
         AuthRevocationService,
         // AccountStatusService is UserStatusGuard's only constructor dependency, so it must be
         // exported for the same @UseGuards() reason as the entries around it: the guard is

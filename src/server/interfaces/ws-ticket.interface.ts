@@ -63,4 +63,9 @@ export interface WsTicketSnapshot {
    * reports it: a transport that stays open should end by then.
    */
   exp?: number
+  /**
+   * The `sid` of the access token that minted the ticket, so that redeeming it is refused once its
+   * session has been ended. Absent when the token carried none; such a record is accepted.
+   */
+  sid?: string
 }

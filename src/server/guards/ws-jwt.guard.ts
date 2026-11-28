@@ -146,7 +146,7 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
     }
 
     // The same chain an HTTP request is held to, from the one service that owns it: signature,
-    // `jti`, `sub` and `tenantId` shapes, token type, both revocation channels, the tenant binding,
+    // `jti`, `sub` and `tenantId` shapes, token type, the revocation channels, the tenant binding,
     // the account's CURRENT status and the MFA policy. A socket is the longer-lived credential, so
     // it is not admitted on less. `@SkipMfa()` lifts only the MFA gate, as it does on HTTP.
     const skipMfa =
