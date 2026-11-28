@@ -1,5 +1,6 @@
 /**
  * @fileoverview Which sessions the session limit chooses to end.
+ * @layer Test
  */
 
 import { Logger } from '@nestjs/common'
