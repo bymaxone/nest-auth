@@ -1797,11 +1797,10 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 > bearer client that sends none, or a refresh cookie whose path does not cover the route), it marks the
 > sessions of the login the access token's `sid` names.
 
-> **`DELETE /sessions/:id` cuts every access token of the account, the caller's included.**
-> It and `POST /sessions/revoke-all` advance the account's token epoch. The caller's next request
-> answers `401` until the client refreshes; every session that was kept refreshes normally, and a
-> revoked one cannot. `SessionService.revokeSession`, the method for host code, ends the named
-> session and its access tokens only.
+> **`DELETE /sessions/:id` ends the named session and its access tokens only.** The caller's own
+> access token and the other sessions keep working. When the stored session names no family, it
+> advances the account's token epoch instead, so every access token of the account answers `401`
+> until its client refreshes. `POST /sessions/revoke-all` always advances the epoch.
 
 > **The platform plane never uses a refresh cookie.** `extractPlatformRefreshToken` reads
 > `req.body.refreshToken` in every `tokenDelivery` mode, and the access token is always the

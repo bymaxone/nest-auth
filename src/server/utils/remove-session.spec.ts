@@ -5,7 +5,6 @@
  */
 
 import { endStoredSession } from './remove-session'
-import type { AuthRedisService } from '../redis/auth-redis.service'
 
 const familyId = '3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b'
 const session = { userId: 'u1', tenantId: 't1', sessionHash: 'a'.repeat(64) }
@@ -21,8 +20,12 @@ function store() {
 }
 
 /** Runs the removal over `redis`. */
-const end = (redis: ReturnType<typeof store>, announce: () => void, target = session) =>
-  endStoredSession(redis as unknown as AuthRedisService, options, target, announce)
+const end = (
+  redis: ReturnType<typeof store>,
+  announce: () => void,
+  target = session,
+  withoutFamily?: () => Promise<unknown>
+) => endStoredSession(redis, options, target, announce, withoutFamily)
 
 describe('endStoredSession', () => {
   // Scenario: an owned session. Expected: the family is read before the removal, then ended.
@@ -63,6 +66,22 @@ describe('endStoredSession', () => {
     await expect(end(redis, announce)).rejects.toThrow('READONLY')
 
     expect(announce).toHaveBeenCalledTimes(1)
+  })
+
+  // Scenario: a record that names its family, and one that does not. Expected: the fallback runs
+  // only for the second, in place of the entry write.
+  it.each([
+    [familyId, 1, 0],
+    [undefined, 0, 1]
+  ])('with family %p writes %i entries and runs the fallback %i times', async (id, sets, falls) => {
+    const redis = store()
+    redis.readSessionOwner.mockResolvedValue({ familyId: id })
+    const withoutFamily = jest.fn().mockResolvedValue(undefined)
+
+    await end(redis, jest.fn(), session, withoutFamily)
+
+    expect(redis.set).toHaveBeenCalledTimes(sets)
+    expect(withoutFamily).toHaveBeenCalledTimes(falls)
   })
 
   // Scenario: a malformed hash or a blank tenant. Expected: refused before any key is read.

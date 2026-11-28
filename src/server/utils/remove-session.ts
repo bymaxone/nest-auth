@@ -10,6 +10,7 @@
 import { revokeSessionAccess } from './session-access'
 import { pinned } from './settle'
 import { raiseFirst, settleWrites } from './settle-writes'
+import { sessionId } from '../constants/session-id'
 import { sessionIndexKey } from '../constants/user-keys'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -114,7 +115,7 @@ export function assertSessionHash(sessionHash: string, field = 'sessionHash'): v
  * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the account.
  */
 export async function removeStoredSession(
-  redis: AuthRedisService,
+  redis: Pick<AuthRedisService, 'eval'>,
   hmacKey: string,
   { userId, tenantId, sessionHash }: { userId: string; tenantId: string; sessionHash: string }
 ): Promise<void> {
@@ -146,23 +147,26 @@ export async function removeStoredSession(
  * The family id is read before the removal deletes the record, and used only once the removal has
  * proved the account owns the session. A refused access write is raised after `announce`.
  *
+ * @param withoutFamily - Runs instead of the entry write when the record names no family a token
+ *   could carry. By default nothing does, and those access tokens last until they expire.
  * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the account.
  */
 export async function endStoredSession(
-  redis: AuthRedisService,
+  redis: Pick<AuthRedisService, 'eval' | 'readSessionOwner' | 'set'>,
   { hmacKey, jwt }: { hmacKey: string; jwt: { accessExpiresIn: string } },
   session: { userId: string; tenantId: string; sessionHash: string },
-  announce: () => void
+  announce: () => void,
+  withoutFamily?: () => Promise<unknown>
 ): Promise<void> {
   assertTenant(session.tenantId)
   assertSessionHash(session.sessionHash)
   const { familyId } = await pinned(redis.readSessionOwner(`rt:${session.sessionHash}`))
   await pinned(removeStoredSession(redis, hmacKey, session))
-  const failures = await pinned(
-    settleWrites([
-      (): Promise<void> => revokeSessionAccess(redis, 'dashboard', familyId, jwt.accessExpiresIn)
-    ])
-  )
+  const endAccess = (): Promise<unknown> =>
+    sessionId(familyId) === undefined && withoutFamily !== undefined
+      ? withoutFamily()
+      : revokeSessionAccess(redis, 'dashboard', familyId, jwt.accessExpiresIn)
+  const failures = await pinned(settleWrites([endAccess]))
   announce()
   raiseFirst(failures)
 }

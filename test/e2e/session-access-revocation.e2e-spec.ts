@@ -139,6 +139,22 @@ describe('access tokens of an ended session (E2E)', () => {
       .expect(204)
   }
 
+  async function deleteSession(caller: Tokens, target: Tokens): Promise<void> {
+    await request(server())
+      .delete(`/sessions/${hashOf(target.refreshToken)}`)
+      .set('Authorization', `Bearer ${caller.accessToken}`)
+      .expect(204)
+  }
+
+  /** Rewrites a session record as one written before families existed. */
+  async function forgetFamily(tokens: Tokens): Promise<void> {
+    const redis = boot.app.get(AuthRedisService)
+    const key = `rt:${hashOf(tokens.refreshToken)}`
+    const record = JSON.parse((await redis.get(key)) ?? '') as Record<string, unknown>
+    delete record['familyId']
+    await redis.set(key, JSON.stringify(record), 600)
+  }
+
   describe('dashboard', () => {
     beforeEach(() => start())
 
@@ -164,6 +180,29 @@ describe('access tokens of an ended session (E2E)', () => {
       })
 
       expect([await me(earlier), await me(current), await me(other)]).toEqual([401, 401, 200])
+    })
+
+    it('ends only the session named to DELETE /sessions/:id', async () => {
+      const caller = await register()
+      const earlier = await login(caller.email)
+      const other = await login(caller.email)
+      const target = await rotate('/refresh', earlier)
+
+      await deleteSession(caller, target)
+
+      expect([await me(earlier), await me(target)]).toEqual([401, 401])
+      expect([await me(caller), await me(other)]).toEqual([200, 200])
+    })
+
+    // A record that names no family says nothing about which access tokens came from it.
+    it('ends every access token when the record of the deleted session names no family', async () => {
+      const caller = await register()
+      const target = await login(caller.email)
+      await forgetFamily(target)
+
+      await deleteSession(caller, target)
+
+      expect([await me(caller), await me(target)]).toEqual([401, 401])
     })
 
     it('refuses the access tokens of a family whose refresh token was replayed', async () => {

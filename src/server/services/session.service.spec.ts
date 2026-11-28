@@ -1809,11 +1809,10 @@ describe('SessionService', () => {
   // =========================================================================
 
   describe('revokeOtherSession', () => {
-    // Deleting the refresh session stops rotation but says nothing about the stateless access
-    // token its holder already carries — that token kept working for up to its full lifetime.
-    // Someone who opens their session list and revokes a device does so because they think it
-    // is compromised, which is a decision about right now.
-    it('bumps the token epoch so the revoked device loses its access token too', async () => {
+    // A record naming no family says nothing about which access tokens came from it, and a
+    // person revoking a device they believe is compromised decides about right now. (The
+    // named-family case is in `remove-session.spec.ts`.)
+    it('bumps the token epoch when the record names no family', async () => {
       mockRedis.eval.mockResolvedValue(1)
 
       await service.revokeOtherSession({
@@ -1828,7 +1827,7 @@ describe('SessionService', () => {
     // After the revoke, never before: a failure in the revoke must leave the epoch untouched
     // and the operation visibly incomplete, rather than signing every device out of its access
     // token for a session that is in fact still alive.
-    it('does not bump when the session was not revoked', async () => {
+    it('writes nothing when the session was not revoked', async () => {
       mockRedis.eval.mockResolvedValue(0)
 
       await expect(

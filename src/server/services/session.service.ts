@@ -359,7 +359,8 @@ export class SessionService {
    * Revokes a single session belonging to the specified user.
    *
    * Once `SISMEMBER` has proved ownership, deletes the refresh token, its detail and its member
-   * of the user's session SET, and ends that session's access tokens.
+   * of the user's session SET, and ends that session's access tokens. When the record names no
+   * family, those access tokens last until they expire.
    *
    * @param userId - Internal user ID who owns the session.
    * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
@@ -374,35 +375,28 @@ export class SessionService {
   }
 
   /**
-   * Revokes one named session **other than the caller's own**, and cuts the access tokens with
-   * it.
+   * Revokes one named session on behalf of its owner, as `DELETE /sessions/:id` does.
    *
-   * Distinct from {@link revokeSession}, which ends the named session and its access tokens only:
-   * this also bumps the account's epoch, which ends the access tokens of every session of the
-   * account. The other sessions keep their refresh sessions and mint a new access token on their
-   * next rotation; the revoked one cannot.
+   * Like {@link revokeSession}, except for a session whose record names no family: nothing says
+   * which access tokens came from it, so the account's token epoch is advanced and every access
+   * token of the account is refused. The other sessions keep their refresh sessions.
    *
    * @param userId - Internal user ID who owns the session.
    * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeOtherSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    // No `assertTenant` here: `removeStoredSession` on the next line performs the identical check
-    // before touching anything, so a guard at this level is unreachable code that reads as
-    // defence. Measured — deleting it left all 133 tests in this suite green, which is what an
-    // equivalent mutant looks like. Removed rather than suppressed: a `Stryker disable` would
-    // have preserved the duplication and added a comment defending it.
     await pinned(
-      removeStoredSession(this.redis, this.options.hmacKey, { userId, tenantId, sessionHash })
+      endStoredSession(
+        this.redis,
+        this.options,
+        { userId, tenantId, sessionHash },
+        () => {
+          this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
+        },
+        (): Promise<unknown> => this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
+      )
     )
-    // After the revoke, not before: a failure above leaves the epoch untouched and the
-    // operation visibly incomplete, rather than the reverse — every device losing its access
-    // token for a session that is in fact still alive.
-    try {
-      await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
-    } finally {
-      this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
-    }
   }
 
   /**

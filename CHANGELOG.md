@@ -26,9 +26,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   and a WebSocket ticket minted from one, is refused at once instead of working until it expires.
   The other sessions of the account are not affected.
   `onSessionsRevoked` now names the revoked sessions for `refresh_reuse`.
+- `DELETE /sessions/:id` and `SessionService.revokeOtherSession` end the named session only. They
+  advanced the account's token epoch, so every access token of the account, the caller's included,
+  was refused until its client refreshed. The epoch is still advanced when the stored session names
+  no family.
 
   **Apply to a derived backend:**
   - Nothing to change in code that goes through the mounted guards or `AuthTokenVerifierService`.
+  - A client or test that expects its own access token to be refused after revoking another
+    session must stop expecting it. To cut every access token of an account, use
+    `AuthService.revokeAllSessions` or `SessionService.revokeAllExceptCurrent`.
   - Code that calls `AuthRevocationService.isAccessTokenRevoked` with a payload it rebuilt must
     include `sid`, or the session check is skipped.
   - Redis holds a new key per ended session, `rvs:{sid}` or `prvs:{sid}`, for the access-token
