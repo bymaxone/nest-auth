@@ -288,7 +288,8 @@ describe('a revocation the store refuses part-way (real Redis)', () => {
       await refuseWrites()
       if (expired) {
         const namespace = boot.options.redisNamespace as string
-        await boot.redis.call('DEL', `${namespace}:${marker}:${hashOf(mine.refreshToken)}`)
+        const key = `${namespace}:${marker}:${hashOf(mine.refreshToken)}`
+        expect(await admin.del(key)).toBe(1)
       }
       expect(await out()).toBe(204)
 
