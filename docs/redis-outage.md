@@ -90,8 +90,8 @@ the suite pauses and stops itself, under each client configuration a host may us
 | Platform plane                                  | `platform/*`                                                     | 503                                                               | the primitives (`auth-redis.service.outage.spec`); not driven over HTTP                         |
 | A process that boots with Redis down            | `RedisReadinessService`                                          | boot fails with the address in the message                        | `redis-readiness.e2e-spec`                                                                      |
 
-A logout that cannot end the sign-in keeps the stored refresh session: until a repeated logout
-succeeds the presented refresh token still refreshes (`real-redis/partial-revoke`).
+A logout refused the removal of the sign-in's sessions keeps the stored refresh session: until a
+repeated logout succeeds the presented refresh token still refreshes (`real-redis/partial-revoke`).
 
 Absorbed on purpose. The rule, with its examples, is `serviceUnavailable.absorption` in
 `conformance/wire-contract.json`: a call whose result the answer does not depend on is logged and

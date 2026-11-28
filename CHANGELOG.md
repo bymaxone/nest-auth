@@ -52,8 +52,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **Apply to a derived backend:** a reset on an account without MFA now signs it out. A job that
   calls `resetMfa` on accounts it has not checked must check `mfaEnabled` first.
 
-- A logout on either plane that cannot end the sign-in keeps the stored refresh session, so a
-  logout repeated at any later time ends it. The call still answers an error.
+- A logout on either plane that is refused the removal of the sign-in's sessions keeps the stored
+  refresh session, so a logout repeated at any later time ends it. The call still answers an error.
 
   **Apply to a derived backend:** nothing to change.
 
@@ -90,7 +90,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 When the store accepts some writes of an operation and refuses others:
 
-- Logout that cannot end the sign-in: the call errors, and until a repeated logout succeeds the
+- Logout, family removal refused: the call errors, and until a repeated logout succeeds the
   presented refresh token still refreshes.
 - Eviction past the session limit, session entry or family removal refused: the login that caused
   the eviction succeeds, and the evicted session cannot refresh, but its access tokens are accepted
@@ -98,12 +98,12 @@ When the store accepts some writes of an operation and refuses others:
 - Eviction of a sign-in that holds two sessions, session entry refused: neither session can
   refresh, and their access tokens are accepted until they expire.
 - Eviction of a sign-in that holds two sessions, family removal refused: the second session keeps
-  refreshing until the next login evicts it.
+  refreshing until it is revoked or a later eviction removes it.
 - MFA enable, MFA disable and password reset, session removal refused: the call errors, repeating
   it is refused, and the sessions keep refreshing until every session of the account is revoked.
 - MFA enable, MFA disable, password reset and change of password, token epoch refused: the call
   errors, repeating it as it was is refused, and access tokens are accepted until they expire.
-  Refresh is refused.
+  Refresh of the ended sessions is refused.
 
 ### Fixed
 
