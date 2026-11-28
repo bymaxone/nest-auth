@@ -41,8 +41,9 @@ function evictionContext({
 }
 
 /**
- * Removes the sessions the limit pushed out. Each removed one fires `onSessionEvicted`; the whole
- * pass then fires `onSessionsRevoked` once.
+ * Removes the sessions the limit pushed out. Each one whose three writes are accepted fires
+ * `onSessionEvicted`; the pass then fires `onSessionsRevoked` once, naming every session whose
+ * refresh token was deleted.
  */
 export async function evictSessions(
   redis: Pick<AuthRedisService, 'del' | 'srem'>,

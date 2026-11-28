@@ -569,7 +569,7 @@ export class AuthService {
         (): Promise<unknown> => this.redis.del(`rp:${sessionHash}`)
       ])
     )
-    await pinned(this.revokeSessionMetadata(userId, tenantId, sessionHash))
+    await pinned(notice.after(this.revokeSessionMetadata(userId, tenantId, sessionHash)))
 
     // A refused revocation write is not a completed logout: no hook, and the caller is told so.
     // The session record is already gone, so the owner is kept for the retry that will finish it.
@@ -617,31 +617,30 @@ export class AuthService {
   }
 
   /**
-   * Removes the session's detail record and index member. The `rt:{hash}` DEL already ran.
-   * SESSION_NOT_FOUND means the session was evicted, already revoked, or is not this account's —
-   * in all cases authentication is already invalidated.
+   * Removes the session's records and index member, deleting `rt:{hash}` again, so it also ends a
+   * session whose first DEL was refused. SESSION_NOT_FOUND: evicted, revoked or another account's.
    *
    * The tenant is REQUIRED to name the index, and it comes off the record rather than from the
    * caller. A record without one is a pre-upgrade write: the contract lists `tenantId` among the
-   * refresh session's fields, so a live record always has it. Skipping the call is the honest end
-   * for one that does not — `rt:{hash}` is already deleted, so the session is dead either way, and
-   * guessing a tenant would name an index belonging to nobody while reading like a revocation that
-   * happened.
+   * refresh session's fields, so a live record always has it. The call is skipped for one that does
+   * not: guessing a tenant would name an index belonging to nobody while reading like a revocation.
    *
    * @param userId - The owner, empty when none is known.
    * @param tenantId - The owner's tenant, absent when the record carried none.
    * @param sessionHash - The SHA-256 of the raw refresh token.
+   * @returns Whether this removal deleted the session, which it can after a refused DEL.
    */
   private async revokeSessionMetadata(
     userId: string,
     tenantId: string | undefined,
     sessionHash: string
-  ): Promise<void> {
-    if (!this.options.sessions.enabled || !userId || tenantId === undefined) return
+  ): Promise<boolean> {
+    if (!this.options.sessions.enabled || !userId || tenantId === undefined) return false
     try {
       await pinned(
         removeStoredSession(this.redis, this.options.hmacKey, { userId, tenantId, sessionHash })
       )
+      return true
     } catch (err: unknown) {
       const errCode =
         err instanceof AuthException
@@ -653,6 +652,7 @@ export class AuthService {
         // a forged one, and this one names the failing KEY, which embeds the consumer's user id.
         logStore(this.logger, 'AUTH_STORE_DEGRADED', 'session_cleanup', err)
       }
+      return false
     }
   }
 

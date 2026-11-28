@@ -387,6 +387,27 @@ describe('onSessionsRevoked (E2E)', () => {
       expect(await onlyEvent()).toMatchObject({ reason: 'all_sessions_revoked' })
     })
 
+    // The logout's first delete is refused and its metadata removal, which deletes the same key,
+    // still ends the session.
+    it('fires when a refused logout delete is followed by a removal that ends the session', async () => {
+      const account = await register()
+      const redis = boot.app.get(AuthRedisService)
+      jest.spyOn(redis, 'del').mockRejectedValueOnce(new Error('READONLY'))
+
+      await expect(
+        boot.app.get(AuthService).logout(account.accessToken, account.refreshToken)
+      ).rejects.toThrow('READONLY')
+
+      expect(await onlyEvent()).toMatchObject({
+        reason: 'logout',
+        sessionIds: [hashOf(account.refreshToken)]
+      })
+      await request(server())
+        .post('/refresh')
+        .send({ refreshToken: account.refreshToken })
+        .expect(401)
+    })
+
     it('does not fire when the store refuses the deletion itself', async () => {
       const account = await register()
       jest

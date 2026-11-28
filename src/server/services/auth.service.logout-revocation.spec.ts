@@ -173,9 +173,27 @@ describe('AuthService.logout — refused revocation writes', () => {
     expect(mockHooks.afterLogout).not.toHaveBeenCalled()
   })
 
-  // Scenario: the session delete is refused. Expected: no revocation is announced. Why: this call
-  // revoked no session.
-  it('should announce no revocation when the session delete is refused', async () => {
+  // Scenario: the session delete is refused and the metadata removal, which deletes the same key,
+  // removes nothing either. Expected: no revocation is announced. Why: this call revoked no session.
+  it.each([STORE_REFUSED, new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)])(
+    'should announce no revocation when neither removal deletes the session (%s)',
+    async (refusal) => {
+      mockRedis.del.mockImplementation((key: string) =>
+        key === `rt:${HASH}` ? Promise.reject(STORE_REFUSED) : Promise.resolve(true)
+      )
+      jest.mocked(removeStoredSession).mockRejectedValue(refusal)
+
+      await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
+      await flushMicrotasks()
+
+      expect(mockHooks.onSessionsRevoked).not.toHaveBeenCalled()
+    }
+  )
+
+  // Scenario: a record that names no tenant, so no metadata removal runs, and the session delete is
+  // refused. Expected: no revocation is announced.
+  it('should announce no revocation when the delete is refused and no metadata removal runs', async () => {
+    mockRedis.readSessionOwner.mockResolvedValue({ userId: 'user-1', tenantId: undefined })
     mockRedis.del.mockImplementation((key: string) =>
       key === `rt:${HASH}` ? Promise.reject(STORE_REFUSED) : Promise.resolve(true)
     )
@@ -183,7 +201,32 @@ describe('AuthService.logout — refused revocation writes', () => {
     await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
     await flushMicrotasks()
 
+    expect(removeStoredSession).not.toHaveBeenCalled()
     expect(mockHooks.onSessionsRevoked).not.toHaveBeenCalled()
+  })
+
+  // Scenario: the session delete is refused and the metadata removal then deletes the session.
+  // Expected: the revocation is announced although the logout did not complete.
+  it('should announce the session the metadata removal deleted after the delete was refused', async () => {
+    mockRedis.del.mockImplementation((key: string) =>
+      key === `rt:${HASH}` ? Promise.reject(STORE_REFUSED) : Promise.resolve(true)
+    )
+
+    await expect(service.logout('access.jwt', RAW_REFRESH)).rejects.toBe(STORE_REFUSED)
+    await flushMicrotasks()
+
+    expect(mockHooks.onSessionsRevoked.mock.calls).toEqual([
+      [
+        {
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          plane: 'dashboard',
+          reason: 'logout',
+          sessionIds: [HASH]
+        }
+      ]
+    ])
+    expect(mockHooks.afterLogout).not.toHaveBeenCalled()
   })
 
   // Scenario: a completed logout, whether or not the delete reports a removed key. Expected: one
