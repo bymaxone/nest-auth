@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { sessionRevocationKey, sessionRevocationTtlSeconds } from './utils/session-access'
+import { isWsTicketSnapshot } from './utils/ws-ticket-snapshot'
 
 interface RevocationContract {
   version: number
@@ -53,5 +54,26 @@ describe('the session revocation entry in the contract', () => {
     expect(record?.['optionalFields']).toEqual([field])
     expect(record?.['fields']).not.toContain(field)
     expect(record?.[field]).toContain('optional')
+  })
+
+  const ticketRecord = {
+    sub: 'u1',
+    role: 'member',
+    status: 'active',
+    mfaEnabled: false,
+    mfaVerified: false,
+    jti: 'j1',
+    epoch: 0
+  }
+
+  // Scenario: a ticket record whose sid another writer got wrong. Expected: still a ticket. Why:
+  // the contract reads such a value as absent, as an access token's sid is read.
+  it.each([null, 7, 'a:b', ''])('keeps a record whose sid is %p a ticket', (value) => {
+    expect(isWsTicketSnapshot({ ...ticketRecord, sid: value })).toBe(true)
+  })
+
+  // Scenario: an expiry outside the declared range. Expected: not a ticket.
+  it.each([null, -1, 1.5, 2 ** 53, '1'])('refuses a record whose exp is %p', (value) => {
+    expect(isWsTicketSnapshot({ ...ticketRecord, exp: value })).toBe(false)
   })
 })
