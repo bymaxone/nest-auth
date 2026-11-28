@@ -3,7 +3,8 @@
  *
  * The refusal is the server's own: the application connects as an ACL user whose write access to
  * one key family is taken away for the first call and given back for the retry. Only a real server
- * refuses a key a script declares, and a command a script runs.
+ * refuses a key a script declares, and a command a script runs. The server is this file's own: one
+ * row sets its memory limit, which the key namespaces of a shared server do not separate.
  *
  * @layer Test
  */
@@ -19,6 +20,7 @@ import { MfaService } from '../../../src/server/services/mfa.service'
 import { PasswordService } from '../../../src/server/services/password.service'
 import { SessionService } from '../../../src/server/services/session.service'
 import { bootstrapTestApp, type BootstrappedTestApp } from '../setup'
+import { startRedisContainer, type StartedRedis } from './redis-container'
 
 const PASSWORD = 'PartialRevoke123!-xyz'
 const TENANT = 'tenant-1'
@@ -40,6 +42,8 @@ interface Tokens {
 const hashOf = (token: string): string => createHash('sha256').update(token).digest('hex')
 
 describe('a revocation the store refuses part-way (real Redis)', () => {
+  let store: StartedRedis
+  let admin: Redis
   let boot: BootstrappedTestApp
   let client: Redis
   let sequence = 0
@@ -50,12 +54,20 @@ describe('a revocation the store refuses part-way (real Redis)', () => {
     const keys = FAMILIES.map(
       (family) => `${families.includes(family) ? '%R' : ''}~${namespace}:${family}:*`
     )
-    await boot.redis.call('ACL', 'SETUSER', ACL_USER, 'resetkeys', ...keys)
+    await admin.call('ACL', 'SETUSER', ACL_USER, 'resetkeys', ...keys)
   }
 
+  beforeAll(async () => {
+    store = await startRedisContainer()
+    admin = new Redis(store.url)
+  })
+
+  afterAll(async () => {
+    admin.disconnect()
+    await store.container.stop()
+  })
+
   beforeEach(async () => {
-    const url = new URL(process.env['BYMAX_E2E_REDIS_URL'] as string)
-    const admin = new Redis(url.href)
     await admin.call(
       'ACL',
       'SETUSER',
@@ -67,8 +79,7 @@ describe('a revocation the store refuses part-way (real Redis)', () => {
       '&*',
       '+@all'
     )
-    admin.disconnect()
-    client = new Redis(url.href, { username: ACL_USER, password: ACL_PASSWORD })
+    client = new Redis(store.url, { username: ACL_USER, password: ACL_PASSWORD })
     boot = await bootstrapTestApp(
       { platform: { enabled: true } },
       {
@@ -195,13 +206,14 @@ describe('a revocation the store refuses part-way (real Redis)', () => {
     const [target, sibling] = await siblings('/refresh', account)
     const sessionHash = hashOf(target.refreshToken)
 
-    await boot.redis.call('CONFIG', 'SET', 'maxmemory', '1')
+    await admin.config('SET', 'maxmemory', '1')
     try {
+      await expect(boot.redis.set('shared-server-probe', '1', 'EX', 5)).resolves.toBe('OK')
       await boot.app
         .get(SessionService)
         .revokeSession({ userId: account.userId, tenantId: TENANT, sessionHash })
     } finally {
-      await boot.redis.call('CONFIG', 'SET', 'maxmemory', '0')
+      await admin.config('SET', 'maxmemory', '0')
     }
 
     expect(await refreshStatus('/refresh', target)).toBe(401)
