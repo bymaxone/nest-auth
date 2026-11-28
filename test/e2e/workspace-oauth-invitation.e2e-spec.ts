@@ -26,6 +26,8 @@ import type {
   OAuthProviderPlugin
 } from '../../src/server/interfaces/oauth-provider.interface'
 import { OAUTH_PLUGINS } from '../../src/server/oauth/oauth.constants'
+import { SessionService } from '../../src/server/services/session.service'
+import { TokenManagerService } from '../../src/server/services/token-manager.service'
 import { WorkspaceInvitationService } from '../../src/server/services/workspace-invitation.service'
 import { createEmptyHookContext } from '../../src/server/utils/sanitize-headers'
 import { bootstrapTestApp, expectAuthError } from './setup'
@@ -54,7 +56,18 @@ const plugin: OAuthProviderPlugin = {
   fetchProfile: async () => flow.profile
 }
 
-const hooks: IAuthHooks = { onOAuthLogin: async () => flow.decision }
+/** What the after-acceptance hook found each time it ran: the account and its open sessions. */
+const acceptances: { email: string; sessions: number }[] = []
+
+/** Counts the sessions of an account, as the app under test lists them. */
+let openSessions: (userId: string) => Promise<number> = async () => 0
+
+const hooks: IAuthHooks = {
+  onOAuthLogin: async () => flow.decision,
+  afterInvitationAccepted: async (user) => {
+    acceptances.push({ email: user.email, sessions: await openSessions(user.id) })
+  }
+}
 
 /** The roles every app here uses. */
 const WORKSPACES = {
@@ -71,6 +84,7 @@ async function boot(registration: 'open' | 'invitation-only'): Promise<Bootstrap
   return bootstrapTestApp(
     {
       registration,
+      sessions: { enabled: true },
       workspaces: WORKSPACES,
       oauth: {
         google: {
@@ -111,6 +125,9 @@ describe('workspace invitation through OAuth (E2E)', () => {
     beforeAll(async () => {
       b = await boot('open')
       app = b.app
+      const sessions = app.get(SessionService, { strict: false })
+      openSessions = async (userId) =>
+        (await sessions.listSessions({ userId, tenantId: 'tenant-1' })).length
     })
 
     afterAll(async () => {
@@ -184,6 +201,45 @@ describe('workspace invitation through OAuth (E2E)', () => {
       expect(access.body).toMatchObject({ role: 'editor' })
       expectAuthError(await preview(token), 'auth.invalid_invitation_token')
     })
+
+    it('runs the after-acceptance hook once the session of the new account is open', async () => {
+      const email = 'hook.success@example.com'
+      flow.profile = profileFor(email, true)
+      const { token } = await invitation(email)
+      acceptances.length = 0
+
+      const res = await finish(await start(token))
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(res.status).toBe(200)
+      expect(acceptances).toEqual([{ email, sessions: 1 }])
+    })
+
+    it.each([
+      ['the tokens cannot be issued', TokenManagerService, 'issueTokens'],
+      ['the session cannot be written', SessionService, 'createSession']
+    ] as const)(
+      'runs no after-acceptance hook when %s, keeping the membership and the spent token',
+      async (_name, service, method) => {
+        const email = `hook.${method.toLowerCase()}@example.com`
+        flow.profile = profileFor(email, true)
+        const { token } = await invitation(email)
+        const target = app.get<Record<string, () => Promise<unknown>>>(service, { strict: false })
+        const failing = jest.spyOn(target, method).mockRejectedValueOnce(new Error('store down'))
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+        acceptances.length = 0
+
+        const res = await finish(await start(token))
+        await new Promise((resolve) => setImmediate(resolve))
+        failing.mockRestore()
+        error.mockRestore()
+
+        expect(res.status).toBe(500)
+        expect(acceptances).toEqual([])
+        expect(await b.repo.findByEmail({ email, tenantId: 'tenant-1' })).not.toBeNull()
+        expectAuthError(await preview(token), 'auth.invalid_invitation_token')
+      }
+    )
 
     it('refuses a provider address that is not the invited one and leaves the token usable', async () => {
       const { token } = await invitation('someone.else@example.com')

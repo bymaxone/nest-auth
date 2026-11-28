@@ -85,7 +85,12 @@ const users = {
 const hooks = { onOAuthLogin: jest.fn(), afterLogin: jest.fn() }
 const redis = { set: jest.fn(), getdel: jest.fn() }
 const tokens = { issueTokens: jest.fn(), issueMfaTempToken: jest.fn() }
-const accepts = { prepareOAuth: jest.fn(), judgeNewAccount: jest.fn(), completeOAuth: jest.fn() }
+const accepts = {
+  prepareOAuth: jest.fn(),
+  judgeNewAccount: jest.fn(),
+  completeOAuth: jest.fn(),
+  announceCreated: jest.fn()
+}
 
 /** The service under test, with the resolved options a case needs and the accept service or none. */
 async function build(
@@ -255,10 +260,36 @@ describe('OAuthService with workspace invitations', () => {
       expect(accepts.completeOAuth).toHaveBeenCalledWith(
         LOADED,
         USER,
-        true,
         expect.objectContaining({ tenantId: 'tenant-1', email: PROFILE.email, userId: USER.id }),
         false
       )
+    })
+
+    it('announces a created account only after its tokens are issued', async () => {
+      const service = await build()
+
+      await callback(service, stored({ workspaceInvitation: HASH }))
+
+      expect(accepts.announceCreated).toHaveBeenCalledTimes(1)
+      expect(accepts.announceCreated).toHaveBeenCalledWith(
+        expect.not.objectContaining({ passwordHash: expect.anything() }),
+        expect.objectContaining({ tenantId: 'tenant-1', userId: USER.id })
+      )
+      expect(tokens.issueTokens.mock.invocationCallOrder[0]).toBeLessThan(
+        accepts.announceCreated.mock.invocationCallOrder[0] as number
+      )
+    })
+
+    it('announces nothing when the tokens cannot be issued', async () => {
+      const service = await build()
+      tokens.issueTokens.mockRejectedValue(new Error('store down'))
+
+      await expect(callback(service, stored({ workspaceInvitation: HASH }))).rejects.toThrow(
+        'store down'
+      )
+
+      expect(accepts.completeOAuth).toHaveBeenCalledTimes(1)
+      expect(accepts.announceCreated).not.toHaveBeenCalled()
     })
 
     it('tells the vetting when the provider did not verify the address', async () => {
@@ -283,13 +314,8 @@ describe('OAuthService with workspace invitations', () => {
       await callback(service, stored({ workspaceInvitation: HASH }))
 
       expect(accepts.judgeNewAccount).not.toHaveBeenCalled()
-      expect(accepts.completeOAuth).toHaveBeenCalledWith(
-        LOADED,
-        USER,
-        false,
-        expect.anything(),
-        false
-      )
+      expect(accepts.completeOAuth).toHaveBeenCalledWith(LOADED, USER, expect.anything(), false)
+      expect(accepts.announceCreated).not.toHaveBeenCalled()
     })
 
     it('refuses before the hook or any account is touched when the invitation cannot be honoured', async () => {
@@ -383,7 +409,7 @@ describe('OAuthService with workspace invitations', () => {
       expect(accepts.judgeNewAccount.mock.invocationCallOrder[0]).toBeLessThan(
         users.createWithOAuth.mock.invocationCallOrder[0] as number
       )
-      expect(accepts.completeOAuth.mock.calls[0]?.[4]).toBe(true)
+      expect(accepts.completeOAuth.mock.calls[0]?.[3]).toBe(true)
     })
 
     it('names the account after the address when the profile carries no name', async () => {

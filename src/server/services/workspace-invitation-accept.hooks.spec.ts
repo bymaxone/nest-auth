@@ -246,7 +246,7 @@ describe('beforeWorkspaceCreate for an account an OAuth flow is about to create'
     })
 
     const hostAsked = await h.service.judgeNewAccount(loaded, account, asked)
-    await h.service.completeOAuth(loaded, user('new', { email: EMAIL }), true, CONTEXT, hostAsked)
+    await h.service.completeOAuth(loaded, user('new', { email: EMAIL }), CONTEXT, hostAsked)
 
     expect(hostAsked).toBe(true)
     expect(beforeWorkspaceCreate).toHaveBeenCalledTimes(1)

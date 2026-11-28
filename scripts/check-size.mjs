@@ -188,6 +188,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     188.48 KiB (193,007 B) sits 30 B above the measured 192,977 B, which also holds the host-hook fixes: the
 //     judging of a workspace before an invitation signup creates the account, the platform `afterLogin`, and the
 //     report of a change whose cache step failed.
+//     188.94 KiB (193,473 B) sits 30 B above the measured 193,443 B, which also holds the announcement of
+//     an OAuth invitation account after its session is issued.
 //   observability  1.31 KiB → 1.34 KiB: the metrics contributor and the readiness indicator, which read the
 //     tally, the closed sets and the probe from the server entry and so bundle none of them.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
@@ -255,7 +257,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // `__name` or a numbered variant of it, because the surface lines alone have enough headroom to hide
 // the loss.
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 193_235 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 193_473 },
   { name: 'observ. (metrics + health)', path: 'dist/observability/index.mjs', brotli: 1.34 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.6 * 1024 },

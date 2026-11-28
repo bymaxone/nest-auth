@@ -191,8 +191,6 @@ export class WorkspaceInvitationAcceptService {
    *
    * @param loaded - What {@link prepareOAuth} returned.
    * @param user - The account the flow signed in.
-   * @param created - Whether the flow created the account, which is when the host's
-   *   after-acceptance hook runs.
    * @param context - Request metadata for the hooks.
    * @param hostAsked - What {@link judgeNewAccount} answered, when the flow called it.
    * @returns The workspace joined and the role held there.
@@ -203,7 +201,6 @@ export class WorkspaceInvitationAcceptService {
   async completeOAuth(
     loaded: LoadedInvitation,
     user: AuthUser,
-    created: boolean,
     context: HookContext,
     hostAsked = false
   ): Promise<AcceptedInvitation> {
@@ -211,15 +208,22 @@ export class WorkspaceInvitationAcceptService {
     if (user.tenantId !== current.record.tenantId) throw invalidToken()
     assertAddress(current.record, user.email, user.emailVerified)
     await pinned(this.assertStillGrantable(current.record))
-    const accepted = await pinned(this.finish(current, user, context, hostAsked))
-    if (created) {
-      runDetached(
-        this.logger,
-        () => this.hooks.afterInvitationAccepted?.(toSafeUser(user), context),
-        'afterInvitationAccepted'
-      )
-    }
-    return checked(accepted)
+    return checked(await pinned(this.finish(current, user, context, hostAsked)))
+  }
+
+  /**
+   * Starts the host's `afterInvitationAccepted` hook for an account an invitation created, without
+   * waiting for it. Called once the account's session is open.
+   *
+   * @param user - The account the invitation created.
+   * @param context - Request metadata for the hook.
+   */
+  announceCreated(user: SafeAuthUser, context: HookContext): void {
+    runDetached(
+      this.logger,
+      () => this.hooks.afterInvitationAccepted?.(user, context),
+      'afterInvitationAccepted'
+    )
   }
 
   /**
@@ -561,11 +565,7 @@ export class WorkspaceInvitationAcceptService {
         })
       )
     }
-    runDetached(
-      this.logger,
-      () => this.hooks.afterInvitationAccepted?.(user, context),
-      'afterInvitationAccepted'
-    )
+    this.announceCreated(user, context)
     return checked(result)
   }
 }
