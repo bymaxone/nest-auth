@@ -1096,7 +1096,7 @@ Where the table says **logged**, the call is not awaited: a throw or a rejection
 
 `onSessionsRevoked` is the one hook to implement when the host keeps state per session, such as open sockets or a cache. The more specific hooks in the table still fire beside it.
 
-It receives `{ userId, tenantId?, plane, reason, sessionIds? }`. `tenantId` is absent on the platform plane and for a session record that names none. `sessionIds` holds the SHA-256 hashes of the revoked refresh sessions when the operation names them; when it is absent, treat every session of that account as revoked.
+It receives `{ userId, tenantId?, plane, reason, sessionIds? }`. `tenantId` is absent on the platform plane and for a session record that names none. `sessionIds` holds the SHA-256 hashes of the revoked refresh sessions when the operation names them; when it is absent, the event does not say which sessions ended, so treat any session of that account as possibly revoked.
 
 | `reason`                 | What revoked                                                                                                      | `sessionIds` |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------------ |

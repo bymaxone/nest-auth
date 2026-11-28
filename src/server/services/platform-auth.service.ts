@@ -308,7 +308,6 @@ export class PlatformAuthService {
    *
    * @param userId - The administrator who signed out; empty when the record named no owner, in
    *   which case there is nobody to announce and nothing fires.
-   * @param sessionHash - The hash of the session that ended.
    */
   private emitPlatformLogout(userId: string): void {
     if (!this.hooks?.afterPlatformLogout || !userId) return
