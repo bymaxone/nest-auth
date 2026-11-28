@@ -60,6 +60,7 @@ const HOOK_NAMES = Object.keys({
   onOAuthLogin: true,
   afterInvitationAccepted: true,
   onSessionEvicted: true,
+  onSessionsRevoked: true,
   onApiKeyRequest: true,
   beforeWorkspaceCreate: true,
   onWorkspaceEvent: true

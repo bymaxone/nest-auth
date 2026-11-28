@@ -24,15 +24,14 @@ import type {
 } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
-import { logEvent, logHook } from '../observability/log-event'
+import { logEvent } from '../observability/log-event'
 import { markingPlane, observed } from '../observability/observed-outcome'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { SessionExtra } from '../redis/create-session-script'
 import { parseJson } from '../utils/captured-builtins'
 import { jwtSignOptions } from '../utils/dependency-options'
+import { endReusedFamily } from '../utils/end-reused-family'
 import { refusedOr } from '../utils/object-prototype-guard'
-import { runDetached } from '../utils/run-detached'
-import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { dashboardSessionDetail, platformSessionExtra } from '../utils/session-detail'
 import { newSessionRecord, recoveredRecord, rotationRecord } from '../utils/session-records'
 import { checked, pinned, PinnedAll } from '../utils/settle'
@@ -459,58 +458,18 @@ export class TokenManagerService {
         plane: 'dashboard',
         familyId: outcome.familyId
       })
-      const { ownerId } = await pinned(this.redis.revokeFamily(outcome.familyId))
-      logEvent(this.logger, 'AUTH_REFRESH_FAMILY_REVOKED', {
-        plane: 'dashboard',
-        familyId: outcome.familyId
-      })
-      // The one moment the library can say "this is not a guess about risk": a token that was
-      // already exchanged has been presented again, so one of its two holders is not the owner.
-      // Emitted after the revocation, so a consumer that reacts by paging someone is reacting
-      // to a lineage that is already dead rather than one still being torn down.
-      this.emitReuseDetected('dashboard', ownerId, outcome.familyId, ip, userAgent)
+      await pinned(
+        endReusedFamily(this.redis, this.hooks, this.logger, {
+          kind: 'dashboard',
+          outcome,
+          ip,
+          userAgent
+        })
+      )
       throw observed('reuse_detected', new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID))
     }
     logEvent(this.logger, 'AUTH_REFRESH_REFUSED', { plane: 'dashboard' })
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
-  }
-
-  /**
-   * Emits {@link IAuthHooks.onRefreshTokenReuseDetected}, fire-and-forget.
-   *
-   * The owner is read from the stored session where it can be — a replay of a token whose live
-   * key is already gone leaves nothing to read, and the hook is skipped rather than fired with
-   * an empty identity that a consumer would have to guess about.
-   *
-   * **The context describes WHO PRESENTED the replayed token**, which is the whole reason a
-   * consumer subscribes to this hook. `userId` says whose account the family belongs to; `ip` and
-   * `userAgent` are the only description of the party holding the token that should not exist, so
-   * a report carrying the first and not the second says a compromise happened and gives nothing
-   * to act on.
-   *
-   * `sanitizedHeaders` stays empty and that is honest — the rotation path receives the address
-   * and the agent, never the header map, so there is nothing to sanitize. Inventing one would be
-   * worse than an empty object a consumer can see is empty.
-   *
-   * @param userId - The account the revoked family belonged to.
-   * @param familyId - The revoked family.
-   * @param ip - Address the replayed token was presented from.
-   * @param userAgent - Raw `User-Agent` of the presenting client.
-   */
-  private emitReuseDetected(
-    plane: 'dashboard' | 'platform',
-    userId: string,
-    familyId: string,
-    ip: string,
-    userAgent: string
-  ): void {
-    if (!this.hooks?.onRefreshTokenReuseDetected || userId === '') return
-    const onReuse = this.hooks.onRefreshTokenReuseDetected.bind(this.hooks)
-    runDetached(
-      this.logger,
-      () => onReuse({ userId, familyId }, { ...createEmptyHookContext(), plane, ip, userAgent }),
-      'onRefreshTokenReuseDetected'
-    )
   }
 
   /**
@@ -939,16 +898,14 @@ export class TokenManagerService {
         plane: 'platform',
         familyId: outcome.familyId
       })
-      const { ownerId } = await pinned(this.redis.revokeFamily(outcome.familyId, 'platform'))
-      // Named for the same reason as the dashboard plane, and more so: this is the
-      // highest-privilege identity in the system.
-      logEvent(this.logger, 'AUTH_REFRESH_FAMILY_REVOKED', {
-        plane: 'platform',
-        familyId: outcome.familyId
-      })
-      // Both planes report reuse: an operator watching for account takeover cares about a
-      // replayed platform token at least as much as a dashboard one.
-      this.emitReuseDetected('platform', ownerId, outcome.familyId, ip, userAgent)
+      await pinned(
+        endReusedFamily(this.redis, this.hooks, this.logger, {
+          kind: 'platform',
+          outcome,
+          ip,
+          userAgent
+        })
+      )
       throw observed('reuse_detected', new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID))
     }
     logEvent(this.logger, 'AUTH_REFRESH_REFUSED', { plane: 'platform' })

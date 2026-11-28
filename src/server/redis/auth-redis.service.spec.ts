@@ -755,7 +755,7 @@ describe('AuthRedisService', () => {
       mockRedis.get.mockResolvedValue('{"userId":"u1","tenantId":"tenant-1"}')
       mockRedis.eval.mockResolvedValue(2)
 
-      await expect(service.revokeFamily('fam-1')).resolves.toEqual({ removed: 2, ownerId: 'u1' })
+      expect(await service.revokeFamily('fam-1')).toMatchObject({ removed: 2, ownerId: 'u1' })
 
       // The membership is read from the family index itself — a wrong key here would revoke
       // nothing while still reporting success.

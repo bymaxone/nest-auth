@@ -315,24 +315,22 @@ describe('PasswordResetService', () => {
       })
     })
 
-    // ASVS v5 §7.4.3: a credential change offers to end every other session. The caller's own
-    // survives — the device that just changed the password should not be signed out by doing
-    // so — and `revokeAllExceptCurrent` bumps the epoch, which is what reaches the stateless
-    // access tokens the other devices hold.
+    // ASVS v5 §7.4.3: a credential change offers to end every other session. The caller's device
+    // stays signed in, and the epoch bump reaches the access tokens the other devices hold.
     it('ends every other session, keeping the caller signed in', async () => {
       await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
 
       expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith({
         userId: 'u1',
         tenantId: 'tenant-1',
-        currentSessionHash: sha256('raw-refresh')
+        currentSessionHash: sha256('raw-refresh'),
+        reason: 'password_changed'
       })
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
     })
 
-    // Scenario: the caller's token has rotated, so the live session it stands for has another
-    // hash. Expected: that session is the one kept. Why: sparing the presented hash would spare
-    // nothing, and the sweep would end the caller's own device.
+    // Scenario: the caller's token has rotated. Expected: the session it now stands for is kept.
+    // Why: sparing the presented hash would spare nothing and sign out the caller's own device.
     it('keeps the session the presented token resolves to', async () => {
       mockSessionService.resolveLiveSession.mockResolvedValue(sha256('successor-token'))
 
@@ -341,7 +339,8 @@ describe('PasswordResetService', () => {
       expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith({
         userId: 'u1',
         tenantId: 'tenant-1',
-        currentSessionHash: sha256('successor-token')
+        currentSessionHash: sha256('successor-token'),
+        reason: 'password_changed'
       })
     })
 

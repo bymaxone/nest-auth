@@ -18,6 +18,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- `IAuthHooks.onSessionsRevoked`, one hook fired by every revocation of refresh sessions whose account is
+  known, on both identity planes: logout, revoking one or every other session, `revokeAllSessions`,
+  `revokeAllPlatformSessions`, a refresh that finds the account missing or blocked, password change
+  and reset, MFA enable and disable, session eviction and refresh token reuse. Several of these had
+  no hook before. The event carries `userId`, `plane`, `reason` and, when known, `tenantId` and
+  `sessionIds`; the types `SessionsRevokedEvent` and `SessionRevocationReason` are exported.
+  This addition does not change when the existing hooks fire. **Apply:** nothing is required. A host
+  that keeps state per session can implement the hook instead of watching routes.
+
 ### Fixed
 
 - On a workspace invitation completed by an OAuth sign-in that creates the account,

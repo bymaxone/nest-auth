@@ -12,18 +12,31 @@ import { sessionIndexKey } from '../constants/user-keys'
 import { sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type {
+  HookContext,
+  IAuthHooks,
+  SessionRevocationReason,
+  SessionsRevokedEvent
+} from '../interfaces/auth-hooks.interface'
 import type { SessionAlertInfo } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { logEvent, logHook, logStore } from '../observability/log-event'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { integerReply } from '../redis/integer-reply'
 import { parseJson, stringifyJson } from '../utils/captured-builtins'
+import { deleteGracePointers } from '../utils/delete-grace-pointers'
 import { describeChannelStatus } from '../utils/describe-error'
+import { evictSessions } from '../utils/evict-sessions'
 import { hostEntityOf } from '../utils/host-read'
 import { toSafeUser } from '../utils/mfa-safe-user'
+import {
+  assertSessionHash,
+  assertTenant,
+  removeStoredSession,
+  SESSION_HASH_RE
+} from '../utils/remove-session'
 import { runDetached } from '../utils/run-detached'
 import { parseUserAgent, type StoredSessionDetail } from '../utils/session-detail'
+import { announceSessionsRevoked } from '../utils/session-revocation'
 import { allOf, awaiting, checked, detached, pinned, PinnedAll } from '../utils/settle'
 import { raiseFirst } from '../utils/settle-writes'
 
@@ -33,32 +46,6 @@ import { raiseFirst } from '../utils/settle-writes'
 
 /** Maximum stored IP length — IPv6 max is 45 characters. Truncated before Redis storage. */
 const MAX_IP_LENGTH = 45
-
-/** Regex for a valid SHA-256 hex session hash (64 lowercase hex characters). */
-const SESSION_HASH_RE = /^[a-f0-9]{64}$/
-
-/**
- * Lua script for atomic session revocation.
- *
- * Performs SISMEMBER check and all deletions in a single round-trip to
- * prevent TOCTOU race conditions between the ownership check and deletion.
- *
- * KEYS[1] = `sess:{userId}` (auto-namespaced by AuthRedisService)
- * KEYS[2] = `rt:{sessionHash}` (auto-namespaced)
- * KEYS[3] = `sd:{sessionHash}` (auto-namespaced)
- * ARGV[1] = `rt:{sessionHash}` (SET member value — stored WITHOUT namespace, matching
- *   the format written by `TokenManagerService.sadd('sess:{userId}', 'rt:{hash}')`)
- *
- * Returns: 1 if revoked, 0 if the session was not a member of the SET.
- */
-const REVOKE_SESSION_LUA = `
-local is_member = redis.call('SISMEMBER', KEYS[1], ARGV[1])
-if is_member == 0 then return 0 end
-redis.call('DEL', KEYS[2])
-redis.call('SREM', KEYS[1], ARGV[1])
-redis.call('DEL', KEYS[3])
-return 1
-`
 
 /**
  * Lua script for atomic session detail rotation.
@@ -193,6 +180,8 @@ export interface RevokeAllExceptCurrentParams {
   tenantId: string
   /** SHA-256 hash of the session to KEEP — the caller's own. */
   currentSessionHash: string
+  /** What `onSessionsRevoked` is told. Defaults to `other_sessions_revoked`. */
+  reason?: SessionRevocationReason
 }
 
 /**
@@ -230,34 +219,6 @@ export class SessionService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Refuses a dashboard tenant that names nothing, at the public boundary.
-   *
-   * Every method on this service takes the tenant as a REQUIRED named field, and all of them are
-   * exported — the object form replaced the positional one precisely so a `string` tenant could
-   * not be transposed with a `string` user id or session hash. Naming it removes the transposition
-   * but not the empty string: a caller can still pass `''`, and that is what this refuses.
-   *
-   * `userSubject` cannot enforce it instead: the rotation scripts must be
-   * called with the empty PLACEHOLDER identity to discover a grace pointer, so the innermost
-   * builder has to stay total, and an empty key in a script's KEYS array is not "no key" — the
-   * `eval` wrapper prefixes it into a real key named `auth:`.
-   *
-   * So the refusal lives here, where a caller can actually be wrong. `''` derived
-   * `dashboard:0::{userId}`, swept and bumped keys nobody writes, and returned normally — a
-   * revocation reported as done while every session and access token it named stayed valid.
-   *
-   * @param tenantId - The tenant supplied by the caller.
-   * @throws {@link AuthException} `VALIDATION` when it is blank.
-   */
-  private assertTenant(tenantId: string): void {
-    if (tenantId === '') {
-      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
-        { field: 'tenantId', message: 'tenantId is required to name a session index' }
-      ])
-    }
-  }
-
-  /**
    * Records a new session in Redis and enforces the concurrent session limit.
    *
    * The device and activity record under `sd:{hash}` is written with the session itself, by
@@ -284,7 +245,7 @@ export class SessionService {
     ip,
     userAgent
   }: CreateSessionParams): Promise<string> {
-    this.assertTenant(tenantId)
+    assertTenant(tenantId)
     const hash = sha256(rawRefreshToken)
     const device = parseUserAgent(userAgent)
 
@@ -349,7 +310,7 @@ export class SessionService {
     currentSessionHash,
     currentSessionId
   }: ListSessionsParams): Promise<SessionInfo[]> {
-    this.assertTenant(tenantId)
+    assertTenant(tenantId)
     // Drop the grace members whose pointers have already expired, before reading the index.
     // A rotation adds one per refresh and only a revoke-all ever removed them, so an account
     // that refreshes and never signs out again accumulates them without bound — and this
@@ -406,22 +367,10 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    this.assertTenant(tenantId)
-    this.assertValidSessionHash(sessionHash)
-
-    // Atomic Lua script: ownership check (SISMEMBER) + all deletions in one
-    // round-trip to eliminate TOCTOU between the membership check and DEL/SREM.
-    const result = await pinned(
-      this.redis.eval(
-        REVOKE_SESSION_LUA,
-        [this.indexKey(userId, tenantId), `rt:${sessionHash}`, `sd:${sessionHash}`],
-        [`rt:${sessionHash}`]
-      )
+    await pinned(
+      removeStoredSession(this.redis, this.options.hmacKey, { userId, tenantId, sessionHash })
     )
-
-    if (integerReply(result) === 0) {
-      throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
-    }
+    this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
   }
 
   /**
@@ -449,16 +398,22 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeOtherSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    // No `assertTenant` here: `revokeSession` on the next line performs the identical check
+    // No `assertTenant` here: `removeStoredSession` on the next line performs the identical check
     // before touching anything, so a guard at this level is unreachable code that reads as
     // defence. Measured — deleting it left all 133 tests in this suite green, which is what an
     // equivalent mutant looks like. Removed rather than suppressed: a `Stryker disable` would
     // have preserved the duplication and added a comment defending it.
-    await pinned(this.revokeSession({ userId, tenantId, sessionHash }))
+    await pinned(
+      removeStoredSession(this.redis, this.options.hmacKey, { userId, tenantId, sessionHash })
+    )
     // After the revoke, not before: a failure above leaves the epoch untouched and the
     // operation visibly incomplete, rather than the reverse — every device losing its access
     // token for a session that is in fact still alive.
-    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
+    try {
+      await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
+    } finally {
+      this.announce({ userId, tenantId, reason: 'session_revoked', sessionIds: [sessionHash] })
+    }
   }
 
   /**
@@ -492,8 +447,8 @@ export class SessionService {
    *   the predecessor of one.
    */
   async resolveLiveSession({ userId, tenantId, sessionHash }: LiveSessionParams): Promise<string> {
-    this.assertTenant(tenantId)
-    this.assertValidSessionHash(sessionHash, 'sessionHash')
+    assertTenant(tenantId)
+    assertSessionHash(sessionHash, 'sessionHash')
 
     return await pinned(
       this.resolveLiveMember(
@@ -506,9 +461,9 @@ export class SessionService {
   /**
    * Revokes all sessions for a user except the caller's current session.
    *
-   * Reads all `rt:`-prefixed members from `sess:{userId}` and calls
-   * {@link revokeSession} for each session whose hash differs from
-   * `currentSessionHash`. The current session is always preserved, and it has to exist: a hash
+   * Reads all `rt:`-prefixed members from `sess:{userId}` and removes each session whose hash
+   * differs from `currentSessionHash`, then reports them in one `onSessionsRevoked` event.
+   * The current session is always preserved, and it has to exist: a hash
    * that names no live session of this user is refused before anything is revoked, since keeping
    * nothing would revoke every session the account has, the caller's own included.
    *
@@ -531,28 +486,59 @@ export class SessionService {
    * @param currentSessionHash - SHA-256 hash of the session to preserve.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when `currentSessionHash` names no live
    *   session of this user.
-   * @throws {unknown} Propagates any error thrown by `revokeSession` — including
-   *   {@link AuthException} with various codes, Redis errors, or other runtime errors.
+   * @throws {unknown} Propagates any other error met while removing the sessions or advancing
+   *   the epoch.
    */
   async revokeAllExceptCurrent({
     userId,
     tenantId,
-    currentSessionHash
+    currentSessionHash,
+    reason = 'other_sessions_revoked'
   }: RevokeAllExceptCurrentParams): Promise<void> {
-    this.assertTenant(tenantId)
-    this.assertValidSessionHash(currentSessionHash, 'currentSessionHash')
+    assertTenant(tenantId)
+    assertSessionHash(currentSessionHash, 'currentSessionHash')
 
     const members = await pinned(this.redis.smembers(this.indexKey(userId, tenantId)))
     const keptHash = await pinned(this.resolveLiveMember(members, currentSessionHash))
-    const rtMembers = members.filter((m) => m.startsWith('rt:'))
+    const revoked: string[] = []
+    let completed = false
+    try {
+      await pinned(this.removeOthers({ userId, tenantId }, members, keptHash, revoked))
+      await pinned(deleteGracePointers(this.redis, this.indexKey(userId, tenantId), members))
+      // Last, and only once every refresh session is gone: a bump before the loop would be
+      // undone by nothing, but a bump after it means a failure above leaves the epoch untouched
+      // rather than logging the user out of a device the loop never got to revoke.
+      await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
+      completed = true
+    } finally {
+      // A failure part-way still announces what is already deleted.
+      if (completed || revoked.length > 0) {
+        this.announce({ userId, tenantId, reason, sessionIds: revoked })
+      }
+    }
+  }
 
-    for (const member of rtMembers) {
+  /** Removes every session in `members` but the kept one, recording each one it removed. */
+  private async removeOthers(
+    { userId, tenantId }: { userId: string; tenantId: string },
+    members: string[],
+    keptHash: string,
+    revoked: string[]
+  ): Promise<void> {
+    for (const member of members.filter((m) => m.startsWith('rt:'))) {
       const hash = member.slice(3)
 
       if (timingSafeCompare(hash, keptHash)) continue
 
       try {
-        await pinned(this.revokeSession({ userId, tenantId, sessionHash: hash }))
+        await pinned(
+          removeStoredSession(this.redis, this.options.hmacKey, {
+            userId,
+            tenantId,
+            sessionHash: hash
+          })
+        )
+        revoked.push(hash)
       } catch (err: unknown) {
         // SESSION_NOT_FOUND is expected when a concurrent logout already removed
         // this session between our SMEMBERS read and the Lua revocation. Any
@@ -564,30 +550,6 @@ export class SessionService {
         throw err
       }
     }
-
-    // Every rotation grace pointer the account holds goes too.
-    //
-    // `revokeSession` only ever deletes `rt:`/`sd:` keys, and the loop above only visits `rt:`
-    // members, so a `rp:{predecessor}` pointer survived both. For a *revoked* session that is
-    // harmless — the grace branch requires the successor's `rt:` key, which is gone. The gap is
-    // the *preserved* session: its predecessor's pointer names a hash that is deliberately
-    // still alive, so anyone holding that predecessor token could take the grace branch and
-    // mint a brand-new full-lifetime session for the rest of the window. The epoch bump below
-    // does not help — a recovered session signs its access token from the current epoch.
-    //
-    // "Sign out my other devices" is a statement about right now, so no credential minted
-    // before this moment may still produce a session. `logout` clears the same pointer for the
-    // single token it is handed, for the same reason.
-    const gracePointers = members.filter((m) => m.startsWith('rp:'))
-    for (const member of gracePointers) {
-      await pinned(this.redis.del(member))
-      await pinned(this.redis.srem(this.indexKey(userId, tenantId), member))
-    }
-
-    // Last, and only once every refresh session is gone: a bump before the loop would be
-    // undone by nothing, but a bump after it means a failure above leaves the epoch untouched
-    // rather than logging the user out of a device the loop never got to revoke.
-    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard'))
   }
 
   /**
@@ -621,8 +583,8 @@ export class SessionService {
     ip: string,
     userAgent: string
   ): Promise<void> {
-    this.assertValidSessionHash(oldHash, 'oldHash')
-    this.assertValidSessionHash(newHash, 'newHash')
+    assertSessionHash(oldHash, 'oldHash')
+    assertSessionHash(newHash, 'newHash')
 
     // Guard against a programming error where the same hash is supplied for both
     // arguments. timingSafeCompare is used because session hashes are derived from
@@ -693,41 +655,6 @@ export class SessionService {
       // Old detail missing or unparseable — fall back to current timestamp.
     }
     return createdAt
-  }
-
-  /**
-   * Asserts that a session hash string is a valid 64-character lowercase hex string.
-   *
-   * Rejects malformed inputs before they reach Redis to prevent unexpected key
-   * construction and to avoid leaking timing information via Redis operations on
-   * attacker-controlled key names.
-   *
-   * @remarks
-   * **This used to answer `SESSION_NOT_FOUND`, and that was wrong.** The stated reason was to stop
-   * callers enumerating valid hash formats — but the format is not a secret. It is 64 hex
-   * characters, `SessionInfo.sessionHash` publishes it on every listed session, and the route's
-   * own documentation describes it. Nothing is protected by hiding it, and the pairing had a real
-   * cost: a consumer sending a malformed hash got the same answer as one sending a hash that had
-   * already been revoked, so a UI bug read as a race between the session list and the click. That
-   * is measured, not hypothetical — it cost a consumer session twenty minutes chasing a race that
-   * cannot happen.
-   *
-   * A malformed hash is a caller error and now says so. A well-formed hash that names nothing
-   * still answers `SESSION_NOT_FOUND`, which is where the no-enumeration argument does apply:
-   * that one really would tell the caller whether a session exists.
-   *
-   * @param sessionHash - The session hash to validate.
-   * @throws {@link AuthException} `VALIDATION` when the value is not 64 lowercase hex characters.
-   */
-  private assertValidSessionHash(sessionHash: string, field = 'sessionHash'): void {
-    if (!SESSION_HASH_RE.test(sessionHash)) {
-      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
-        {
-          field,
-          message: `${field} must be 64 lowercase hexadecimal characters`
-        }
-      ])
-    }
   }
 
   /**
@@ -863,43 +790,14 @@ export class SessionService {
       .filter((entry) => entry.memberHash !== newHash)
       .slice(0, evictCount)
 
-    // Names the account as well as the request. An eviction context must carry tenant-qualified
-    // identity: a repository id is unique only within a tenant, so a consumer disconnecting sockets
-    // on a bare id reaches another tenant's user. Both values are parameters of this method, so there is nothing to look up.
-    const context: HookContext = {
-      plane: 'dashboard',
-      userId,
-      tenantId,
-      ip,
-      userAgent,
-      sanitizedHeaders: {}
-    }
+    const index = this.indexKey(userId, tenantId)
+    const request = { userId, tenantId, ip, userAgent, index }
+    await pinned(evictSessions(this.redis, this.hooks, this.logger, request, toEvict))
+  }
 
-    for (const entry of toEvict) {
-      try {
-        // Best-effort eviction: partial Redis failures leave stale keys that expire via TTL.
-        // The new session is already committed at this point — a mid-eviction failure
-        // MUST NOT propagate back to createSession callers.
-        await pinned(this.redis.del(`rt:${entry.memberHash}`))
-        await pinned(this.redis.srem(this.indexKey(userId, tenantId), entry.member))
-        await pinned(this.redis.del(`sd:${entry.memberHash}`))
-      } catch (err: unknown) {
-        logEvent(this.logger, 'AUTH_SESSION_EVICTION_FAILED', {
-          detail: describeChannelStatus(err)
-        })
-        continue
-      }
-
-      // Fire onSessionEvicted hook — fire-and-forget; errors must not propagate.
-      if (this.hooks?.onSessionEvicted) {
-        const onSessionEvicted = this.hooks.onSessionEvicted.bind(this.hooks)
-        runDetached(
-          this.logger,
-          () => onSessionEvicted(userId, entry.memberHash, context),
-          'onSessionEvicted'
-        )
-      }
-    }
+  /** Announces a revocation of dashboard sessions through `onSessionsRevoked`. */
+  private announce(revocation: Omit<SessionsRevokedEvent, 'plane'>): void {
+    announceSessionsRevoked(this.hooks, this.logger, { ...revocation, plane: 'dashboard' })
   }
 
   /**

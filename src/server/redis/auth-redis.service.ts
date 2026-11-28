@@ -674,7 +674,7 @@ export class AuthRedisService {
    *   the three methods that lost their default in this change, this one takes no positional
    *   tenant beside it — the owner and its tenant come off the family's own record — so there is
    *   no adjacent same-typed argument for it to be transposed with.
-   * @returns The number of members removed and the account the family belonged to. The owner
+   * @returns The members removed, the family's account and its tenant, if named. The owner
    *   is reported because the caller cannot obtain it any other way: the presented token's own
    *   `rt:` key was deleted when it was rotated, so at reuse-detection time the family index is
    *   the only surviving link between the replayed token and an account. It is `''` when no
@@ -683,7 +683,7 @@ export class AuthRedisService {
   async revokeFamily(
     familyId: string,
     kind: 'dashboard' | 'platform' = 'dashboard'
-  ): Promise<{ removed: number; ownerId: string }> {
+  ): Promise<{ removed: number; ownerId: string; tenantId?: string | undefined }> {
     if (familyId === '') return checked({ removed: 0, ownerId: '' })
     const p = prefixesFor(kind)
     const members = await pinned(this.smembers(`${p.family}:${familyId}`))
@@ -706,7 +706,7 @@ export class AuthRedisService {
         [this.stored, p.live, p.detail, indexKey]
       )
     )
-    return checked({ removed: integerReply(removed), ownerId })
+    return checked({ removed: integerReply(removed), ownerId, tenantId })
   }
 
   /**

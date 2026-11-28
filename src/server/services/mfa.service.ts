@@ -36,6 +36,7 @@ import { committedSafeUser } from '../utils/mfa-safe-user'
 import { decryptMfaSecret, encryptMfaSecret } from '../utils/mfa-secret-cipher'
 import { parsePlainRecoveryCodes, parseSetupData, type MfaSetupData } from '../utils/mfa-setup-data'
 import { runDetached } from '../utils/run-detached'
+import { revokeEverySession } from '../utils/session-revocation'
 import { checked, pinned, PinnedAll } from '../utils/settle'
 
 // ---------------------------------------------------------------------------
@@ -350,8 +351,7 @@ export class MfaService {
     // moment the user enabled a second factor because they suspected that theft.
     // Scoped to the caller's own plane: the two id spaces come from different repositories
     // and may collide, so an unscoped revoke would log out the unrelated account sharing it.
-    await pinned(this.redis.invalidateUserSessions(userId, tenantId, context))
-    await pinned(this.redis.bumpUserTokenEpoch(userId, tenantId, context))
+    await pinned(this.endSessionsForNewFactor(userId, tenantId, context))
 
     logEvent(this.logger, 'AUTH_MFA_ENABLED', { plane: context, userId })
     notifyMfaChange(
@@ -380,6 +380,22 @@ export class MfaService {
         'afterMfaEnabled'
       )
     }
+  }
+
+  /** Ends every session of the account whose second factor was just turned on. */
+  private async endSessionsForNewFactor(
+    userId: string,
+    tenantId: string | undefined,
+    plane: 'dashboard' | 'platform'
+  ): Promise<void> {
+    await pinned(
+      revokeEverySession(this.redis, this.hooks, this.logger, {
+        userId,
+        ...(tenantId === undefined ? {} : { tenantId }),
+        plane,
+        reason: 'mfa_enabled'
+      })
+    )
   }
 
   // ---------------------------------------------------------------------------

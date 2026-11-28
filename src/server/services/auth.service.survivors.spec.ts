@@ -18,6 +18,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   GUARDED_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { removeStoredSession } from '../utils/remove-session'
 import { expectEvent } from '../__tests__/log-events'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { AccountStatusService } from './account-status.service'
@@ -27,6 +28,8 @@ import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
+
+jest.mock('../utils/remove-session', () => ({ removeStoredSession: jest.fn() }))
 
 const JWT_SECRET = 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long'
 const HMAC_KEY = createHash('sha256')
@@ -63,7 +66,6 @@ const mockTokenManager = {
 }
 const mockSessionService = {
   createSession: jest.fn(),
-  revokeSession: jest.fn(),
   rotateSession: jest.fn()
 }
 
@@ -170,7 +172,7 @@ describe('AuthService.logout and the index of sessions', () => {
     const owner = await service.logout('access.jwt', 'raw-refresh-token')
 
     expect(owner).toBe('')
-    expect(mockSessionService.revokeSession).not.toHaveBeenCalled()
+    expect(removeStoredSession).not.toHaveBeenCalled()
   })
 
   // Scenario: the library runs with sessions off and the stored session names its owner. Expected: the index is not asked to revoke.
@@ -182,6 +184,6 @@ describe('AuthService.logout and the index of sessions', () => {
     const owner = await service.logout('access.jwt', 'raw-refresh-token')
 
     expect(owner).toBe(USER.id)
-    expect(mockSessionService.revokeSession).not.toHaveBeenCalled()
+    expect(removeStoredSession).not.toHaveBeenCalled()
   })
 })
